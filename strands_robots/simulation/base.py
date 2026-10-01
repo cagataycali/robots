@@ -658,6 +658,38 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
 # ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
 # side reaches it through the function-local import it already uses for
 # ``randomization_seed_error``, so neither module gains a module-level edge.
+JOINT_RANGE_WRITE_TOLERANCE = 0.01
+"""How far past a limited joint's range a written position may sit (rad or m).
+
+Joint limits are soft: a servo held against a limit settles a little outside
+``jnt_range`` (an SO-101 wrist flex held at its lower limit rests 1.1e-3 rad past it),
+and :meth:`get_robot_state` reports that pose. A write guard with no slack
+refuses the pose the simulator itself produced. Inside this band the value is
+written as given, never clamped; a pose written at the band's edge comes back
+at under 0.2 rad/s, where the 99 rad write the guard exists for came back at
+23.8 rad/s. Capped at 1% of the range so a short slide joint keeps its band
+proportionate.
+"""
+
+
+def outside_joint_range(value: float, lo: float, hi: float) -> bool:
+    """Whether a position lies outside ``[lo, hi]`` by more than the write tolerance.
+
+    The one rule every backend's ``set_joint_positions`` range guard applies,
+    so a pose read back from any engine is writable on that engine.
+
+    Args:
+        value: The position the caller asked to write.
+        lo: Lower bound of the joint's range.
+        hi: Upper bound of the joint's range.
+
+    Returns:
+        ``True`` when the write must be refused.
+    """
+    slack = min(JOINT_RANGE_WRITE_TOLERANCE, 0.01 * (hi - lo))
+    return not lo - slack <= value <= hi + slack
+
+
 LIST_POLICIES_RUNNING_DESCRIBE_ENTRY = (
     "() -> dict  # name the robots a rollout is driving right now, read from "
     "the same in-flight population stop_policy derives its verdict from, so "
@@ -1009,14 +1041,26 @@ class SimEngine(ABC):
         optional = {c for c, stub in stubs.items() if getattr(type(self), stub.__name__, stub) is not stub}
         return _caps.DEFAULT_CAPABILITIES | optional
 
-    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
-        """Initialize the optional ROS 2 telemetry bridge state.
+    def _init_ros_bridge(
+        self,
+        *,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
+        foxglove: bool | str = False,
+        foxglove_mcap: str | os.PathLike[str] | None = None,
+        foxglove_services: bool = False,
+    ) -> None:
+        """Initialize the optional telemetry bridges: ROS 2 and Foxglove.
 
         Backends that accept a ``ros2_bridge`` flag call this once from their
         own ``__init__``. It is intentionally a plain method rather than an ABC
         ``__init__`` override: the simulation interface imposes no base-class
         constructor contract, so lightweight subclasses and test doubles need
         not thread ``super().__init__()`` through just to satisfy the ABC.
+
+        Both bridges speak the same three-method interface and share the one
+        ``_ros_bridge`` slot the publish path reads; asked for together they
+        are held in a :class:`~strands_robots.foxglove.TelemetryFanout`.
 
         Args:
             ros2_bridge: When True, publish per-robot ``joint_states`` and
@@ -1028,6 +1072,18 @@ class SimEngine(ABC):
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
                 Only an ``int`` in ``[0, 232]`` names a domain; a value
                 outside the RTPS port map raises :class:`ValueError`.
+            foxglove: ``True`` serves a live Foxglove WebSocket on
+                ``127.0.0.1:8765`` (the next free port if busy), a
+                ``"host:port"`` string picks the address; every :meth:`step`
+                then publishes ``/tf``, the robot's meshes, joint states and
+                cameras. ``STRANDS_ROBOTS_FOXGLOVE=1`` turns it on for a
+                caller that left this False. Requires the ``[foxglove]``
+                extra. Defaults to False.
+            foxglove_mcap: Path of an MCAP file the same channels are
+                recorded to. A new file only; requires ``foxglove``.
+            foxglove_services: When True, advertise the gated
+                ``strands/set_joint_positions`` service. Off, the server
+                advertises no capability. Requires ``foxglove``.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
         # Refuse a domain id outside the RTPS port map here, so a backend that
@@ -1035,11 +1091,61 @@ class SimEngine(ABC):
         if error := dds_domain_id_error(ros2_domain, "ros2_domain", type(self).__name__):
             raise ValueError(error)
         self._ros2_domain = ros2_domain
+        # Every Foxglove keyword is graded before either bridge exists, so a
+        # refused keyword leaves no rclpy node and no open socket behind.
+        from strands_robots.foxglove.options import resolve_foxglove_options
+
+        foxglove_options = resolve_foxglove_options(
+            foxglove, foxglove_mcap=foxglove_mcap, foxglove_services=foxglove_services, context=type(self).__name__
+        )
         self._ros_bridge: Any = None
+        self._foxglove_bridge: Any = None
+        bridges: list[Any] = []
         if self._ros2_bridge_enabled:
             from strands_robots.simulation.ros_bridge import SimRosBridge
 
-            self._ros_bridge = SimRosBridge(domain_id=self._ros2_domain)
+            bridges.append(SimRosBridge(domain_id=self._ros2_domain))
+        if foxglove_options is not None:
+            from strands_robots.foxglove import FoxgloveBridge
+
+            try:
+                self._foxglove_bridge = FoxgloveBridge(
+                    foxglove_options,
+                    name=getattr(self, "tool_name_str", None) or type(self).__name__,
+                    engine=self,
+                    command_sink=self._foxglove_command_sink,
+                )
+            except Exception:
+                for bridge in bridges:
+                    bridge.shutdown()
+                raise
+            bridges.append(self._foxglove_bridge)
+        if len(bridges) == 1:
+            self._ros_bridge = bridges[0]
+        elif bridges:
+            from strands_robots.foxglove import TelemetryFanout
+
+            self._ros_bridge = TelemetryFanout(bridges)
+
+    def _foxglove_command_sink(self, robot: str | None, positions: dict[str, float]) -> dict[str, Any]:
+        """Apply a gated Foxglove ``set_joint_positions`` call through the engine's own method."""
+        method = getattr(self, "set_joint_positions", None)
+        if method is None:
+            return {"status": "error", "content": [{"text": f"{type(self).__name__} has no set_joint_positions."}]}
+        result: dict[str, Any] = method(positions, robot_name=robot, hold=True)
+        return result
+
+    @property
+    def foxglove_url(self) -> str | None:
+        """The live Foxglove WebSocket URL, or ``None`` when no Foxglove bridge runs."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.url if bridge is not None else None
+
+    @property
+    def foxglove_link(self) -> str | None:
+        """A ``foxglove://`` deep link to this engine's server, or ``None``."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.link if bridge is not None else None
 
     def _publish_ros_telemetry(self, *, skip_images: bool = False) -> None:
         """Publish joint_states (and camera images) for every robot once.
@@ -1051,6 +1157,11 @@ class SimEngine(ABC):
         bridge = getattr(self, "_ros_bridge", None)
         if bridge is None:
             return
+        # A bridge that rate-limits its cameras says when a frame is worth the
+        # render; one without the hint gets a frame every step, as before.
+        wants_images = getattr(bridge, "wants_images", None)
+        if not skip_images and wants_images is not None and not wants_images():
+            skip_images = True
         for robot in self.list_robots():
             # Per-robot guard: a transient render/observation failure on one
             # robot (e.g. EGL/GL context loss, a camera that produced no frame)
@@ -1091,6 +1202,8 @@ class SimEngine(ABC):
         if bridge is not None:
             bridge.shutdown()
             self._ros_bridge = None
+        if getattr(self, "_foxglove_bridge", None) is not None:
+            self._foxglove_bridge = None
 
     def _resolve_single_robot(self, robot_name: str | None) -> str:
         """Resolve an optional robot name to a concrete one.

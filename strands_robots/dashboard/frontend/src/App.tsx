@@ -11,7 +11,6 @@ import { authToken, backendKey, backendLabel, setAuthToken, subscribeAuth, serve
 import { sessionVerdict } from './lib/sessionExpiry'
 import { serverNotice, staleServerNotice, fleetFieldGaps, type RefusedHandshakes } from './lib/serverNotice'
 import FleetBar from './components/FleetBar'
-import { getRecordApi } from './lib/recordApi'
 import RobotCard from './components/RobotCard'
 import { armHosts } from './lib/armHosts'
 import RobotDetail from './components/RobotDetail'
@@ -27,14 +26,14 @@ import HelpSheet from './components/HelpSheet'
 import EstopButton from './components/EstopButton'
 import { hotkeyVerdict } from './lib/hotkeys'
 import ErrorBoundary from './components/ErrorBoundary'
-import TrainingTab from './components/TrainingTab'
-import SimTab from './components/SimTab'
-import RecordPanel from './components/RecordPanel'
 import AuthGate from './components/AuthGate'
 
-type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'training' | 'record' | 'sim' | 'help' | null
+type Panel = 'settings' | 'activity' | 'devices' | 'estop' | 'help' | null
 
-const PANELS: readonly Exclude<Panel, null>[] = ['settings', 'activity', 'devices', 'estop', 'training', 'record', 'sim', 'help']
+// The record, train and sim screens left with the agent's in-process sim tools: the dashboard is
+// the fleet on the mesh, its cards, and the agent that drives them. Their fragments fall back to
+// the fleet.
+const PANELS: readonly Exclude<Panel, null>[] = ['settings', 'activity', 'devices', 'estop', 'help']
 
 /** The panel a fragment names: `#devices` -> 'devices', `#fleet` / empty -> null (the fleet is the page). */
 function panelFromHash(hash: string): Panel {
@@ -77,20 +76,12 @@ function Dashboard() {
     return () => window.removeEventListener('hashchange', onHash)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // the record screen's parting gift: the dataset it just finished, seeded into training
-  const [trainPrefill, setTrainPrefill] = useState<{ dataset_root?: string } | undefined>(undefined)
   /** The verdict of copying the first-run snippet. */
   const [snipCopied, setSnipCopied] = useState<string | null>(null)
   const [boards, setBoards] = useState<(RememberedBoard & DetectedBoard)[] | null | undefined>(undefined)
   const [settingsTab, setSettingsTab] = useState<'mesh' | undefined>(undefined)
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
-  /**
-   * UX_REVIEW #10: the record backend is probed ONCE per page load (lib/recordApi caches it), so
-   * asking here costs nothing and lets the nav warn before the click instead of after. null
-   * until the answer arrives — the nav must not guess in either direction.
-   */
-  const [recordMock, setRecordMock] = useState<boolean | null>(null)
 
   /** R2: which robots currently have a live sim twin. */
   const liveTwins = useMemo(() => new Set(
@@ -168,11 +159,6 @@ function Dashboard() {
     void serverRoutePaths().then(paths => { if (live) setDark(darkRoutes(paths)) }).catch(() => {})
     return () => { live = false }
   }, [backendKey()])  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    let live = true
-    void getRecordApi().then(a => { if (live) setRecordMock(a.mock) }).catch(() => {})
-    return () => { live = false }
-  }, [])
 
   // Keyboard: Escape closes, "." (or Cmd/Ctrl+. even while typing) opens the stop sheet, "?"
   // opens help.
@@ -254,15 +240,11 @@ function Dashboard() {
         activityCount={activity.length}
         absentChildren={absentChildren}
         quietChildren={quietChildren}
-        recordMock={recordMock}
         onInstall={() => void pwa.install()}
         onSettings={() => { setSettingsTab(undefined); route('settings') }}
         onWireSecurity={() => { setSettingsTab('mesh'); route('settings') }}
         onActivity={() => route('activity')}
         onDevices={() => route('devices')}
-        onTraining={() => { setTrainPrefill(undefined); route('training') }}
-        onRecord={() => route('record')}
-        onSim={() => route('sim')}
         onHelp={() => route('help')}
       />
 
@@ -281,6 +263,17 @@ function Dashboard() {
       {link.headline && (
         <div className={`toast ${link.commandsWork ? '' : 'warn'}`} role="status">
           <b>{link.headline}</b> {link.detail}
+        </div>
+      )}
+
+      {/* The mesh session refused to open (a plain start on a laptop: auth defaults to mtls with no certificate). The fleet is empty for a reason, and the reason is here, with the one line that fixes it on a trusted machine. */}
+      {loaded && mesh.online === false && mesh.error && (
+        <div className="toast warn" role="status" data-testid="mesh-not-started">
+          <b>Mesh not started.</b> {mesh.error}
+          <span className="hint">
+            {' '}No robot can reach this dashboard until it joins. On a laptop or a trusted LAN start it with
+            {' '}<code>STRANDS_MESH_LOCAL_DEV=1</code>; for a shared network set the certificate variables (Settings, mesh).
+          </span>
         </div>
       )}
 
@@ -420,23 +413,6 @@ function Dashboard() {
       <EstopSheet open={panel === 'estop'} onClose={() => route(null)}
         linkWarning={link.commandsWork ? null : link.estopReason}
         meshBacked={mesh.online === true} />
-      {panel === 'training' && (
-        <ErrorBoundary label="the training screen" onDismiss={() => route(null)}>
-          <TrainingTab onClose={() => route(null)} prefill={trainPrefill} />
-        </ErrorBoundary>
-      )}
-      {panel === 'sim' && (
-        <ErrorBoundary label="the simulation screen" onDismiss={() => route(null)}>
-          <SimTab onClose={() => route(null)} />
-        </ErrorBoundary>
-      )}
-      {panel === 'record' && (
-        <ErrorBoundary label="the record screen" onDismiss={() => route(null)}>
-          <RecordPanel peers={list.filter(p => !p.stale)} onClose={() => route(null)}
-            onDevices={() => route('devices')}
-            onTrain={prefill => { setTrainPrefill(prefill); route('training') }} />
-        </ErrorBoundary>
-      )}
 
       <ErrorBoundary label="the chat dock">
         <AgentDock

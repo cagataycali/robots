@@ -100,6 +100,22 @@ def _register_bot(
     return robot_dir
 
 
+def _uncurated_discoverable_name(monkeypatch) -> str:
+    """A real ``robot_descriptions`` MJCF name the curated registry does not answer.
+
+    Every MJCF description in ``robot_descriptions`` 1.23.0 is shipped by a
+    curated entry, and each entry claims its description's short name. So the
+    resolver's own registry read hides that one entry: the description table
+    and the discovery path it would reach stay the real ones.
+    """
+    from strands_robots.registry.discovery import list_discoverable
+
+    name = sorted(list_discoverable())[0]
+    curated = manager.get_robot
+    monkeypatch.setattr(manager, "get_robot", lambda n: None if n == name else curated(n))
+    return name
+
+
 class TestIsRobotAssetPresent:
     def test_true_when_xml_exists(self, tmp_path):
         _register_bot(tmp_path / "assets")
@@ -508,7 +524,7 @@ class TestDecliningAlsoDeclinesDiscovery:
 
     # -- second layer: the same question, of the real registry ------------
 
-    def test_a_really_discoverable_name_is_declined(self):
+    def test_a_really_discoverable_name_is_declined(self, monkeypatch):
         """Independent oracle: real registry data, no stand-in.
 
         A name the curated registry does not carry but ``robot_descriptions``
@@ -519,13 +535,7 @@ class TestDecliningAlsoDeclinesDiscovery:
         pytest.importorskip("robot_descriptions")
         import sys
 
-        from strands_robots.registry import get_robot
-        from strands_robots.registry.discovery import list_discoverable
-
-        candidates = [name for name in sorted(list_discoverable()) if get_robot(name) is None]
-        assert candidates, "no discoverable name is outside the curated registry to test with"
-
-        name = candidates[0]
+        name = _uncurated_discoverable_name(monkeypatch)
         before = {m for m in sys.modules if m.startswith("robot_descriptions")}
         assert manager.resolve_model_path(name, allow_download=False) is None
         new = {m for m in sys.modules if m.startswith("robot_descriptions")} - before
@@ -777,18 +787,12 @@ class TestTheDirectoryResolverCanDeclineTheSameFetch:
 
     # -- second layer: the same question, of the real registry ------------
 
-    def test_a_really_discoverable_name_is_declined(self):
+    def test_a_really_discoverable_name_is_declined(self, monkeypatch):
         """Independent oracle: real registry data, no stand-in."""
         pytest.importorskip("robot_descriptions")
         import sys
 
-        from strands_robots.registry import get_robot
-        from strands_robots.registry.discovery import list_discoverable
-
-        candidates = [name for name in sorted(list_discoverable()) if get_robot(name) is None]
-        assert candidates, "no discoverable name is outside the curated registry to test with"
-
-        name = candidates[0]
+        name = _uncurated_discoverable_name(monkeypatch)
         before = {m for m in sys.modules if m.startswith("robot_descriptions")}
         assert manager.resolve_model_dir(name, allow_download=False) is None
         new = {m for m in sys.modules if m.startswith("robot_descriptions")} - before

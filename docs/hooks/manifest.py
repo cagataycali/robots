@@ -21,7 +21,6 @@ from pathlib import Path
 log = logging.getLogger("mkdocs.hooks.manifest")
 
 _REPO = Path(__file__).resolve().parents[2]
-_REGISTRY = _REPO / "strands_robots" / "registry" / "robots.json"
 _DOCS = _REPO / "docs"
 _OUT = _DOCS / "assets" / "viewer" / "robots.json"
 

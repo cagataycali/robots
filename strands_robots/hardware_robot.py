@@ -561,6 +561,9 @@ class Robot(TeleopMixin, AgentTool):
         ros2_transport: str = "rclpy",
         joint_limits: dict[str, tuple[float, float]] | None = None,
         dds_security_config: dict[str, str] | None = None,
+        foxglove: bool | str = False,
+        foxglove_mcap: str | os.PathLike[str] | None = None,
+        foxglove_services: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize Robot with async capabilities.
@@ -640,6 +643,22 @@ class Robot(TeleopMixin, AgentTool):
                 Security is configured via the ROS 2 RMW keystore/env); passing
                 it with ``ros2_transport="rclpy"`` raises. Requires
                 ``ros2_bridge=True``.
+            foxglove: ``True`` serves this robot's live observation to
+                Foxglove on ``ws://127.0.0.1:8765`` (the next free port when
+                busy) as per-joint states and one JPEG stream per camera;
+                ``"host:port"`` picks the address. The real-arm counterpart of
+                ``Simulation(foxglove=...)``, on the same telemetry path as
+                ``ros2_bridge``, and both may be on at once.
+                ``STRANDS_ROBOTS_FOXGLOVE=1`` switches it on for a caller that
+                left this ``False``. Needs the ``[foxglove]`` extra. Defaults
+                to ``False`` - no socket is opened.
+            foxglove_mcap: Path of a new MCAP file the same channels are
+                recorded to. Requires ``foxglove``; an existing file is
+                refused rather than overwritten.
+            foxglove_services: When ``True``, advertise the gated
+                ``strands/set_joint_positions`` service; each call is refused
+                until ``STRANDS_FOXGLOVE_COMMAND_ALLOW`` names it. Default
+                ``False``: the server advertises no capability.
             **kwargs: Robot-specific parameters (port, etc.)
         """
         super().__init__()
@@ -756,6 +775,21 @@ class Robot(TeleopMixin, AgentTool):
                 raise ValueError(error)
         if ros2_bridge:
             self._check_ros2_bridge_deps(ros2_transport=ros2_transport)
+        # Same reasoning for the Foxglove keywords: graded (and the extra
+        # probed) before lerobot is imported, so the operator reads the
+        # refusal that names the keyword they set.
+        from strands_robots.foxglove.options import resolve_foxglove_options
+
+        foxglove_options = resolve_foxglove_options(
+            foxglove, foxglove_mcap=foxglove_mcap, foxglove_services=foxglove_services, context=type(self).__name__
+        )
+        if foxglove_options is not None:
+            require_optional(
+                "foxglove",
+                pip_install="foxglove-sdk",
+                extra="foxglove",
+                purpose="the live Foxglove view (Robot(foxglove=True))",
+            )
 
         # Initialize robot using lerobot's abstraction
         self.robot = self._initialize_robot(robot, cameras, **kwargs)
@@ -795,10 +829,12 @@ class Robot(TeleopMixin, AgentTool):
             joint_limits=joint_limits,
             dds_security_config=dds_security_config,
         )
+        self._init_foxglove_bridge(foxglove_options)
 
     # ------------------------------------------------------------------
     # ROS 2 telemetry bridge (opt-in) - mirror of SimEngine(ros2_bridge=...)
     # ------------------------------------------------------------------
+
     @staticmethod
     def _check_ros2_bridge_deps(*, ros2_transport: str) -> None:
         """Validate the ROS 2 bridge transport and its optional dependency.
@@ -914,6 +950,7 @@ class Robot(TeleopMixin, AgentTool):
         self._ros2_domain = ros2_domain
         self._ros2_transport = ros2_transport
         self._ros_bridge: Any = None
+        self._foxglove_bridge: Any = None
         if not self._ros2_bridge_enabled:
             # No silent no-op: a security/safety config that never reaches a
             # bridge is almost certainly an operator mistake.
@@ -961,6 +998,72 @@ class Robot(TeleopMixin, AgentTool):
                 enable_commands=bool(ros2_commands),
                 joint_limits=joint_limits,
             )
+
+    def _init_foxglove_bridge(self, options: Any) -> None:
+        """Start the Foxglove bridge and join it to the telemetry slot the ROS 2 bridge uses.
+
+        Plain method for the same reason as :meth:`_init_ros_bridge`. With a
+        ROS 2 bridge already in ``_ros_bridge`` the two are held in a
+        :class:`~strands_robots.foxglove.TelemetryFanout`, so the publish path
+        still calls one object.
+
+        Args:
+            options: The resolved
+                :class:`~strands_robots.foxglove.FoxgloveOptions`, or ``None``
+                to start nothing.
+        """
+        self._foxglove_bridge = None
+        if options is None:
+            return
+        from strands_robots.foxglove import FoxgloveBridge, TelemetryFanout
+
+        existing: Any = getattr(self, "_ros_bridge", None)
+        try:
+            self._foxglove_bridge = FoxgloveBridge(
+                options,
+                name=self.tool_name_str,
+                engine=None,
+                command_sink=self._foxglove_command_sink,
+            )
+        except Exception:
+            # A live ROS 2 bridge started two lines earlier in __init__ must
+            # not outlive a constructor that raises: a retrying caller would
+            # accumulate DDS participants with nothing left to shut them down.
+            if existing is not None:
+                existing.shutdown()
+                self._ros_bridge = None
+            raise
+        joined: Any = self._foxglove_bridge if existing is None else TelemetryFanout([existing, self._foxglove_bridge])
+        self._ros_bridge = joined
+
+    def _foxglove_command_sink(self, robot: str | None, positions: dict[str, float]) -> dict[str, Any]:
+        """Apply a gated Foxglove ``set_joint_positions`` call as one ``send_action``.
+
+        A call that names a robot this server does not drive is refused before
+        anything reaches the arm: one server drives one arm, so a panel pointed
+        at the wrong port must not move the wrong hardware. ``robot=None``
+        means this arm.
+        """
+        names = {self.tool_name_str, getattr(self.robot, "name", None)}
+        if robot is not None and robot not in names:
+            text = (
+                f"set_joint_positions names robot {robot!r}, but this server drives {self.tool_name_str!r}; "
+                "nothing was sent to the arm. Point the panel at that robot's own Foxglove server."
+            )
+            return {"status": "error", "content": [{"text": text}]}
+        return self.send_action(dict(positions))
+
+    @property
+    def foxglove_url(self) -> str | None:
+        """The live Foxglove WebSocket URL, or ``None`` when no Foxglove bridge runs."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.url if bridge is not None else None
+
+    @property
+    def foxglove_link(self) -> str | None:
+        """A ``foxglove://`` deep link to this robot's server, or ``None``."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.link if bridge is not None else None
 
     def _publish_ros_telemetry(self, observation: dict[str, Any], *, skip_images: bool = False) -> None:
         """Publish one ``joint_states`` (+ camera ``image_raw``) for ``observation``.
@@ -1044,6 +1147,7 @@ class Robot(TeleopMixin, AgentTool):
                 bridge.shutdown()
             finally:
                 self._ros_bridge = None
+                self._foxglove_bridge = None
 
     def _initialize_robot(
         self, robot: LeRobotRobot | RobotConfig | str, cameras: dict[str, dict[str, Any]] | None, **kwargs: Any
@@ -4263,10 +4367,14 @@ class Robot(TeleopMixin, AgentTool):
                 "robot_info": str(self.robot),
                 "data_config": self.data_config,
                 **self._device_facts(),
-                "ros2_bridge": bool(getattr(self, "_ros_bridge", None) is not None),
+                # The slot also carries a Foxglove bridge, so the ROS 2 fact is
+                # the flag the constructor graded, not "the slot is filled".
+                "ros2_bridge": bool(getattr(self, "_ros2_bridge_enabled", False))
+                and getattr(self, "_ros_bridge", None) is not None,
                 "ros2_transport": getattr(self, "_ros2_transport", "rclpy")
-                if getattr(self, "_ros_bridge", None) is not None
+                if getattr(self, "_ros2_bridge_enabled", False) and getattr(self, "_ros_bridge", None) is not None
                 else None,
+                "foxglove_url": self.foxglove_url,
                 "task_status": self._task_state.status.value,
                 "current_instruction": self._task_state.instruction,
                 "task_duration": self._task_state.duration,

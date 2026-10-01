@@ -41,6 +41,7 @@ from strands_robots.registry.discovery import discover_urdf_path, list_urdf_disc
 from strands_robots.simulation.base import (
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
+    outside_joint_range,
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
@@ -75,6 +76,7 @@ from strands_robots.simulation.newton.backend import (
 )
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
+from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -143,28 +145,6 @@ def _short_joint_name(label: str) -> str:
         The trailing path segment.
     """
     return label.rsplit("/", 1)[-1]
-
-
-def _quat_rotate_inverse_wxyz(quat_wxyz: list[float], vec: list[float]) -> list[float]:
-    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
-
-    Computes ``R(q)^T @ vec`` (the standard "rotate by the inverse"), used to
-    turn Newton's world-frame free-joint angular velocity into the BODY frame so
-    ``base_ang_vel`` matches the MuJoCo backend and the IMU-gyro convention WBC /
-    locomotion controllers consume. The quaternion is normalised internally; a
-    ~zero-norm quaternion returns ``vec`` unchanged.
-    """
-    q = np.asarray(quat_wxyz, dtype=np.float64)
-    norm = float(np.linalg.norm(q))
-    if norm < 1e-8:
-        return [float(v) for v in vec]
-    w, x, y, z = q / norm
-    v = np.asarray(vec, dtype=np.float64)
-    q_vec = np.array([x, y, z], dtype=np.float64)
-    a = v * (2.0 * w * w - 1.0)
-    b = np.cross(q_vec, v) * (w * 2.0)
-    c = q_vec * (float(np.dot(q_vec, v)) * 2.0)
-    return [float(t) for t in (a - b + c)]
 
 
 def _is_zero_mass_sentinel(mass: Any) -> bool:
@@ -1461,7 +1441,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 if dof is None or lower is None or upper is None or dof >= len(lower):
                     continue
                 lo, hi = float(lower[dof]), float(upper[dof])
-                if lo < hi and not lo - 1e-9 <= float(value) <= hi + 1e-9:
+                if lo < hi and outside_joint_range(float(value), lo, hi):
                     out_of_range.append(f"{jname}={float(value):g} (range [{lo:g}, {hi:g}])")
             if out_of_range:
                 return {
