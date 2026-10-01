@@ -126,6 +126,29 @@ class TestTheContractIsReadFromTheIoDescriptors:
             {"slider_to_cart": 0.6, "cart_to_pole": 0.3}
         )
 
+    def test_the_per_joint_clip_pairs_isaac_lab_writes_are_read(self) -> None:
+        """Isaac Lab's IO descriptor serialises ``clip`` as ``self._clip[0].tolist()``:
+        one ``[low, high]`` pair PER JOINT, ``action_dim`` long. That is the shape every
+        real clipped run ships; refusing it withheld the contract from exactly those runs."""
+        desc = fake_io_descriptors()
+        desc["actions"][0]["clip"] = [[-1.0, 1.0], [-0.5, 0.25]]
+        contract = contract_from_io_descriptors(desc)
+        assert contract["action_terms"][0]["clip"] == [[-1.0, 1.0], [-0.5, 0.25]]
+        # ...and each joint is bounded by ITS pair, after the affine.
+        assert apply_action_contract(contract, [5.0, 5.0]) == pytest.approx(
+            {"slider_to_cart": 1.0, "cart_to_pole": 0.25}
+        )
+        assert apply_action_contract(contract, [-5.0, -5.0]) == pytest.approx(
+            {"slider_to_cart": -1.0, "cart_to_pole": -0.5}
+        )
+
+    def test_a_clip_list_of_the_wrong_length_or_shape_is_still_refused(self) -> None:
+        desc = fake_io_descriptors()
+        for bad in ([[-1.0, 1.0]], [[-1.0, 1.0], [0.0]], [[-1.0, 1.0], [-1.0, "x"]], "0 1"):
+            desc["actions"][0]["clip"] = bad
+            with pytest.raises(DeployContractError, match="unrecognised action clip"):
+                contract_from_io_descriptors(desc)
+
     def test_widths_that_do_not_fit_the_actor_are_named(self) -> None:
         contract = contract_from_io_descriptors(go2_io_descriptors())
         problems = contract_problems(contract, num_actor_obs=40, num_actions=11)

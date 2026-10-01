@@ -172,8 +172,28 @@ def contract_from_io_descriptors(
     }
 
 
+def _is_pair(value: Any) -> bool:
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, str)
+        and len(value) == 2
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in value)
+    )
+
+
 def _clip_list(clip: Any, joints: list[str], width: int) -> list[list[float]] | None:
-    """A term's clip as ``[[low, high]] * width``, or ``None`` when it has none."""
+    """A term's clip as one ``[low, high]`` pair per joint, or ``None`` when it has none.
+
+    Three shapes reach this: Isaac Lab's IO descriptor writes
+    ``self._clip[0].tolist()``, one pair PER JOINT and ``width`` long (the shape
+    every real clipped run ships); a task config keys the clip by joint-name
+    pattern (a mapping, accepted on resolved names only); and a single pair
+    applies to every joint. Anything else is refused by repr.
+
+    Raises:
+        DeployContractError: If the clip is a mapping missing a joint, a list of
+            the wrong length, or any other shape.
+    """
     if clip is None:
         return None
     if isinstance(clip, Mapping):
@@ -182,8 +202,15 @@ def _clip_list(clip: Any, joints: list[str], width: int) -> list[list[float]] | 
         if missing:
             raise DeployContractError(f"action clip names patterns, not the joints {missing}")
         return [[float(clip[j][0]), float(clip[j][1])] for j in joints]
-    if isinstance(clip, Sequence) and len(clip) == 2 and all(isinstance(v, int | float) for v in clip):
+    if _is_pair(clip):
         return [[float(clip[0]), float(clip[1])]] * width
+    if (
+        isinstance(clip, Sequence)
+        and not isinstance(clip, str)
+        and len(clip) == width
+        and all(_is_pair(pair) for pair in clip)
+    ):
+        return [[float(pair[0]), float(pair[1])] for pair in clip]
     raise DeployContractError(f"unrecognised action clip {clip!r}")
 
 
