@@ -3,13 +3,9 @@
 The observation schema reports a floating base as ``base_pos`` / ``base_quat`` /
 ``base_lin_vel`` / ``base_ang_vel``. Linear velocity is world-frame on all three
 backends; **angular velocity is body-frame** - the IMU-gyro convention a locomotion
-policy is trained against. The Newton backend states it outright and carries a
-helper for it:
-
-    _quat_rotate_inverse_wxyz(...)
-    "used to turn Newton's world-frame free-joint angular velocity into the BODY
-     frame so ``base_ang_vel`` matches the MuJoCo backend and the IMU-gyro
-     convention WBC / locomotion controllers consume"
+policy is trained against. MuJoCo's free-joint angular velocity is already local;
+Newton and Isaac rotate theirs through the one helper pinned in
+``tests/simulation/test_world_to_body_rotation.py``.
 
 Isaac's ``articulation.get_angular_velocity()`` returns the **world** frame, and it
 was emitted unrotated. So of the four base channels, this was the one whose numbers
@@ -40,17 +36,6 @@ import pytest
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from tests.simulation._isaac_engine import isaac_engine
-
-
-def _world_to_body_frame(quat, vec):
-    """Imported inside the test, not at module scope, so this file's behavioural
-    assertions still collect and run against a tree where the helper does not exist
-    yet. A module-scope import turns every test here into one collection error,
-    which proves the symbol is new and says nothing about whether the angular
-    velocity is rotated - the thing actually under test."""
-    from strands_robots.simulation.isaac.simulation import _world_to_body_frame as fn
-
-    return fn(quat, vec)
 
 
 def _quat_about_axis(axis: tuple[float, float, float], angle: float) -> list[float]:
@@ -118,7 +103,7 @@ class TestTheAngularVelocityIsRotatedIntoTheBodyFrame:
 
         The sign is the part worth stating. For R_y(+90) = [[0,0,1],[0,1,0],[-1,0,0]],
         body-frame is R^T @ v, so [0,0,1] becomes [-1,0,0]. Cross-checked against
-        scipy's ``Rotation.from_euler("y", 90)`` and the Newton backend's helper,
+        scipy's ``Rotation.from_euler("y", 90)`` and a first-principles matrix,
         both of which give [-1,0,0] - this expectation was written +1 first and the
         implementation was right.
         """
@@ -190,45 +175,6 @@ class TestTheOtherThreeChannelsAreUntouched:
         obs = _observe(quat, [0.0, 0.0, 0.0])
 
         assert obs["base_quat"] == pytest.approx(quat, abs=1e-9)
-
-
-class TestTheRotationAgreesWithTheNewtonBackend:
-    """One convention, two implementations, so they are compared rather than trusted.
-
-    Isaac does not import Newton's helper: that would pull ``warp`` into Isaac's
-    import path. The cost of a second implementation is that it can drift, so the
-    drift is what is measured.
-    """
-
-    def test_the_two_helpers_agree_numerically(self) -> None:
-        newton = pytest.importorskip("strands_robots.simulation.newton.simulation")
-        rotate_inverse = newton._quat_rotate_inverse_wxyz
-        rng = np.random.default_rng(20260908)
-
-        worst = 0.0
-        for _ in range(200):
-            q = rng.normal(size=4)
-            q = q / np.linalg.norm(q)
-            v = rng.normal(size=3)
-            mine = np.asarray(_world_to_body_frame(list(q), list(v)))
-            theirs = np.asarray(rotate_inverse(list(q), list(v)))
-            worst = max(worst, float(np.abs(mine - theirs).max()))
-
-        assert worst < 1e-9, f"the two backends' rotations diverged by {worst:.2e}"
-
-    def test_a_zero_norm_quaternion_returns_the_vector_unchanged(self) -> None:
-        """Matching Newton: an unreadable orientation is not grounds for scaling a
-        real velocity by garbage, and ``base_quat`` is reported alongside."""
-        assert _world_to_body_frame([0.0, 0.0, 0.0, 0.0], [1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0]
-
-    def test_the_rotation_preserves_magnitude(self) -> None:
-        """A frame change cannot alter how fast the base is turning."""
-        quat = _quat_about_axis((0.3, -0.5, 0.8), 1.1)
-        world = [0.4, 1.2, -0.7]
-
-        body = _world_to_body_frame(quat, world)
-
-        assert np.linalg.norm(body) == pytest.approx(np.linalg.norm(world), abs=1e-9)
 
 
 class TestAFixedBaseStillReportsNothing:

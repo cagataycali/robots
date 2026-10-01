@@ -17,7 +17,14 @@ other provider::
 
 ``checkpoint_dir`` is spelled as the trainer spells it (``TrainResult.checkpoint_dir``,
 ``BaseRLAlgo.load_checkpoint``, ``latest_checkpoint``), so the value a caller
-already holds is the value this provider takes.
+already holds is the value this provider takes. It also takes what Isaac Lab
+leaves behind: an rsl_rl run directory (``model_<iteration>.pt`` files beside
+``params/agent.yaml``), a path to one such file, or a HuggingFace repo id
+holding either shape (``owner/name``, ``hf://owner/name``, ``owner/name@revision``).
+An rsl_rl actor is converted once through
+:func:`~strands_robots.training.rl.rsl_rl.convert_checkpoint` into
+``<run>/strands_policy/`` and loaded from there; see
+:func:`resolve_checkpoint_dir` for the detection order.
 
 The checkpoint's ``actor_obs_keys`` are read from the observation by name, in the
 trained order, because that order is part of the weights: an actor trained on
@@ -28,24 +35,189 @@ substituting a zero would command a real robot from a fabricated state.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import boolean_flag_error, name_list_error, sequence_length
+from strands_robots.utils import boolean_flag_error, name_list_error, refusal_repr, refusal_str, sequence_length
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from strands_robots.training.rl.checkpoint import DeployableActor
 
 logger = logging.getLogger(__name__)
 
+#: Files a Hub snapshot needs for either loadable shape: the rsl_rl run
+#: (``model_<n>.pt`` + ``params/agent.yaml``, ``record.json`` for the action
+#: names) or a strands checkpoint pair. Media and ONNX exports are not fetched.
+HUB_ALLOW_PATTERNS: tuple[str, ...] = (
+    "model_*.pt",
+    "params/agent.yaml",
+    "record.json",
+    "policy_meta.json",
+    "policy.pt",
+)
+
+#: Name of the directory the converted rsl_rl actor is written to, beside the run.
+CONVERTED_DIR_NAME = "strands_policy"
+
+_MODEL_FILE_RE = re.compile(r"^model_(\d+)\.pt\Z")
+_HUB_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def _snapshot_download(repo_id: str, *, revision: str | None, allow_patterns: list[str]) -> str:
+    """Fetch the loadable files of a Hub repo and return the local snapshot directory."""
+    from huggingface_hub import snapshot_download
+
+    return str(snapshot_download(repo_id=repo_id, revision=revision, allow_patterns=allow_patterns))
+
+
+def parse_hub_id(value: str) -> tuple[str, str | None] | None:
+    """Return ``(repo_id, revision)`` when *value* is shaped like a HuggingFace repo id, else ``None``.
+
+    Accepts ``owner/name``, ``hf://owner/name`` and ``owner/name@revision``.
+    Anything path-like (an absolute path, ``./`` or ``..``, a backslash, more
+    than one ``/``, a ``.pt`` name) is not an id, so a mistyped local path is
+    reported as missing rather than sent to the network.
+    """
+    spec = value.removeprefix("hf://")
+    repo, _, revision = spec.partition("@")
+    if repo.endswith(".pt") or "\\" in repo or ".." in repo or repo.startswith((".", "/", "~")):
+        return None
+    if not _HUB_REPO_ID_RE.match(repo):
+        return None
+    return repo, (revision or None)
+
+
+def _record_action_names(run_dir: Path, num_actions: int) -> list[str]:
+    """The ``action_names`` a ``record.json`` beside the run lists, when there are exactly *num_actions* of them."""
+    path = run_dir / "record.json"
+    if not path.is_file():
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return []
+    names = record.get("action_names") if isinstance(record, dict) else None
+    if not isinstance(names, list) or len(names) != num_actions or not all(isinstance(n, str) and n for n in names):
+        return []
+    return list(names)
+
+
+def _convert_rsl_rl(model: Path) -> str:
+    """Convert *model* into ``<run>/strands_policy/`` unless that copy is already current."""
+    from strands_robots.training.rl.rsl_rl import convert_checkpoint
+
+    out = model.parent / CONVERTED_DIR_NAME
+    meta_path = out / "policy_meta.json"
+    if meta_path.is_file() and (out / "policy.pt").is_file():
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            current = isinstance(meta, dict) and meta.get("source_checkpoint") == str(model.resolve())
+            current = current and meta_path.stat().st_mtime_ns >= model.stat().st_mtime_ns
+        except (OSError, ValueError):
+            current = False
+        if current:
+            return str(out)
+    import torch
+
+    state = torch.load(model, map_location="cpu", weights_only=True)
+    actor = state.get("actor_state_dict") if isinstance(state, dict) else None
+    last = max((int(m.group(1)) for k in (actor or {}) if (m := re.match(r"^mlp\.(\d+)\.weight\Z", k))), default=None)
+    num_actions = int(actor[f"mlp.{last}.weight"].shape[0]) if actor and last is not None else -1
+    names = _record_action_names(model.parent, num_actions)
+    logger.info("rl: converting rsl_rl checkpoint %s into %s (action names: %d)", model, out, len(names))
+    return convert_checkpoint(str(model), str(out), action_keys=names or None)
+
+
+def _resolve_local(path: Path) -> str:
+    """Return the strands checkpoint directory behind an existing *path*."""
+    if path.is_file():
+        if _MODEL_FILE_RE.match(path.name):
+            return _convert_rsl_rl(path)
+        raise FileNotFoundError(
+            f"rl: checkpoint_dir {refusal_repr(str(path))} is a file but not an rsl_rl model_<n>.pt; "
+            "pass the run directory, one model_<n>.pt, a strands checkpoint directory or a HuggingFace repo id"
+        )
+    if (path / "policy_meta.json").is_file() or (path / "policy.pt").is_file():
+        # A strands checkpoint, whole or half: the loader names the missing file.
+        return str(path)
+    from strands_robots.training.rl.rsl_rl import latest_model
+
+    model = latest_model(str(path))
+    if model:
+        return _convert_rsl_rl(Path(model))
+    raise FileNotFoundError(
+        f"rl: no policy_meta.json and no model_<n>.pt in {refusal_repr(str(path))}; create_policy('rl') loads a "
+        "strands checkpoint (policy.pt + policy_meta.json), an rsl_rl run (model_<n>.pt + params/agent.yaml), "
+        "or a HuggingFace repo id naming one of those"
+    )
+
+
+def resolve_checkpoint_dir(checkpoint_dir: str) -> str:
+    """Return the directory holding ``policy.pt`` + ``policy_meta.json`` behind *checkpoint_dir*.
+
+    Detection order:
+
+    1. An existing strands checkpoint directory: returned as is.
+    2. An existing directory holding rsl_rl ``model_<n>.pt`` files, or a path to
+       one such file: the newest (or the named) model is converted once into
+       ``<run>/strands_policy/`` and that directory is returned. The copy is
+       reused while its ``policy_meta.json`` is newer than the model file and
+       names it as ``source_checkpoint``. ``action_names`` from a ``record.json``
+       beside the model become the checkpoint's ``action_keys`` when their count
+       matches the actor's outputs.
+    3. A HuggingFace repo id (``owner/name``, ``hf://owner/name``,
+       ``owner/name@revision``): the loadable files
+       (:data:`HUB_ALLOW_PATTERNS`) are fetched with ``snapshot_download``, then
+       1 or 2 applies to the snapshot.
+
+    Raises:
+        FileNotFoundError: If the path exists but holds none of the shapes, or
+            neither exists nor is shaped like a repo id.
+        RuntimeError: If the Hub download fails (repo missing, no network, no
+            access); with ``huggingface_hub`` absent the cause is the
+            ``ImportError`` naming the install.
+    """
+    spec = checkpoint_dir.strip()
+    path = Path(spec).expanduser()
+    if path.exists():
+        return _resolve_local(path)
+    parsed = parse_hub_id(spec)
+    if parsed is None:
+        raise FileNotFoundError(
+            f"rl: checkpoint_dir {refusal_repr(spec)} does not exist and is not shaped like a HuggingFace "
+            "repo id (owner/name); pass a strands checkpoint directory, an rsl_rl run or model_<n>.pt, or a repo id"
+        )
+    repo_id, revision = parsed
+    logger.info("rl: resolving checkpoint_dir %s as HuggingFace repo %s (revision %s)", spec, repo_id, revision)
+    try:
+        local = _snapshot_download(repo_id, revision=revision, allow_patterns=list(HUB_ALLOW_PATTERNS))
+    except ImportError as exc:
+        raise RuntimeError(
+            f"rl: checkpoint_dir {refusal_repr(spec)} looks like a HuggingFace repo id but huggingface_hub is "
+            "not installed to download it (pip install huggingface_hub); if you meant a local path, pass one that exists"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - every hub failure is this configuration's verdict
+        raise RuntimeError(
+            f"rl: could not download {refusal_repr(repo_id)} from HuggingFace: {refusal_str(exc)}. If you meant a "
+            "local path, pass an existing directory or model_<n>.pt; otherwise check the repo id, network and access"
+        ) from exc
+    return _resolve_local(Path(local))
+
 
 class RLCheckpointPolicy(Policy):
     """Deterministic rollout of an RL training checkpoint's actor.
 
     Args:
-        checkpoint_dir: Directory holding ``policy.pt`` + ``policy_meta.json``,
-            as returned by ``TrainResult.checkpoint_dir``.
+        checkpoint_dir: Directory holding ``policy.pt`` + ``policy_meta.json``
+            (``TrainResult.checkpoint_dir``), an rsl_rl run directory or one of
+            its ``model_<n>.pt`` files, or a HuggingFace repo id holding either;
+            see :func:`resolve_checkpoint_dir`.
         device: Torch device to load the actor onto (default ``"cpu"``; PPO on
             MuJoCo declares no GPU floor).
         raw_actions: For an Isaac Lab export only. ``False`` (the default)
@@ -75,8 +247,8 @@ class RLCheckpointPolicy(Policy):
             default checkpoint: without one there is no trained actor to run),
             or it is an Isaac Lab export whose deploy contract is missing or
             does not fit the actor and ``raw_actions`` was not asked for.
-        FileNotFoundError: If the directory holds no ``policy.pt`` /
-            ``policy_meta.json``.
+        FileNotFoundError: If the path holds none of the loadable shapes.
+        RuntimeError: If a Hub download fails.
     """
 
     def __init__(
@@ -99,7 +271,8 @@ class RLCheckpointPolicy(Policy):
 
         if error := boolean_flag_error(raw_actions, "raw_actions", "rl"):
             raise ValueError(error)
-        self._actor: DeployableActor = load_deployable_actor(str(checkpoint_dir).strip(), device=device)
+        resolved = resolve_checkpoint_dir(str(checkpoint_dir))
+        self._actor: DeployableActor = load_deployable_actor(resolved, device=device)
         self._device = device
         if joint_map is not None and not (
             isinstance(joint_map, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in joint_map.items())
@@ -113,7 +286,7 @@ class RLCheckpointPolicy(Policy):
         self._last_raw_action: list[float] = [0.0] * self._actor.num_actions
         self._contract = None if raw_actions else self._actor.deploy_contract
         if not raw_actions and self._actor.isaaclab_task:
-            self._check_contract(str(checkpoint_dir).strip())
+            self._check_contract(resolved)
         self.robot_state_keys: list[str] = []
         logger.info(
             "RL checkpoint policy loaded: provider=%s iteration=%s actor_obs=%d actions=%d",

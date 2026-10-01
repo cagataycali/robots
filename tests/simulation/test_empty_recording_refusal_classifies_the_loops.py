@@ -13,9 +13,11 @@ be right about *which* loops can fill a recording, and there are three kinds:
   ``eval_policy``'s own docstring recommends exactly that ("Use it to record
   frames"). Measured: a hook calling ``add_frame`` over a 20-step eval writes 20
   frames and ``stop_recording`` then saves the episode.
-* :meth:`~strands_robots.simulation.base.SimEngine.replay_episode`,
-  :meth:`~strands_robots.teleop_mixin.TeleopMixin.teleoperate` and a bare
-  ``step`` loop take no such hook, so nothing a caller does makes them record.
+* :meth:`~strands_robots.simulation.base.SimEngine.replay_episode` takes no
+  such hook, so nothing a caller does makes it record.
+  :meth:`~strands_robots.teleop_mixin.TeleopMixin.teleoperate` takes none
+  either, but on MuJoCo it steps the world one control period per frame, and
+  ``step`` feeds an open recording, so it is named as a route, not denied.
 
 The refusal used to say frames "are written only by ``run_policy``" and that
 "eval_policy / evaluate / replay_episode and bare step loops do NOT feed the
@@ -53,6 +55,8 @@ _LOOPS: dict[str, type] = {
 # run_policy installs the recording hook itself, so it is not a caller-supplied
 # route even though it is the one entry point that always records.
 _SELF_FEEDING = "run_policy"
+# Hookless, but records on MuJoCo because every frame goes through ``step``.
+_STEP_FED = "teleoperate"
 
 
 def _takes_on_frame(name: str) -> bool:
@@ -70,7 +74,7 @@ def _hook_bearing() -> set[str]:
 
 def _hookless() -> set[str]:
     """Loops that cannot record however the caller calls them."""
-    return {n for n in _LOOPS if n != _SELF_FEEDING and not _takes_on_frame(n)}
+    return {n for n in _LOOPS if n not in (_SELF_FEEDING, _STEP_FED) and not _takes_on_frame(n)}
 
 
 def _refusal_text() -> str:
@@ -150,7 +154,7 @@ class TestTheRefusalIsRightAboutWhichLoopsCanRecord:
         )
 
     def test_every_hookless_loop_is_named_as_unable(self) -> None:
-        """Including ``teleoperate``, which the refusal used to omit entirely."""
+        """Every loop that takes no hook and does not step is named as unable."""
         text = _refusal_text()
         clause = _cannot_sentence(text)
         missing = _hookless() - _names(clause)
@@ -158,6 +162,12 @@ class TestTheRefusalIsRightAboutWhichLoopsCanRecord:
             f"{sorted(missing)} take no on_frame hook, so no caller can make them record, but "
             f"the refusal does not say so: {clause!r}"
         )
+
+    def test_the_step_fed_loop_is_named_and_not_denied(self) -> None:
+        """``teleoperate`` records through ``step``; calling it unable misleads."""
+        text = _refusal_text()
+        assert _STEP_FED in _names(text), text
+        assert _STEP_FED not in _names(_cannot_sentence(text)), _cannot_sentence(text)
 
     def test_the_self_feeding_loop_is_still_the_headline_remedy(self) -> None:
         """``run_policy`` records with no hook from the caller, so it leads."""
@@ -179,7 +189,7 @@ class TestTheScanFoundSomethingToGrade:
 
     def test_both_groups_are_populated(self) -> None:
         assert len(_hook_bearing()) >= 2, f"expected >=2 hook-bearing loops, got {sorted(_hook_bearing())}"
-        assert len(_hookless()) >= 2, f"expected >=2 hookless loops, got {sorted(_hookless())}"
+        assert _hookless(), "expected a hookless loop to grade"
 
     @pytest.mark.parametrize("name", sorted(_LOOPS))
     def test_every_graded_loop_still_exists(self, name: str) -> None:

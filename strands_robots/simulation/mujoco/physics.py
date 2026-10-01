@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint, outside_joint_range
 from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
@@ -2082,7 +2082,7 @@ class PhysicsMixin:
             if not model.jnt_limited[jnt_id]:
                 continue
             lo, hi = (float(x) for x in model.jnt_range[jnt_id])
-            if not lo <= float(value) <= hi:
+            if outside_joint_range(float(value), lo, hi):
                 # Name the unit the bounds are in. Without it the cheapest reading
                 # of "outside [-1.92, 1.92]" is "clamp to the bound", which is the
                 # wrong pose whenever the caller is holding the same angle in

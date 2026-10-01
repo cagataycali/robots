@@ -115,4 +115,4 @@ def test_every_dashboard_wire_roster_names_embodiment() -> None:
     assert "embodiment" in routes_record.WIRE_POLICY_CONFIG_KEYS
     for verb in ("execute", "start"):
         assert "embodiment" in peer_tools._SIM_FIELDS[verb]
-    assert "embodiment" in peer_tools._SIM_INPUT_SCHEMA["properties"]
+    assert "embodiment" in peer_tools.sim_input_schema()["properties"]
