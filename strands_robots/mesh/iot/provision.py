@@ -767,6 +767,15 @@ def _validate_thing_name(thing_name: str) -> None:
             f"{thing_name.split(CHILD_PEER_SEPARATOR, 1)[0]!r} could publish as this Thing. "
             "Use a single '_' or '-'."
         )
+    if thing_name.endswith("_"):
+        base = thing_name.rstrip("_")
+        raise ValueError(
+            f"thing_name={thing_name!r} ends with a trailing '_': its child peers would be named "
+            f"{thing_name}{CHILD_PEER_SEPARATOR}<robot> = {base}___<robot>, which Thing {base!r}'s grant "
+            f"strands/{base}{CHILD_PEER_SEPARATOR}*/* matches, so {base!r} could publish, subscribe and answer as "
+            f"this Thing's robots. With {CHILD_PEER_SEPARATOR!r} refused inside a name this is the one remaining "
+            "aliasing pair; end the name with a letter, digit or '-'."
+        )
 
 
 def provision_robot(

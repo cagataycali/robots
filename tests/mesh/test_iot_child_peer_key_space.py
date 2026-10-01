@@ -176,8 +176,24 @@ class TestTheGrantCannotAliasAnotherThing:
             prov._validate_thing_name("childfix-a__evil")
         # The refusal names the Thing that could publish as it.
         assert "'childfix-a'" in str(e.value)
-        for name in ("childfix-a", "childfix_a", "a_b_c", "a-b"):
+        for name in ("childfix-a", "childfix_a", "a_b_c", "a-b", "_a", "a-"):
             prov._validate_thing_name(name)
+
+    def test_a_thing_name_with_a_trailing_underscore_is_refused(self, robot_doc):
+        """``X_`` + ``__`` + robot = ``X___robot``, which Thing ``X``'s grant ``strands/X__*/*`` matches.
+
+        With ``__`` refused inside a name this is the one remaining pair whose child
+        key spaces overlap, and a Thing name is permanent once its certificate is
+        issued, so it is refused at provisioning like the separator itself.
+        """
+        docs = _certificate_documents(robot_doc)
+        # The gap the refusal closes: another Thing's grant reaches this child.
+        assert _may_publish(docs, "childfix-a", "strands/childfix-a___so101/state")
+        with pytest.raises(ValueError, match="trailing '_'") as e:
+            prov._validate_thing_name("childfix-a_")
+        assert "'childfix-a'" in str(e.value) and "childfix-a___" in str(e.value)
+        with pytest.raises(ValueError, match="trailing '_'"):
+            prov._validate_thing_name("a_")
 
     def test_provision_and_reprovision_refuse_it_before_any_aws_call(self, monkeypatch, tmp_path):
         monkeypatch.setattr(prov, "_require_boto3", lambda: pytest.fail("boto3 was reached for a refused name"))
