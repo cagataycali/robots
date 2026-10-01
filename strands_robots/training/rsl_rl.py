@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
+from strands_robots.utils import refusal_repr
 
 #: The run name becomes a directory under the operator's ``output_dir``: a plain token only
 #: (letters, digits, ``_``, ``-``; no leading ``-`` or ``.``), so an agent-supplied value can
@@ -58,7 +59,7 @@ def run_name_problem(value: Any) -> str | None:
     """Error text when ``extra["run_name"]`` is not a plain token usable as one path segment."""
     if not isinstance(value, str) or not _RUN_NAME_RE.match(value):
         return (
-            f"extra run_name {value!r} is not allowed (must match {_RUN_NAME_RE.pattern}: "
+            f"extra run_name {refusal_repr(value)} is not allowed (must match {_RUN_NAME_RE.pattern}: "
             "letters, digits, '_' and '-', no leading '-' or '.', no path separators)"
         )
     return None
