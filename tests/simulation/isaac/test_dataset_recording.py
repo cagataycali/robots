@@ -30,6 +30,7 @@ from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import (
     IsaacSimulation,
     _CameraState,
+    _frame_at_camera_size,
     _RobotState,
 )
 
@@ -105,7 +106,11 @@ def _drive_episode(engine: IsaacSimulation, robot_name: str, instruction: str, n
     for step in range(n_frames):
         obs: dict = {j: float(step) * 0.01 for j in joints}
         for cam_name, cam in engine._cameras.items():
-            obs[cam_name] = np.asarray(cam.handle.get_rgba())[..., :3].astype(np.uint8)
+            # Mirror get_observation: the on_frame hook receives frames already
+            # resampled to the size the camera was added with, not the raw RTX
+            # render size (see _frame_at_camera_size).
+            raw = np.asarray(cam.handle.get_rgba())[..., :3].astype(np.uint8)
+            obs[cam_name] = _frame_at_camera_size(cam, raw)
         action = {j: float(step) * 0.01 + 0.001 for j in joints}
         hook(step, obs, action)
 
@@ -319,14 +324,15 @@ def test_stop_recording_flushes_trailing_episode(tmp_path) -> None:
     assert info["total_frames"] == 8
 
 
-def test_camera_declared_at_probed_resolution_and_recorded(tmp_path) -> None:
-    """The schema declares each camera at the resolution the probe observed.
+def test_camera_declared_at_requested_resolution_and_recorded(tmp_path) -> None:
+    """The schema declares each camera at the resolution it was added with.
 
     RTX cameras render at a DLSS-safe NATIVE size that can differ from the
-    requested output size; ``get_observation`` emits the native frame. The
-    schema must match that stream or every ``add_frame`` is rejected. Here the
-    ``_CameraState`` claims 640x480 but the probe frame is 64x48 - the probe
-    must win, and the round-trip must land a real MP4 on disk.
+    requested output size, but every consumer now receives the frame resampled
+    to the requested size (see ``_frame_at_camera_size``), so the schema must
+    match that stream or every ``add_frame`` is rejected. Here the camera is
+    added at 640x480 while the RTX handle yields a 64x48 frame - the requested
+    size must win, and the round-trip must land a real MP4 on disk.
     """
     root = str(tmp_path / "isaac_cam")
     cam = _CameraState(name="front", prim_path="/World/Cameras/front", width=640, height=480)
@@ -339,7 +345,7 @@ def test_camera_declared_at_probed_resolution_and_recorded(tmp_path) -> None:
     recorder = engine._recording_state_dict["dataset_recorder"]
     feat = recorder.dataset.features["observation.images.front"]
     shape = tuple(feat["shape"]) if isinstance(feat, dict) else tuple(feat.shape)
-    assert 48 in shape and 64 in shape, f"probed 64x48 must define the schema, got {shape}"
+    assert 480 in shape and 640 in shape, f"requested 640x480 must define the schema, got {shape}"
 
     _drive_episode(engine, "so100", "with camera", 4)
     engine.save_episode()

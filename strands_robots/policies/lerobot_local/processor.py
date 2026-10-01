@@ -252,6 +252,43 @@ _STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
 _STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
 
 
+def complete_stats_overrides(overrides: dict[str, Any], policy_config: Any | None) -> dict[str, Any]:
+    """Give a stats override the ``features`` and ``norm_map`` it needs to normalize anything.
+
+    ``processor_overrides={"normalizer_processor": {"stats": ...}}`` is the
+    documented remedy for a checkpoint whose stats are missing or inert, but a
+    normalizer normalizes only the features it DECLARES, and lerobot/pi05_base
+    and pi05_droid ship ``policy_preprocessor.json`` with ``features: {}``: the
+    stats loaded and changed nothing (a -2.2 rad joint reached pi0.5's 256-bin
+    state tokenizer as -2.2 and came out as bin -1). ``lerobot-train`` builds
+    these steps from the policy config - ``features`` = the input and output
+    features for the normalizer, the output features for the unnormalizer,
+    ``norm_map`` = ``normalization_mapping`` - so the same is filled in here
+    when the override supplies ``stats`` but no ``features``. A caller who
+    passes ``features`` / ``norm_map`` keeps them.
+
+    Args:
+        overrides: The caller's ``processor_overrides`` (never mutated).
+        policy_config: The loaded policy's config, or ``None``.
+
+    Returns:
+        The overrides, completed where a stats override lacked features.
+    """
+    if not overrides or policy_config is None:
+        return overrides
+    inputs = dict(getattr(policy_config, "input_features", None) or {})
+    outputs = dict(getattr(policy_config, "output_features", None) or {})
+    norm_map = dict(getattr(policy_config, "normalization_mapping", None) or {})
+    if not norm_map or not (inputs or outputs):
+        return overrides
+    out = dict(overrides)
+    for key, features in (("normalizer_processor", {**inputs, **outputs}), ("unnormalizer_processor", outputs)):
+        override = out.get(key)
+        if isinstance(override, dict) and override.get("stats") and not override.get("features"):
+            out[key] = {**override, "features": features, "norm_map": override.get("norm_map") or norm_map}
+    return out
+
+
 def _flat_floats(value: Any) -> list[float]:
     """A stat tensor / array / list as a flat list of Python floats."""
     if hasattr(value, "detach"):
@@ -316,6 +353,9 @@ class ProcessorBridge:
         # step writes into this list, so a degradation absorbed inside LeRobot's
         # pipeline reaches the policy that reports it.
         self._state_missing_keys: list[str] = []
+        # The loaded policy's config (``max_state_dim`` for the pi family's
+        # state padding); ``None`` when the bridge was built without one.
+        self._policy_config: Any | None = None
 
     @classmethod
     def from_pretrained(
@@ -397,7 +437,7 @@ class ProcessorBridge:
         # base checkpoint whose stats are dataset-prefixed and therefore inert)
         # could not be applied at all.
         pre_overrides, post_overrides = cls._route_overrides(
-            overrides or {},
+            complete_stats_overrides(overrides or {}, policy_config),
             pretrained_name_or_path,
             preprocessor_config,
             postprocessor_config,
@@ -432,11 +472,77 @@ class ProcessorBridge:
                 pretrained_name_or_path, policy_config, device, revision=revision
             )
 
-        return cls(
+        bridge = cls(
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             device=device,
         )
+        bridge._policy_config = policy_config
+        bridge._pad_narrow_state_stats()
+        return bridge
+
+    def _pad_narrow_state_stats(self) -> None:
+        """Widen a padded model's narrower state stats to its declared width, neutrally.
+
+        The pi family (pi0, pi0.5, pi0-FAST) declares ``observation.state`` at
+        ``max_state_dim`` (32) and pads the robot's state with zeros, while its
+        dataset stats are the robot's width: lerobot/pi0fast-libero ships 8.
+        The width guard (:meth:`mismatched_normalization_widths`) then refused
+        the official checkpoint with its OWN stats. The padded tail carries
+        zeros, so it gets the stats that leave a zero at zero - mean 0 / std 1,
+        min / q01 / q10 -1 and max / q99 / q90 1 - and the robot's columns keep
+        theirs. Only for a step whose declared ``observation.state`` feature IS
+        ``max_state_dim`` wide (read from ``step.features``); a fine-tune that
+        declares the robot's width keeps its stats, and any other mismatch is
+        still refused.
+        """
+        padded = getattr(self._policy_config, "max_state_dim", None)
+        if not isinstance(padded, int) or padded <= 0:
+            return
+        neutral = {
+            "mean": 0.0,
+            "q50": 0.0,
+            "std": 1.0,
+            "min": -1.0,
+            "max": 1.0,
+            "q01": -1.0,
+            "q99": 1.0,
+            "q10": -1.0,
+            "q90": 1.0,
+        }
+        try:
+            import torch
+        except ImportError:  # pragma: no cover - torch ships with lerobot
+            return
+        for pipeline in (self._preprocessor, self._postprocessor):
+            for step in getattr(pipeline, "steps", []) if pipeline is not None else []:
+                stats = (getattr(step, "_tensor_stats", None) or {}).get("observation.state")
+                if not stats:
+                    continue
+                # The pad applies only when the step DECLARES observation.state
+                # at the padded width. max_state_dim is always 32 on the pi
+                # family, but lerobot-train sets input_features from the
+                # dataset: a fine-tune on a 6-DOF arm declares the feature at
+                # 6 with 6-wide stats, which fit as they are; widening them
+                # would make the width guard refuse the checkpoint with its own
+                # stats. A step declaring no state feature is left alone too.
+                feature = (getattr(step, "features", None) or {}).get("observation.state")
+                shape = tuple(getattr(feature, "shape", None) or ())
+                if len(shape) != 1 or int(shape[0]) != padded:
+                    continue
+                for name, fill in neutral.items():
+                    value = stats.get(name)
+                    if value is None or getattr(value, "ndim", 0) != 1 or value.shape[0] >= padded:
+                        continue
+                    tail = torch.full((padded - value.shape[0],), fill, dtype=value.dtype, device=value.device)
+                    stats[name] = torch.cat([value, tail])
+                    logger.info(
+                        "lerobot_local: widened observation.state %s stats from %d to the padded width %d "
+                        "(the padded tail normalizes zeros to zeros)",
+                        name,
+                        value.shape[0],
+                        padded,
+                    )
 
     @classmethod
     def _route_overrides(
@@ -801,6 +907,7 @@ class ProcessorBridge:
                     state_units=embodiment.state_units,
                     gripper_index=embodiment.gripper_index,
                     gripper_joint_range=list(embodiment.gripper_joint_range),
+                    gripper_fraction=list(embodiment.gripper_fraction),
                     joint_mids=list(embodiment.joint_mids),
                     strict_keys=strict_keys,
                     missing_keys_sink=self._state_missing_keys,
@@ -884,13 +991,28 @@ class ProcessorBridge:
         the normal case for a fine-tuned checkpoint whose stats use the
         canonical ``action`` / ``observation.state`` keys.
         """
+        inert: list[str] = []
+        # A normalizer that declares NO features normalizes nothing whatever
+        # stats it holds: lerobot/pi05_base and pi05_droid ship
+        # ``policy_preprocessor.json`` with ``features: {}``, so supplied stats
+        # were loaded and ignored, and this check - which walks the declared
+        # features - found nothing to report.
+        for is_post, pipeline in ((False, self._preprocessor), (True, self._postprocessor)):
+            for step in getattr(pipeline, "steps", []) if pipeline is not None else []:
+                if type(step).__name__ in ("NormalizerProcessorStep", "UnnormalizerProcessorStep") and not (
+                    getattr(step, "features", None) or {}
+                ):
+                    descriptor = (
+                        f"{'action' if is_post else 'observation'} ({type(step).__name__} declares no features)"
+                    )
+                    if descriptor not in inert:
+                        inert.append(descriptor)
         try:
             from lerobot.configs.types import FeatureType
             from lerobot.utils.constants import ACTION
         except ImportError:
-            return []
+            return inert
 
-        inert: list[str] = []
         for _step, key, _feature, ftype, mode, stat_keys in self._declared_normalization_targets():
             lookup = ACTION if ftype == FeatureType.ACTION else key
             if lookup not in stat_keys:
@@ -1089,6 +1211,7 @@ class ProcessorBridge:
                 continue
             lookup = ACTION if ftype == FeatureType.ACTION else key
             stats = (getattr(step, "_tensor_stats", None) or {}).get(lookup) or {}
+
             for stat_name in _STAT_NAMES_READ_BY_MODE.get(mode.value, _STAT_NAMES_READ_BY_ANY_MODE):
                 value = stats.get(stat_name)
                 if value is None:
