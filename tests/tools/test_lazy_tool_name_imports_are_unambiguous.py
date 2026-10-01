@@ -62,6 +62,7 @@ import pytest
 
 import strands_robots
 import strands_robots.tools as tools_pkg
+from tests._package_ast import parse_file
 
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_ROOT.parent
@@ -247,7 +248,7 @@ class TestNoAmbiguousReadShipsInTheTree:
         offenders = sorted(
             f"{path.relative_to(_REPO_ROOT)}:{line} imports {name!r}"
             for path in _first_party_modules()
-            for line, name in _ambiguous_reads(ast.parse(path.read_text(encoding="utf-8")), shadowable)
+            for line, name in _ambiguous_reads(parse_file(path), shadowable)
         )
 
         assert not offenders, (

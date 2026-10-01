@@ -44,6 +44,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Where a reader looks for a guard's name: source, tests, docs, and the two
@@ -110,7 +112,7 @@ def _defined_names() -> frozenset[str]:
         ):
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except (SyntaxError, UnicodeDecodeError):
             continue
         for node in ast.walk(tree):

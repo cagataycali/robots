@@ -56,6 +56,7 @@ import pytest
 from strands_robots.inference import RemotePolicy
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 from strands_robots.utils import positive_finite_number_error
+from tests._package_ast import parse_file
 
 from .test_iot_reconnect_client_lifecycle import _FakeClient, _make_certs
 
@@ -301,7 +302,7 @@ class TestEverySurfaceTakingAConnectTimeoutRoutesThroughTheDomain:
         found: dict[str, bool] = {}
         for path in sorted(source_root.rglob("*.py")):
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                tree = parse_file(path)
             except SyntaxError:  # pragma: no cover - the package parses
                 continue
 

@@ -16,6 +16,7 @@ import ast
 from pathlib import Path
 
 import strands_robots.registry as registry_pkg
+from tests._package_ast import parse_file
 
 PACKAGE = "strands_robots.registry"
 PACKAGE_DIR = Path(registry_pkg.__file__).parent
@@ -23,7 +24,7 @@ PACKAGE_DIR = Path(registry_pkg.__file__).parent
 
 def _sibling_imports(path: Path) -> set[str]:
     """Registry sibling modules ``path`` imports, at module scope or inside a body."""
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = parse_file(path)
     edges: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
