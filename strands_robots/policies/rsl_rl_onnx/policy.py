@@ -263,11 +263,26 @@ class RslRlOnnxPolicy(Policy):
 
     # ------------------------------------------------------------ observation
 
+    @staticmethod
+    def _require(obs: dict[str, Any], keys: list[str], term: str) -> None:
+        """A sensor term reads engine keys; a missing key is refused by name, never a constant.
+
+        ``joint_vel`` used to read 0.0, ``base_quat`` the identity (so ``projected_gravity`` said
+        "upright" forever) and the base velocities zeros, each with a success envelope and the
+        right ``obs_dim``. A real arm publishes no ``.vel`` keys, so the actor ran on fabricated
+        velocities; a humanoid without ``base_quat`` was blind to falling.
+        """
+        missing = [k for k in keys if k not in obs]
+        if missing:
+            raise ValueError(f"observation omits {missing} that the actor's {term!r} term reads; nothing is assumed")
+
     def _term(self, name: str, obs: dict[str, Any], kwargs: dict[str, Any]) -> np.ndarray:
         if name == "joint_pos":
             return np.asarray([float(obs[j]) for j in self.spec.joint_names], dtype=np.float32) - self._default
         if name == "joint_vel":
-            return np.asarray([float(obs.get(f"{j}.vel", 0.0)) for j in self.spec.joint_names], dtype=np.float32)
+            keys = [f"{j}.vel" for j in self.spec.joint_names]
+            self._require(obs, keys, name)
+            return np.asarray([float(obs[k]) for k in keys], dtype=np.float32)
         if name == "actions":
             return self._last_action
         if name == "command":
@@ -277,12 +292,16 @@ class RslRlOnnxPolicy(Policy):
                 v[: len(tv)] = np.asarray(tv, dtype=np.float32)[: len(v)]
                 return v
             return self._command
-        quat = np.asarray(obs.get("base_quat", [1.0, 0.0, 0.0, 0.0]), dtype=np.float64)
         if name == "base_lin_vel":
-            return _quat_rotate_inverse(quat, np.asarray(obs.get("base_lin_vel", [0, 0, 0]), dtype=np.float64))
+            self._require(obs, ["base_quat", "base_lin_vel"], name)
+            quat = np.asarray(obs["base_quat"], dtype=np.float64)
+            return _quat_rotate_inverse(quat, np.asarray(obs["base_lin_vel"], dtype=np.float64))
         if name == "base_ang_vel":
-            return np.asarray(obs.get("base_ang_vel", [0, 0, 0]), dtype=np.float32)
+            self._require(obs, ["base_ang_vel"], name)
+            return np.asarray(obs["base_ang_vel"], dtype=np.float32)
         if name == "projected_gravity":
+            self._require(obs, ["base_quat"], name)
+            quat = np.asarray(obs["base_quat"], dtype=np.float64)
             return _quat_rotate_inverse(quat, _GRAVITY.astype(np.float64))
         if name == "ee_to_target":
             tp = kwargs.get("target_pose")

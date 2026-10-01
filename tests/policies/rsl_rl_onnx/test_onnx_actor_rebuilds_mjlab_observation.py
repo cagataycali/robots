@@ -70,6 +70,40 @@ def test_unknown_term_and_missing_joint_are_refused_by_name(tmp_path):
         RslRlOnnxPolicy()
 
 
+@pytest.mark.parametrize(
+    ("terms", "obs_dim", "drop", "named"),
+    [
+        (["joint_pos", "joint_vel"], 4, "a.vel", "a.vel"),
+        (["base_lin_vel", "joint_pos"], 5, "base_quat", "base_quat"),
+        (["base_lin_vel", "joint_pos"], 5, "base_lin_vel", "base_lin_vel"),
+        (["base_ang_vel", "joint_pos"], 5, "base_ang_vel", "base_ang_vel"),
+        (["projected_gravity", "joint_pos"], 5, "base_quat", "base_quat"),
+    ],
+)
+def test_a_sensor_term_whose_engine_key_is_absent_is_refused_by_name(tmp_path, terms, obs_dim, drop, named):
+    """Review on #4229: ``joint_vel`` read 0.0, ``base_quat`` read identity (so ``projected_gravity``
+    said "upright" forever), the base velocities read zeros, each with a success envelope and the
+    right ``obs_dim``. ``hardware_robot`` publishes no ``.vel`` keys, so a real arm ran on fabricated
+    velocities. Every sensor term now refuses a missing key by name, as ``joint_pos`` already did
+    (``command`` is a command, not a reading, and keeps its default)."""
+    from strands_robots.policies.rsl_rl_onnx import RslRlOnnxPolicy
+
+    pol = RslRlOnnxPolicy(onnx_path=_write_actor(tmp_path / "s.onnx", terms, obs_dim))
+    full = {
+        "a": 0.6,
+        "a.vel": 1.0,
+        "b": -0.2,
+        "b.vel": -2.0,
+        "base_quat": [1.0, 0.0, 0.0, 0.0],
+        "base_lin_vel": [1.0, 0.0, 0.0],
+        "base_ang_vel": [0.0, 0.0, 0.5],
+    }
+    assert pol.build_observation(full).shape == (obs_dim,)
+    partial = {k: v for k, v in full.items() if k != drop}
+    with pytest.raises(ValueError, match=named):
+        pol.build_observation(partial)
+
+
 def test_registered_with_the_policy_factory():
     from strands_robots.policies.factory import list_providers
 

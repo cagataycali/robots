@@ -47,6 +47,23 @@ from typing import Any
 
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
+#: The run name becomes a directory under the operator's ``output_dir``: a plain token only
+#: (letters, digits, ``_``, ``-``; no leading ``-`` or ``.``), so an agent-supplied value can
+#: neither traverse (``..``, ``/``, ``\\``) nor hide. Checked in :meth:`RslRlTrainer.validate`
+#: and again at the write site.
+_RUN_NAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*\Z")
+
+
+def run_name_problem(value: Any) -> str | None:
+    """Error text when ``extra["run_name"]`` is not a plain token usable as one path segment."""
+    if not isinstance(value, str) or not _RUN_NAME_RE.match(value):
+        return (
+            f"extra run_name {value!r} is not allowed (must match {_RUN_NAME_RE.pattern}: "
+            "letters, digits, '_' and '-', no leading '-' or '.', no path separators)"
+        )
+    return None
+
+
 logger = logging.getLogger(__name__)
 
 #: embodiment -> default task when ``extra["task"]`` is not given.
@@ -118,6 +135,11 @@ class RslRlTrainer(Trainer):
     def validate(self, spec: TrainSpec) -> list[str]:
         """Pure preflight: task resolvable, sizes positive, output_dir set; no GPU touched."""
         problems: list[str] = self._security_problems(spec)
+        # The run name is one path segment under output_dir: refuse anything else here, before
+        # any config is built (review on #4229: an agent-supplied value could traverse out).
+        if (run_name := (spec.extra or {}).get("run_name")) is not None:
+            if problem := run_name_problem(run_name):
+                problems.append(problem)
         # Shared domains go through the Trainer gates (one owner per field).
         problems.extend(self._checkpoint_cadence_problems(spec))
         problems.extend(self._seed_problems(spec))
@@ -193,7 +215,11 @@ class RslRlTrainer(Trainer):
         assert task is not None
         extra = spec.extra or {}
         device = str(extra.get("device", "cuda:0"))
-        run_name = str(extra.get("run_name", "strands"))
+        run_name = extra.get("run_name", "strands")
+        if problem := run_name_problem(run_name):
+            # validate() refuses this first; the write site holds the same line on its own.
+            raise ValueError(problem)
+        run_name = str(run_name)
 
         import torch  # noqa: F401 - rsl_rl needs torch imported first
         from mjlab.scripts.train import TrainConfig, run_train
