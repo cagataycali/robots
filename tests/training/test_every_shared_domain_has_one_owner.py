@@ -92,11 +92,19 @@ DOMAINS: tuple[SharedDomain, ...] = (
         "_launch_topology_problems",
         ("num_gpus", "num_nodes"),
         "cosmos3.py",
+        "isaaclab.py",
         "lerobot.py",
         "sagemaker.py",
         # "Is this a topology I have to launch differently" - a launcher choice,
-        # asked after the gate has established the counts are usable.
-        comparisons=("spec.num_gpus > 1", "spec.num_nodes > 1"),
+        # asked after the gate has established the counts are usable. Isaac Lab
+        # supports only one GPU and node here, so it asks the opposite question -
+        # "is this anything other than the single I can launch" - and refuses.
+        comparisons=(
+            "spec.num_gpus > 1",
+            "spec.num_nodes > 1",
+            "spec.num_gpus != 1",
+            "spec.num_nodes != 1",
+        ),
         # The count as SageMaker's InstanceCount API field.
         conversions=("int(spec.num_nodes)",),
     ),
@@ -115,11 +123,14 @@ DOMAINS: tuple[SharedDomain, ...] = (
         "_checkpoint_cadence_problems",
         ("save_freq",),
         "cosmos3.py",
+        "isaaclab.py",
         "lerobot.py",
         "sagemaker.py",
         # The eval_steps fallback selector: which cadence to forward, not whether
         # the cadence is usable.
         comparisons=("spec.save_freq > 0",),
+        # The admitted cadence as Isaac Lab's agent.save_interval override value.
+        conversions=("int(spec.save_freq)",),
     ),
     _domain(
         "_validation_episodes_problems",
