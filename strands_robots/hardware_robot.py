@@ -62,6 +62,7 @@ from strands_robots.bus_access import bus_lock, read_observation, write_action
 from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.registry.policies import policy_requires_error
 from strands_robots.ros_telemetry import ROS2_SYSTEM_INSTALL_HINT
+from strands_robots.simulation.base import unknown_parameter_error
 from strands_robots.teleop_mixin import TeleopMixin, _stop_reported_stopped
 from strands_robots.utils import (
     boolean_flag_error,
@@ -521,6 +522,26 @@ class RobotTaskState:
     #: the task envelope can describe it (see ``Policy.reads_instruction``).
     #: Cleared with the rest of the state when a new task is claimed.
     policy: Any = None
+
+
+#: The input keys each action of the real robot tool takes, besides ``action``.
+#: The published schema (:attr:`Robot.tool_spec`) lists the union; a key sent
+#: with an action that does not take it is refused by name before anything
+#: else runs, with the sentence the sim tool uses
+#: (:func:`~strands_robots.simulation.base.unknown_parameter_error`). The tool
+#: used to read its input with ``get`` and drop the rest, so a misspelt
+#: ``policy_config`` reached the operator gate and the arm as a rollout with the
+#: default configuration (GH #4167).
+TOOL_FIELDS: dict[str, frozenset[str]] = {
+    "execute": frozenset({"instruction", "policy_provider", "policy_host", "policy_port", "duration", "policy_config"}),
+    "start": frozenset({"instruction", "policy_provider", "policy_host", "policy_port", "duration", "policy_config"}),
+    "status": frozenset(),
+    "stop": frozenset(),
+    "get_state": frozenset(),
+    "get_robot_state": frozenset(),
+    "list_cameras": frozenset(),
+    "render": frozenset({"camera_name", "output_path"}),
+}
 
 
 class Robot(TeleopMixin, AgentTool):
@@ -4066,6 +4087,18 @@ class Robot(TeleopMixin, AgentTool):
             input_data = tool_use.get("input", {})
 
             action = input_data.get("action", "get_state")
+
+            # A key this action does not take is refused by name before the
+            # gate, the preflight or any read: see :data:`TOOL_FIELDS`. An
+            # unknown action keeps its own answer below.
+            fields = TOOL_FIELDS.get(action)
+            if fields is not None:
+                unknown = sorted(str(key) for key in input_data if key != "action" and key not in fields)
+                if unknown:
+                    yield ToolResultEvent(
+                        self._make_tool_result(tool_use_id, unknown_parameter_error(unknown, action, sorted(fields)))
+                    )
+                    return
 
             # Handle different actions
             if action in hardware_observe.OBSERVE_ACTIONS:

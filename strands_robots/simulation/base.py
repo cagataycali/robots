@@ -283,6 +283,33 @@ def close_match_hint(requested: object, known: Sequence[str]) -> str:
 DEFAULT_MODEL_DISCOVERY_HINT = " Use action='list_urdfs' to see all available robots."
 
 
+def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence[str]) -> dict[str, Any]:
+    """The tool result refusing an input key the action does not take.
+
+    One sentence for every robot tool: the sim tool built it inline and the
+    real arm tool did not check at all, so ``execute(..., bogus=1)`` went on
+    to the operator gate and the arm with the field silently dropped while the
+    sim refused the same mistake by name (GH #4167). ``unknown`` is named in
+    the caller's own spelling, ``valid`` is what the caller picks from next,
+    and the nearest of them is suggested through :func:`close_match_hint`.
+
+    Args:
+        unknown: The refused keys; the first is the one the sentence names.
+        action: The action the keys were sent with.
+        valid: The keys this action does take, already sorted by the caller.
+
+    Returns:
+        A ``{"status": "error", "content": [{"text": ...}]}`` tool result.
+    """
+    reported = unknown[0]
+    valid_sorted = list(valid)
+    hint = close_match_hint(reported, valid_sorted)
+    return {
+        "status": "error",
+        "content": [{"text": f"Unknown parameter '{reported}' for action '{action}'.{hint} Valid: {valid_sorted}"}],
+    }
+
+
 def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DISCOVERY_HINT) -> str:
     """Build the 'model could not be resolved' error for a robot name.
 
