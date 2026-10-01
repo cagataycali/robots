@@ -15,7 +15,11 @@ description: "Toddlerbot 2xM Humanoid (45-DOF)"
 from strands_robots import Robot
 
 robot = Robot("toddlerbot_2xm")
+print(robot.robot_joint_names("toddlerbot_2xm"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

@@ -13,11 +13,15 @@ URDF from [poppy-project/poppy_torso_description@6beeec3](https://github.com/pop
 
 <img class="sr-thumb" src="../assets/img/robots/poppy_torso.webp" alt="poppy_torso, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("poppy_torso")
+robot = Robot("poppy_torso")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("poppy_torso"))
+robot.cleanup()
 ```
+
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
 
 ## Policies verified on this robot
 

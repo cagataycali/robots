@@ -324,7 +324,10 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 )
             )
 
-            frame.write(rec, {robot_name: scalars}, {robot_name: action}, images, instruction)
+            # The command applied, not the policy's task-space dict, when a
+            # controller converted it (see IsaacSimulation._recorded_action).
+            recorded = self._recorded_action(robot_name, action) if hasattr(self, "_recorded_action") else action
+            frame.write(rec, {robot_name: scalars}, {robot_name: recorded}, images, instruction)
             state["unrendered_skips"] = 0
 
         return _record

@@ -2258,6 +2258,40 @@ class MuJoCoSimEngine(
             return None
         return self._unknown_robot_msg(robot_name)
 
+    def _teleop_apply(self, action: dict[str, Any], robot_name: str | None, period: float) -> dict[str, Any]:
+        """Apply one teleop frame, then advance the world to the end of its period.
+
+        :meth:`send_action` takes one physics step, so a 30 Hz session used to
+        advance the world 2 ms per 33 ms tick: the follower lagged the leader ten
+        to one, and no frame ever reached an open recording, because only
+        :meth:`step` feeds one. The rest of the period goes through :meth:`step`,
+        so sim time keeps pace with the session and a recording captures one
+        frame per ``1/fps`` seconds of it.
+
+        Args:
+            action: The merged, slew-checked frame.
+            robot_name: The follower, or ``None`` for the world's single robot.
+            period: The session's control period in seconds (``1 / hz``).
+
+        Returns:
+            :meth:`send_action`'s reply, or :meth:`step`'s when the step failed.
+        """
+        result = self.send_action(action, robot_name=robot_name)
+        world, timestep = self._world, self.physics_timestep()
+        if world is None or world._data is None or not timestep:
+            return result
+        # Stepped to the next multiple of ``period`` in sim time rather than a
+        # rounded count per tick, so a period that is not a whole number of
+        # physics steps (1/30 s at 2 ms) does not drift the clock.
+        now = float(world._data.time)
+        boundary = (math.floor(now / period + 1e-9) + 1) * period
+        remaining = max(0, math.ceil((boundary - now) / timestep - 1e-9))
+        if remaining:
+            stepped = self.step(remaining)
+            if stepped.get("status") == "error" and result.get("status") != "error":
+                return stepped
+        return result
+
     def _unknown_action_msg(self, requested: str) -> str:
         """Actionable 'unknown action' message: name it, offer a close-match over
         the published enum, and point at where that enum is written - consistent
@@ -3566,6 +3600,43 @@ class MuJoCoSimEngine(
         except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
             logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
 
+    def _maybe_install_contract_pd(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+        """Install the Isaac Lab actuator PD an exported actor's deploy contract records, when it applies.
+
+        An exported Isaac Lab actor emits joint POSITION targets, and the run's
+        actuator model (Isaac Lab's Go2: a ``DCMotor`` PD, stiffness 25,
+        damping 0.5) turned them into torque on every physics step. On robots
+        whose actuators here are torque motors (strands' MuJoCo Go2) this closes
+        the same loop - see
+        :class:`~strands_robots.policies.isaaclab_actuator_pd.ContractPDController`
+        - or the targets are read as newton-metres. Position servos, a manual
+        controller already installed, or no such policy: ``None``, nothing done.
+        """
+        from strands_robots.policies.base import iter_policy_tree
+
+        member = next(
+            (p for p in iter_policy_tree(policy) if (getattr(p, "deploy_contract", None) or {}).get("actuators")),
+            None,
+        )
+        world = self._world
+        if member is None or world is None or world._model is None:
+            return None
+        state = getattr(world, "_backend_state", None)
+        if not isinstance(state, dict) or state.get("action_controller") is not None:
+            return None
+        from strands_robots.policies.isaaclab_actuator_pd import ContractPDController
+
+        pd = ContractPDController.from_sim(self, robot_name, member.deploy_contract, member.contract_joint_binding())  # type: ignore[attr-defined]
+        if pd is None:
+            return None
+        state["action_controller"] = pd
+        logger.info(
+            "installed the Isaac Lab actuator PD for %r: its actuators are torque motors and the policy's "
+            "deploy contract records the run's stiffness and damping",
+            robot_name,
+        )
+        return pd.uninstall
+
     def _maybe_install_action_controller(self, policy: Any, robot_name: str) -> Callable[[], None] | str | None:
         """Auto-install the WBC torque shim when a WBCPolicy drives a servo scene.
 
@@ -3604,6 +3675,9 @@ class MuJoCoSimEngine(
         motors or none of the WBC joints resolve in this scene.
         """
         from strands_robots.policies.base import iter_policy_tree
+
+        if (cleanup := self._maybe_install_contract_pd(policy, robot_name)) is not None:
+            return cleanup
 
         try:
             from strands_robots.policies.wbc import (
@@ -4255,7 +4329,8 @@ class MuJoCoSimEngine(
             "(*, names=None, robot_name=None, hz=50.0, publish=False, "
             "block=False, duration=None) -> dict  # drive the sim from its "
             "attached teleoperator(s): each tick polls get_action(), applies "
-            "map_fn, merges (last-wins), and send_action()s the result. "
+            "map_fn, merges (last-wins), send_action()s the result and steps "
+            "the world one control period, so an open recording captures it. "
             "block=False runs a background loop and returns immediately; "
             "duration stops it after N seconds; publish=True also mirrors the "
             "stream to the mesh. The human-driven sibling of run_policy"

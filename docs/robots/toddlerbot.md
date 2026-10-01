@@ -13,11 +13,15 @@ URDF from [hshi74/toddlerbot@067f9dc](https://github.com/hshi74/toddlerbot/tree/
 
 <img class="sr-thumb" src="../assets/img/robots/toddlerbot.webp" alt="toddlerbot, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("toddlerbot")
+robot = Robot("toddlerbot")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("toddlerbot"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

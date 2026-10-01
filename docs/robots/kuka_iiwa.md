@@ -15,7 +15,11 @@ description: "KUKA LBR iiwa 14 (7-DOF collaborative)"
 from strands_robots import Robot
 
 robot = Robot("kuka_iiwa")
+print(robot.robot_joint_names("kuka_iiwa"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 Aliases: `iiwa`, `iiwa14`, `kuka_iiwa_14`.
 

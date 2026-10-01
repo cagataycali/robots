@@ -19,6 +19,8 @@ from strands_robots import Robot
 robot = Robot("google_robot")  # needs ~/.strands_robots/assets/google_robot/robot.xml on disk
 ```
 
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
+
 Aliases: `oxe_google`.
 
 ## Policies verified on this robot

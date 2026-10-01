@@ -1,46 +1,42 @@
 ---
-description: rl rolls out an actor trained by create_trainer("ppo" | "fast_sac" | "fast_td3") from its policy.pt and policy_meta.json.
+description: rl rolls out an actor trained by create_trainer("ppo" | "fast_sac" | "fast_td3"), or an rsl_rl run from Isaac Lab, from disk or the Hub.
 ---
 
 # rl
 
-By the end of this page you can load an actor the RL trainers wrote and drive a robot with it through the same `run_policy` path as every other provider.
+By the end of this page you can load an actor the RL trainers or Isaac Lab wrote and drive a robot through the `run_policy` path every provider shares.
 
 ```bash
-pip install 'strands-robots[rl]'    # torch + gymnasium + the MuJoCo backend
+pip install 'strands-robots[rl]'    # torch + gymnasium + MuJoCo
 ```
 
 ## What it is
 
-`RLCheckpointPolicy` is the inference half of the RL loop. `create_trainer("ppo" | "fast_sac" | "fast_td3")` trains against a `SimEnv` and writes `policy.pt` plus `policy_meta.json`; this provider loads that pair and presents it as an ordinary `Policy`. Rollout is deterministic: the actor's mean action, no sampling. `requires_images` is `False`.
+`RLCheckpointPolicy` is the inference half of the RL loop. `create_trainer("ppo" | "fast_sac" | "fast_td3")` trains against a `SimEnv` and writes `policy.pt` plus `policy_meta.json`; this provider presents that pair as a `Policy`. Rollout is the actor's mean action. `requires_images` is `False`.
 
-The checkpoint's `actor_obs_keys` are read from the observation by name, in the trained order, because the order is part of the weights. A key the observation does not carry is refused, not defaulted: a zero would command a real robot from a fabricated state.
+The checkpoint's `actor_obs_keys` are read from the observation by name, in trained order (part of the weights); a missing key is refused, never defaulted to a zero commanding a robot from a fabricated state.
+
+## Three shapes of `checkpoint_dir`
 
 ```python
 from strands_robots.policies import create_policy
 
-try:
-    create_policy("rl")
-except ValueError as exc:
-    print(exc)
+create_policy("rl", checkpoint_dir=result.checkpoint_dir)  # strands checkpoint dir
+create_policy("rl", checkpoint_dir="logs/rsl_rl/h1_rough")  # rsl_rl run, or one model_<n>.pt
+create_policy("rl", checkpoint_dir="owner/name@main")  # Hub repo id; @revision optional
 ```
 
-You should see:
-
-```text
-checkpoint_dir is required for the 'rl' policy provider: pass the directory a trainer wrote (TrainResult.checkpoint_dir), e.g. create_policy('rl', checkpoint_dir=result.checkpoint_dir)
-```
+An rsl_rl actor (what `isaaclab` trains: ELU layers plus observation normalizer) is rebuilt once into `<run>/strands_policy/` and reused while newer than the model. `action_names` in a `record.json` beside it name the actions when counts match. From the Hub only `model_*.pt`, `params/agent.yaml`, `record.json` and the strands pair are fetched; a repo that cannot be downloaded is a `RuntimeError` naming the id.
 
 ## Constructor keywords
 
 {{providers:kwargs:rl}}
 
-`checkpoint_dir` is spelled as the trainers spell it (`TrainResult.checkpoint_dir`, `latest_checkpoint`), so the value you already hold is the value this takes. `device` defaults to `cpu`; PPO on MuJoCo declares no GPU floor.
+`device` defaults to `cpu`: PPO on MuJoCo declares no GPU floor.
 
 ## Train, then roll out
 
 ```python
-import os
 import tempfile
 
 from strands_robots.simulation import create_simulation
@@ -58,7 +54,7 @@ def make_env() -> SimEnv:
 
 spec = RLTrainSpec(env_factory=make_env, output_dir=tempfile.mkdtemp(), total_timesteps=96, rollout_steps=24, learning_rate=3e-4)
 result = create_trainer("ppo").train(spec)
-print(result.status, sorted(os.listdir(result.checkpoint_dir)))
+print(result.status)
 
 sim = create_simulation("mujoco")
 sim.create_world()
@@ -68,19 +64,12 @@ print(out["status"])
 sim.cleanup()
 ```
 
-You should see (the numbers on your machine differ, the files do not):
+You should see `success` twice, plus a few `[sim] action value ... outside the range` gripper warnings: six iterations train nothing; the point is that a trainer's checkpoint is what `rl` takes.
 
-```text
-success ['policy.pt', 'policy_meta.json']
-success
-```
-
-A few `[sim] action value ... outside the range` warnings on the gripper are expected: the actor is untrained. Six optimizer iterations train nothing useful; the point is that the checkpoint a trainer writes is what `rl` takes. Real runs use `total_timesteps` in the hundreds of thousands.
-
-The trainers, their fields and what `policy_meta.json` records are on the [RL training](../training/rl.md) page.
+Trainers and `policy_meta.json` fields: [RL training](../training/rl.md). Isaac Lab runs: [Isaac Lab training](../training/isaaclab.md).
 
 ## Limits
 
-- The observation must carry every `actor_obs_keys` name. Rolling a checkpoint out on a robot whose joints are named differently is refused, not remapped.
-- Deterministic mean action only. There is no exploration noise at inference.
-- Only checkpoints written by this package's trainers load; a foreign `policy.pt` has no `policy_meta.json` and is refused by `FileNotFoundError`.
+- The observation must carry every `actor_obs_keys` name unless an Isaac Lab export builds it from robot state (`command=` sets the velocity command; on MuJoCo torque motors the run's PD drives joints); differently named joints are refused.
+- Deterministic mean action only.
+- Only strands pairs and rsl_rl 5.x actors (`actor_state_dict`, `mlp.<i>` layers) load; anything else is `FileNotFoundError`.

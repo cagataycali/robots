@@ -15,7 +15,11 @@ description: "Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 s
 from strands_robots import Robot
 
 robot = Robot("yahboom_m3pro")
+print(robot.robot_joint_names("yahboom_m3pro"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ```python title="sketch"
 robot = Robot("yahboom_m3pro", mode="real", port="192.168.1.50:9090")  # YahboomM3ProDriver

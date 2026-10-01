@@ -13,11 +13,15 @@ URDF from [openai/roboschool@1.0.49](https://github.com/openai/roboschool/tree/1
 
 <img class="sr-thumb" src="../assets/img/robots/fetch.webp" alt="fetch, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("fetch")
+robot = Robot("fetch")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("fetch"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ## Policies verified on this robot
 

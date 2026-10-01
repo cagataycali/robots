@@ -15,7 +15,11 @@ description: "Unitree A1 Quadruped"
 from strands_robots import Robot
 
 robot = Robot("unitree_a1")
+print(robot.robot_joint_names("unitree_a1"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `a1`.
 

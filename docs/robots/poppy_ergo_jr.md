@@ -13,11 +13,15 @@ URDF from [poppy-project/poppy_ergo_jr_description@7eb32bd](https://github.com/p
 
 <img class="sr-thumb" src="../assets/img/robots/poppy_ergo_jr.webp" alt="poppy_ergo_jr, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("poppy_ergo_jr")
+robot = Robot("poppy_ergo_jr")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("poppy_ergo_jr"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

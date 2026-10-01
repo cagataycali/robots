@@ -15,7 +15,11 @@ description: "Unitree Go1 Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("go1")
+print(robot.robot_joint_names("go1"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `unitree_go1`.
 

@@ -13,11 +13,15 @@ URDF from [jhu-lcsr-attic/bhand_model@937f418](https://github.com/jhu-lcsr-attic
 
 <img class="sr-thumb" src="../assets/img/robots/barrett_hand.webp" alt="barrett_hand, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("barrett_hand")
+robot = Robot("barrett_hand")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("barrett_hand"))
+robot.cleanup()
 ```
+
+`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
 
 ## Policies verified on this robot
 

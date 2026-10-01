@@ -15,7 +15,11 @@ description: "Shadow Dexterous Hand (24-DOF)"
 from strands_robots import Robot
 
 robot = Robot("shadow_hand")
+print(robot.robot_joint_names("shadow_hand"))
+robot.cleanup()
 ```
+
+`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
 
 ## Policies verified on this robot
 

@@ -30,7 +30,9 @@ A simulation appears twice: the session peer (`arm-b`) and one child peer per ro
 
 ## What it is
 
-Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers commands and relays teleoperation frames. The wire is Zenoh on the LAN (`[mesh]` extra, `eclipse-zenoh`), optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
+{{drawing:d06_mesh_topology}}
+
+Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers RPC commands, and relays teleoperation frames. The wire is Zenoh on the LAN (`[mesh]` extra, `eclipse-zenoh`), optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
 
 The mesh is enrichment. A Zenoh session that fails to open leaves the robot working without it; the mesh never crashes the host.
 
