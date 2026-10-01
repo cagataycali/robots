@@ -260,10 +260,17 @@ class TestExportWritesTheContractAndDeployHonoursIt:
         (run / RUN_RECORD_FILE).write_text(json.dumps(record))
         monkeypatch.setenv("FAKE_IO_DESCRIPTORS", json.dumps(fake_io_descriptors()))
         training_argv = (tmp_path / "argv.json").read_text()  # the train launch, before the record was touched
-        meta = json.loads((Path(_json_block(_export(tmp_path))["exported_model"]) / "policy_meta.json").read_text())
-        reason = meta["deploy_contract_missing"]
+        exported = _export(tmp_path)
         injected = value if isinstance(value, str) else value[-1]
-        assert RUN_RECORD_FILE in reason and repr(injected) in reason and "not rebuilt" in reason, reason
+        if field == "task":
+            # A record whose task is not the task asked for is refused before the
+            # relaunch is even considered: export picks runs by task since #4436.
+            assert exported["status"] == "error", exported
+            assert "no Isaac-Cartpole run" in exported["content"][0]["text"], exported
+        else:
+            meta = json.loads((Path(_json_block(exported)["exported_model"]) / "policy_meta.json").read_text())
+            reason = meta["deploy_contract_missing"]
+            assert RUN_RECORD_FILE in reason and repr(injected) in reason and "not rebuilt" in reason, reason
         assert (tmp_path / "argv.json").read_text() == training_argv, "the crafted record reached a relaunch argv"
 
     def test_an_export_without_a_contract_is_refused_unless_raw_actions_are_asked_for(
