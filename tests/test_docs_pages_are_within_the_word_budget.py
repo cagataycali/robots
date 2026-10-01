@@ -72,14 +72,15 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 3,420 to 60,685 when every simulated robot page (the 81 URDF pages included) gained
 #: a fence that prints its joints and a next-step sentence, and the front-matter descriptions
 #: were quoted. Banked to the exact total.
-#: Raised by 1 to 60,685 when the Start index said what a sketch fence's label means.
-#: Raised by 4,925 to 65,610 for the docs ladder: Start rewritten as six rungs with a
+#: Lowered to 60,626 when the arm pages' next-step sentence dropped one word (x60 pages) to pay
+#: for main's new registry aliases. Banked to the exact total.
+#: Raised by 4,925 to 65,551 for the docs ladder: Start rewritten as six rungs with a
 #: checkpoint sentence each (Stage 0 See it is a captured agent transcript with its frames),
 #: a Concepts tab for the Policy -> Robot -> Backend spine with a glossary, and a provider
 #: decision table. Pictures enter through one-word {{drawing:}} / {{sim:}} tokens, so the
 #: raise is words, not images. Banked to the exact total; the next page needs an equal cut
 #: or its own raise.
-_SITE_BUDGET = 65_610
+_SITE_BUDGET = 65_551
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
