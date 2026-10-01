@@ -193,7 +193,7 @@ class TestTheSpecIsGraded:
             ({"task": "Isaac-Cartpole", "num_envs": 0}, "extra['num_envs'] must be a positive integer"),
             ({"task": "Isaac-Cartpole", "num_envs": True}, "extra['num_envs'] must be a positive integer"),
             ({"task": "Isaac-Cartpole", "physics": "physx --x"}, "extra['physics'] must be a physics preset"),
-            ({"task": "Isaac-Cartpole", "rl_library": "skrl"}, "extra['rl_library'] 'skrl' is not supported"),
+            ({"task": "Isaac-Cartpole", "rl_library": "sb3"}, "extra['rl_library'] 'sb3' is not supported"),
             ({"task": "Isaac-Cartpole", "wait": "yes"}, "extra['wait'] must be a boolean"),
             ({"task": "Isaac-Cartpole", "timeout_s": 0}, "extra['timeout_s'] must be"),
             ({"task": "Isaac-Cartpole", "python": "/bin/sh"}, "extra key(s) ['python'] are not read"),

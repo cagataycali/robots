@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from strands_robots.dashboard._hub import hub_unavailable_reason
 from strands_robots.dashboard.ttl_cache import TTLCache
 from strands_robots.training import _validate
 from strands_robots.utils import (
@@ -575,8 +576,7 @@ def hub_datasets(query: str = "", limit: int = 12) -> tuple[list[dict[str, Any]]
         ]
     except Exception as exc:  # noqa: BLE001 - hub outage degrades to local-only
         logger.warning("hub dataset search failed: %r", exc)
-        kind = type(exc).__name__
-        return [], f"Hub search unavailable ({kind}) - showing local datasets only"
+        return [], f"Hub search unavailable ({hub_unavailable_reason(exc)}) - showing local datasets only"
     _HUB_DS_CACHE.put(key, rows)
     return rows, None
 

@@ -1,0 +1,24 @@
+{
+  "first-robot-1": {
+    "page": "start/first-robot.md",
+    "fence": 1
+  },
+  "first-robot-2": {
+    "page": "start/first-robot.md",
+    "fence": 2
+  },
+  "talk-to-it": {
+    "script": "docs/hooks/transcripts/talk_to_it.py",
+    "page": "start/first-agent.md",
+    "frames": [
+      "talk-to-it-1",
+      "talk-to-it-2",
+      "talk-to-it-3"
+    ],
+    "timeout_s": 900
+  },
+  "same-checkpoint-1": {
+    "page": "start/first-policy.md",
+    "fence": 1
+  }
+}
