@@ -791,7 +791,7 @@
       "joints": 16,
       "asset": {
         "dir": "open_duck_mini_v2",
-        "model_xml": "open_duck_mini_v2.xml",
+        "model_xml": "robot_motors.xml",
         "scene_xml": "scene.xml",
         "source": {
           "type": "github",

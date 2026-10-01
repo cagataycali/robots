@@ -252,6 +252,20 @@ _STAT_NAMES_READ_BY_MODE: dict[str, tuple[str, ...]] = {
 _STAT_NAMES_READ_BY_ANY_MODE: tuple[str, ...] = ("mean", "std", "min", "max", "q01", "q99", "q10", "q90")
 
 
+def _flat_floats(value: Any) -> list[float]:
+    """A stat tensor / array / list as a flat list of Python floats."""
+    if hasattr(value, "detach"):
+        value = value.detach().cpu()
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, list | tuple):
+        return [float(value)]
+    flat: list[float] = []
+    for item in value:
+        flat.extend(_flat_floats(item) if isinstance(item, list | tuple) else [float(item)])
+    return flat
+
+
 _STAT_KEY_SEPARATORS = (".", "/", "_", "-")
 
 
@@ -787,6 +801,7 @@ class ProcessorBridge:
                     state_units=embodiment.state_units,
                     gripper_index=embodiment.gripper_index,
                     gripper_joint_range=list(embodiment.gripper_joint_range),
+                    gripper_fraction=list(embodiment.gripper_fraction),
                     joint_mids=list(embodiment.joint_mids),
                     strict_keys=strict_keys,
                     missing_keys_sink=self._state_missing_keys,
@@ -992,6 +1007,48 @@ class ProcessorBridge:
                     found.append(stat_key)
             found.sort()
         return candidates
+
+    def recorded_value_ranges(self, key: str) -> list[tuple[float, float]] | None:
+        """Per-column ``(low, high)`` the checkpoint's stats record for *key*.
+
+        Stats carry the UNITS the training dataset was recorded in, which is the
+        one piece of evidence a rollout has about them before the first action
+        is applied: an SO-arm dataset recorded through the LeRobot driver spans
+        tens of degrees per joint, a MuJoCo or Isaac state never leaves a few
+        radians. The joint-units guard in
+        :meth:`~strands_robots.policies.lerobot_local.policy.LerobotLocalPolicy.get_actions`
+        reads this to decide whether the state it is about to pack speaks the
+        checkpoint's units.
+
+        The bound is taken from the first stat pair present, in order of how
+        directly it records the data: ``min``/``max``, then ``q01``/``q99``,
+        then ``mean`` +/- 3 ``std``. Every normalizer and unnormalizer step of
+        both pipelines is searched, so a checkpoint whose state normalization is
+        inert but whose postprocessor still carries the dataset stats answers.
+
+        Args:
+            key: The feature key, e.g. ``"observation.state"`` or ``"action"``.
+
+        Returns:
+            One ``(low, high)`` per column, or ``None`` when no step carries
+            stats for *key*.
+        """
+        pairs = (("min", "max"), ("q01", "q99"))
+        for pipeline in (self._preprocessor, self._postprocessor):
+            if pipeline is None:
+                continue
+            for step in getattr(pipeline, "steps", []):
+                stats = (getattr(step, "_tensor_stats", None) or {}).get(key) or {}
+                if not stats:
+                    continue
+                for low_name, high_name in pairs:
+                    low, high = stats.get(low_name), stats.get(high_name)
+                    if low is not None and high is not None:
+                        return list(zip(_flat_floats(low), _flat_floats(high), strict=False))
+                mean, std = stats.get("mean"), stats.get("std")
+                if mean is not None and std is not None:
+                    return [(m - 3 * s, m + 3 * s) for m, s in zip(_flat_floats(mean), _flat_floats(std), strict=False)]
+        return None
 
     def mismatched_normalization_widths(self) -> list[str]:
         """Declared normalizations whose supplied stats cannot broadcast onto the feature.

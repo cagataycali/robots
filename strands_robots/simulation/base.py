@@ -358,6 +358,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     # listing cannot mask the more specific diagnosis, and vice versa.
     asset_gap: tuple[str, str, str, bool, list[str]] | None = None
     hardware_only: tuple[str, str] | None = None
+    urdf_refused: tuple[str, str] | None = None
     try:
         from strands_robots.assets.manager import get_search_paths, is_robot_asset_present
         from strands_robots.registry import get_robot as _get_robot
@@ -378,6 +379,10 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
                 asset.get("auto_download") is False,
                 [str(path) for path in get_search_paths()],
             )
+        elif entry and not asset and entry.get("source") == "urdf":
+            # A robot_descriptions URDF the loader could not compile; the sweep
+            # recorded why, and that sentence is the whole diagnosis.
+            urdf_refused = (canonical, str(entry.get("refusal") or "the description does not build"))
         elif entry and not asset:
             # Registered, correct, and simply not a simulation robot. The LeRobot
             # type is what the hardware route is keyed on, so it is quoted when
@@ -386,6 +391,7 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
     except Exception:  # noqa: BLE001 - the diagnosis is best-effort
         asset_gap = None
         hardware_only = None
+        urdf_refused = None
 
     if asset_gap is not None:
         canonical, asset_dir, model_xml, never_downloads, search_paths = asset_gap
@@ -407,6 +413,14 @@ def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DIS
         else:
             msg += f" Fetch it with the download_assets tool (robots='{canonical}')."
         return msg
+
+    if urdf_refused is not None:
+        canonical, refusal = urdf_refused
+        return (
+            f"Robot '{requested}' is a robot_descriptions URDF that does not compile for MuJoCo: {refusal}. "
+            f"The name is correct; pass urdf_path= to supply a model of your own, or use "
+            f"list_robots(mode='sim') to see the robots this backend can spawn."
+        )
 
     if hardware_only is not None:
         canonical, lerobot_type = hardware_only
@@ -1381,6 +1395,31 @@ class SimEngine(ABC):
                 sole-robot default on this thread.
         """
         self._predicate_binding().robot = robot_name
+
+    def _bind_policy_state_keys(self, policy: Any, robot_name: str, *, prebuilt: bool) -> None:
+        """Bind *policy* to the robot's action keys - unless the caller already chose them.
+
+        A policy built here gets the robot's full ``robot_action_keys``. A
+        ``policy_object`` the caller configured keeps its own
+        ``robot_state_keys`` when every one of them is a key of this robot: the
+        rebinding used to overwrite them on every rollout, so a pi0.5-DROID
+        policy set to the panda's 7 arm joints + one gripper finger (8 of its
+        9 keys) was re-bound to all 9 and could not be driven as trained. Keys
+        that are not this robot's (or the generic ``joint_<i>`` placeholders a
+        checkpoint loads with) are replaced, as before.
+        """
+        robot_keys = list(self.robot_action_keys(robot_name))
+        chosen = list(getattr(policy, "robot_state_keys", None) or []) if prebuilt else []
+        if chosen and all(isinstance(k, str) for k in chosen) and set(chosen) <= set(robot_keys):
+            if chosen != robot_keys:
+                logger.info(
+                    "kept the %d robot_state_keys the caller set on the policy for %r (of the robot's %d)",
+                    len(chosen),
+                    robot_name,
+                    len(robot_keys),
+                )
+            return
+        policy.set_robot_state_keys(robot_keys)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
@@ -3644,7 +3683,7 @@ class SimEngine(ABC):
         # matches the guarded binding in MujocoSimulation.run_policy's
         # multi-robot path.
         try:
-            policy.set_robot_state_keys(self.robot_action_keys(robot_name))
+            self._bind_policy_state_keys(policy, robot_name, prebuilt=policy_object is not None)
             self.bind_policy_sim_context(policy, robot_name)
         except Exception as exc:  # noqa: BLE001 - non-fatal policy configuration
             logger.debug("policy binding for %r failed: %s", robot_name, exc)
@@ -5642,7 +5681,7 @@ class SimEngine(ABC):
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
@@ -6075,7 +6114,7 @@ class SimEngine(ABC):
             # caller benchmark an already-loaded checkpoint (e.g. a multi-GB
             # VLA) without a create_policy round-trip / redundant reload.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         # Frames are labelled with the instruction the POLICY is conditioned on:
         # the caller's, else the benchmark's own (#187 - LIBERO and friends ship
