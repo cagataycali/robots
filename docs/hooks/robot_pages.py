@@ -68,6 +68,19 @@ FAMILIES: dict[str, tuple[str, str]] = {
     "expressive": ("Expressive", "Desk robots whose output is posture and attention, not a grasp."),
 }
 
+#: Family -> the sentence a simulated robot page ends its fence with: what to do
+#: next with this kind of body, pointing at the guide that shows it.
+NEXT_STEPS: dict[str, str] = {
+    "arm": "Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).",
+    "bimanual": "One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.",
+    "hand": "`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).",
+    "humanoid": "Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).",
+    "mobile": "Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).",
+    "mobile_manip": "The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.",
+    "aerial": "Commanded as a setpoint stream; [simulation](../learn/simulation/index.md) covers gravity, timestep and cameras.",
+    "expressive": "Its output is posture and attention; [agents](../learn/agents.md) shows a model driving it as a tool.",
+}
+
 #: Native driver class -> the facts a hardware section states. Every line is
 #: read from the driver module named in ``module`` at this commit.
 DRIVERS: dict[str, dict[str, object]] = {
@@ -585,8 +598,29 @@ def robot_page(name: str) -> str:
                 "```",
                 "",
             ]
+        elif spec.get("source") == "urdf":
+            lines += [
+                '```python title="sketch"',
+                "from strands_robots import Robot",
+                "",
+                f'robot = Robot("{name}")  # clones the description and compiles the URDF on first use',
+                f'print(robot.robot_joint_names("{name}"))',
+                "robot.cleanup()",
+                "```",
+                "",
+            ]
         else:
-            lines += ["```python", "from strands_robots import Robot", "", f'robot = Robot("{name}")', "```", ""]
+            lines += [
+                "```python",
+                "from strands_robots import Robot",
+                "",
+                f'robot = Robot("{name}")',
+                f'print(robot.robot_joint_names("{name}"))',
+                "robot.cleanup()",
+                "```",
+                "",
+            ]
+        lines += [NEXT_STEPS.get(spec["category"], ""), ""]
     if cov.real:
         lines += [
             '```python title="sketch"',

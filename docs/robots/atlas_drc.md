@@ -13,11 +13,15 @@ URDF from [RobotLocomotion/drake@7abea05](https://github.com/RobotLocomotion/dra
 
 <img class="sr-thumb" src="../assets/img/robots/atlas_drc.webp" alt="atlas_drc, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("atlas_drc")
+robot = Robot("atlas_drc")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("atlas_drc"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

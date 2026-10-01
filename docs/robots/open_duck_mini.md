@@ -15,7 +15,11 @@ description: "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)"
 from strands_robots import Robot
 
 robot = Robot("open_duck_mini")
+print(robot.robot_joint_names("open_duck_mini"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("open_duck_mini", mode="real", driver="strands", port="/dev/ttyACM0")  # FeetechDriver
