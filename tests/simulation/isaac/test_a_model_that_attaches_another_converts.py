@@ -148,3 +148,73 @@ def test_the_importer_gets_the_flattened_copy_and_it_is_cleaned_up(attaching, tm
     assert os.path.isfile(result)
     assert os.path.join(os.path.dirname(attaching), "arm", "assets", "link.obj") in _Importer.seen[0]
     assert [n for n in os.listdir(cache) if n.startswith(".")] == []
+
+
+# Two attached models that each ship their own ``assets/link.obj``. The composed
+# spec carries both as ``<prefix>link`` with the same file string; the flattened
+# copy must point each at ITS model's file, not the first one found.
+_OBJ_B = "v 0 0 0\nv 0.05 0 0\nv 0 0.05 0\nv 0 0 0.05\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n"
+
+_TWO_ARMS = """<mujoco model="base">
+  <compiler angle="radian"/>
+  <asset>
+    <model name="armA" file="../armA/arm.xml"/>
+    <model name="armB" file="../armB/arm.xml"/>
+  </asset>
+  <worldbody>
+    <body name="chassis">
+      <freejoint/>
+      <geom type="box" size=".1 .1 .02"/>
+      <body name="left" pos="0.2 0 0.05"><attach model="armA" body="Base" prefix="A_"/></body>
+      <body name="right" pos="-0.2 0 0.05"><attach model="armB" body="Base" prefix="B_"/></body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def two_arms(tmp_path) -> str:
+    root = tmp_path / "two"
+    for arm, obj in (("armA", _OBJ), ("armB", _OBJ_B)):
+        (root / arm / "assets").mkdir(parents=True)
+        (root / arm / "assets" / "link.obj").write_text(obj)
+        (root / arm / "arm.xml").write_text(_ARM)
+    (root / "base").mkdir()
+    (root / "base" / "base.xml").write_text(_TWO_ARMS)
+    return str(root / "base" / "base.xml")
+
+
+def test_two_attached_models_with_the_same_asset_file_each_keep_their_own(two_arms, tmp_path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    flat = mjcf_assets._flatten_attached_models(two_arms, str(work))
+
+    spec = mujoco.MjSpec.from_file(flat)
+    files = {m.name: m.file for m in spec.meshes}
+    root = os.path.dirname(os.path.dirname(two_arms))
+    assert files["A_link"] == os.path.join(root, "armA", "assets", "link.obj")
+    assert files["B_link"] == os.path.join(root, "armB", "assets", "link.obj")
+    # ...and the geometry says so: B's tetrahedron is the larger one.
+    a, b = mujoco.MjModel.from_xml_path(two_arms), mujoco.MjModel.from_xml_path(flat)
+    np.testing.assert_allclose(a.mesh_vert, b.mesh_vert)
+    ia, ib = (mujoco.mj_name2id(b, mujoco.mjtObj.mjOBJ_MESH, n) for n in ("A_link", "B_link"))
+    span = [np.ptp(b.mesh_vert[b.mesh_vertadr[i] : b.mesh_vertadr[i] + b.mesh_vertnum[i]]) for i in (ia, ib)]
+    assert span[1] > span[0] * 2, span  # 0.05 vs 0.02 tetrahedra; first-wins gave both A's
+
+
+def test_an_asset_file_string_shared_by_two_models_that_no_prefix_tells_apart_is_refused(two_arms, tmp_path) -> None:
+    """Without a prefix the composed names collide too; MuJoCo refuses that itself,
+    so the one shape that reaches us unnamed is a file string two models resolve
+    differently and no composed asset claims - refused with both candidates named,
+    never first-wins."""
+    with pytest.raises(mjcf_assets.MjcfAssetError, match=r"(?s)link\.obj.*armA.*armB"):
+        mjcf_assets._resolve_shared_asset_file(
+            "link.obj",
+            {
+                "link.obj": [
+                    os.path.join("x", "armA", "assets", "link.obj"),
+                    os.path.join("x", "armB", "assets", "link.obj"),
+                ]
+            },
+        )

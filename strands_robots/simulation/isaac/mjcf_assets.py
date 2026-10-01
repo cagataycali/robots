@@ -588,6 +588,76 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
     return written
 
 
+class MjcfAssetError(ValueError):
+    """An attached model's asset cannot be placed without guessing.
+
+    Raised instead of taking the first candidate when two attached models
+    declare the same asset file string against their own directories and no
+    composed asset name tells them apart: a wrong-but-existing mesh compiles,
+    loads and is published into the shared USD cache under ``status: success``.
+    """
+
+
+def _attach_prefixes(mjcf_path: str, _seen: frozenset[str] = frozenset()) -> dict[str, list[str]]:
+    """``<model>`` file path -> every ``<attach prefix>`` the description gives it, transitively.
+
+    MuJoCo prefixes an attached model's asset names with the attach's ``prefix``
+    (an absent attribute is the empty prefix), which is how a composed mesh is
+    matched back to the model that declared it. Paths follow the include rule:
+    relative to the file that declares the ``<model>``.
+    """
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    try:
+        root = ET.parse(entry).getroot()
+    except (ET.ParseError, OSError):
+        return {}
+    files: dict[str, str] = {}  # model name -> file
+    prefixes: dict[str, list[str]] = {}  # model name -> prefixes
+
+    def _walk(el: ET.Element, base: str, seen: frozenset[str]) -> None:
+        for child in el.iter():
+            if child.tag == "include" and child.get("file"):
+                inc = os.path.normpath(os.path.join(base, child.get("file", "")))
+                if inc not in seen and os.path.isfile(inc):
+                    try:
+                        _walk(ET.parse(inc).getroot(), os.path.dirname(inc), seen | {inc})
+                    except (ET.ParseError, OSError):
+                        continue
+            elif child.tag == "model" and child.get("file") and child.get("name"):
+                files[child.get("name", "")] = os.path.normpath(os.path.join(base, child.get("file", "")))
+            elif child.tag == "attach" and child.get("model"):
+                prefixes.setdefault(child.get("model", ""), []).append(child.get("prefix", ""))
+
+    _walk(root, os.path.dirname(entry), _seen | {entry})
+    out: dict[str, list[str]] = {}
+    for name, path in files.items():
+        out.setdefault(path, []).extend(prefixes.get(name, []))
+        for inner, inner_prefixes in _attach_prefixes(path, _seen | {entry, path}).items():
+            # a model attached inside an attached model carries both prefixes
+            out.setdefault(inner, []).extend(p + q for p in prefixes.get(name, [""]) for q in inner_prefixes)
+    return out
+
+
+def _resolve_shared_asset_file(file: str, by_file: dict[str, list[str]]) -> str | None:
+    """The one path *file* resolves to across the attached models, None when no model declares it.
+
+    Raises:
+        MjcfAssetError: If two attached models resolve *file* to different paths;
+            the candidates are named so the caller can see which model's asset
+            would have been served.
+    """
+    candidates = sorted(set(by_file.get(file, [])))
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise MjcfAssetError(
+            f"asset file {file!r} is declared by {len(candidates)} attached models against their own "
+            f"directories ({', '.join(candidates)}) and no composed asset name claims it, so the flattened "
+            "copy cannot say which mesh is meant; give each <attach> a distinct prefix, or name the assets apart."
+        )
+    return candidates[0]
+
+
 def _attached_model_files(mjcf_path: str, _seen: frozenset[str] = frozenset()) -> list[str]:
     """Absolute paths of every ``<asset><model file=...>`` the description attaches, transitively.
 
@@ -650,35 +720,55 @@ def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
         return mjcf_path
     import mujoco
 
-    # file string as the composed spec carries it -> where the attached model finds it
-    located: dict[str, str] = {}
+    # Two maps back to the attached models: the composed asset NAME (the attach
+    # prefix + the name the child gave it) -> where that child keeps the file,
+    # and the bare file string -> every path the children resolve it to. The
+    # name is what tells two models' ``assets/link.obj`` apart; the file string
+    # alone is first-wins, which served the wrong model's mesh under success.
+    prefixes = _attach_prefixes(mjcf_path)
+    by_name: dict[tuple[str, str], str] = {}
+    by_file: dict[str, list[str]] = {}
+
+    def _asset_name(asset: object, file: str) -> str:
+        name = str(getattr(asset, "name", "") or "")
+        return name or os.path.splitext(os.path.basename(file))[0]  # MuJoCo's default: the file stem
+
     for child in attached:
         cspec = mujoco.MjSpec.from_file(child)
         cdir = os.path.dirname(child)
         for kind, subdir in (("meshes", cspec.meshdir), ("hfields", cspec.meshdir), ("skins", cspec.meshdir)):
             for asset in getattr(cspec, kind, []):
                 if asset.file:
-                    located.setdefault(asset.file, _spec_asset_path(cdir, subdir, asset.file))
+                    path = _spec_asset_path(cdir, subdir, asset.file)
+                    by_file.setdefault(asset.file, []).append(path)
+                    for prefix in prefixes.get(child, [""]):
+                        by_name.setdefault((kind, prefix + _asset_name(asset, asset.file)), path)
         for tex in cspec.textures:
             if tex.file:
-                located.setdefault(tex.file, _spec_asset_path(cdir, cspec.texturedir, tex.file))
+                path = _spec_asset_path(cdir, cspec.texturedir, tex.file)
+                by_file.setdefault(tex.file, []).append(path)
+                for prefix in prefixes.get(child, [""]):
+                    by_name.setdefault(("textures", prefix + _asset_name(tex, tex.file)), path)
 
     spec = mujoco.MjSpec.from_file(mjcf_path)
     pdir = os.path.dirname(os.path.abspath(mjcf_path))
 
-    def _resolve(file: str, subdir: str) -> str:
+    def _resolve(kind: str, asset: object, file: str, subdir: str) -> str:
         own = _spec_asset_path(pdir, subdir, file)
-        if os.path.isfile(own) or file not in located:
+        if os.path.isfile(own):
             return own
-        return located[file]
+        named = by_name.get((kind, _asset_name(asset, file)))
+        if named is not None:
+            return named
+        return _resolve_shared_asset_file(file, by_file) or own  # None: not an attached asset; compile names it
 
     for kind in ("meshes", "hfields", "skins"):
         for asset in getattr(spec, kind, []):
             if asset.file:
-                asset.file = _resolve(asset.file, spec.meshdir)
+                asset.file = _resolve(kind, asset, asset.file, spec.meshdir)
     for tex in spec.textures:
         if tex.file:
-            tex.file = _resolve(tex.file, spec.texturedir)
+            tex.file = _resolve("textures", tex, tex.file, spec.texturedir)
     spec.meshdir = ""
     spec.texturedir = ""
     spec.compile()  # fails here, naming the file, if a path is still wrong
