@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import time
 from typing import Any, cast
 
@@ -51,6 +52,7 @@ from strands_robots.dashboard.mesh_bridge import (
 from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.routes_auth import _json_body
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
+from strands_robots.dashboard.ttl_cache import TTLCache
 from strands_robots.dashboard.ws_observability import (
     CloseLogThrottle,
     cap_note,
@@ -59,7 +61,7 @@ from strands_robots.dashboard.ws_observability import (
     fps_cap,
 )
 from strands_robots.simulation.models import registry_entry
-from strands_robots.utils import boolean_flag_error
+from strands_robots.utils import boolean_flag_error, refusal_str
 
 logger = logging.getLogger(__name__)
 
@@ -747,6 +749,129 @@ async def _restart_mesh(request: Request, *, force: bool = False) -> dict[str, A
 async def get_mesh_config(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Mesh posture: endpoints, auth mode, peer counts, the stored ``mesh`` settings."""
     return cast("dict[str, Any]", _bridge(request).mesh_info())
+
+
+#: One registry read per 30 s at most, whatever the page's poll cadence.
+IOT_REGISTRY_TTL_S = 30.0
+_IOT_REGISTRY_CACHE: TTLCache[dict[str, Any]] = TTLCache(IOT_REGISTRY_TTL_S, max_entries=4)
+
+
+#: Backends whose transport can address one Thing point to point.
+_ADDRESSED_BACKENDS = frozenset({"iot", "bridge"})
+
+
+def _dashboard_thing_name() -> str:
+    """The Thing this dashboard connects as (``STRANDS_IOT_THING_NAME``), or ``""``.
+
+    It is in the registry like every other Thing, but it is not a robot to ping
+    and never a grey card.
+    """
+    return os.getenv("STRANDS_IOT_THING_NAME", "").strip()
+
+
+def iot_registry_view(bridge: MeshBridge) -> dict[str, Any]:
+    """The IoT Thing registry merged with what the bridge has heard, for the fleet grid.
+
+    Every Thing is a row; ``peer_live`` says whether a peer of that name has spoken
+    inside the TTL (its card already exists, with a ``reach`` chip), and ``last_seen``
+    prefers the bridge's own presence stamp over the fleet index's. Things are never
+    written into ``bridge.peers``: presence is the only path into the peer table.
+    """
+    from strands_robots.mesh.iot.registry import list_things
+
+    cached = _IOT_REGISTRY_CACHE.get("registry")
+    if cached is None:
+        cached = list_things().as_dict()
+        _IOT_REGISTRY_CACHE.put("registry", cached)
+    view = dict(cached)
+    live = set(bridge.live_peers())
+    peers = dict(bridge.peers)
+    own_thing = _dashboard_thing_name()
+    things = []
+    for row in view.get("things") or []:
+        name = str(row.get("thing_name") or "")
+        heard = peers.get(name) or {}
+        stamp = heard.get("last_seen") if isinstance(heard, dict) else None
+        merged = {
+            **row,
+            "peer_live": name in live,
+            "heard_by_bridge": isinstance(stamp, (int, float)),
+            "last_seen": float(stamp) if isinstance(stamp, (int, float)) else row.get("last_seen"),
+            "self": bool(own_thing) and name == own_thing,
+        }
+        things.append(merged)
+    view["things"] = things
+    backend = str(bridge.mesh_info().get("backend") or "zenoh")
+    view["backend"] = backend
+    # The ping button exists only where one Thing can be addressed point to point.
+    view["ping_available"] = backend in _ADDRESSED_BACKENDS
+    return view
+
+
+@router.get("/mesh/iot/registry")
+async def iot_registry(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """Provisioned IoT Things next to the peers this dashboard has heard (read only)."""
+    bridge = _bridge(request)
+    return await asyncio.to_thread(iot_registry_view, bridge)
+
+
+#: Budget for one ping round trip: the direct delivery and the status reply share it.
+PING_TIMEOUT_S = 3.0
+#: Every word ``ping_thing_verdict`` can answer with; the card shows the word as is.
+PING_VERDICTS: tuple[str, ...] = ("answered", "offline", "forbidden", "silent", "unavailable", "refused", "error")
+
+
+async def ping_thing_verdict(bridge: MeshBridge, thing: str) -> dict[str, Any]:
+    """One ``status`` read sent point to point to *thing*, mapped to a verdict word.
+
+    Closed by default without being a motion gate: ``status`` moves nothing, so
+    :func:`task_gate` does not apply, but the target must be a Thing the registry
+    view lists (a registry card is the only place the button exists) and the
+    backend must be one with an addressed send. On plain Zenoh the answer is
+    ``unavailable`` and nothing reaches the wire.
+    """
+    backend = str(bridge.mesh_info().get("backend") or "zenoh")
+    if backend not in _ADDRESSED_BACKENDS:
+        return {
+            "thing": thing,
+            "verdict": "unavailable",
+            "reason": "no addressed send on this backend",
+            "latency_ms": None,
+        }
+    view = await asyncio.to_thread(iot_registry_view, bridge)
+    names = {str(row.get("thing_name") or "") for row in view.get("things") or []}
+    if thing not in names:
+        return {
+            "thing": thing,
+            "verdict": "refused",
+            "reason": f"refused: {refusal_str(thing)} is not a Thing in the IoT registry view; nothing was sent",
+            "latency_ms": None,
+        }
+    result = await bridge.send_cmd_async(thing, {"action": "status"}, timeout=PING_TIMEOUT_S, source="ping")
+    raw_delivery = result.get("delivery")
+    delivery: dict[str, Any] = raw_delivery if isinstance(raw_delivery, dict) else {}
+    reason = str(delivery.get("reason") or "")
+    latency = delivery.get("latency_ms")
+    if reason == "offline":
+        verdict, why = "offline", "the broker has no session for this Thing (404)"
+    elif reason == "forbidden":
+        verdict, why = "forbidden", "this operator identity may not address that Thing (403)"
+    elif reason in ("unavailable", "too_large", "throttled", "unconfirmed"):
+        verdict, why = "error", f"direct send {reason}"
+    elif result.get("status") == "timeout":
+        verdict = "silent" if delivery.get("confirmed") else "error"
+        why = "the Thing took the message and did not answer" if verdict == "silent" else "no reply and no delivery"
+    elif result.get("error"):
+        verdict, why = "error", refusal_str(result.get("error"))
+    else:
+        verdict, why = "answered", ""
+    return {"thing": thing, "verdict": verdict, "reason": why, "latency_ms": latency}
+
+
+@router.post("/robots/{thing}/ping")
+async def ping_thing(request: Request, thing: str, _: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """One direct-message round trip to a registry Thing: answered, offline, forbidden or silent."""
+    return await ping_thing_verdict(_bridge(request), thing)
 
 
 @router.post("/mesh/config")

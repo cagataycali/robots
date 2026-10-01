@@ -106,6 +106,10 @@ export interface Peer {
    *  U15: this is the ONLY thing that may differ. It says nothing about the
    *  robot's health and gates no control. */
   origin?: 'managed' | 'external' | string | null
+  /** Which transport leg carried this peer's presence inside the TTL: 'lan' (Zenoh only),
+   *  'iot' (AWS IoT Core only) or 'both' (a bridge peer heard on both). Absent or null =
+   *  the server does not know; render nothing rather than guess. */
+  reach?: 'lan' | 'iot' | 'both' | string | null
   /** Camera names this dashboard REQUESTED when it spawned the peer (annotation,
    *  managed peers only). Presence lists only the cameras the robot managed to
    *  OPEN, so this is the only way to tell "joints-only by design" from "they
@@ -131,7 +135,7 @@ export interface Peer {
   presence?: Presence
   state?: PeerState
   stream?: StreamStep
-  cameras?: Record<string, { t?: number; shape?: number[] }>
+  cameras?: Record<string, { t?: number; shape?: number[]; via?: string; latency_ms?: number | null; error?: string }>
   /** SensorLoops topics, each absent until the robot publishes it. An arm publishes none of
    *  them and is not broken, so absence is never rendered as a fault (lib/sensorFreshness). */
   pose?: PosePayload
@@ -289,7 +293,7 @@ export type MeshEvent =
   | { type: 'presence'; peer_id: string; data: Presence }
   | { type: 'state'; peer_id: string; data: PeerState }
   | { type: 'stream'; peer_id: string; data: StreamStep }
-  | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[] } }
+  | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[]; via?: string; latency_ms?: number | null; error?: string } }
   | { type: 'pose'; peer_id: string; data: PosePayload }
   | { type: 'health'; peer_id: string; data: HealthPayload }
   | { type: 'imu'; peer_id: string; data: ImuPayload }
@@ -298,3 +302,42 @@ export type MeshEvent =
   | { type: 'safety'; kind: 'estop' | 'resume'; data: Record<string, unknown> }
   | { type: 'activity'; data: ActivityEntry }
   | { type: 'mesh_reconfigured'; ok: boolean; mesh: MeshInfo }
+
+/** One provisioned AWS IoT Thing as `/api/mesh/iot/registry` reports it (read only). */
+export interface RegistryThing {
+  thing_name: string
+  thing_type?: string | null
+  attributes?: Record<string, string>
+  /** The broker's verdict from the fleet index, null when the account does not index connectivity. */
+  connectivity?: 'connected' | 'disconnected' | string | null
+  /** Epoch seconds: the bridge's own presence stamp when it heard this Thing, else the index's. */
+  last_seen?: number | null
+  /** A peer of this name has spoken inside the TTL: its own card exists, no registry card. */
+  peer_live?: boolean
+  heard_by_bridge?: boolean
+  /** This is the Thing the dashboard itself connects as: never a card. */
+  self?: boolean
+}
+
+export interface RegistryView {
+  status: 'ok' | 'off' | 'no-boto3' | 'no-credentials' | 'denied' | 'error' | string
+  detail?: string
+  region?: string | null
+  indexed?: boolean
+  things: RegistryThing[]
+  count?: number
+  /** The dashboard's mesh backend; `ping_available` is true on iot and bridge, where a Thing can be addressed. */
+  backend?: string
+  ping_available?: boolean
+}
+
+/** `POST /api/robots/{thing}/ping`: one direct round trip, mapped to a closed set of words. */
+export interface PingResult {
+  thing: string
+  verdict: 'answered' | 'offline' | 'forbidden' | 'silent' | 'unavailable' | 'refused' | 'error' | string
+  reason?: string
+  latency_ms?: number | null
+  /** Client side: when the answer arrived, so the label can age. */
+  at?: number
+  pending?: boolean
+}

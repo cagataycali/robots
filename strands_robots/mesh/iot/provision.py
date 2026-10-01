@@ -348,6 +348,83 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
 ROBOT_NO_ESTOP_POLICY_NAME = "strands-robot-no-estop"
 
 
+#: Name of the second policy every operator certificate carries: what the
+#: dashboard fleet view reads about a robot beyond presence, state and health.
+#: A second document because AWS caps one IoT policy at
+#: :data:`POLICY_DOCUMENT_CAP` characters and ``strands-operator`` is at it.
+OPERATOR_OBSERVE_POLICY_NAME = "strands-operator-observe"
+
+#: The rest of what the dashboard fleet view subscribes to
+#: (:data:`~strands_robots.dashboard.mesh_bridge.FLEET_SUBSCRIPTIONS`). Without
+#: these grants the broker accepted the SUBSCRIBE and delivered nothing, so a
+#: robot reached over IoT showed joints and a health row and never a stream, a
+#: pose, a lidar summary or a camera. Every topic here is telemetry a robot
+#: publishes about itself; commands, responses and teleop input stay out.
+_OPERATOR_OBSERVE_POLICY_DOC: dict[str, Any] = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "OperatorObserveSensors",
+            "Effect": "Allow",
+            "Action": ["iot:Subscribe", "iot:Receive"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/*/stream",
+                "arn:aws:iot:*:*:topicfilter/strands/+/stream",
+                "arn:aws:iot:*:*:topic/strands/*/pose",
+                "arn:aws:iot:*:*:topicfilter/strands/+/pose",
+                "arn:aws:iot:*:*:topic/strands/*/imu",
+                "arn:aws:iot:*:*:topicfilter/strands/+/imu",
+                "arn:aws:iot:*:*:topic/strands/*/odom",
+                "arn:aws:iot:*:*:topicfilter/strands/+/odom",
+                "arn:aws:iot:*:*:topic/strands/*/lidar/*",
+                "arn:aws:iot:*:*:topicfilter/strands/+/lidar/#",
+            ],
+        },
+        {
+            # Camera topics in their own statement so the read scope is
+            # reviewable on its own line. Two payloads travel here: the S3
+            # reference ``camera/<cam>/ref`` that
+            # :mod:`~strands_robots.mesh.iot.camera_offload` publishes (a
+            # presigned URL the dashboard resolves server side) and, when a
+            # robot opted in with ``STRANDS_MESH_IOT_CAMERA_INLINE=1``, a JPEG
+            # frame under the AWS IoT payload cap. Teleop ``input/`` and
+            # ``hand/`` are not here: they never cross the WAN.
+            "Sid": "OperatorObserveCameras",
+            "Effect": "Allow",
+            "Action": ["iot:Subscribe", "iot:Receive"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/*/camera/*",
+                "arn:aws:iot:*:*:topicfilter/strands/+/camera/#",
+            ],
+        },
+    ],
+}
+
+#: AWS IoT refuses a policy document over this many characters (a hard limit
+#: of the service, measured 2026-09-30: "size exceeds hard limit (2048)").
+POLICY_DOCUMENT_CAP = 2048
+
+
+def policy_document_text(document: dict[str, Any]) -> str:
+    """*document* as the text sent to AWS: compact JSON, no spaces after separators.
+
+    The default ``json.dumps`` spacing alone put the robot policy over
+    :data:`POLICY_DOCUMENT_CAP`.
+    """
+    return json.dumps(document, separators=(",", ":"))
+
+
+def policy_document_size_error(name: str, document: dict[str, Any]) -> str | None:
+    """Why AWS would refuse *document*, or ``None`` when it fits the cap."""
+    size = len(policy_document_text(document))
+    if size <= POLICY_DOCUMENT_CAP:
+        return None
+    return (
+        f"policy {name} is {size} characters; AWS IoT refuses a document over {POLICY_DOCUMENT_CAP}. "
+        "Move a statement into a second policy attached to the same certificate."
+    )
+
+
 def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
     """Build the robot IoT policy document.
 
@@ -784,6 +861,8 @@ def provision_operator(
     thing_arn = _ensure_thing(iot, thing_name, attributes)
     policy_arn = _ensure_policy(iot, OPERATOR_POLICY_NAME, _OPERATOR_POLICY_DOC)
     logger.info("[provision] %s: using policy %s", thing_name, policy_arn)
+    observe_arn = _ensure_policy(iot, OPERATOR_OBSERVE_POLICY_NAME, _OPERATOR_OBSERVE_POLICY_DOC)
+    logger.info("[provision] %s: using policy %s", thing_name, observe_arn)
 
     # Clean up stale certs from prior provision_operator runs.
     _cleaned, stale = _cleanup_stale_certs_report(iot, thing_name)
@@ -793,6 +872,10 @@ def provision_operator(
     cert_arn, cert_id = _create_cert(iot, cert_path, key_path, thing_name)
 
     iot.attach_policy(policyName=OPERATOR_POLICY_NAME, target=cert_arn)
+    # The fleet view's reads ride a second policy: one document is capped at
+    # POLICY_DOCUMENT_CAP characters and the first is at it. An operator
+    # provisioned before this policy existed re-runs provision to get it.
+    iot.attach_policy(policyName=OPERATOR_OBSERVE_POLICY_NAME, target=cert_arn)
     iot.attach_thing_principal(thingName=thing_name, principal=cert_arn)
 
     ca_path = cert_dir / "AmazonRootCA1.pem"
@@ -874,6 +957,11 @@ def reprovision_thing(
             f"reprovision: no policy is attached to {thing_name!r}'s certificates, so there is nothing to carry "
             "over; use provision_robot or provision_operator instead"
         )
+    if OPERATOR_POLICY_NAME in policy_names and OPERATOR_OBSERVE_POLICY_NAME not in policy_names:
+        # An operator provisioned before the fleet view's second policy existed:
+        # rotating its key is the moment it gets the reads too.
+        _ensure_policy(iot, OPERATOR_OBSERVE_POLICY_NAME, _OPERATOR_OBSERVE_POLICY_DOC)
+        policy_names.append(OPERATOR_OBSERVE_POLICY_NAME)
 
     cert_dir = Path(cert_dir) if cert_dir else DEFAULT_CERT_DIR
     cert_dir.mkdir(parents=True, exist_ok=True)
@@ -1044,6 +1132,8 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
     Returns:
         The policy ARN.
     """
+    if size_problem := policy_document_size_error(name, document):
+        raise ValueError(size_problem)
     try:
         existing = iot.get_policy(policyName=name)
     except iot.exceptions.ResourceNotFoundException:
@@ -1069,7 +1159,9 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
             )
             if stale:
                 iot.delete_policy_version(policyName=name, policyVersionId=stale[0]["versionId"])
-        resp = iot.create_policy_version(policyName=name, policyDocument=json.dumps(document), setAsDefault=True)
+        resp = iot.create_policy_version(
+            policyName=name, policyDocument=policy_document_text(document), setAsDefault=True
+        )
         logger.info(
             "[provision] policy %s updated: v%s -> v%s (new default; connected clients pick it up on reconnect)",
             name,
@@ -1080,7 +1172,7 @@ def _ensure_policy(iot: Any, name: str, document: dict[str, Any]) -> str:
 
     resp = iot.create_policy(
         policyName=name,
-        policyDocument=json.dumps(document),
+        policyDocument=policy_document_text(document),
     )
     logger.info("[provision] policy %s created", name)
     return resp["policyArn"]
