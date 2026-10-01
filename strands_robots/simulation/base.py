@@ -283,6 +283,33 @@ def close_match_hint(requested: object, known: Sequence[str]) -> str:
 DEFAULT_MODEL_DISCOVERY_HINT = " Use action='list_urdfs' to see all available robots."
 
 
+def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence[str]) -> dict[str, Any]:
+    """The tool result refusing an input key the action does not take.
+
+    One sentence for every robot tool: the sim tool built it inline and the
+    real arm tool did not check at all, so ``execute(..., bogus=1)`` went on
+    to the operator gate and the arm with the field silently dropped while the
+    sim refused the same mistake by name (GH #4167). ``unknown`` is named in
+    the caller's own spelling, ``valid`` is what the caller picks from next,
+    and the nearest of them is suggested through :func:`close_match_hint`.
+
+    Args:
+        unknown: The refused keys; the first is the one the sentence names.
+        action: The action the keys were sent with.
+        valid: The keys this action does take, already sorted by the caller.
+
+    Returns:
+        A ``{"status": "error", "content": [{"text": ...}]}`` tool result.
+    """
+    reported = unknown[0]
+    valid_sorted = list(valid)
+    hint = close_match_hint(reported, valid_sorted)
+    return {
+        "status": "error",
+        "content": [{"text": f"Unknown parameter '{reported}' for action '{action}'.{hint} Valid: {valid_sorted}"}],
+    }
+
+
 def unknown_model_msg(requested: str, *, discovery_hint: str = DEFAULT_MODEL_DISCOVERY_HINT) -> str:
     """Build the 'model could not be resolved' error for a robot name.
 
@@ -982,14 +1009,26 @@ class SimEngine(ABC):
         optional = {c for c, stub in stubs.items() if getattr(type(self), stub.__name__, stub) is not stub}
         return _caps.DEFAULT_CAPABILITIES | optional
 
-    def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
-        """Initialize the optional ROS 2 telemetry bridge state.
+    def _init_ros_bridge(
+        self,
+        *,
+        ros2_bridge: bool = False,
+        ros2_domain: int = 0,
+        foxglove: bool | str = False,
+        foxglove_mcap: str | os.PathLike[str] | None = None,
+        foxglove_services: bool = False,
+    ) -> None:
+        """Initialize the optional telemetry bridges: ROS 2 and Foxglove.
 
         Backends that accept a ``ros2_bridge`` flag call this once from their
         own ``__init__``. It is intentionally a plain method rather than an ABC
         ``__init__`` override: the simulation interface imposes no base-class
         constructor contract, so lightweight subclasses and test doubles need
         not thread ``super().__init__()`` through just to satisfy the ABC.
+
+        Both bridges speak the same three-method interface and share the one
+        ``_ros_bridge`` slot the publish path reads; asked for together they
+        are held in a :class:`~strands_robots.foxglove.TelemetryFanout`.
 
         Args:
             ros2_bridge: When True, publish per-robot ``joint_states`` and
@@ -1001,6 +1040,18 @@ class SimEngine(ABC):
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
                 Only an ``int`` in ``[0, 232]`` names a domain; a value
                 outside the RTPS port map raises :class:`ValueError`.
+            foxglove: ``True`` serves a live Foxglove WebSocket on
+                ``127.0.0.1:8765`` (the next free port if busy), a
+                ``"host:port"`` string picks the address; every :meth:`step`
+                then publishes ``/tf``, the robot's meshes, joint states and
+                cameras. ``STRANDS_ROBOTS_FOXGLOVE=1`` turns it on for a
+                caller that left this False. Requires the ``[foxglove]``
+                extra. Defaults to False.
+            foxglove_mcap: Path of an MCAP file the same channels are
+                recorded to. A new file only; requires ``foxglove``.
+            foxglove_services: When True, advertise the gated
+                ``strands/set_joint_positions`` service. Off, the server
+                advertises no capability. Requires ``foxglove``.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
         # Refuse a domain id outside the RTPS port map here, so a backend that
@@ -1008,11 +1059,61 @@ class SimEngine(ABC):
         if error := dds_domain_id_error(ros2_domain, "ros2_domain", type(self).__name__):
             raise ValueError(error)
         self._ros2_domain = ros2_domain
+        # Every Foxglove keyword is graded before either bridge exists, so a
+        # refused keyword leaves no rclpy node and no open socket behind.
+        from strands_robots.foxglove.options import resolve_foxglove_options
+
+        foxglove_options = resolve_foxglove_options(
+            foxglove, foxglove_mcap=foxglove_mcap, foxglove_services=foxglove_services, context=type(self).__name__
+        )
         self._ros_bridge: Any = None
+        self._foxglove_bridge: Any = None
+        bridges: list[Any] = []
         if self._ros2_bridge_enabled:
             from strands_robots.simulation.ros_bridge import SimRosBridge
 
-            self._ros_bridge = SimRosBridge(domain_id=self._ros2_domain)
+            bridges.append(SimRosBridge(domain_id=self._ros2_domain))
+        if foxglove_options is not None:
+            from strands_robots.foxglove import FoxgloveBridge
+
+            try:
+                self._foxglove_bridge = FoxgloveBridge(
+                    foxglove_options,
+                    name=getattr(self, "tool_name_str", None) or type(self).__name__,
+                    engine=self,
+                    command_sink=self._foxglove_command_sink,
+                )
+            except Exception:
+                for bridge in bridges:
+                    bridge.shutdown()
+                raise
+            bridges.append(self._foxglove_bridge)
+        if len(bridges) == 1:
+            self._ros_bridge = bridges[0]
+        elif bridges:
+            from strands_robots.foxglove import TelemetryFanout
+
+            self._ros_bridge = TelemetryFanout(bridges)
+
+    def _foxglove_command_sink(self, robot: str | None, positions: dict[str, float]) -> dict[str, Any]:
+        """Apply a gated Foxglove ``set_joint_positions`` call through the engine's own method."""
+        method = getattr(self, "set_joint_positions", None)
+        if method is None:
+            return {"status": "error", "content": [{"text": f"{type(self).__name__} has no set_joint_positions."}]}
+        result: dict[str, Any] = method(positions, robot_name=robot, hold=True)
+        return result
+
+    @property
+    def foxglove_url(self) -> str | None:
+        """The live Foxglove WebSocket URL, or ``None`` when no Foxglove bridge runs."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.url if bridge is not None else None
+
+    @property
+    def foxglove_link(self) -> str | None:
+        """A ``foxglove://`` deep link to this engine's server, or ``None``."""
+        bridge = getattr(self, "_foxglove_bridge", None)
+        return bridge.link if bridge is not None else None
 
     def _publish_ros_telemetry(self, *, skip_images: bool = False) -> None:
         """Publish joint_states (and camera images) for every robot once.
@@ -1024,6 +1125,11 @@ class SimEngine(ABC):
         bridge = getattr(self, "_ros_bridge", None)
         if bridge is None:
             return
+        # A bridge that rate-limits its cameras says when a frame is worth the
+        # render; one without the hint gets a frame every step, as before.
+        wants_images = getattr(bridge, "wants_images", None)
+        if not skip_images and wants_images is not None and not wants_images():
+            skip_images = True
         for robot in self.list_robots():
             # Per-robot guard: a transient render/observation failure on one
             # robot (e.g. EGL/GL context loss, a camera that produced no frame)
@@ -1064,6 +1170,8 @@ class SimEngine(ABC):
         if bridge is not None:
             bridge.shutdown()
             self._ros_bridge = None
+        if getattr(self, "_foxglove_bridge", None) is not None:
+            self._foxglove_bridge = None
 
     def _resolve_single_robot(self, robot_name: str | None) -> str:
         """Resolve an optional robot name to a concrete one.
@@ -1395,6 +1503,31 @@ class SimEngine(ABC):
                 sole-robot default on this thread.
         """
         self._predicate_binding().robot = robot_name
+
+    def _bind_policy_state_keys(self, policy: Any, robot_name: str, *, prebuilt: bool) -> None:
+        """Bind *policy* to the robot's action keys - unless the caller already chose them.
+
+        A policy built here gets the robot's full ``robot_action_keys``. A
+        ``policy_object`` the caller configured keeps its own
+        ``robot_state_keys`` when every one of them is a key of this robot: the
+        rebinding used to overwrite them on every rollout, so a pi0.5-DROID
+        policy set to the panda's 7 arm joints + one gripper finger (8 of its
+        9 keys) was re-bound to all 9 and could not be driven as trained. Keys
+        that are not this robot's (or the generic ``joint_<i>`` placeholders a
+        checkpoint loads with) are replaced, as before.
+        """
+        robot_keys = list(self.robot_action_keys(robot_name))
+        chosen = list(getattr(policy, "robot_state_keys", None) or []) if prebuilt else []
+        if chosen and all(isinstance(k, str) for k in chosen) and set(chosen) <= set(robot_keys):
+            if chosen != robot_keys:
+                logger.info(
+                    "kept the %d robot_state_keys the caller set on the policy for %r (of the robot's %d)",
+                    len(chosen),
+                    robot_name,
+                    len(robot_keys),
+                )
+            return
+        policy.set_robot_state_keys(robot_keys)
 
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
@@ -3658,7 +3791,7 @@ class SimEngine(ABC):
         # matches the guarded binding in MujocoSimulation.run_policy's
         # multi-robot path.
         try:
-            policy.set_robot_state_keys(self.robot_action_keys(robot_name))
+            self._bind_policy_state_keys(policy, robot_name, prebuilt=policy_object is not None)
             self.bind_policy_sim_context(policy, robot_name)
         except Exception as exc:  # noqa: BLE001 - non-fatal policy configuration
             logger.debug("policy binding for %r failed: %s", robot_name, exc)
@@ -5486,6 +5619,13 @@ class SimEngine(ABC):
             than ``n_episodes``, and the aggregate covers only those episodes
             instead of averaging over ones whose data does not exist.
 
+            Physics: ``physics_error`` - ``None`` on every healthy evaluation,
+            and the backend's divergence report (episode, step, joint) when the
+            physics diverged and the backend reset the world mid-episode. The
+            evaluation stops there, the diverged episode is not counted and its
+            unsaved recording frames are discarded, and ``status`` is
+            ``"error"``.
+
             Video: ``video_paths`` (one MP4 per episode, empty when no
             recording was requested).
 
@@ -5656,7 +5796,7 @@ class SimEngine(ABC):
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         on_frame, recording_claim = self._evaluation_recording(resolved_robot, instruction, on_frame, "eval_policy")
 
@@ -5898,6 +6038,10 @@ class SimEngine(ABC):
             ``"error"`` - see :meth:`eval_policy`, which reports it the same
             way.
 
+            ``physics_error`` is ``None`` on every healthy run and carries the
+            divergence report when the physics diverged mid-episode; the
+            benchmark stops the same way :meth:`eval_policy` does.
+
             ``actions_applied`` (actions actually handed to ``send_action``),
             ``steps_advanced`` (control steps the benchmark advanced) and
             ``uncommanded_error`` report the same fact :meth:`eval_policy`
@@ -6089,7 +6233,7 @@ class SimEngine(ABC):
             # caller benchmark an already-loaded checkpoint (e.g. a multi-GB
             # VLA) without a create_policy round-trip / redundant reload.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
+        self._bind_policy_state_keys(policy, resolved_robot, prebuilt=policy_object is not None)
         self.bind_policy_sim_context(policy, resolved_robot)
         # Frames are labelled with the instruction the POLICY is conditioned on:
         # the caller's, else the benchmark's own (#187 - LIBERO and friends ship

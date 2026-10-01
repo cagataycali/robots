@@ -1,4 +1,4 @@
-"""The red button's label and the action a click takes come from one lockout state.
+"""The dashboard's own lockout is painted only from what the server said about it.
 
 The button reads E-STOP or RESUME and a click posts `/api/safety/estop` or
 `/api/safety/resume`. The two were decided in different places: the label was
@@ -11,17 +11,13 @@ inverted. The error handlers compounded it by painting the line `locked` for
 any failure - a 429 session cap, a network error - so the button could flip
 into resume mode while the server's lockout was clear.
 
-Now `lockoutLine()` is the one writer of the client's lockout state, it writes
-the label, and the click handler reads the action from that same state. A
-failed request is not an e-stop: it is shown as a message and the line is
-re-read from `/api/safety`.
-
-The UI is now the React SPA (`frontend/src`), where the same rule reads: the Sim
-tab holds ONE `lockout` state, every write of it is a server answer (the
-`/api/safety` read, the `/api/safety/<action>` reply, a telemetry frame that
-carried one), both the button's label and the click's action are read from that
-state, and a failed request becomes a message, never a lockout. These cells read
-`SimTab.tsx` for that shape, so the rule holds without a browser in the suite.
+The surface that fires this rail is the e-stop sheet (`frontend/src/components/
+EstopSheet.tsx`; the in-process Sim tab that once held its own button left with
+the agent's sim tools). The rule there reads: the sheet holds ONE `simLockout`
+state, every write of it is the server's answer to the `/api/safety/<action>`
+it just posted, and a failed request becomes a message, never a lockout. These
+cells read `EstopSheet.tsx` for that shape, so the rule holds without a browser
+in the suite.
 """
 
 from __future__ import annotations
@@ -30,7 +26,7 @@ import pathlib
 import re
 
 FRONTEND_SRC = pathlib.Path(__file__).parent.parent / "strands_robots" / "dashboard" / "frontend" / "src"
-SIM_TAB = FRONTEND_SRC / "components" / "SimTab.tsx"
+ESTOP_SHEET = FRONTEND_SRC / "components" / "EstopSheet.tsx"
 
 
 def _function_body(source: str, header: str) -> str:
@@ -46,38 +42,39 @@ def _function_body(source: str, header: str) -> str:
 
 class TestTheEstopButtonReadsOneState:
     def test_one_lockout_state_and_every_write_is_a_server_answer(self) -> None:
-        """The tab keeps one ``lockout`` state, and nothing writes it but what the server said."""
-        source = SIM_TAB.read_text(encoding="utf-8")
+        """The sheet keeps one ``simLockout`` state, and nothing writes it but what the server said."""
+        source = ESTOP_SHEET.read_text(encoding="utf-8")
         states = re.findall(r"useState<SimLockout \| null>", source)
         assert len(states) == 1, f"the lockout is held in {len(states)} states, so two can disagree"
-        writes = [line.strip() for line in source.splitlines() if "setLockout(" in line]
-        assert writes, "nothing writes the lockout, so the button reads a state that never changes"
+        writes = [line.strip() for line in source.splitlines() if "setSimLockout(" in line]
+        assert writes, "nothing writes the lockout, so the sheet paints a state that never changes"
         for write in writes:
-            assert re.search(r"await (api|post)<\{ lockout: SimLockout \}>|onLockout\(|\(m\.lockout\)|\(l\)", write), (
+            assert re.search(r"setSimLockout\(sim\.lockout\)", write), (
                 f"a lockout write that is not a server answer: {write}"
             )
 
-    def test_the_label_and_the_click_read_the_same_state(self) -> None:
-        """The label and the action both come from ``lockout.state``, so they cannot invert."""
-        source = SIM_TAB.read_text(encoding="utf-8")
-        assert re.search(r"lockout\?\.state === 'locked' \? 'RESUME' : 'E-STOP", source), (
-            "the button's label is not read from the recorded lockout"
-        )
-        handler = _function_body(source, "const toggleEstop = async () =>")
-        assert re.search(
-            r"const route = lockout\?\.state === 'locked' \? '/api/safety/resume' : '/api/safety/estop'", handler
-        ), "the click does not choose its action from the recorded lockout"
-        assert "className" not in handler, "the click reads a painted class, which the label does not follow"
+    def test_the_lockout_the_sheet_paints_is_the_answer_to_the_route_it_posted(self) -> None:
+        """Each write follows a ``post<{ lockout: SimLockout }>('/api/safety/<action>')`` on the same rail."""
+        source = ESTOP_SHEET.read_text(encoding="utf-8")
+        for action in ("estop", "resume"):
+            handler = _function_body(
+                source, "const fire = async () =>" if action == "estop" else "const resume = async () =>"
+            )
+            assert f"post<{{ lockout: SimLockout }}>('/api/safety/{action}')" in handler, (
+                f"the {action} handler does not read the lockout from the server's answer"
+            )
+            assert "className" not in handler, "the handler reads a painted class, which the label does not follow"
 
     def test_no_handler_fabricates_a_lockout(self) -> None:
         """A failed request is reported as a message; only a server answer becomes the lockout."""
-        source = SIM_TAB.read_text(encoding="utf-8")
+        source = ESTOP_SHEET.read_text(encoding="utf-8")
         fabricated = [
             f"{n}: {line.strip()}"
             for n, line in enumerate(source.splitlines(), 1)
-            if re.search(r"setLockout\(\s*\{\s*state\s*:", line)
+            if re.search(r"setSimLockout\(\s*\{\s*state\s*:", line)
         ]
         assert fabricated == [], f"a lockout the server never reported is written: {fabricated}"
-        handler = _function_body(source, "const toggleEstop = async () =>")
-        assert re.search(r"catch \(\w+\) \{ await failed\(", handler), "a failed e-stop request's reason is not shown"
-        assert "setLockout" not in handler.split("catch")[1], "a failed request is painted as a lockout"
+        for header in ("const fire = async () =>", "const resume = async () =>"):
+            handler = _function_body(source, header)
+            assert "catch (e" in handler, f"{header} has no failure branch to report a failed request"
+            assert "setSimLockout" not in handler.split("catch")[1], "a failed request is painted as a lockout"

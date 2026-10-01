@@ -77,6 +77,7 @@ import threading
 import types
 from typing import Any
 
+import numpy as np
 import pytest
 
 from strands_robots.simulation.base import SimEngine
@@ -146,6 +147,12 @@ class CountingLock:
 # --------------------------------------------------------------------------- #
 # Backend stand-ins (every guard precedes the solver and the stage)           #
 # --------------------------------------------------------------------------- #
+# The three instability counters ``step`` reads (see mujoco/divergence.py),
+# never bumped: this stand-in's physics does not diverge.
+_MJ_WARNINGS = types.SimpleNamespace(mjWARN_BADQPOS=0, mjWARN_BADQVEL=1, mjWARN_BADQACC=2)
+_STABLE_WARNINGS = [types.SimpleNamespace(number=0, lastinfo=0) for _ in range(3)]
+
+
 def _mujoco_stub(lock: CountingLock, tick: Any = None, batch: int | None = None) -> tuple[Any, dict[str, int]]:
     calls = {"n": 0}
 
@@ -158,12 +165,14 @@ def _mujoco_stub(lock: CountingLock, tick: Any = None, batch: int | None = None)
     stub = types.SimpleNamespace(
         _world=types.SimpleNamespace(
             _model=object(),
-            _data=types.SimpleNamespace(time=0.0),
+            # ``step`` reads MuJoCo's instability counters and the state's
+            # finiteness after each batch, so the stand-in carries both.
+            _data=types.SimpleNamespace(time=0.0, warning=_STABLE_WARNINGS, qpos=np.zeros(1), qvel=np.zeros(1)),
             sim_time=0.0,
             step_count=0,
             _backend_state={},
         ),
-        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None),
+        _mj=types.SimpleNamespace(mj_step=mj_step, mj_forward=lambda model, data: None, mjtWarning=_MJ_WARNINGS),
         _lock=lock,
         _MAX_STEPS_PER_CALL=MuJoCoSimEngine._MAX_STEPS_PER_CALL,
         _STEPS_PER_BATCH=MuJoCoSimEngine._STEPS_PER_BATCH if batch is None else batch,
@@ -257,8 +266,11 @@ class TestTheLockIsReleasedBetweenBatches:
         stub, calls = _isaac_stub(lock, batch=PROBE_BATCH)
         assert IsaacSimulation.step(stub, PROBE_BATCH * 4)["status"] == "success"
         assert calls["n"] == PROBE_BATCH * 4
-        # One extra for the precondition read, which precedes the loop.
-        assert lock.acquires == 5
+        # One extra for the precondition read, which precedes the loop, and one
+        # for the divergence check after it, which reads the stale flag and
+        # every articulation under the lock as one short step (a worker's
+        # remove_object between the two would otherwise be read through).
+        assert lock.acquires == 6
 
     def test_newton_releases_the_lock_every_batch(self) -> None:
         lock = CountingLock()

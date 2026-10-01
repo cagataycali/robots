@@ -91,6 +91,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     unknown_model_msg,
+    unknown_parameter_error,
 )
 from strands_robots.simulation.ik import (
     GRIPPER_BODY_HINTS,
@@ -126,6 +127,7 @@ from strands_robots.simulation.mujoco.backend import (
     pose_qpos_components,
     qpos_ceiling_error,
 )
+from strands_robots.simulation.mujoco.divergence import divergence_error, instability_counts
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
 from strands_robots.simulation.mujoco.physics import (
@@ -891,6 +893,9 @@ class MuJoCoSimEngine(
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
         render_dir: str | os.PathLike[str] | None = None,
+        foxglove: bool | str = False,
+        foxglove_mcap: str | os.PathLike[str] | None = None,
+        foxglove_services: bool = False,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -954,6 +959,24 @@ class MuJoCoSimEngine(
                 ``Robot(name, mode="sim", render_dir=...)`` through the factory's
                 ``**kwargs``. A value that cannot name a directory (a non-path
                 type, an empty string) is refused with a :class:`ValueError`.
+            foxglove: ``True`` serves this simulation live to Foxglove on
+                ``ws://127.0.0.1:8765`` (the next free port when that one is
+                busy); ``"host:port"`` picks the address, ``":0"`` an
+                ephemeral port. Every ``step`` then publishes ``/tf`` and the
+                robots' meshes for the 3D panel, per-robot joint states and
+                cameras as JPEG. ``STRANDS_ROBOTS_FOXGLOVE=1`` switches it on
+                for a caller that left this ``False``. Needs the
+                ``[foxglove]`` extra; refused with :class:`ImportError`
+                without it. Reaches here from ``Robot(name, foxglove=...)``.
+                Defaults to ``False`` - the sim opens no socket.
+            foxglove_mcap: Path of a new MCAP file the same channels are
+                recorded to (the static scene once). Requires ``foxglove``;
+                an existing file is refused rather than overwritten.
+            foxglove_services: When ``True``, the server advertises the
+                ``strands/set_joint_positions`` service, gated by
+                ``STRANDS_FOXGLOVE_COMMAND_ALLOW`` like every other command
+                surface. Default ``False``: the server advertises no
+                capability and nothing inbound exists.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -1022,8 +1045,15 @@ class MuJoCoSimEngine(
         # resolved handle is stored below, where its own contract comment lives.
         mesh_handle = _validated_mesh_handle(mesh)
         super().__init__()
-        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+        # Named before the bridges exist so the Foxglove server carries it.
         self.tool_name_str = tool_name
+        self._init_ros_bridge(
+            ros2_bridge=ros2_bridge,
+            ros2_domain=ros2_domain,
+            foxglove=foxglove,
+            foxglove_mcap=foxglove_mcap,
+            foxglove_services=foxglove_services,
+        )
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
@@ -1292,8 +1322,12 @@ class MuJoCoSimEngine(
         assert action_map is not None  # narrow for mypy: no error implies a mapping
         with self._lock:
             self._unresolved_action_keys: list[str] = []
+            unstable_before = instability_counts(self._mj, self._world._data)
             self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
             unresolved = self._unresolved_action_keys
+            diverged = divergence_error(self._mj, self._world._model, self._world._data, unstable_before, "send_action")
+        if diverged is not None:
+            return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
         applied = [k for k in action_map if k not in unresolved]
         if unresolved:
             # Surface the actual valid actuator names so the user can
@@ -5657,6 +5691,9 @@ class MuJoCoSimEngine(
         # lock; ``None`` when nothing is open or a rollout owns the recorder.
         recorded_frames = 0
         clock: _StepRecordingClock | None = None
+        # MuJoCo resets a diverged world and says so only on stderr; read its
+        # counters before, and after each batch, so the reset is reported.
+        unstable_before = instability_counts(mj, self._world._data)
         # Process in batches, releasing lock between batches so stop_policy
         # and other actions can interleave on long runs.
         remaining = n_steps
@@ -5716,6 +5753,16 @@ class MuJoCoSimEngine(
                     mj.mj_forward(self._world._model, self._world._data)
                 self._world.sim_time = self._world._data.time
                 self._world.step_count += batch
+                diverged = divergence_error(mj, self._world._model, self._world._data, unstable_before, "step")
+            if diverged is not None:
+                done = n_steps - remaining
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"{diverged} (advanced {done} of {n_steps} steps.)"},
+                        {"json": {"diverged": True, "steps_advanced": done}},
+                    ],
+                }
         self._publish_ros_telemetry()
         text = f"+{n_steps} steps | t={self._world.sim_time:.4f}s | total={self._world.step_count}"
         if clock is not None:
@@ -5893,6 +5940,8 @@ class MuJoCoSimEngine(
             )
         if self._world._backend_state.get("recording", False):
             lines.append(f"[recording] {len(self._world._backend_state['trajectory'])} steps")
+        if (foxglove_url := self.foxglove_url) is not None:
+            lines.append(f"Foxglove: {foxglove_url}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:
@@ -7529,6 +7578,10 @@ class MuJoCoSimEngine(
         # chunk) leaves a dangling partial episode we must discard so the next
         # recording starts at frame 0 rather than appending to a half-episode.
         completed_cleanly = False
+        # Set when MuJoCo declares the physics unstable mid-rollout; the loop
+        # stops there, and the partial episode is discarded like any other
+        # unclean exit (its last frames would show the reset, not the task).
+        diverged: str | None = None
         # Pace on a DEADLINE, not a delay: ``time.sleep(1 / control_frequency)``
         # added each step's work - N policy queries, one camera render, the
         # recorder's frame write - to the period, so the loop ran at ``1 /
@@ -7613,6 +7666,7 @@ class MuJoCoSimEngine(
                             robot = self._world.robots[rname]
                             pfx = robot.namespace or ""
                             self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj, rname)
+                        unstable_before = instability_counts(mj, self._world._data)
                         for _ in range(n_substeps):
                             mj.mj_step(self._world._model, self._world._data)
                             # Kinematic attachments (attach_bodies mode="kinematic")
@@ -7624,6 +7678,11 @@ class MuJoCoSimEngine(
                         self._world.step_count += n_substeps
                         if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
                             self._viewer_handle.sync()
+                        diverged = divergence_error(
+                            mj, self._world._model, self._world._data, unstable_before, "run_multi_policy"
+                        )
+                    if diverged is not None:
+                        break
 
                     # --- 4. Record ONE merged frame (all robots + all cameras).
                     # ``recording`` already implies ``recorder is not None`` (see its
@@ -7649,7 +7708,7 @@ class MuJoCoSimEngine(
 
                     ticker.wait()
 
-            completed_cleanly = True
+            completed_cleanly = diverged is None
         except CooperativeStop:
             # A cooperative stop is a normal, user-requested halt: the frames
             # captured so far are valid and the caller will save_episode them.
@@ -7665,6 +7724,14 @@ class MuJoCoSimEngine(
             if not completed_cleanly and recording and recorder is not None:
                 recorder.clear_episode_buffer()
 
+        if diverged is not None:
+            text = f"{diverged} Stopped after {step_count} synchronized steps"
+            if recording:
+                text += "; the partial episode was discarded"
+            return {
+                "status": "error",
+                "content": [{"text": f"{text}."}, {"json": {"steps": step_count, "diverged": True}}],
+            }
         text = (
             f"{'stopped early' if stopped_early else 'completed'}: "
             f"run_multi_policy on {len(policies)} robots ({', '.join(policies)}) - "
@@ -7926,18 +7993,8 @@ class MuJoCoSimEngine(
             # ...and the nearest of them is named, the way an unknown action or
             # an unknown robot already is: ``policy`` is answered with
             # ``policy_provider, policy_config`` instead of a 20-name list to
-            # scan.
-            hint = close_match_hint(reported_unknown, valid_sorted)
-            return None, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
-                        )
-                    }
-                ],
-            }
+            # scan. The sentence is the one the real arm tool uses too.
+            return None, unknown_parameter_error([reported_unknown], action, valid_sorted)
 
         # 2) Scalar string type validation. The schema publishes these as
         # strings, and every value at this boundary arrives as JSON, so a

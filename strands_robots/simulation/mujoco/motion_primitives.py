@@ -79,6 +79,7 @@ from strands_robots.simulation.motion_primitives_base import (
     _quat_angle_error,
 )
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
+from strands_robots.simulation.mujoco.divergence import divergence_error, instability_counts
 from strands_robots.simulation.mujoco.scene_ops import (
     actuator_target_body_ids,
     effective_ctrl_range,
@@ -177,18 +178,31 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             )
         return None
 
-    def _primitive_tick(self, model: Any, data: Any, ctrl_targets: dict[int, float]) -> None:
+    def _primitive_tick(
+        self, model: Any, data: Any, ctrl_targets: dict[int, float], action: str
+    ) -> dict[str, Any] | None:
         """One control tick: assert ctrl targets, advance physics, refresh FK.
 
         Must be called under ``self._lock``. Mirrors ``step()``'s bookkeeping
         (kinematic attachments, ``sim_time`` / ``step_count``) and finishes
         with ``mj_kinematics`` so the caller reads current frame poses.
+
+        Args:
+            model: The ``MjModel`` the primitive resolved its targets on.
+            data: The ``MjData`` it steps.
+            ctrl_targets: Actuator id -> ctrl value asserted before each substep.
+            action: The primitive's action name, for the divergence report.
+
+        Returns:
+            ``None`` after a normal tick; the structured error to return when
+            MuJoCo declared the physics unstable during it (and reset the world).
         """
         mj = self._mj
         assert self._world is not None  # callers must check
         for act_id, value in ctrl_targets.items():
             data.ctrl[act_id] = value
         has_kinematic_attachments = bool(self._world._backend_state.get("kinematic_attachments"))
+        unstable_before = instability_counts(mj, data)
         for _ in range(_SUBSTEPS_PER_TICK):
             mj.mj_step(model, data)
             if has_kinematic_attachments:
@@ -196,6 +210,9 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         self._world.sim_time = data.time
         self._world.step_count += _SUBSTEPS_PER_TICK
         mj.mj_kinematics(model, data)
+        if diverged := divergence_error(mj, model, data, unstable_before, action):
+            return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
+        return None
 
     def _pose_actuator_map(self, model: Any, robot: Any) -> tuple[dict[int, int], dict[int, int]]:
         """Split :meth:`_joint_actuator_map` into the pose-writable half and the rest.
@@ -833,7 +850,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 abort = self._primitive_abort_reason("move_to", robot_name, model)
                 if abort is not None:
                     return abort
-                self._primitive_tick(model, data, ctrl_targets)
+                if (diverged := self._primitive_tick(model, data, ctrl_targets, "move_to")) is not None:
+                    return diverged
                 ee_pos, ee_quat = self._frame_world_pose(model, data, frame_name, frame_type)
             steps_used += 1
             position_error = float(np.linalg.norm(ee_pos - target))
@@ -1219,7 +1237,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 abort = self._primitive_abort_reason("set_gripper", robot_name, model)
                 if abort is not None:
                     return abort
-                self._primitive_tick(model, data, targets)
+                if (diverged := self._primitive_tick(model, data, targets, "set_gripper")) is not None:
+                    return diverged
 
         with self._lock:
             joint_positions: dict[str, float] = {}
@@ -1399,7 +1418,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 abort = self._primitive_abort_reason("rotate_wrist", robot_name, model)
                 if abort is not None:
                     return abort
-                self._primitive_tick(model, data, ctrl_targets)
+                if (diverged := self._primitive_tick(model, data, ctrl_targets, "rotate_wrist")) is not None:
+                    return diverged
                 final_yaw = float(data.qpos[wrist_qadr])
             steps_used += 1
             yaw_error = abs(final_yaw - target_yaw)
