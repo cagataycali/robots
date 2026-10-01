@@ -129,6 +129,7 @@ LAYERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "rosbridge",
             "ros_telemetry",
             "rtps",
+            "teleop",
             "teleop_mixin",
             "teleoperator",
         ),
