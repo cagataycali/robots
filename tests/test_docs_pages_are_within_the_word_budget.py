@@ -76,7 +76,9 @@ _BUDGET: int = _hook().LIMIT
 #: Lowered to 60,626 when the arm pages' next-step sentence dropped one word (x60 pages) to pay
 #: for main's new registry aliases. Banked to the exact total.
 #: Raised by 567 for the Foxglove page carried in from main, then banked to the exact total, 61,202.
-_SITE_BUDGET = 61_202
+#: Raised by 1,754 to 62,956 for the two humanoid design pages under project/ (whole-body
+#: teleoperation, driver composition) plus their index rows, carried in from main. Banked to the exact total.
+_SITE_BUDGET = 62_956
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

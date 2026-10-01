@@ -266,6 +266,17 @@ function Dashboard() {
         </div>
       )}
 
+      {/* The mesh session refused to open (a plain start on a laptop: auth defaults to mtls with no certificate). The fleet is empty for a reason, and the reason is here, with the one line that fixes it on a trusted machine. */}
+      {loaded && mesh.online === false && mesh.error && (
+        <div className="toast warn" role="status" data-testid="mesh-not-started">
+          <b>Mesh not started.</b> {mesh.error}
+          <span className="hint">
+            {' '}No robot can reach this dashboard until it joins. On a laptop or a trusted LAN start it with
+            {' '}<code>STRANDS_MESH_LOCAL_DEV=1</code>; for a shared network set the certificate variables (Settings, mesh).
+          </span>
+        </div>
+      )}
+
       {/* the dark-feature banner. */}
       {dark.length > 0 && (
         <div className="toast warn" role="status">

@@ -607,3 +607,5 @@ nav:
       - Contributing: project/contributing.md
       - Roadmap: project/roadmap.md
       - Security policy: project/security-policy.md
+      - Whole-body teleoperation design: project/design-wholebody-teleop.md
+      - Driver composition design: project/design-driver-composition.md
