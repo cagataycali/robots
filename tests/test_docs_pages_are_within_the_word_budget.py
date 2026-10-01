@@ -90,7 +90,8 @@ _BUDGET: int = _hook().LIMIT
 #: Raised for the holosoma provider page (learn/policies/holosoma.md) and its robot page rows,
 #: carried in by merge. Banked to the exact total.
 #: Raised by 16 to 68,761 for main's isaaclab and rl training pages (#4402, #4427), carried in by merge.
-_SITE_BUDGET = 68_761
+#: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links, carried in by merge.
+_SITE_BUDGET = 69_295
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

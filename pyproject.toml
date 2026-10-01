@@ -556,6 +556,23 @@ sim-newton = [
     "mujoco-warp>=3.11.0,<3.12.0",
     "trimesh>=4.0.0,<5.0.0",
 ]
+# mjlab GPU-vectorized MuJoCo backend (mujocolab/mjlab: Isaac-Lab-shaped API
+# on MuJoCo-Warp, rsl_rl training, ONNX export). Selected via
+# create_simulation("mjlab", num_envs=N) / Robot(..., backend="mjlab"). Shares
+# newton's MuJoCo 3.11 pins (mjlab pins mujoco~=3.11 + mujoco-warp~=3.11).
+# GPU/heavy - kept OUT of `[all]`. Known conflict: mjlab needs torch>=2.14
+# while `[lerobot]` (lerobot>=0.6.1) caps torch<2.12, so the two extras do not
+# resolve together in one step; install `[lerobot]` first, then this extra
+# (the LeRobot v3 recorder still imports on torch 2.14). onnxruntime serves
+# the exported policies through strands_robots.policies.rsl_rl_onnx.
+sim-mjlab = [
+    "strands-robots[sim-mujoco]",
+    "mjlab>=1.6.0,<2.0.0",
+    "mujoco>=3.11.0,<3.12.0",
+    "mujoco-warp>=3.11.0,<3.12.0",
+    "warp-lang>=1.14.0,<2.0.0",
+    "onnxruntime>=1.17.0,<2.0.0",
+]
 # Isaac Sim GPU-native backend (NVIDIA Isaac Sim / Omniverse). Selected via
 # create_simulation("isaac") / Robot(..., backend="isaac"); the vendored
 # in-tree backend lives at strands_robots.simulation.isaac (parent epic #1144).
@@ -881,6 +898,12 @@ dependencies = [
 # [voice] and [mesh-iot] each pin awscrt to a different exact release (through
 # aws-sdk-bedrock-runtime[awscrt] and awsiotsdk), so no one environment holds
 # both; declaring the conflict lets the universal lock resolve each on its own.
+# [sim-mjlab] reaches websockets<17 through mjlab's viser viewer, while
+# [inference] and [cosmos3-service] floor websockets at 17.0 (a measured
+# behaviour floor, see those extras), so no one environment holds mjlab next
+# to either of them or to [all]; declaring the conflicts lets the universal
+# lock resolve each on its own. mjlab still installs next to [sim-mujoco],
+# [lerobot] and [dev], which is what its tests and the recorder need.
 conflicts = [
     [
         { extra = "voice" },
@@ -888,6 +911,18 @@ conflicts = [
     ],
     [
         { extra = "voice" },
+        { extra = "all" },
+    ],
+    [
+        { extra = "sim-mjlab" },
+        { extra = "inference" },
+    ],
+    [
+        { extra = "sim-mjlab" },
+        { extra = "cosmos3-service" },
+    ],
+    [
+        { extra = "sim-mjlab" },
         { extra = "all" },
     ],
 ]
@@ -1115,7 +1150,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*", "flux_action", "flux_action.*", "natten", "natten.*", "isaaclab", "isaaclab.*", "isaaclab_tasks", "isaaclab_tasks.*", "isaaclab_rl", "isaaclab_rl.*", "rsl_rl", "rsl_rl.*"]
+module = ["lerobot.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*", "unitree_sdk2py.*", "booster_robotics_sdk_python", "booster_robotics_sdk_python.*", "webauthn", "webauthn.*", "requests", "requests.*", "flux_action", "flux_action.*", "natten", "natten.*", "isaaclab", "isaaclab.*", "isaaclab_tasks", "isaaclab_tasks.*", "isaaclab_rl", "isaaclab_rl.*", "rsl_rl", "rsl_rl.*", "mjlab", "mjlab.*", "mujoco_warp", "mujoco_warp.*", "warp", "warp.*", "onnx", "onnx.*", "tensorboard", "tensorboard.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge
@@ -1145,6 +1180,13 @@ ignore_missing_imports = true
 module = ["strands_robots.training.rl.*"]
 warn_return_any = false
 disallow_untyped_defs = false
+
+# mjlab task definitions (training.mjlab_tasks.*) subclass mjlab's untyped
+# manager terms and return torch tensors the stubs cannot see through; same
+# posture as training.rl.*. Public signatures are still annotated.
+[[tool.mypy.overrides]]
+module = ["strands_robots.training.mjlab_tasks.*"]
+warn_return_any = false
 
 # LeRobot local policy uses dynamic attr access via draccus PreTrainedConfig
 [[tool.mypy.overrides]]

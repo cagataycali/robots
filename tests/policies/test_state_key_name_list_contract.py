@@ -111,6 +111,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import pathlib
+import tempfile
 from collections.abc import Callable
 from typing import Any
 
@@ -139,6 +140,7 @@ _MUST_VALIDATE = {
     "policies/microduck/policy.py::MicroduckPolicy",
     "policies/moveit2/policy.py::MoveIt2Policy",
     "policies/rl.py::RLCheckpointPolicy",
+    "policies/rsl_rl_onnx/policy.py::RslRlOnnxPolicy",
 }
 
 # Already total without the shared domain: every joint they drive is resolved by
@@ -635,6 +637,16 @@ def _rl() -> Any:
     return RLCheckpointPolicy(checkpoint_dir=directory)
 
 
+def _rsl_rl_onnx() -> Any:
+    """A two-joint actor written on the spot with the metadata mjlab stamps."""
+    pytest.importorskip("onnx", reason="onnx needed to write the actor fixture")
+    from strands_robots.policies.rsl_rl_onnx import RslRlOnnxPolicy
+    from tests.policies.rsl_rl_onnx.actor_fixture import write_actor
+
+    path = write_actor(pathlib.Path(tempfile.mkdtemp()) / "actor.onnx", ["joint_pos", "actions"], 4)
+    return RslRlOnnxPolicy(onnx_path=path)
+
+
 class _ZeroDecoderSession:
     """A SONIC decoder session that returns zero joint targets."""
 
@@ -897,6 +909,7 @@ _OWNING_SURFACES: list[_Surface] = [
     ("policies/microduck/policy.py::MicroduckPolicy", _microduck, "_robot_state_keys", None),
     ("policies/moveit2/policy.py::MoveIt2Policy", _moveit2, "_robot_state_keys", "zmq"),
     ("policies/rl.py::RLCheckpointPolicy", _rl, "robot_state_keys", "torch"),
+    ("policies/rsl_rl_onnx/policy.py::RslRlOnnxPolicy", _rsl_rl_onnx, "robot_state_keys", "onnxruntime"),
 ]
 _OWNING_IDS = [surface.split("::")[1] for surface, *_ in _OWNING_SURFACES]
 
@@ -916,7 +929,7 @@ def test_the_behavioural_table_covers_every_surface_that_owns_the_check() -> Non
     """Derived, so a provider added later cannot skip the behavioural half.
 
     ``MockPolicy`` and ``RemotePolicy`` are driven by the sections above; these
-    seven are the remainder. A tenth owning surface fails here rather than
+    eight are the remainder. An eleventh owning surface fails here rather than
     joining the set whose refusal only the AST classifier ever sees.
     """
     driven_above = {"policies/mock.py::MockPolicy", "inference/client.py::RemotePolicy"}
@@ -928,7 +941,7 @@ def test_every_owning_provider_refuses_the_bare_string(entry: _Surface) -> None:
     """The headline mistake, refused with the shared domain's message verbatim.
 
     Equality rather than a substring: the provider has to return the shared
-    verdict, not a locally re-worded copy that could drift from the other eight.
+    verdict, not a locally re-worded copy that could drift from the other nine.
     """
     policy = _build(entry)
     with pytest.raises(ValueError) as excinfo:

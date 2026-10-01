@@ -15,6 +15,7 @@ site/
 # macOS Finder metadata
 .DS_Store
 .venv-docs/
+.mypy_cache/
 
 # The dashboard consent store (config_api.ENV_FILE, written by /api/consent): local state, never committed.
 .env

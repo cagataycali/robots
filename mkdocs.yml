@@ -564,6 +564,7 @@ nav:
           - MuJoCo: learn/simulation/mujoco.md
           - Isaac Sim: learn/simulation/isaac.md
           - Newton: learn/simulation/newton.md
+          - mjlab: learn/simulation/mjlab.md
           - URDF robots: learn/simulation/urdf.md
           - Worlds and objects: learn/simulation/worlds-and-objects.md
           - Predicates and rollouts: learn/simulation/predicates-and-rollouts.md

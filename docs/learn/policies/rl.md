@@ -68,6 +68,10 @@ You should see `success` twice, plus a few `[sim] action value ... outside the r
 
 Trainers and `policy_meta.json` fields: [RL training](../training/rl.md). Isaac Lab runs: [Isaac Lab training](../training/isaaclab.md).
 
+## rsl_rl_onnx
+
+`policy="rsl_rl_onnx"` loads an actor exported by the [mjlab](../simulation/mjlab.md) trainer (`train_policy(provider="rsl_rl")`): `onnx_path` (local or `hf://repo/file.onnx`) and `robot`. The ONNX metadata carries joint names, default pose, action scale and observation terms, so one file runs on `mujoco`, `mjlab` and hardware; velocity tasks take `target_velocity`, reach tasks `target_pose`.
+
 ## Limits
 
 - The observation must carry every `actor_obs_keys` name unless an Isaac Lab export builds it from robot state (`command=` sets the velocity command; on MuJoCo torque motors the run's PD drives joints); differently named joints are refused.

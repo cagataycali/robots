@@ -25,7 +25,7 @@ sim.cleanup()
 You should see:
 
 ```text
-['isaac', 'isaac_sim', 'isaacsim', 'mj', 'mjc', 'mjx', 'mujoco', 'newton', 'nt', 'nvidia']
+['isaac', 'isaac_sim', 'isaacsim', 'mj', 'mjc', 'mjl', 'mjlab', 'mjx', 'mujoco', 'mujoco_warp', 'newton', 'nt', 'nvidia']
 Simulation State
 t=0.2000s (step 100)
 dt=0.002s | g=[0.0, 0.0, -9.81]

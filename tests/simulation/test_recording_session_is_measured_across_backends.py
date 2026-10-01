@@ -1,8 +1,8 @@
 """Every backend measures the recording SESSION, not the dataset it resumed.
 
 ``stop_recording`` is shared: :class:`DatasetRecordingMixin` implements the whole
-lifecycle once and the MuJoCo, Newton and Isaac backends mix it in unchanged.
-Only ``start_recording`` is per-backend, and each of the three resolves
+lifecycle once and the MuJoCo, Newton, Isaac and mjlab backends mix it in
+unchanged. Only ``start_recording`` is per-backend, and each of the four resolves
 create-vs-resume itself and installs the recorder it built.
 
 That split is why a session-scoped count cannot be a per-backend detail.
@@ -82,7 +82,7 @@ def _announces_a_resume(body: str) -> bool:
     """Whether ``body`` tells the caller the dataset is being appended to.
 
     The notice comes back from ``_arm_dataset_recorder`` when the session is
-    armed with ``resumed=``, which is how the three backends keep one wording;
+    armed with ``resumed=``, which is how the four backends keep one wording;
     a backend that resolved a resume and then armed without saying so is what
     this reads for. An inline sentence counts too - what is pinned is that the
     caller is told, not how it is spelled.

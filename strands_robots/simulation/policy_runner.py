@@ -1778,13 +1778,25 @@ class PolicyRunner:
             surfaces the failure rather than resetting into an undefined
             state.
         """
-        try:
-            world = getattr(self.sim, "_world", None)
-            if world is None:
+        # Backends that mix in DatasetRecordingMixin expose the live recorder
+        # through ``_active_recorder`` (the shared state seam - a SimWorld's
+        # ``_backend_state`` on MuJoCo/Newton, an engine-owned dict on Isaac and
+        # mjlab). Fall back to the SimWorld attribute for engines without it.
+        recorder = None
+        active = getattr(self.sim, "_active_recorder", None)
+        if callable(active):
+            try:
+                recorder = active()
+            except Exception:  # noqa: BLE001 - seam failure reads as "no recorder"
+                recorder = None
+        if recorder is None:
+            try:
+                world = getattr(self.sim, "_world", None)
+                if world is None:
+                    return None
+                recorder = world._backend_state.get("dataset_recorder")
+            except AttributeError:
                 return None
-            recorder = world._backend_state.get("dataset_recorder")
-        except AttributeError:
-            return None
         if recorder is None:
             return None
         # Don't flush an empty buffer - LeRobot raises on save_episode with

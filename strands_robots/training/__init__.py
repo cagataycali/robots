@@ -94,3 +94,16 @@ def _load_isaaclab_trainer() -> type[Trainer]:
 
 
 register_trainer("isaaclab", _load_isaaclab_trainer)
+
+
+# ``rsl_rl`` is the training-side name of the ``rsl_rl_onnx`` provider (mjlab +
+# rsl_rl PPO in, ONNX out). The policies.json ``trainer`` block already resolves
+# ``create_trainer("rsl_rl_onnx")``; this alias lets an agent say what it is
+# doing (training with rsl_rl) rather than what it will load afterwards.
+def _load_rsl_rl_trainer() -> type[Trainer]:
+    from strands_robots.training.rsl_rl import RslRlTrainer
+
+    return RslRlTrainer
+
+
+register_trainer("rsl_rl", _load_rsl_rl_trainer, aliases=["mjlab"])

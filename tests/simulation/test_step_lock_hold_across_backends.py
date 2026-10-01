@@ -83,6 +83,7 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from strands_robots.simulation.mjlab.simulation import MjlabEngine
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
@@ -246,13 +247,14 @@ class TestTheLockIsReleasedBetweenBatches:
         the granularity is inherited, ``_MAX_STEPS_PER_CALL`` is MuJoCo's own.
         """
         assert SimEngine._STEPS_PER_BATCH == 1000
-        for engine in (MuJoCoSimEngine, IsaacSimulation, NewtonSimEngine):
+        for engine in (MuJoCoSimEngine, IsaacSimulation, NewtonSimEngine, MjlabEngine):
             assert engine._STEPS_PER_BATCH == SimEngine._STEPS_PER_BATCH
             assert "_STEPS_PER_BATCH" not in vars(engine), (
                 f"{engine.__name__} shadows the shared batch size; the reason for it is shared"
             )
         assert not hasattr(IsaacSimulation, "_MAX_STEPS_PER_CALL")
         assert not hasattr(NewtonSimEngine, "_MAX_STEPS_PER_CALL")
+        assert not hasattr(MjlabEngine, "_MAX_STEPS_PER_CALL")
 
     def test_mujoco_releases_the_lock_every_batch(self) -> None:
         lock = CountingLock()
@@ -528,7 +530,7 @@ class TestATornDownWorldAborts:
 #: on, and the shared refusal it aborts a lost world with.
 _REQUIRED_STEP_GUARDS = ("_STEPS_PER_BATCH", "step_aborted_msg")
 
-_KNOWN_STEP_SURFACES = ("isaac", "mujoco", "newton")
+_KNOWN_STEP_SURFACES = ("isaac", "mjlab", "mujoco", "newton")
 
 
 def _scan_step_surfaces(root: pathlib.Path) -> tuple[dict[str, tuple[str, ...]], list[str]]:

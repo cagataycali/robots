@@ -52,6 +52,7 @@ _PROVIDER_POLICIES = {
     "flux3_action/policy.py": "Flux3ActionPolicy",
     "holosoma/policy.py": "HolosomaPolicy",
     "rl.py": "RLCheckpointPolicy",
+    "rsl_rl_onnx/policy.py": "RslRlOnnxPolicy",
 }
 
 # Built-in policy classes documented by test_builtin_policy_docstrings; the
