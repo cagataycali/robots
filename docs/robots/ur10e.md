@@ -15,7 +15,11 @@ description: "Universal Robots UR10e (6-DOF industrial)"
 from strands_robots import Robot
 
 robot = Robot("ur10e")
+print(robot.robot_joint_names("ur10e"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
 robot = Robot("ur10e", mode="real", driver="strands", port="192.168.1.10")  # URDriver

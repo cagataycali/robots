@@ -1,14 +1,13 @@
-"""Every picture token on a page has its files, and every committed SVG is what its scene renders.
+"""Every picture token on a page has its files, and every committed picture has a page.
 
 ``docs/hooks/visuals.py`` expands ``{{drawing:<id>}}`` into the paper and dark
 SVGs that ``docs/drawings/_tools/scene.py`` renders from the scene module
 ``docs/drawings/scenes/<id>.py``, and ``{{sim:<id>}}`` into the frame under
 ``docs/assets/sim``. A token with no files would ship as literal text (the hook
-warns, and ``--strict`` fails the build, but only when the build runs); an SVG that
-no longer matches its scene is a drawing whose source lies. Both are graded here,
-from the sources, without a build or a browser. The pipeline lands before any page
-places a token, so a picture with no page is not graded yet; the pages that place
-them bring that rule. The hook and the renderer
+warns, and ``--strict`` fails the build, but only when the build runs); an SVG
+with no page is a picture nobody sees and a scene nobody rebuilds; an SVG that
+no longer matches its scene is a drawing whose source lies. All three are graded
+here, from the sources, without a build or a browser. The hook and the renderer
 are loaded by path: the docs venv is not the test venv.
 """
 
@@ -63,14 +62,16 @@ def test_every_visual_token_resolves_to_committed_files() -> None:
     )
 
 
-def test_every_scene_has_its_two_exports() -> None:
+def test_every_committed_drawing_is_placed_on_a_page() -> None:
+    placed = {ident for kind, ident in _references() if kind == "drawing"}
     scenes = {p.stem for p in _SCENES.glob("*.py") if not p.name.startswith("_")}
     exports = {p.name.split(".")[0] for p in _SVGS.glob("*.svg")}
+    orphans = sorted((scenes | exports) - placed)
+    assert not orphans, (
+        f"drawings no page references: {orphans}. Place {{{{drawing:<id>}}}} on the page that explains it, or delete the scene and its SVGs."
+    )
     unexported = sorted(scenes - exports)
     assert not unexported, f"scenes with no SVG: {unexported}. Run docs/drawings/_tools/scene.py --all."
-    for name in sorted(scenes):
-        for scheme in ("paper", "dark"):
-            assert (_SVGS / f"{name}.{scheme}.svg").is_file(), f"{name}: no {scheme} export"
 
 
 def test_every_committed_svg_is_what_its_scene_renders() -> None:
@@ -91,12 +92,6 @@ def test_every_scene_keeps_the_brand_rules() -> None:
     """One accent element, a title, a lead, a footnote, no em or en dash, every identifier in the docs."""
     renderer = _renderer()
     problems = renderer.check_labels(renderer.load_scenes(), _DOCS)
-    # The pages that name every identifier the drawings draw land with the content; until
-    # then a name the package itself defines (EmbodimentMap) is not an invention.
-    package_text = "\n".join(f.read_text(encoding="utf-8") for f in (_REPO / "strands_robots").rglob("*.py"))
-    problems = [
-        line for line in problems if not (": name not in docs: " in line and line.rsplit(": ", 1)[1] in package_text)
-    ]
     assert problems == [], problems
     for name, scene in renderer.load_scenes().items():
         svg = scene.svg("paper")
@@ -114,9 +109,23 @@ def test_every_scene_keeps_the_brand_rules() -> None:
         assert 'class="grot muted" x="600.0"' in svg, f"{name}: no centred footnote"
 
 
+def test_every_committed_sim_frame_is_placed_on_a_page() -> None:
+    sim_dir = _DOCS / "assets" / "sim"
+    if not sim_dir.is_dir():
+        return
+    placed = {ident for kind, ident in _references() if kind == "sim"}
+    frames = {p.stem for p in sim_dir.glob("*.png")}
+    orphans = sorted(frames - placed)
+    assert not orphans, (
+        f"sim frames no page references: {orphans}. Place {{{{sim:<id>}}}} under the fence that built it."
+    )
+
+
 def test_the_hook_emits_lazy_images_for_both_schemes() -> None:
     hook = docs_hook("visuals")
-    ident = sorted(p.stem for p in _SCENES.glob("*.py") if not p.name.startswith("_"))[0]
+    ident = next((i for k, i in _references() if k == "drawing"), None)
+    if ident is None:
+        return
     out = hook.drawing_html(ident, "../")
     assert out is not None
     assert out.count('loading="lazy"') == 2, out
@@ -139,3 +148,8 @@ def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
     assert sorted(frames - set(promised)) == [], (
         "frames with no manifest entry; add them to docs/hooks/data/sim_frames.json"
     )
+    placed = {ident for kind, ident in _references() if kind == "sim"}
+    for frame, page_path in promised.items():
+        page = _DOCS / page_path
+        assert page.is_file(), f"{frame}: page {page_path} does not exist"
+        assert frame in placed, f"{frame}: no page places {{{{sim:{frame}}}}} (the manifest names {page_path})"

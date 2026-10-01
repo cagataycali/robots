@@ -28,10 +28,26 @@ from strands_robots.training import TrainSpec, create_trainer, list_trainers
 logger = logging.getLogger(__name__)
 
 #: The actions ``train_policy`` answers, in the order its docstring lists them.
-_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "stop", "play", "export", "list")
+_ACTIONS: tuple[str, ...] = ("train", "validate", "status", "stop", "play", "record", "export", "list")
 
 #: ``extra`` keys ``action="play"`` reads, and the keyword each becomes.
 _PLAY_EXTRA_KEYS: tuple[str, ...] = ("num_envs", "video_length", "timeout_s", "wait")
+
+#: ``extra`` keys ``action="record"`` reads, and the keyword each becomes.
+_RECORD_EXTRA_KEYS: tuple[str, ...] = (
+    "dataset_dir",
+    "repo_id",
+    "episodes",
+    "frames",
+    "camera",
+    "camera_eye",
+    "camera_target",
+    "width",
+    "height",
+    "task_description",
+    "timeout_s",
+    "wait",
+)
 
 
 def _ok(text: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -133,6 +149,14 @@ def train_policy(
                                ``num_envs``, ``video_length``, ``timeout_s``,
                                ``wait``). Poll the returned ``job_id`` with
                                ``status``; ``metrics['video']`` is the clip.
+            - ``"record"``   : roll a finished job's policy out and record it as a
+                               LeRobotDataset (needs ``job_id`` and
+                               ``extra['dataset_dir']``; ``isaaclab``; ``extra`` may
+                               set ``repo_id``, ``episodes``, ``frames``, ``camera``,
+                               ``camera_eye``, ``camera_target``, ``width``,
+                               ``height``, ``task_description``, ``timeout_s``,
+                               ``wait``). Poll the returned ``job_id``;
+                               ``metrics['dataset']`` is the dataset root.
             - ``"export"``   : produce a loadable artifact from a checkpoint
                                (needs ``output_dir``; uses the run's last checkpoint).
             - ``"list"``     : list available training providers.
@@ -213,7 +237,7 @@ def train_policy(
             ``num_envs``, ``physics`` (``"newton_mjwarp"`` / ``"isaacsim_physx"``),
             ``wait`` (block until the run ends), ``timeout_s``; ``steps`` is the
             PPO iteration count and ``status`` polls the returned ``job_id``.
-        job_id: Job identifier for ``action="status"``, ``"stop"`` and ``"play"``.
+        job_id: Job identifier for ``action="status"``, ``"stop"``, ``"play"`` and ``"record"``.
 
     Returns:
         Canonical Strands result ``{status, content:[...]}`` (no sibling keys).
@@ -256,7 +280,7 @@ def train_policy(
         if action == "list":
             return _ok("Available training providers:\n  " + "\n  ".join(list_trainers()))
 
-        if action in ("status", "stop", "play"):
+        if action in ("status", "stop", "play", "record"):
             if not job_id:
                 return _err(f"action='{action}' requires job_id")
             trainer = create_trainer(provider)
@@ -267,6 +291,17 @@ def train_policy(
                         f"action='play' does not read extra key(s) {unknown}; accepted: {list(_PLAY_EXTRA_KEYS)}"
                     )
                 res = trainer.play(job_id, **(extra or {}))
+            elif action == "record":
+                unknown = sorted(str(k) for k in (extra or {}) if k not in _RECORD_EXTRA_KEYS)
+                if unknown or not (extra or {}).get("dataset_dir"):
+                    return _err(
+                        f"action='record' needs extra['dataset_dir'] and reads only {list(_RECORD_EXTRA_KEYS)}"
+                        + (f"; got unknown key(s) {unknown}" if unknown else "")
+                    )
+                if not hasattr(trainer, "record"):
+                    return _err(f"action='record' is not supported by provider {provider!r}")
+                args = dict(extra or {})
+                res = trainer.record(job_id, args.pop("dataset_dir"), **args)
             elif action == "status":
                 res = trainer.status(job_id)
             else:

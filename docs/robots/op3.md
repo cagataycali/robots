@@ -15,7 +15,11 @@ description: "ROBOTIS OP3 Humanoid (20-DOF)"
 from strands_robots import Robot
 
 robot = Robot("op3")
+print(robot.robot_joint_names("op3"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `robotis_op3`.
 

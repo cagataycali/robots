@@ -13,11 +13,15 @@ URDF from [openai/roboschool@1.0.49](https://github.com/openai/roboschool/tree/1
 
 <img class="sr-thumb" src="../assets/img/robots/atlas_v4.webp" alt="atlas_v4, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("atlas_v4")
+robot = Robot("atlas_v4")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("atlas_v4"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

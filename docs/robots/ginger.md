@@ -13,11 +13,15 @@ URDF from [Rayckey/GingerURDF@6a1307c](https://github.com/Rayckey/GingerURDF/tre
 
 <img class="sr-thumb" src="../assets/img/robots/ginger.webp" alt="ginger, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("ginger")
+robot = Robot("ginger")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("ginger"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ## Policies verified on this robot
 

@@ -15,7 +15,11 @@ description: "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)"
 from strands_robots import Robot
 
 robot = Robot("asimov_v0")
+print(robot.robot_joint_names("asimov_v0"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `asimov`.
 

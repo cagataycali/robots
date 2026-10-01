@@ -34,7 +34,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
@@ -1461,6 +1461,13 @@ class _RobotState:
         # A site-actuated free body (a MuJoCo quadrotor): no articulation, its
         # motors are wrenches applied every tick. None for an articulated robot.
         self.site_drive: SiteDrive | None = None
+        # The joint position targets standing on every joint after the last
+        # command an installed action controller converted, by joint name - the
+        # command a recording stores as ``action`` (see _recorded_action).
+        self.commanded_targets: dict[str, float] | None = None
+        # Whether the targets were seeded from a successful measured read; until
+        # then the joints no command named have no target (and no zero).
+        self.commanded_targets_seeded = False
         # Joint positions (USD DOF name -> value) a keyframe spawn made this
         # robot's default state; None for the zero-configuration spawn.
         self.spawn_joint_positions: dict[str, float] | None = None
@@ -2801,6 +2808,11 @@ class IsaacSimulation(
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
                     self._reset_site_drives()
+                    # A reset puts the drives back on the default state; the
+                    # next command re-seeds from the measured positions.
+                    for _robot in self._robots.values():
+                        _robot.commanded_targets = None
+                        _robot.commanded_targets_seeded = False
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -6481,6 +6493,8 @@ class IsaacSimulation(
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                             )
+                            if controller is not None:
+                                self._note_commanded_targets(robot, joint_indices, action_array)
                         if effort_array.size > 0:
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -6659,6 +6673,8 @@ class IsaacSimulation(
                 robot.articulation.apply_action(
                     ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                 )
+                if controller is not None:
+                    self._note_commanded_targets(robot, joint_indices, action_array)
             if effort_array.size > 0:
                 robot.articulation.apply_action(
                     ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -7088,7 +7104,8 @@ class IsaacSimulation(
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
                         images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
-                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
+                        recorded = {r: self._recorded_action(r, a) for r, a in per_robot_action.items()}
+                        frame.write(recorder, per_robot_obs, recorded, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
@@ -9183,6 +9200,69 @@ class IsaacSimulation(
                         physx.apply_torque(stage_id, drive.body_int, tuple(float(v) for v in torque))
             except (RuntimeError, ValueError, AttributeError, TypeError) as e:
                 logger.error("site motors on %s: could not apply this tick's wrench: %s", drive.body_prim_path, e)
+
+    def _note_commanded_targets(self, robot: _RobotState, joint_indices: np.ndarray, values: np.ndarray) -> None:
+        """Fold one converted command into the standing target of every joint.
+
+        A task-space controller names only the joints a step moves (an all-zero
+        delta names no arm joint, an absent gripper names no finger), yet each
+        recorded frame owes a value for every joint: the PD target standing on
+        it. Seeded from the measured positions - what the drives hold before any
+        command - and updated with each command, on the thread that applied it.
+        """
+        if robot.commanded_targets is None or not robot.commanded_targets_seeded:
+            # Seed from the measured positions. When that read fails, the joints
+            # this command does not name get NO target rather than a zero: a
+            # zero here is a home pose nothing commanded, and it would flow into
+            # every recorded frame's action column with nothing to tell it apart
+            # (Key Conventions #6). Left absent, the recorder refuses the frame
+            # for the columns without a value, and the seed is retried on the
+            # next command.
+            q = None
+            why = "the physics view is stale"
+            if not self._physics_view_stale:  # both callers gate first; this read keeps its own
+                try:
+                    q = robot.articulation.get_joint_positions()  # type: ignore[union-attr]
+                    why = "get_joint_positions() returned None"
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    why = f"get_joint_positions() raised {type(exc).__name__}: {exc}"
+            if robot.commanded_targets is None:
+                robot.commanded_targets = {}
+            if q is None:
+                logger.warning(
+                    "isaac: %s's measured positions could not be read (%s); the standing target of "
+                    "every joint this command does not name stays absent until a read succeeds, so a "
+                    "recorded frame refuses those columns instead of carrying zeros nobody commanded",
+                    robot.name,
+                    why,
+                )
+            else:
+                measured = np.asarray(q, dtype=float).reshape(-1)
+                for i, name in enumerate(robot.joint_names):
+                    if i < measured.size:
+                        robot.commanded_targets.setdefault(name, float(measured[i]))
+                robot.commanded_targets_seeded = True
+        for idx, value in zip(joint_indices.tolist(), values.tolist(), strict=False):
+            if 0 <= idx < len(robot.joint_names):
+                robot.commanded_targets[robot.joint_names[idx]] = float(value)
+
+    def _recorded_action(self, robot_name: str, action: Mapping[str, Any]) -> Mapping[str, Any]:
+        """The action a recorded frame stores for *robot_name*.
+
+        With an action controller installed the policy's action is task-space
+        (``{x, y, z, roll, pitch, yaw, gripper}``) while the dataset's action
+        columns are the robot's joints, so the policy's dict has no value for
+        any of them and the recorder refused every frame. What was commanded is
+        the joint targets the controller produced; that is what is recorded.
+        Without a controller the policy's action is the command and is recorded
+        as is.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is None or registry_entry(self._action_controllers, robot_name) is None:
+            return action
+        if robot.commanded_targets is None:
+            return action
+        return dict(robot.commanded_targets)
 
     def _apply_spawn_pose(self, robot: _RobotState, pose: dict[str, float]) -> None:
         """Make *pose* (MJCF joint name -> position) the robot's default joint state and its drive targets.

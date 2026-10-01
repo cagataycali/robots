@@ -50,7 +50,7 @@ PLACEHOLDER_OWNER = "you"
 NOT_HUB_IDS: frozenset[str] = frozenset({"checkpoints/last"})
 
 _QUOTED = re.compile(r"[\"'`]([A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*)[\"'`]")
-_FILE_SUFFIX = re.compile(r"\.(json|py|md|xml|yaml|yml|toml|txt|png|svg|mp4|onnx|safetensors|csv)\Z")
+_FILE_SUFFIX = re.compile(r"\.(json|jsonl|py|md|xml|yaml|yml|toml|txt|png|svg|mp4|onnx|safetensors|csv)\Z")
 
 #: A line names a checkpoint when one of these sits on it: the constructor
 #: keyword, the smart-string factory, a provider string, a model id keyword, or
