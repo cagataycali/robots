@@ -27,6 +27,7 @@ import pytest
 
 from strands_robots.policies.protomotions import bridge, motion_utils, state_utils
 from strands_robots.policies.protomotions.state_utils import quat_rotate_inverse
+from tests._package_ast import parse_file
 
 from .test_cache_body_rows_match_the_tracker_order import g1_like_mjcf
 
@@ -104,7 +105,7 @@ def _docstrings_in_the_package() -> list[tuple[str, str]]:
     pkg_dir = pathlib.Path(inspect.getfile(state_utils)).parent
     out: list[tuple[str, str]] = []
     for path in sorted(pkg_dir.glob("*.py")):
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         mod_doc = ast.get_docstring(tree)
         if mod_doc:
             out.append((f"{path.name}:<module>", mod_doc))

@@ -72,6 +72,7 @@ pytest.importorskip("psutil")
 import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from strands_robots.tools import _process_stop  # noqa: E402
+from tests._package_ast import parse_file
 
 SessionManager = train_mod.SessionManager
 lerobot_train = train_mod.lerobot_train
@@ -468,7 +469,7 @@ class TestTheVerdictIsControlledWhereItIsAnswered:
         offenders = []
         accepted = 0
         for path in sorted((root / "tests").rglob("*.py")):
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            for node in ast.walk(parse_file(path)):
                 if not (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)

@@ -79,6 +79,7 @@ import re
 
 from strands_robots.mesh import security as _security
 from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
@@ -109,7 +110,7 @@ def _policy_type_allow_env_reads() -> frozenset[str]:
     Derived from the module's own source so a variant added later is held to
     the same documentation rule without editing a list here.
     """
-    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
+    tree = parse_file(_MODULE)
     names: set[str] = set()
     for node in ast.walk(tree):
         literal = None

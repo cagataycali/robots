@@ -7,7 +7,10 @@ knows).
 
 Keys (all derived, none configured):
 
-* ``robots``            entries in ``strands_robots/registry/robots.json``
+* ``robots``            every robot ``Robot("<name>")`` accepts: ``robots.json`` plus the
+                        ``robot_descriptions`` URDF tail in ``urdf_robots.json``
+* ``robots_curated``    entries in ``robots.json`` alone
+* ``urdf_robots``       entries in ``urdf_robots.json``; ``urdf_robots_sim`` those that build
 * ``robots_decade``     that number rounded down to a ten, for "70+" prose
 * ``categories``        distinct ``category`` values in the registry
 * ``<category>``        robots in that category, e.g. ``{{n:arm}}``,
@@ -30,9 +33,11 @@ the docs venv without the package's optional extras.
 from __future__ import annotations
 
 import collections
+import importlib.util
 import json
 import logging
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -47,7 +52,9 @@ _SIM_NON_BACKENDS = frozenset({"task_objects"})
 @lru_cache(maxsize=1)
 def numbers() -> dict[str, int]:
     """Derive every number once per build."""
-    robots = json.loads((_PKG / "registry" / "robots.json").read_text(encoding="utf-8"))["robots"]
+    view = _registry_view()
+    curated = view.curated()
+    robots = view.merged()  # curated + the robot_descriptions URDF tail, what Robot("<name>") accepts
     categories = collections.Counter(spec["category"] for spec in robots.values())
     tools = sum(len(re.findall(r"^\s*@tool\b", path.read_text(encoding="utf-8"), re.M)) for path in _PKG.rglob("*.py"))
     sim_backends = sorted(
@@ -64,6 +71,9 @@ def numbers() -> dict[str, int]:
     out: dict[str, int] = {
         "robots": len(robots),
         "robots_decade": len(robots) // 10 * 10,
+        "robots_curated": len(curated),
+        "urdf_robots": len(view.urdf_robots()),
+        "urdf_robots_sim": sum(1 for spec in view.urdf_robots().values() if spec.get("asset")),
         "categories": len(categories),
         "hardware": sum(1 for spec in robots.values() if spec.get("hardware")),
         "aliases": sum(len(spec.get("aliases", ())) for spec in robots.values()),
@@ -95,3 +105,16 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
 def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001 - mkdocs signature
     """mkdocs hook entry point: expand every ``{{n:key}}`` token."""
     return substitute(markdown, page.file.src_path)
+
+
+def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
+    """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module

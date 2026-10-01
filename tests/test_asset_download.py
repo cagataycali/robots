@@ -20,6 +20,7 @@ from unittest.mock import patch
 import pytest
 
 from strands_robots.assets import download as dl
+from tests._package_ast import parse_file
 
 _MOD = "strands_robots.assets.download"
 
@@ -772,7 +773,7 @@ def test_every_asset_tree_copy_goes_through_the_one_owner() -> None:
     root = Path(strands_robots.__file__).parent
     callers: list[str] = []
     for path in sorted(root.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parse_file(path)
         for func in ast.walk(tree):
             if not isinstance(func, ast.FunctionDef):
                 continue

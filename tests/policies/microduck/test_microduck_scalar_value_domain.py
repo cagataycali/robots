@@ -48,6 +48,7 @@ import pytest
 
 from strands_robots.policies.microduck import MicroduckPolicy, MicroduckPolicyBundle
 from strands_robots.policies.microduck.policy import MICRODUCK_DEFAULT_POSE, MICRODUCK_JOINT_NAMES
+from tests._package_ast import parse_file
 from tests.policies.microduck.test_microduck_policy import _obs_dict, _StubSession
 
 #: The values neither knob can use. Every one of them was accepted before, and
@@ -146,7 +147,7 @@ class TestTheActionScaleConstructorRoute:
             MicroduckPolicy(session=_StubSession(), action_scale=0.0)
         text = str(excinfo.value)
         assert text.startswith("MicroduckPolicy (constructor): action_scale")
-        assert "must be > 0" in text
+        assert "must be a positive finite number" in text
 
     def test_the_scale_is_refused_before_it_is_stored(self) -> None:
         # A guard after the coercion would leave a nan on the instance.
@@ -201,7 +202,7 @@ class TestTheVelocityGateThreshold:
             _bundle(switch_on_velocity=float("nan"))
         text = str(excinfo.value)
         assert text.startswith("MicroduckPolicyBundle: switch_on_velocity")
-        assert "must be > 0" in text
+        assert "must be a positive finite number" in text
 
     def test_the_structural_checks_still_run_first(self) -> None:
         # An unusable threshold must not mask the identity error a caller would
@@ -259,7 +260,7 @@ class TestEveryCallerSuppliedScalarConsultsADomain:
     def _scalar_knobs() -> dict[str, list[str]]:
         found: dict[str, list[str]] = {}
         for path in sorted(_PACKAGE.glob("*.py")):
-            tree = ast.parse(path.read_text())
+            tree = parse_file(path)
             for klass in ast.walk(tree):
                 if not isinstance(klass, ast.ClassDef) or klass.name.startswith("_"):
                     continue
@@ -281,7 +282,7 @@ class TestEveryCallerSuppliedScalarConsultsADomain:
 
     @staticmethod
     def _consults_a_domain(path: pathlib.Path, fn_name: str, param: str) -> bool:
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         for fn in ast.walk(tree):
             if not isinstance(fn, ast.FunctionDef) or fn.name != fn_name:
                 continue

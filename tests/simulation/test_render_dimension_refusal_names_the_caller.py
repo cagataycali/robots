@@ -42,6 +42,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_file
 
 _ROOT = pathlib.Path(inspect.getfile(NewtonSimEngine)).resolve().parents[3]
 
@@ -64,7 +65,7 @@ def _context_arguments(path: pathlib.Path, helper: str) -> list[tuple[str, str |
     which is itself a finding: a subject computed at the call site is not one a
     reader can check against the method it names.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = parse_file(path)
     calls: list[tuple[str, str | None]] = []
     stack: list[str] = []
 
