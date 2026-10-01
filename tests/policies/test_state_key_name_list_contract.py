@@ -154,6 +154,7 @@ _TOTAL_BY_MEMBERSHIP = {
     "policies/kimodo/policy.py::KimodoPolicy",
     "policies/protomotions/policy.py::ProtoMotionsPolicy",
     "policies/wbc/policy.py::WBCPolicy",
+    "policies/wbc_latent/policy.py::WBCLatentPolicy",
 }
 
 # Pure delegators: they bind nothing themselves, so the wrapped policy's guard
@@ -619,6 +620,32 @@ def _rl() -> Any:
     return RLCheckpointPolicy(checkpoint_dir=directory)
 
 
+class _ZeroDecoderSession:
+    """A SONIC decoder session that returns zero joint targets."""
+
+    def run(self, output_names: Any, input_feed: Any) -> list[Any]:
+        import numpy as np
+
+        from strands_robots.policies.wbc_latent.constants import NUM_JOINTS
+
+        return [np.zeros((1, NUM_JOINTS), dtype=np.float32)]
+
+
+def _wbc_latent_policy() -> Any:
+    """A SONIC token decoder wrapping the mock policy, on an injected session."""
+    from strands_robots.policies.mock import MockPolicy
+    from strands_robots.policies.wbc_latent import SonicDecoder, WBCLatentPolicy
+
+    return WBCLatentPolicy(MockPolicy(), decoder=SonicDecoder(session=_ZeroDecoderSession()))
+
+
+def _wbc_latent_keys() -> list[str]:
+    """A key list the decoder accepts: the 29 SONIC joints."""
+    from strands_robots.policies.wbc_latent.constants import SONIC_JOINT_NAMES
+
+    return list(SONIC_JOINT_NAMES)
+
+
 # (surface id as classified above, factory, the attribute the setter binds into,
 # a key list that surface accepts). Held against ``_TOTAL_BY_MEMBERSHIP`` by
 # ``test_the_membership_table_covers_every_already_total_surface``, so a provider
@@ -634,11 +661,17 @@ _MEMBERSHIP_SURFACES: list[_Membership] = [
         _protomotions_keys,
     ),
     ("policies/wbc/policy.py::WBCPolicy", _wbc_policy, "_robot_state_keys", _wbc_keys),
+    (
+        "policies/wbc_latent/policy.py::WBCLatentPolicy",
+        _wbc_latent_policy,
+        "_robot_state_keys",
+        _wbc_latent_keys,
+    ),
 ]
 _MEMBERSHIP_IDS = [surface.split("::")[1] for surface, *_ in _MEMBERSHIP_SURFACES]
 
-# All four report the joints they could not find; WBC names the leg+waist subset
-# it drives, so this prefix is the part of the message the four have in common.
+# Each reports the joints it could not find; WBC names the leg+waist subset
+# it drives, so this prefix is the part of the message they have in common.
 _MEMBERSHIP_REFUSAL = "missing expected G1"
 
 # The shapes the shared domain exists for. A by-name provider has to refuse each

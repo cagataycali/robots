@@ -429,6 +429,67 @@ class Cosmos3Policy(Policy):
         """Cosmos 3 conditions on camera frames - always needs images."""
         return True
 
+    @classmethod
+    def preflight(cls, observation_keys: set[str], **policy_config: Any) -> None:
+        """Refuse a configuration whose actions no actuator in the observation would receive.
+
+        The server answers in its embodiment's action layout (the DROID
+        ``joint_pos`` layout is ``joint_0..joint_6, gripper``) and
+        ``_unpack_actions`` keys each step by those names, renamed only through
+        ``action_mapping`` (or the ``robot=`` sugar that supplies one). A robot
+        whose actuators are named otherwise (a MuJoCo Panda exposes
+        ``joint1..joint7`` and ``finger_joint1``) receives a step dict naming
+        none of them, ``send_action`` drops every command, and ``run_policy``
+        reports the rollout ran. Measured with a fake RoboLab chunk and
+        ``set_robot_state_keys(["joint1", ..., "joint7", "gripper"])``: every
+        action was keyed ``joint_0..joint_6``; none of ``joint1..joint7`` was
+        commanded, and nothing said so.
+
+        So, before the server is dialled: when neither ``action_mapping`` nor
+        ``robot`` is given and no name of the active layout is among the
+        observation keys, the configuration is refused, naming both remedies.
+        An explicit ``action_mapping`` is the caller's answer to this question
+        and is not second-guessed; a ``robot`` the registry knows supplies one,
+        and one it does not know is the constructor's refusal. An observation
+        that carries no per-actuator names (only a flat state) gives this hook
+        nothing to judge against and passes.
+
+        Args:
+            observation_keys: Runtime observation keys (joint names plus camera
+                names), as the rollout surface reads them.
+            **policy_config: The constructor kwargs (``embodiment``,
+                ``action_space``, ``backend``, ``action_mapping``, ``robot``).
+
+        Raises:
+            ValueError: When the actions this configuration would emit name no
+                key of the observation and no rename was configured.
+        """
+        if policy_config.get("action_mapping") is not None or policy_config.get("robot") is not None:
+            return
+        try:
+            embodiment = get_embodiment(policy_config.get("embodiment", "droid"))
+        except (TypeError, ValueError, AttributeError):
+            return  # the constructor's refusal, in its own words
+        if policy_config.get("backend", "service") == "diffusers":
+            layout = list(embodiment.raw_action_layout)
+        else:
+            action_space = policy_config.get("action_space") or embodiment.default_action_space
+            layout = list(embodiment.action_layouts.get(action_space, []))
+        if not layout:
+            return
+        named = {key for key in observation_keys if isinstance(key, str)}
+        if not named or named == {FLAT_STATE_KEY} or any(name in named for name in layout):
+            return
+        candidates = sorted(key for key in named if key != FLAT_STATE_KEY and key.count("/") == 0)
+        raise ValueError(
+            f"cosmos3: Cosmos3Policy(embodiment={embodiment.name!r}) would key every action by the layout "
+            f"names {layout}, and none of them is an observation key of this robot "
+            f"({candidates[:16]}), so send_action would drop every command while the rollout "
+            f"reports it ran. Either pass robot=<name> for a built-in mapping "
+            f"({list_robot_action_mappings()}) or action_mapping={{<layout name>: <actuator name>}} "
+            f"naming the actuators above."
+        )
+
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         """Record the robot's ordered joint/state keys.
 

@@ -1,48 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression tests: a camera mount the backend lacks is reported, not a TypeError.
+"""Every backend mounts a camera on a body with ``add_camera(parent_body=...)``.
 
 ``parent_body`` mounts a camera ON a moving body so a wrist view rides with the
-arm. Two of the three backends implement it; Isaac does not. Until this fix Isaac
-did not *declare* the parameter either, so the gap was answered by Python rather
-than by the backend - measured on this tree, ``IsaacSimulation.add_camera`` had no
-``parent_body`` in its signature and no ``**kwargs``, so::
-
-    sim.add_camera(name="wrist", parent_body="so101/gripper")
-    TypeError: IsaacSimulation.add_camera() got an unexpected keyword argument 'parent_body'
-
-That names the parameter and nothing else: not that mounting is the capability at
-stake, not that two sibling backends do mount, and not that omitting it yields a
-world-fixed camera which Isaac does support. It also arrives as a ``TypeError``
-out of a method whose whole contract is the ``{"status", "content"}`` envelope.
-
-The call above is not hypothetical - it is the *documented remedy*.
-``docs/learn/policies/lerobot-local.md`` (where the old camera-naming page redirects) prescribes it, backend-agnostically, as the
-first of "Two ways to satisfy the check" for a VLA whose model card declares an
-``observation.images.wrist_image`` feature, and ``README.md`` states the rule
-("Wrist cameras mount on a body"). So the guidance a caller follows to make a
-manipulation VLA see its wrist stream cannot be followed on one of the three
-backends, and the failure points at neither the capability nor the alternative.
-
-The fix is the one this repository already applies to the same situation one
-method away. ``IsaacSimulation.add_robot`` *declares* ``mjcf_path`` - a loader
-that backend genuinely lacks - and refuses it with a structured error naming the
-reason and the backend that has it ("Convert the MJCF to URDF/USD and pass
-urdf_path/usd_path, or use create_simulation(backend='mujoco') to load MJCF").
-``add_camera`` now answers ``parent_body`` the same way, in the same position:
-before the lock and before validating the parameters the call would not use, so
-the answer does not depend on the world state.
-
-This reports the gap; it does not close it. Isaac *can* parent prims, so mounting
-is unimplemented rather than impossible, and implementing it needs a stage and an
-Isaac Sim runtime to verify against. That is tracked separately - the refusal is
-what makes the unimplemented capability visible in the meantime, and it names the
-two backends that do mount so a caller is never stuck.
-
-No test here needs Isaac Sim, a GPU or GL: the refusal runs before the lock and
-before anything touches the stage, so the ``__new__`` skeleton reaches it, and the
-MuJoCo/Newton halves reuse the world-fixed patterns their own ``add_camera``
-tests already use (``add_camera`` compiles the spec but renders nothing).
+arm - the documented remedy for a VLA whose model card declares a wrist image
+feature. MuJoCo and Newton implemented it; Isaac refused it, so every pi
+checkpoint (DROID ``left_wrist_0_rgb``, LIBERO ``image2``) got a world-fixed
+"wrist" camera on Isaac, a view distribution none of them was trained on. Isaac
+now authors the camera prim as a child of the link prim. These tests pin the
+parts that need no Isaac Sim runtime: the parameter's domain and its place
+before the world check, and the MuJoCo / Newton behaviour; the live mount is
+verified on Isaac Sim (the camera's world pose follows the link).
 """
 
 from __future__ import annotations
@@ -59,10 +27,8 @@ from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
-#: The backends whose ``add_camera`` mounts a camera on a body. The Isaac refusal
-#: must name every one of them, or a caller told "not supported here" still has to
-#: go and find where it *is* supported.
-_MOUNTING_BACKENDS = ("mujoco", "newton")
+#: The backends whose ``add_camera`` mounts a camera on a body: all three.
+_MOUNTING_BACKENDS = ("mujoco", "newton", "isaac")
 
 #: Mount points a caller plausibly passes - the namespaced ``<robot>/<body>`` form
 #: ``list_bodies`` returns, which is what the docs prescribe.
@@ -123,75 +89,31 @@ def _text(result: dict[str, Any]) -> str:
     return " ".join(block.get("text", "") for block in result.get("content", []))
 
 
-class TestIsaacReportsTheMountItLacks:
-    """The refusal names the capability, the reason and where it is supported."""
+class TestIsaacChecksTheMountBeforeTheWorld:
+    """What is answered before the lock: the mount's type, and that it needs a pose."""
+
+    @pytest.mark.parametrize("bad", [7, "", "   ", ["so101", "gripper"]])
+    def test_a_mount_that_is_not_a_body_name_is_refused(self, bad: Any) -> None:
+        text = _text(_isaac_add_camera(name="wrist", parent_body=bad))
+        assert "parent_body must be a body name" in text
+
+    @pytest.mark.parametrize("kwargs", [{}, {"position": [0.0, 0.0, 0.05]}, {"target": [0.0, 0.0, 0.1]}])
+    def test_a_mount_without_both_position_and_target_is_refused(self, kwargs: dict[str, Any]) -> None:
+        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper", **kwargs))
+        assert "needs both position and target" in text and "1.7 m" in text
 
     @pytest.mark.parametrize("mount", _MOUNTS)
-    def test_a_mount_request_is_refused_through_the_envelope(self, mount: str) -> None:
-        result = _isaac_add_camera(name="wrist", parent_body=mount)
-        assert result["status"] == "error", result
-        # Through the documented envelope - not as a TypeError, which is what the
-        # undeclared parameter produced.
-        assert isinstance(result.get("content"), list)
-
-    def test_the_refusal_quotes_the_value_and_names_the_parameter(self) -> None:
-        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper"))
-        assert "parent_body" in text
-        assert "so101/gripper" in text
-        assert "add_camera" in text
-
-    def test_the_refusal_names_every_backend_that_does_mount(self) -> None:
-        """A caller turned away here must be told where the capability lives.
-
-        This is the half a bare ``TypeError`` could never carry, and the reason
-        the refusal is worth more than the exception it replaces.
-        """
-        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper"))
-        for backend in _MOUNTING_BACKENDS:
-            assert backend in text, f"{backend} not named in: {text}"
-
-    def test_the_refusal_names_the_world_fixed_alternative(self) -> None:
-        """Omitting the mount is supported here, so the refusal says so."""
-        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper"))
-        assert "Omit" in text
-        assert "world-fixed" in text
-
-
-class TestTheRefusalDoesNotDependOnTheWorld:
-    """Guard placement: the capability answer precedes every other check.
-
-    Mirrors ``add_robot``, which answers ``mjcf_path`` at ``body[2]`` - before its
-    lock and before ``coerce_pose_vector``. A caller asking for a capability the
-    backend does not have should hear that, not "No world created" and not a
-    complaint about a pose the call would never use.
-    """
-
-    def test_it_precedes_the_world_check(self) -> None:
-        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper"))
-        assert "parent_body" in text
-        assert "No world created" not in text
-
-    def test_it_precedes_the_pose_validation(self) -> None:
-        """A mount request with an unusable pose still reports the mount."""
-        text = _text(_isaac_add_camera(name="wrist", parent_body="so101/gripper", position=[float("nan"), 0.0, 0.0]))
-        assert "parent_body" in text
-        assert "position" not in text
-
-    def test_it_precedes_the_name_validation(self) -> None:
-        """A mount request with an unusable name still reports the mount."""
-        text = _text(_isaac_add_camera(name="", parent_body="so101/gripper"))
-        assert "parent_body" in text
+    def test_a_well_formed_mount_reaches_the_world_like_any_camera(self, mount: str) -> None:
+        text = _text(
+            _isaac_past_the_guard(name="wrist", parent_body=mount, position=[0.0, 0.0, 0.05], target=[0.0, 0.0, 0.2])
+        )
+        assert "No world created" in text and "parent_body" not in text
 
 
 class TestOmittingTheMountIsUnaffected:
-    """Over-reach control: the world-fixed camera Isaac does support still works.
-
-    Without these, "refuse ``parent_body``" would be satisfied by a guard that
-    refused every call.
-    """
+    """The world-fixed camera still reaches the same path."""
 
     def test_omitting_it_passes_the_guard(self) -> None:
-        """The call reaches the *world* check, so the guard let it by."""
         text = _text(_isaac_past_the_guard(name="front", position=[1.0, 0.0, 0.5]))
         assert "No world created" in text
         assert "parent_body" not in text
@@ -200,22 +122,6 @@ class TestOmittingTheMountIsUnaffected:
         """``None`` is the documented default and means "world-fixed"."""
         text = _text(_isaac_past_the_guard(name="front", parent_body=None))
         assert "No world created" in text
-        assert "parent_body" not in text
-
-    def test_the_refusal_needs_less_state_than_the_accepted_path(self) -> None:
-        """Placement, stated as a measurement.
-
-        A refused mount is answered on an instance carrying no attributes at all.
-        The same call with the mount omitted cannot be: it reaches
-        ``with self._lock`` and raises for the missing attribute. So the guard is
-        strictly before the lock - the ``add_robot``/``mjcf_path`` position.
-        """
-        refused = _isaac_add_camera(name="wrist", parent_body="so101/gripper")
-        assert refused["status"] == "error"
-        assert "parent_body" in _text(refused)
-
-        with pytest.raises(AttributeError, match="_lock"):
-            _isaac_add_camera(name="wrist")
 
 
 class TestTheMountingBackendsStillMount:
@@ -276,27 +182,15 @@ class TestEveryBackendDeclaresTheMount:
         assert inspect.signature(engine.add_camera).parameters["parent_body"].default is None
 
 
-class TestTheDocumentedRemedySaysWhichBackendsMount:
-    """The backend-agnostic guidance that prescribes the mount carries the caveat.
-
-    ``docs/learn/policies/lerobot-local.md`` is a *policy* document - it applies to any
-    simulation backend - and its first remedy is a ``parent_body`` call. Without a
-    caveat it reads as universally available, which is how a reader arrives at the
-    refusal above.
-    """
+class TestTheDocumentedRemedyHoldsOnEveryBackend:
+    """The backend-agnostic guidance that prescribes the mount says it works everywhere."""
 
     @staticmethod
     def _doc() -> str:
         root = pathlib.Path(inspect.getfile(IsaacSimulation)).parents[3]
         return (root / "docs" / "learn" / "policies" / "lerobot-local.md").read_text(encoding="utf-8")
 
-    def test_the_doc_still_prescribes_the_mount(self) -> None:
-        """Non-vacuity: the caveat is about a remedy the doc really gives."""
-        assert "parent_body" in self._doc()
-
-    def test_the_prescription_names_the_backends_that_support_it(self) -> None:
-        doc = self._doc()
-        idx = doc.index("parent_body")
-        window = " ".join(doc[idx : idx + 900].split())
-        for backend in _MOUNTING_BACKENDS:
-            assert backend in window, f"{backend} not named near the prescription: {window[:400]}"
+    def test_the_doc_prescribes_the_mount_without_an_isaac_caveat(self) -> None:
+        doc = " ".join(self._doc().split())
+        sentence = doc[doc.index("`parent_body` mounts a camera on a link") :][:400]
+        assert "every backend" in sentence and "refuses" not in sentence
