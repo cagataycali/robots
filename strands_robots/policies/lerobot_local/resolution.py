@@ -697,6 +697,42 @@ def declared_image_features(pretrained_name_or_path: str, revision: str | None =
     return {name for name, spec in features.items() if isinstance(spec, dict) and spec.get("type") == "VISUAL"}
 
 
+def declared_action_dim(pretrained_name_or_path: str, revision: str | None = None) -> int | None:
+    """The action width a checkpoint declares, read before its weights are.
+
+    ``config.json`` records ``output_features.action.shape``, so whether an
+    embodiment's ``action_keys`` can be driven by this head is knowable before
+    the weight download. Read by ``LerobotLocalPolicy.preflight`` through
+    ``EmbodimentMap.action_dim_error``, the rule ``validate`` applies after the
+    load; the answer is the same, only earlier.
+
+    Args:
+        pretrained_name_or_path: Local path or HF model ID.
+        revision: Optional Hub revision to pin the read to.
+
+    Returns:
+        The declared width, or ``None`` when the checkpoint records no
+        ``output_features`` action shape or cannot be read. ``None`` means
+        "unknown" and must not be read as a width.
+    """
+    config = _read_config_json(pretrained_name_or_path, revision)
+    if config is None:
+        return None
+    features = config.get("output_features")
+    if not isinstance(features, dict):
+        return None
+    action = features.get("action")
+    if not isinstance(action, dict):
+        return None
+    shape = action.get("shape")
+    if not isinstance(shape, list) or not shape:
+        return None
+    width = shape[0]
+    if isinstance(width, bool) or not isinstance(width, int) or width < 1:
+        return None
+    return width
+
+
 #: LeRobot policy types whose image preparation accepts a batch carrying only
 #: SOME of the image features the checkpoint declares.
 #:

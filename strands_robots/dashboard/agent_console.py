@@ -1,58 +1,56 @@
-"""The dashboard's agent: a Strands Agent whose hands are the simulator sessions.
+"""The dashboard's agent: a Strands Agent whose hands are the robots on the mesh.
 
-One :class:`Console` is one operator conversation. Its tools go through the
-same :class:`~strands_robots.dashboard.routes_sim.Safety` object the HTTP
-routes use, so the e-stop refuses the agent exactly as it refuses a button,
-and every accepted command is the same proof that the lockout is clear.
+One :class:`Console` is one operator conversation. The agent holds no robot of
+its own: every robot it can see or move is a peer on the zenoh mesh, the same
+peers whose cards the dashboard shows. A ``fleet`` tool lists them with their
+state, ``spawn_robot`` starts a registry robot in simulation as a mesh peer (so
+its card appears on the dashboard at once), ``despawn_robot`` stops one, and
+every tool-worthy peer is a native tool of its own
+(:mod:`strands_robots.dashboard.peer_tools`) whose motion verbs on a real arm go
+through :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`: the
+browser shows a consent card and the same turn resumes on a yes. The tool list
+follows the mesh: when the fleet signature changes between turns, the agent is
+rebuilt with the new tools and its conversation carried over.
 
-Anything that moves a robot - here ``sim_set_joints`` - raises the SDK
-interrupt the real-hardware hook uses (:mod:`strands_robots.dashboard.agent_hitl`),
-so the browser shows a consent card and the same turn resumes on a yes. The
-operator can grant one call or the rest of the conversation; the grant lives
-in this object and dies with the socket. Stopping is never gated.
+``emergency_stop`` is the one tool that is not a peer: it latches the dashboard's
+own lockout through the same :class:`~strands_robots.dashboard.routes_sim.Safety`
+object the HTTP routes use, so the e-stop refuses the agent exactly as it refuses
+a button. Stopping is never gated.
 
-The agent also sees the FLEET when the server hands it its mesh bridge: a
-``fleet`` tool lists every robot on the mesh with its state, ``spawn_robot``
-starts a registry robot in simulation as a mesh peer (so its card appears on
-the dashboard at once), ``despawn_robot`` stops one, and every tool-worthy peer
-is a native tool of its own (:mod:`strands_robots.dashboard.peer_tools`) whose
-motion verbs on a real arm go through :class:`~strands_robots.dashboard.agent_hitl.MotionInterruptHook`.
-The tool list follows the mesh: when the fleet signature changes between
-turns, the agent is rebuilt with the new tools and its conversation carried over.
+The in-process simulation tools this console once carried (``sim_start``,
+``sim_set_joints`` and their siblings) are gone: a robot the agent drives is a
+mesh peer or it is not driven from here, so one gate, one tool shape and one
+card serve every robot alike.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping
-from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from strands import Agent, tool
-from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 
 logger = logging.getLogger(__name__)
 
-INTERRUPT_NAME = "sim_motion"
 MODEL_ENV = "STRANDS_MODEL_ID"
 MAX_PROMPT_CHARS = 8_000
 
 SYSTEM_PROMPT = """You are the strands-robots dashboard agent. You operate robots for an operator who is
 watching the same screen. Be brief.
 
-Two kinds of robot exist here. In-process simulation sessions (sim_sessions, sim_start, sim_state,
-sim_set_joints, sim_reset, sim_stop) render in the Sim tab. Fleet robots are peers on the zenoh mesh
-and appear as cards on the dashboard: `fleet` lists them with their state, `spawn_robot` creates a new
-simulated robot as a mesh peer (its card appears within seconds), `despawn_robot` removes one, and
-each peer is also a tool named after it (dashes become underscores) whose actions are what that peer
-accepts: status, state, set_joints (target_joints, radians), reset, step, stop, and execute/start for
-policy rollouts. When the operator says "create a robot", use spawn_robot. When they name a robot,
-use that robot's own tool. Joint positions are radians unless the peer's state says otherwise; joints
-are addressed by name or by 1-based index as strings. A move you request may be put to the operator
-first; if they decline, say so and stop. Never work around a refusal or an e-stop."""
+Every robot here is a peer on the zenoh mesh and appears as a card on the dashboard: `fleet` lists
+them with their state, `spawn_robot` creates a new simulated robot as a mesh peer (its card appears
+within seconds), `despawn_robot` removes one, and each peer is also a tool named after it (dashes
+become underscores) whose actions are what that peer accepts: status, state, set_joints
+(target_joints, radians), reset, step, stop, and execute/start for policy rollouts. When the
+operator says "create a robot", use spawn_robot. When they name a robot, use that robot's own tool.
+Joint positions are radians unless the peer's state says otherwise; joints are addressed by name or
+by 1-based index as strings. A move you request may be put to the operator first; if they decline,
+say so and stop. Never work around a refusal or an e-stop."""
 
 #: How the agent chooses a policy for a peer. Appended to the prompt; the facts it
 #: points at are on every ``fleet`` row (:mod:`strands_robots.dashboard.peer_policies`).
@@ -66,9 +64,6 @@ a checkpoint or a server and none was given, ask for it instead of guessing or f
 mock. Send only the kwargs listed for that provider; the robot host refuses anything else."""
 
 SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + POLICY_GUIDANCE
-
-#: agent tool name -> does it move the robot (and so asks the operator first)?
-MOTION_TOOLS: frozenset[str] = frozenset({"sim_set_joints"})
 
 
 def model_id() -> str:
@@ -93,203 +88,77 @@ def default_model() -> Any:
     )
 
 
-@dataclass
-class Grants:
-    """What the operator has already said yes to, for this conversation only."""
-
-    sessions: set[str] = field(default_factory=set)
-
-    def covers(self, session_id: str) -> bool:
-        """Has the operator allowed motion on this session for the rest of the conversation?"""
-        return session_id in self.sessions
-
-    def extend(self, session_id: str) -> None:
-        """Remember a 'for this conversation' yes."""
-        self.sessions.add(session_id)
+#: How long one peer gets to confirm a stop before the fleet stop moves on; the route uses the same.
+STOP_TIMEOUT_S = 5.0
 
 
-def response_approves(response: Any) -> tuple[bool, bool]:
-    """(approved, for the rest of the conversation). Anything but an explicit yes is a no."""
-    if isinstance(response, bool):
-        return response, False
-    if isinstance(response, Mapping):
-        approve = response.get("approve")
-        if isinstance(approve, bool):
-            return approve, bool(response.get("always", False)) and approve
-        return False, False
-    if isinstance(response, str):
-        return response.strip().lower() in {"yes", "y", "approve", "approved", "ok"}, False
-    return False, False
+def fleet_stop(safety: Any, bridge: Any | None, by: str = "agent") -> dict[str, Any]:
+    """Stop everything this dashboard can reach, both rails, and say what confirmed.
 
-
-class MotionGate(HookProvider):
-    """Interrupt before any motion tool call the operator has not already granted."""
-
-    def __init__(self, grants: Grants) -> None:
-        self._grants = grants
-
-    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
-        """Subscribe the gate to every tool call the agent is about to make."""
-        registry.add_callback(BeforeToolCallEvent, self._gate)
-
-    def _gate(self, event: BeforeToolCallEvent) -> None:
-        tool_use = event.tool_use or {}
-        name = str(tool_use.get("name") or "")
-        if name not in MOTION_TOOLS:
-            return
-        tool_input = dict(tool_use.get("input") or {})
-        session_id = str(tool_input.get("session_id") or "")
-        if self._grants.covers(session_id):
-            return
-        reason = {
-            "tool": name,
-            "session_id": session_id,
-            "positions": tool_input.get("positions"),
-            "detail": _detail(tool_input),
+    The local ``safety`` lockout latches first (it refuses every relayed command
+    until an operator resumes). With a bridge, every live peer is then asked to
+    ``stop`` and the signed fleet e-stop engages the lockout on every listening
+    peer, the same two rails ``POST /api/mesh/safety/estop`` fires. ``all_stopped``
+    is True only when every live peer confirmed; anything else keeps shouting.
+    """
+    local = safety.estop(by=by)
+    out: dict[str, Any] = {"lockout": local["lockout"], "frozen": local.get("frozen", [])}
+    if bridge is None:
+        return {
+            **out,
+            "fleet": None,
+            "all_stopped": False,
+            "note": "no mesh bridge: nothing beyond this process was stopped",
         }
-        response = event.interrupt(INTERRUPT_NAME, reason=reason)
-        approved, always = response_approves(response)
-        from strands_robots._hitl_audit import log_operator_response
+    from strands_robots.dashboard.mesh_bridge import stop_outcome
 
-        log_operator_response("dashboard_agent_console", name, session_id, approved=approved, response=response)
-        if approved:
-            if always:
-                self._grants.extend(session_id)
-            return
-        event.cancel_tool = "The operator declined this motion. Do not retry it; tell them and wait."
+    peers = list(bridge.live_peers())
+    stale = sorted(set(bridge.peers) - set(peers))
 
-
-def _detail(tool_input: Mapping[str, Any]) -> str:
-    positions = tool_input.get("positions")
-    if isinstance(positions, Mapping):
-        return ", ".join(f"{k} → {float(v):.3f} rad" for k, v in positions.items() if isinstance(v, (int, float)))
-    return json.dumps(positions)
-
-
-def build_tools(safety: Any) -> list[Any]:
-    """The agent's hands: every call goes through ``safety`` like a button press would."""
-
-    def _session(session_id: str) -> Any:
-        session = safety.store.get(session_id)
-        if session is None:
-            raise ValueError(f"no session {session_id}")
-        return session
-
-    def _snapshot(session: Any) -> dict[str, Any]:
-        snap = session.snapshot.as_dict()
-        return {k: v for k, v in snap.items() if k != "model_path"}
-
-    def _gate(action: str) -> None:
-        # Safety.gate raises HTTPException(423); the agent should read a sentence.
-        from fastapi import HTTPException
-
+    def _stop(peer: str) -> dict[str, Any]:
         try:
-            safety.gate(action)
-        except HTTPException as exc:
-            raise PermissionError(str(exc.detail))
+            result = bridge.send_cmd(peer, {"action": "stop"}, timeout=STOP_TIMEOUT_S, source="estop")
+        except Exception as exc:  # noqa: BLE001 - a peer that cannot be asked is reported, not raised past the others
+            result = {"error": str(exc)}
+        return result if isinstance(result, dict) else {"error": str(result)}
 
-    def _accepted(drop: str | None = None) -> None:
-        """Fold the proof this command was accepted, or report the e-stop that beat it.
+    with ThreadPoolExecutor(max_workers=max(1, len(peers))) as pool:
+        answers = list(pool.map(_stop, peers))
+    per_peer = {peer: {**stop_outcome(answer), "result": answer} for peer, answer in zip(peers, answers, strict=True)}
+    counts = {"stopped": 0, "not_stopped": 0, "no_answer": 0}
+    for info in per_peer.values():
+        counts[info["state"]] = counts.get(info["state"], 0) + 1
+    all_stopped = bool(peers) and counts["stopped"] == len(peers)
+    bridge.record_activity(
+        "estop",
+        "stop_all",
+        target="fleet",
+        detail=f"{counts['stopped']}/{len(peers)} confirmed stopped",
+        ok=all_stopped,
+    )
+    signed = bridge.signed_estop()
+    return {
+        **out,
+        "targeted": peers,
+        "stale_skipped": stale,
+        "counts": counts,
+        "all_stopped": all_stopped,
+        "stopped": per_peer,
+        "signed_rail": {k: v for k, v in signed.items() if k != "responses"},
+        "lockout_engaged": bool(signed.get("lockout_engaged")),
+        "peers_not_stopped": list(signed.get("peers_not_stopped", [])),
+    }
 
-        Args:
-            drop: a session to forget when the e-stop landed. A session that was
-                admitted and then refused must not be left in the store: it holds
-                one of ``MAX_SESSIONS`` slots and thaws into a running robot on
-                resume - a robot the caller was told was refused.
 
-        Raises:
-            PermissionError: the lockout latched while this command was in flight.
-        """
-        from fastapi import HTTPException
-
-        try:
-            safety.accepted()
-        except HTTPException as exc:
-            if drop is not None:
-                safety.store.remove(drop)
-            raise PermissionError(str(exc.detail))
-
-    @tool
-    def robots() -> list[dict[str, Any]]:
-        """Robots that can be simulated: name, dof, and whether a session already runs one."""
-        from strands_robots.dashboard.fleet import registry_robots
-
-        running = {s.robot for s in safety.store.all()}
-        return [{**r, "running": r["name"] in running} for r in registry_robots("sim")]
-
-    @tool
-    def sim_sessions() -> list[dict[str, Any]]:
-        """Every running simulation: id, robot, state, joint names, current joint positions."""
-        return [_snapshot(s) for s in safety.store.all()]
-
-    @tool
-    def sim_start(robot: str) -> dict[str, Any]:
-        """Start a simulation of a registry robot and return its session (id, joints).
-
-        A start that does not finish is forgotten rather than handed back: the
-        state published before the first frame is ``running``, so a session that
-        never rendered would be reported as a robot the operator can watch while
-        it streams nothing and holds one of the store's slots.
-        """
-        _gate("create")
-        from strands_robots.dashboard import routes_sim
-        from strands_robots.registry.robots import get_robot, resolve_name
-
-        entry = get_robot(robot)
-        if entry is None or not entry.get("asset"):
-            raise ValueError(f"{robot!r} is not a robot with a simulation asset")
-        session = safety.store.create(resolve_name(robot))
-        timeout = routes_sim.READY_TIMEOUT
-        if not session.wait_ready(timeout):
-            safety.store.remove(session.id)
-            raise RuntimeError(f"{robot} did not render a first frame within {timeout:.0f}s")
-        if session.snapshot.state == "error":
-            safety.store.remove(session.id)
-            raise RuntimeError(f"could not start {robot}: {session.snapshot.error}")
-        _accepted(drop=session.id)
-        return _snapshot(session)
-
-    @tool
-    def sim_state(session_id: str) -> dict[str, Any]:
-        """The session's latest snapshot: state, sim time, joint names and positions (radians)."""
-        return _snapshot(_session(session_id))
-
-    @tool
-    def sim_set_joints(session_id: str, positions: dict[str, float]) -> dict[str, Any]:
-        """Move joints of a simulated robot to target positions in radians.
-
-        Args:
-            session_id: which simulation (from sim_sessions).
-            positions: joint name or 1-based index (as a string) -> radians, e.g. {"2": 1.2}.
-        """
-        _gate("set_joints")
-        if not positions or any(not isinstance(v, (int, float)) for v in positions.values()):
-            raise ValueError("positions must map joint -> number")
-        result = _session(session_id).command("set_joints", positions=dict(positions))
-        if result.get("status") == "error":
-            raise ValueError(str(result.get("content")))
-        _accepted()
-        return dict(result)
-
-    @tool
-    def sim_reset(session_id: str) -> dict[str, Any]:
-        """Return a simulated robot to its home pose."""
-        _gate("reset")
-        result = _session(session_id).command("reset")
-        _accepted()
-        return dict(result)
-
-    @tool
-    def sim_stop(session_id: str) -> dict[str, Any]:
-        """Stop a simulation and forget it. Never refused."""
-        return {"ok": safety.store.remove(session_id)}
+def build_tools(safety: Any, bridge: Any | None = None) -> list[Any]:
+    """The tools that are not peers: only the e-stop, which stops the fleet like the red button does."""
 
     @tool
     def emergency_stop() -> dict[str, Any]:
-        """Freeze every simulation and latch the dashboard's lockout. Never refused."""
-        return dict(safety.estop(by="agent"))
+        """Stop every robot on the mesh and latch the lockout: per-peer stop, then the signed fleet e-stop. Never refused."""
+        return fleet_stop(safety, bridge, by="agent")
 
-    return [robots, sim_sessions, sim_start, sim_state, sim_set_joints, sim_reset, sim_stop, emergency_stop]
+    return [emergency_stop]
 
 
 #: How long ``spawn_robot`` waits for the new peer's presence on the mesh before
@@ -414,20 +283,35 @@ def build_fleet_tools(bridge: Any, devices: Any | None) -> list[Any]:
     return [fleet, spawn_robot, despawn_robot]
 
 
+def asks_first(bridge: Any | None) -> list[str]:
+    """The tools that put a motion to the operator before it runs, read from the mesh.
+
+    The same table the interrupt hook is built from
+    (:func:`~strands_robots.dashboard.peer_tools.motion_actions_for`): every real-arm
+    proxy, plus a sim proxy whose peer the gate itself calls metal (a wire sim claim
+    this dashboard did not launch), so the badge and the gate cannot disagree. Hosts
+    offer no motion verbs; stopping is never gated.
+    """
+    if bridge is None:
+        return []
+    from strands_robots.dashboard.peer_tools import build_peer_tools, motion_actions_for
+
+    try:
+        snap = bridge.snapshot()
+    except Exception:  # noqa: BLE001 - a badge must not fail on a bridge hiccup
+        logger.debug("asks_first: bridge snapshot unreadable", exc_info=True)
+        return []
+    peers = snap.get("peers") if isinstance(snap, Mapping) else None
+    peers = dict(peers) if isinstance(peers, Mapping) else {}
+    proxies = build_peer_tools(peers, lambda *_a, **_k: {"error": "badge only"})
+    return sorted(motion_actions_for(proxies, peers))
+
+
 def expected_tool_names(bridge: Any | None) -> list[str]:
     """The tool names a console over this bridge would carry, without building an agent."""
     from strands_robots.dashboard.peer_tools import expected_tool_names as proxy_names
 
-    names = [
-        "robots",
-        "sim_sessions",
-        "sim_start",
-        "sim_state",
-        "sim_set_joints",
-        "sim_reset",
-        "sim_stop",
-        "emergency_stop",
-    ]
+    names = ["emergency_stop"]
     if bridge is None:
         return names
     names.extend(FLEET_TOOL_NAMES)
@@ -445,14 +329,13 @@ class Console:
 
     ``bridge`` (the server's :class:`~strands_robots.dashboard.mesh_bridge.MeshBridge`) and
     ``devices`` (its :class:`~strands_robots.dashboard.device_manager.DeviceManager`) are optional:
-    without them the console is the sim-only agent it always was, which is also what the tests
-    that install their own factory get.
+    without them the agent holds only ``emergency_stop`` (no mesh, no robots), which is also what
+    the tests that install their own factory get.
     """
 
     def __init__(
         self, safety: Any, model: Any | None = None, bridge: Any | None = None, devices: Any | None = None
     ) -> None:
-        self.grants = Grants()
         self._safety = safety
         self._model = model if model is not None else default_model()
         self._bridge = bridge
@@ -476,8 +359,8 @@ class Console:
         from strands_robots.dashboard.agent_hitl import MotionInterruptHook
         from strands_robots.dashboard.peer_tools import build_peer_tools, fleet_signature, motion_actions_for
 
-        tools: list[Any] = build_tools(self._safety)
-        hooks: list[Any] = [MotionGate(self.grants)]
+        tools: list[Any] = build_tools(self._safety, self._bridge)
+        hooks: list[Any] = []
         if self._bridge is not None:
             peers = self._peers()
             self._signature = fleet_signature(peers)

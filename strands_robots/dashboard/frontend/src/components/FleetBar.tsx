@@ -2,7 +2,6 @@ import type { MeshInfo } from '../types'
 import type { ConnState } from '../lib/useMesh'
 import { backendLabel } from '../lib/endpoints'
 import { connBadge } from '../lib/connBadge'
-import { recordNavFlag } from '../lib/rehearsalNav'
 import { absentNotice, quietNotice, type AbsentChild } from '../lib/absentChildren'
 import StrandsMark from './StrandsMark'
 import { useEffect, useState } from 'react'
@@ -17,8 +16,6 @@ interface Props {
   online: boolean
   installable: boolean
   activityCount: number
-  /** true = the record backend is a rehearsal, null = not probed yet */
-  recordMock: boolean | null
   onInstall: () => void
   onSettings: () => void
   onWireSecurity: () => void
@@ -26,15 +23,12 @@ interface Props {
   absentChildren?: readonly AbsentChild[]
   quietChildren?: readonly string[]
   onDevices: () => void
-  onTraining: () => void
-  onRecord: () => void
-  onSim: () => void
   onHelp: () => void
 }
 
 export default function FleetBar({
   conn, peerCount, dashboardId, safetyFlash, mesh, online, installable,
-  activityCount, recordMock, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices, onTraining, onRecord, onSim,
+  activityCount, absentChildren, quietChildren, onInstall, onSettings, onWireSecurity, onActivity, onDevices,
   onHelp,
 }: Props) {
   // The mesh session and this browser's socket fail independently: the page can be LIVE while
@@ -43,8 +37,6 @@ export default function FleetBar({
   const quiet = quietNotice(quietChildren, absentChildren)
   const meshDown = mesh.online === false
   const badge = connBadge(conn, { meshDown })
-  // UX_REVIEW #10: a feature that cannot write a dataset says so in the nav.
-  const rec = recordNavFlag(recordMock)
 
   return (
     <header className="fleetbar">
@@ -100,14 +92,6 @@ export default function FleetBar({
             title={`${absentDeath.detail}\n\nOpen devices for the exit status and the last output.`}
           >⚰ {absentDeath.headline}</button>
         )}
-        <button
-          className={`chip${rec.cls ? ` ${rec.cls}` : ''}`}
-          onClick={onRecord}
-          title={rec.title}
-          aria-label={rec.aria}
-        >⏺ record{rec.suffix}</button>
-        <button className="chip" onClick={onTraining} title="Train policies on recorded datasets">🎓 train</button>
-        <button className="chip" onClick={onSim} title="Simulated robots in this process: twin, camera, joint targets">🧊 sim</button>
         <button className="chip" onClick={onActivity} title="Command history">
           ☰ activity{activityCount > 0 ? ` (${activityCount})` : ''}
         </button>
