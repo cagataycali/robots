@@ -69,10 +69,27 @@ _BUDGET: int = _hook().LIMIT
 #: learn page that explains the loader once.
 #: Banked to the exact total, 57,265, when the Start index said what a sketch fence's label
 #: means (one word) on a main that sat 5 over its own ceiling.
-#: Raised for the Foxglove page and the two humanoid design pages under project/ (whole-body
-#: teleoperation, driver composition), then for the mjlab backend page (learn/simulation/mjlab.md)
-#: and its cross-links; banked to the exact merge total.
-_SITE_BUDGET = 60_127
+#: Raised to 50,012 for the Foxglove page (learn/data/foxglove.md, live view and MCAP export) and its two index lines.
+#: Raised by 3,420 to 60,685 when every simulated robot page (the 81 URDF pages included) gained
+#: a fence that prints its joints and a next-step sentence, and the front-matter descriptions
+#: were quoted. Banked to the exact total.
+#: Lowered to 60,626 when the arm pages' next-step sentence dropped one word (x60 pages) to pay
+#: for main's new registry aliases. Banked to the exact total.
+#: Raised by 4,925 to 65,551 for the docs ladder: Start rewritten as six rungs with a
+#: checkpoint sentence each (Stage 0 See it is a captured agent transcript with its frames),
+#: a Concepts tab for the Policy -> Robot -> Backend spine with a glossary, and a provider
+#: decision table. Pictures enter through one-word {{drawing:}} / {{sim:}} tokens, so the
+#: raise is words, not images. Banked to the exact total; the next page needs an equal cut
+#: or its own raise.
+#: Raised by 576 to 66,127 for the Foxglove page carried in from main (learn/data/foxglove.md and
+#: its line on the Learn index). Banked to the exact total.
+#: Raised by 1,754 to 67,881 for the two humanoid design pages (whole-body teleoperation, driver
+#: composition, under reference/project here) plus their index rows, carried in from main. Banked to the exact total.
+#: Raised by 1 to 67,882 when main's teleoperation page gained seven words and the Foxglove page lost
+#: six (#4446, #4450), carried in by merge. Banked to the exact total.
+#: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links, carried in
+#: by merge. Banked to the exact total.
+_SITE_BUDGET = 68_404
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

@@ -15,7 +15,11 @@ description: "PAL Robotics TALOS Humanoid (32-DOF)"
 from strands_robots import Robot
 
 robot = Robot("talos")
+print(robot.robot_joint_names("talos"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 Aliases: `pal_talos`.
 

@@ -113,11 +113,16 @@ plugins:
             heading_level: 3
   - redirects:
       redirect_maps:
+        project/architecture.md: concepts/architecture.md
+        project/index.md: reference/project/index.md
+        project/contributing.md: reference/project/contributing.md
+        project/roadmap.md: reference/project/roadmap.md
+        project/security-policy.md: reference/project/security-policy.md
         agents.md: learn/agents.md
         api-reference.md: reference/api/index.md
-        architecture.md: project/architecture.md
+        architecture.md: concepts/architecture.md
         contracts.md: reference/api/index.md
-        contributing.md: project/contributing.md
+        contributing.md: reference/project/contributing.md
         dashboard.md: learn/dashboard.md
         data/annotation.md: learn/data/label-and-judge.md
         data/dataset-recorder.md: learn/data/record.md
@@ -180,9 +185,9 @@ plugins:
         recording.md: learn/data/record.md
         reference/agents.md: learn/agents.md
         reference/api-reference.md: reference/api/index.md
-        reference/architecture.md: project/architecture.md
+        reference/architecture.md: concepts/architecture.md
         reference/contracts.md: reference/api/index.md
-        reference/contributing.md: project/contributing.md
+        reference/contributing.md: reference/project/contributing.md
         reference/dashboard.md: learn/dashboard.md
         reference/data/annotation.md: learn/data/label-and-judge.md
         reference/data/dataset-recorder.md: learn/data/record.md
@@ -345,12 +350,23 @@ nav:
   - Home: index.md
   - Start:
       - start/index.md
-      - start/install.md
-      - start/first-robot.md
-      - start/first-real-arm.md
-      - start/first-policy.md
-      - start/first-agent.md
-      - start/doctor.md
+      - See it: start/see-it.md
+      - Install: start/install.md
+      - Run it: start/first-robot.md
+      - Talk to it: start/first-agent.md
+      - Real arm: start/first-real-arm.md
+      - Same checkpoint: start/first-policy.md
+      - Teach it: start/teach-it.md
+      - Fleet: start/fleet.md
+      - Doctor: start/doctor.md
+  - Concepts:
+      - concepts/index.md
+      - Architecture: concepts/architecture.md
+      - Robots: concepts/robots.md
+      - Embodiments: concepts/embodiments.md
+      - Simulation and hardware: concepts/backends.md
+      - Data flywheel: concepts/data-flywheel.md
+      - Glossary: concepts/glossary.md
   - Robots:
       - robots/index.md
       - Arms:
@@ -602,11 +618,10 @@ nav:
           - Tools: reference/api/tools.md
           - Data: reference/api/data.md
           - Mesh: reference/api/mesh.md
-  - Project:
-      - project/index.md
-      - Architecture: project/architecture.md
-      - Contributing: project/contributing.md
-      - Roadmap: project/roadmap.md
-      - Security policy: project/security-policy.md
-      - Whole-body teleoperation design: project/design-wholebody-teleop.md
-      - Driver composition design: project/design-driver-composition.md
+      - Project:
+          - reference/project/index.md
+          - Contributing: reference/project/contributing.md
+          - Roadmap: reference/project/roadmap.md
+          - Security policy: reference/project/security-policy.md
+          - Whole-body teleoperation design: reference/project/design-wholebody-teleop.md
+          - Driver composition design: reference/project/design-driver-composition.md

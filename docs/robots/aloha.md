@@ -15,7 +15,11 @@ description: "ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)"
 from strands_robots import Robot
 
 robot = Robot("aloha")
+print(robot.robot_joint_names("aloha"))
+robot.cleanup()
 ```
+
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
 
 Aliases: `agibot_dual_arm`, `agibot_dual_arm_dexhand`, `agibot_dual_arm_full`, `agibot_dual_arm_gripper`, `agibot_genie1`, `galaxea_r1_pro`.
 

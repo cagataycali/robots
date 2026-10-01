@@ -13,11 +13,15 @@ URDF from [robot-descriptions/jaxon_description@4a0cb7a](https://github.com/robo
 
 <img class="sr-thumb" src="../assets/img/robots/jaxon.webp" alt="jaxon, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("jaxon")
+robot = Robot("jaxon")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("jaxon"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

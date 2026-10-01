@@ -1,5 +1,5 @@
 ---
-description: The mjlab backend: GPU-vectorized MuJoCo (MuJoCo-Warp) behind SimEngine, with rsl_rl training, ONNX policies and N-world evaluation.
+description: "The mjlab backend: GPU-vectorized MuJoCo (MuJoCo-Warp) behind SimEngine, with rsl_rl training, ONNX policies and N-world evaluation."
 ---
 
 # mjlab

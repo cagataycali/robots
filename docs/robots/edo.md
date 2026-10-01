@@ -13,11 +13,15 @@ URDF from [ianathompson/eDO_description@17b3f92](https://github.com/ianathompson
 
 <img class="sr-thumb" src="../assets/img/robots/edo.webp" alt="edo, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("edo")
+robot = Robot("edo")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("edo"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

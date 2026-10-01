@@ -19,6 +19,8 @@ from strands_robots import Robot
 robot = Robot("trossen_wxai")  # needs ~/.strands_robots/assets/trossen_wxai/trossen_ai_bimanual.xml on disk
 ```
 
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
+
 Aliases: `trossen_ai_bimanual`.
 
 ## Policies verified on this robot

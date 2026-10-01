@@ -13,11 +13,15 @@ URDF from [tork-a/rtmros_nextage@ac270fb](https://github.com/tork-a/rtmros_nexta
 
 <img class="sr-thumb" src="../assets/img/robots/nextage.webp" alt="nextage, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("nextage")
+robot = Robot("nextage")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("nextage"))
+robot.cleanup()
 ```
+
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
 
 ## Policies verified on this robot
 
