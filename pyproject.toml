@@ -752,6 +752,9 @@ dashboard = [
     # The device roster: serial ports for arms, cameras for previews and recording.
     "pyserial>=3.5,<4.0",
     "opencv-python-headless>=4.8,<5.0",
+    # The Train and Policies tabs search the Hub for LeRobot datasets and
+    # checkpoints. Floor: see the [wbc] comment.
+    "huggingface_hub>=1.5,<2.0.0",
 ]
 # The dashboard's voice operator (``strands_robots.dashboard.voice``): the
 # experimental bidirectional-streaming agent and its two speech-to-speech
