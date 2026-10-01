@@ -301,7 +301,11 @@
       "requires": [],
       "config_keys": [
         "checkpoint_dir",
-        "device"
+        "device",
+        "raw_actions",
+        "joint_map",
+        "command",
+        "obs_terms"
       ],
       "defaults": {
         "device": "cpu"
