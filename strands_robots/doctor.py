@@ -891,7 +891,7 @@ def check_strands_agents() -> str:
             # lower floor is satisfied by a release this package refuses, so
             # pip reports "Requirement already satisfied" against a stale
             # environment and the diagnosis this line answers survives it.
-            fix='uv pip install "strands-agents>=1.57.0,<2.0.0"',
+            fix='uv pip install "strands-agents>=1.57.2,<2.0.0"',
         )
     return _pass(f"strands-agents {_resolve_version('strands', 'strands-agents')}")
 
