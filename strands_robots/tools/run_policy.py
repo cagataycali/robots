@@ -488,6 +488,27 @@ def run_policy(
         except ValueError as e:
             return _err(f"run_policy: {e}")
 
+    # The one input every check above leaves unjudged is the one that names
+    # what will run: the policy. Its provider is resolved, its preflight run and
+    # its constructor called inside every episode's ``Simulation.run_policy``,
+    # so an unknown provider name, a camera the provider cannot route or a
+    # checkpoint id that does not exist was discovered inside the loop - AFTER
+    # step 2 had replaced the dataset at ``dataset_root`` with an empty one.
+    # Measured against two recorded episodes of five frames: an unknown
+    # provider and a missing ``lerobot_local`` checkpoint each left
+    # ``total_episodes=0`` behind and reported ``0/1 episodes ok``. When a
+    # recording is requested the policy is therefore judged and built HERE,
+    # before anything touches disk, and the one built policy is handed to every
+    # episode (``policy_object=``), which also pays a checkpoint load once per
+    # call instead of once per episode. Without a recording nothing is at
+    # stake on disk and the facade keeps reporting per episode as before.
+    forwarded_policy: dict[str, Any] = {}
+    if dataset_root is not None:
+        built = _build_policy_before_recording(simulation, robot_name, policy_provider, policy_config, dataset_root)
+        if isinstance(built, dict):
+            return built
+        forwarded_policy["policy_object"] = built
+
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
     if dataset_root is not None:
@@ -526,6 +547,23 @@ def run_policy(
     try:
         for ep in range(n_episodes):
             ep_seed = None if seed is None else seed + ep
+            if ep > 0 and "policy_object" in forwarded_policy:
+                # The one built policy serves every episode, and ``PolicyRunner.run``
+                # resets it only when a seed was given: unseeded, a history-keeping
+                # provider (flux3_action, groot, any RTC policy) would condition
+                # episode N+1 on episode N's frames while the scene has jumped
+                # back to rest, and the drifted actions are what the dataset keeps.
+                # Mirrors the facade's between-episode reset (SimEngine.run_policy);
+                # best-effort like every other reset call site.
+                try:
+                    forwarded_policy["policy_object"].reset(seed=ep_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%s) raised %s before episode %d; continuing without per-episode policy reset",
+                        ep_seed,
+                        e,
+                        ep + 1,
+                    )
             try:
                 ep_video, ep_video_path = _episode_video_config(video, ep, n_episodes)
                 if ep_video_path:
@@ -544,6 +582,7 @@ def run_policy(
                     seed=ep_seed,
                     video=ep_video,
                     stop_when=stop_when,
+                    **forwarded_policy,
                 )
             except Exception as e:  # noqa: BLE001 - per-episode resilience
                 logger.exception("Episode %d/%d raised: %s", ep + 1, n_episodes, e)
@@ -689,6 +728,12 @@ def run_policy(
         summary_line += f" | stop_when_true_at_reset={n_reset_true}/{n_episodes}"
     if warnings_:
         summary_line += f" | warnings={len(warnings_)}"
+    # The first failed episode's own words, on the line an agent reads. The
+    # per-episode records carry every reason, but a caller that stops at the
+    # summary was told only a count and went looking for the wiring.
+    first_failed = next((e for e in episodes if e["status"] != "success"), None)
+    if first_failed is not None:
+        summary_line += f" | first error (episode {first_failed['index'] + 1}): {first_failed['text']}"
 
     payload = {
         "n_episodes_requested": n_episodes,
@@ -714,6 +759,76 @@ def run_policy(
         "status": out_status,
         "content": [{"text": summary_line}, {"json": payload}],
     }
+
+
+def _build_policy_before_recording(
+    simulation: Any,
+    robot_name: str | None,
+    policy_provider: str,
+    policy_config: dict[str, Any] | None,
+    dataset_root: str,
+) -> Any:
+    """Judge and build the policy while the dataset at ``dataset_root`` is still whole.
+
+    Three verdicts, in the order the facade itself applies them, each returned
+    as the ``status=error`` envelope this tool answers with:
+
+    * the provider name, by :func:`~strands_robots.policies.policy_provider_error`,
+      the rule ``create_policy`` resolves with;
+    * the provider's own pre-build hook, by
+      :func:`~strands_robots.policies.preflight_reason`, fed this simulation's
+      observation keys when the simulation can answer them (a stand-in with no
+      ``get_observation`` is not refused; the hook is then run on nothing, as
+      the facade does when the observation is not yet available);
+    * the constructor, by calling :func:`~strands_robots.policies.create_policy`.
+      Every raise is reported, not only the ``TypeError`` / ``ValueError`` the
+      facade's envelope covers: this is the agent-tool surface, whose episode
+      loop already turns any raise into an error record, and a missing
+      checkpoint (``FileNotFoundError``), a server nobody listens on
+      (``ConnectionError``) or a checkpoint directory without its ONNX
+      (``RuntimeError``) are the measured shapes.
+
+    Args:
+        simulation: The live simulation handle the tool was given.
+        robot_name: As passed to the tool; ``None`` lets the simulation pick its
+            single robot, as ``run_policy`` does.
+        policy_provider: As passed to the tool.
+        policy_config: As passed to the tool, already known to be a mapping.
+        dataset_root: Named in every refusal, so the caller knows what was kept.
+
+    Returns:
+        The built :class:`~strands_robots.policies.base.Policy`, or the error
+        envelope when the policy cannot be built - in which case
+        ``start_recording`` is never reached and the dataset is untouched.
+    """
+    from strands_robots.policies import create_policy, policy_provider_error, preflight_reason
+
+    config = policy_config or {}
+    untouched = f"No recording was started and the dataset at {dataset_root!r} is untouched."
+
+    reason = policy_provider_error(policy_provider, **config)
+    if reason is not None:
+        return _err(f"run_policy: {reason} {untouched}")
+
+    def observation_keys() -> set[str]:
+        reader = getattr(simulation, "get_observation", None)
+        if reader is None:
+            return set()
+        obs = reader(robot_name)
+        return set(obs) if isinstance(obs, dict) else set()
+
+    reason = preflight_reason(policy_provider, observation_keys, **config)
+    if reason is not None:
+        return _err(f"run_policy: {reason} {untouched}")
+
+    try:
+        return create_policy(policy_provider, **config)
+    except Exception as exc:  # noqa: BLE001 - every constructor raise is this tool's to report
+        logger.exception("run_policy: policy provider %r could not be built: %s", policy_provider, exc)
+        return _err(
+            f"run_policy: policy provider {policy_provider!r} refused its configuration, "
+            f"so no rollout was started. {exc} {untouched}"
+        )
 
 
 def _episode_video_config(

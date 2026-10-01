@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
-from strands_robots.dashboard import access, agent_console
+from strands_robots.dashboard import access, agent_console, agent_hitl
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,8 +40,8 @@ async def agent_info(request: Request, _: dict = Depends(access.require_session)
     bridge = getattr(request.app.state, "bridge", None)
     return {
         "model": agent_console.model_id(),
-        "asks_first": sorted(agent_console.MOTION_TOOLS),
-        "interrupt": agent_console.INTERRUPT_NAME,
+        "asks_first": agent_console.asks_first(bridge),
+        "interrupt": agent_hitl.INTERRUPT_NAME,
         "tools": agent_console.expected_tool_names(bridge),
         "fleet_aware": bridge is not None,
     }

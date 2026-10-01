@@ -112,8 +112,8 @@ function rebaseSnapshotPeers(peers, serverNowS, nowS) {
       out[id] = peer;
       continue;
     }
-    const ageS2 = Math.max(0, serverNowS - peer.last_seen);
-    out[id] = { ...peer, last_seen: nowS - ageS2 };
+    const ageS = Math.max(0, serverNowS - peer.last_seen);
+    out[id] = { ...peer, last_seen: nowS - ageS };
   }
   return out;
 }
@@ -1011,11 +1011,9 @@ const BUNDLE_ROUTES = [
   "/api/calibration/run/{p}/key",
   "/api/calibration/{p}",
   "/api/checkpoints/search",
-  "/api/collect",
   "/api/config",
   "/api/consent",
   "/api/consent/revoke",
-  "/api/datasets/labels",
   "/api/deploy/snippet",
   "/api/devices",
   "/api/devices/arm-role",
@@ -1042,7 +1040,6 @@ const BUNDLE_ROUTES = [
   "/api/record/open",
   "/api/record/session",
   "/api/record/upload-preflight",
-  "/api/replay",
   "/api/robots/registry",
   "/api/robots/{p}/policy-fit",
   "/api/robots/{p}/reset",
@@ -1053,24 +1050,9 @@ const BUNDLE_ROUTES = [
   "/api/robots/{p}/teleop/receive",
   "/api/robots/{p}/teleop/stop",
   "/api/robots/{p}/twin",
-  "/api/safety",
   "/api/safety/estop",
   "/api/safety/resume",
-  "/api/settings",
-  "/api/sim",
-  "/api/sim/ports",
-  "/api/sim/{p}",
-  "/api/sim/{p}/joints",
-  "/api/sim/{p}/reset",
-  "/api/sim/{p}/stream.mjpg",
-  "/api/training/datasets",
-  "/api/training/export",
-  "/api/training/jobs",
-  "/api/training/output-dir",
-  "/api/training/status",
-  "/api/training/submit",
-  "/api/training/trainers",
-  "/api/training/validate"
+  "/api/settings"
 ];
 function darkRoutes(livePaths, needed = BUNDLE_ROUTES) {
   if (!Array.isArray(livePaths) || livePaths.length === 0) return [];
@@ -1356,18 +1338,6 @@ function connBadge(conn, opts = {}) {
     }
   }
 }
-function recordNavFlag(mock, base = "Record teleop episodes into a dataset") {
-  if (mock !== true) {
-    return { flagged: false, suffix: "", cls: "", title: base, aria: "record" };
-  }
-  return {
-    flagged: true,
-    suffix: " · rehearsal",
-    cls: "rehearsal",
-    title: `${base}. REHEARSAL: this backend has no /api/record, so the buttons work but nothing is written to disk and no dataset is produced.`,
-    aria: "record — rehearsal only, nothing is written to disk"
-  };
-}
 const SIGNALS = {
   9: {
     phrase: "killed (SIGKILL) — nothing here sends that: despawn asks with SIGTERM first, so the OS under memory pressure, a script, or a person ended it",
@@ -1493,7 +1463,6 @@ function FleetBar({
   online,
   installable,
   activityCount,
-  recordMock,
   absentChildren,
   quietChildren,
   onInstall,
@@ -1501,16 +1470,12 @@ function FleetBar({
   onWireSecurity,
   onActivity,
   onDevices,
-  onTraining,
-  onRecord,
-  onSim,
   onHelp
 }) {
   const absentDeath = absentNotice(absentChildren);
   const quiet = quietNotice(quietChildren, absentChildren);
   const meshDown = mesh.online === false;
   const badge = connBadge(conn, { meshDown });
-  const rec = recordNavFlag(recordMock);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "fleetbar", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("a", { className: "logo", href: "https://strandsagents.com/", title: "Strands Agents", "aria-label": "Strands Agents", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 18, title: "Strands Agents" }) }),
@@ -1568,21 +1533,6 @@ Open devices for the exit status and the last output.`,
           ]
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: `chip${rec.cls ? ` ${rec.cls}` : ""}`,
-          onClick: onRecord,
-          title: rec.title,
-          "aria-label": rec.aria,
-          children: [
-            "⏺ record",
-            rec.suffix
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onTraining, title: "Train policies on recorded datasets", children: "🎓 train" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onSim, title: "Simulated robots in this process: twin, camera, joint targets", children: "🧊 sim" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "chip", onClick: onActivity, title: "Command history", children: [
         "☰ activity",
         activityCount > 0 ? ` (${activityCount})` : ""
@@ -1640,101 +1590,6 @@ function SchemeToggle() {
       children: scheme === "dark" ? "◐ dark" : "◑ paper"
     }
   );
-}
-function emptySession() {
-  return {
-    dataset: null,
-    task: "",
-    leader: null,
-    follower: null,
-    target_episodes: 10,
-    episodes: [],
-    phase: "idle",
-    fps: 30
-  };
-}
-function makeMock() {
-  let s = emptySession();
-  let startedAt = 0;
-  const clone = () => JSON.parse(JSON.stringify(s));
-  return {
-    mock: true,
-    async session() {
-      if (s.phase === "recording" && s.episodes.length > 0) {
-        const ep = s.episodes[s.episodes.length - 1];
-        ep.frames = Math.max(0, Math.round((Date.now() - startedAt) / 1e3 * s.fps));
-        ep.duration_s = Math.round((Date.now() - startedAt) / 1e3 * 10) / 10;
-      }
-      return clone();
-    },
-    async open(opts) {
-      s = { ...emptySession(), ...opts, fps: opts.fps ?? emptySession().fps, episodes: [], phase: "idle" };
-      return clone();
-    },
-    async startEpisode() {
-      if (!s.dataset) throw new Error("no open session");
-      if (s.phase === "recording") return clone();
-      s.phase = "recording";
-      startedAt = Date.now();
-      s.episodes.push({ index: s.episodes.length, frames: 0, duration_s: 0, thumbnails: {} });
-      return clone();
-    },
-    async stopEpisode() {
-      if (s.phase !== "recording") return clone();
-      const duration = (Date.now() - startedAt) / 1e3;
-      const ep = s.episodes[s.episodes.length - 1];
-      ep.frames = Math.max(1, Math.round(duration * s.fps));
-      ep.duration_s = Math.round(duration * 10) / 10;
-      s.phase = "idle";
-      return clone();
-    },
-    async redoEpisode() {
-      if (s.phase === "recording") s.episodes.pop();
-      s.phase = "idle";
-      return clone();
-    },
-    async discard(index) {
-      if (!s.dataset) throw new Error("no open session");
-      const ep = s.episodes.find((e) => e.index === index);
-      if (!ep) throw new Error(`no saved episode with index ${index}`);
-      ep.discarded = true;
-      return clone();
-    },
-    async close() {
-      s = emptySession();
-      return { ok: true, detail: "mock session closed (nothing was written)" };
-    },
-    async uploadPreflight() {
-      return {
-        ok: false,
-        state: "no_credential",
-        needs_force: false,
-        user: null,
-        destination: s.dataset,
-        detail: "this is the in-browser rehearsal - nothing is written and nothing can be published"
-      };
-    }
-  };
-}
-function makeReal() {
-  return {
-    mock: false,
-    session: () => api("/api/record/session"),
-    open: (opts) => post("/api/record/open", opts),
-    startEpisode: () => post("/api/record/episode/start"),
-    stopEpisode: () => post("/api/record/episode/stop"),
-    redoEpisode: () => post("/api/record/episode/redo"),
-    discard: (index) => post("/api/record/episode/discard", { index }),
-    close: (opts) => post("/api/record/close", opts ?? {}),
-    uploadPreflight: () => api("/api/record/upload-preflight")
-  };
-}
-let cached = null;
-function getRecordApi() {
-  if (!cached) {
-    cached = api("/api/record/session").then(() => makeReal()).catch((e) => e && e.status === 404 ? makeMock() : makeReal());
-  }
-  return cached;
 }
 const RUNNING = /* @__PURE__ */ new Set(["running", "executing"]);
 function simActivityStatus(robots, peerId) {
@@ -2368,8 +2223,8 @@ function captureAge(meta, nowS) {
 function stoppedCameras(cameras2, nowS, maxAgeS = CAMERA_STOPPED_AGE_S) {
   const out = [];
   for (const [camera, meta] of Object.entries(cameras2 ?? {})) {
-    const ageS2 = captureAge(meta, nowS);
-    if (ageS2 !== null && ageS2 > maxAgeS) out.push({ camera, ageS: ageS2 });
+    const ageS = captureAge(meta, nowS);
+    if (ageS !== null && ageS > maxAgeS) out.push({ camera, ageS });
   }
   return out.sort((a, b) => b.ageS - a.ageS);
 }
@@ -2377,13 +2232,6 @@ function agoText(seconds) {
   if (seconds < 90) return `${Math.round(seconds)}s ago`;
   if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`;
   return `${(seconds / 3600).toFixed(1)}h ago`;
-}
-function cameraWarning(stopped, opts = {}) {
-  if (stopped.length === 0) return null;
-  const which = stopped.map((c) => `${c.camera} (last frame ${agoText(c.ageS)})`).join(", ");
-  const who = opts.peerId ? `${opts.peerId}: ` : "";
-  const plural2 = stopped.length > 1 ? "cameras have" : "camera has";
-  return `${who}${stopped.length} ${plural2} stopped publishing — ${which}. Recording now writes episodes with a frozen or missing image stream, which you would only notice at training time.`;
 }
 function deadCameraNote(stopped, totalCameras) {
   if (stopped.length === 0 || totalCameras === 0) return null;
@@ -2770,8 +2618,8 @@ const NO_LOG = {
 };
 const TICK_MS = 3e4;
 async function load(peerId) {
-  const cached2 = CACHE.get(peerId);
-  if (cached2 && !verdictIsStale(cached2.at, Date.now() + TICK_MS / 6)) return cached2;
+  const cached = CACHE.get(peerId);
+  if (cached && !verdictIsStale(cached.at, Date.now() + TICK_MS / 6)) return cached;
   const running = INFLIGHT.get(peerId);
   if (running) return running;
   const p = (async () => {
@@ -3308,9 +3156,9 @@ function jointAbsence(input) {
   const { state, presence, problem, nowS } = input;
   const verdict2 = (problem == null ? void 0 : problem.headline) ? problem : null;
   const expects = expectsJoints(presence);
-  const ageS2 = typeof (state == null ? void 0 : state.t) === "number" && state.t > 0 ? nowS - state.t : null;
-  const stateArriving = ageS2 !== null && ageS2 <= STATE_QUIET_S;
-  if (state == null || ageS2 === null) {
+  const ageS = typeof (state == null ? void 0 : state.t) === "number" && state.t > 0 ? nowS - state.t : null;
+  const stateArriving = ageS !== null && ageS <= STATE_QUIET_S;
+  if (state == null || ageS === null) {
     if (verdict2) {
       return {
         text: `no state frames yet — ${verdict2.headline}`,
@@ -3324,7 +3172,7 @@ function jointAbsence(input) {
     return { text: `waiting for the first state frame${count2}`, tone: "waiting", hint: null };
   }
   if (!stateArriving) {
-    const ago2 = ageS2 < 90 ? `${Math.round(ageS2)}s` : ageS2 < 5400 ? `${Math.round(ageS2 / 60)}m` : `${(ageS2 / 3600).toFixed(1)}h`;
+    const ago2 = ageS < 90 ? `${Math.round(ageS)}s` : ageS < 5400 ? `${Math.round(ageS / 60)}m` : `${(ageS / 3600).toFixed(1)}h`;
     if (input.peerStale === false) {
       return {
         text: `state is ${ago2} behind — no joints in it`,
@@ -3571,9 +3419,6 @@ function numField(raw, rules) {
 function isLatestRequest(seq, latest) {
   return seq === latest;
 }
-function newerThanApplied(seq, applied) {
-  return applied === void 0 || seq > applied;
-}
 function emptyNote({ query, hubProblem }) {
   const q = String(query ?? "").trim();
   const named = q ? `“${q}”` : "that";
@@ -3789,12 +3634,6 @@ function CheckpointPicker({ value, onPick, disabled, robot, peerId }) {
 const KEY = "strands.deployIntent";
 const TTL_MS = 10 * 60 * 1e3;
 const CLOCK_GRACE_MS = 60 * 1e3;
-function setDeployIntent(i) {
-  try {
-    sessionStorage.setItem(KEY, JSON.stringify({ ...i, at: Date.now() }));
-  } catch {
-  }
-}
 function peekDeployIntent(now = Date.now()) {
   try {
     const raw = sessionStorage.getItem(KEY);
@@ -4869,7 +4708,7 @@ function teleopSubject(peerId, peers) {
     why: host.children.length === 1 ? `this is the process, not the arm — the robot inside it is ${host.children[0]}` : `this is the process, not the arm — it hosts ${host.children.join(", ")}`
   };
 }
-const jointCount$2 = (p) => typeof (p == null ? void 0 : p.joints) === "number" && p.joints > 0 ? p.joints : 0;
+const jointCount$1 = (p) => typeof (p == null ? void 0 : p.joints) === "number" && p.joints > 0 ? p.joints : 0;
 function leaderOptions(followerId, peers) {
   const list = (peers ?? []).filter((p) => p && p.peer_id);
   const hosts = armHosts(list);
@@ -4881,7 +4720,7 @@ function leaderOptions(followerId, peers) {
       out.push({ peer_id: p.peer_id, ok: false, why: host.why });
       continue;
     }
-    if (!jointCount$2(p)) {
+    if (!jointCount$1(p)) {
       out.push({
         peer_id: p.peer_id,
         ok: false,
@@ -4918,13 +4757,13 @@ function pairPlan(followerId, leaderId, peers) {
   const notes = [];
   if (!follower) blockers.push(`${followerId} is not on the mesh — the dashboard cannot command an arm it cannot see`);
   if (!leader) blockers.push(`${leaderId} is not on the mesh`);
-  if (follower && !jointCount$2(follower))
+  if (follower && !jointCount$1(follower))
     blockers.push(`${followerId} reports no joints, so nothing could be applied to it (its log says why)`);
-  if (leader && !jointCount$2(leader))
+  if (leader && !jointCount$1(leader))
     blockers.push(`${leaderId} reports no joints, so it has no position to publish (its log says why)`);
   const hosts = armHosts(list);
   for (const id of [followerId, leaderId]) if (hosts[id]) blockers.push(`${id} ${hosts[id].why}`);
-  const fj = jointCount$2(follower), lj = jointCount$2(leader);
+  const fj = jointCount$1(follower), lj = jointCount$1(leader);
   if (fj && lj && fj !== lj)
     notes.push(`${leaderId} reports ${lj} joints and ${followerId} reports ${fj} — only the names they share can be followed`);
   if ((follower == null ? void 0 : follower.role) === "leader" && follower.role_source === "measured")
@@ -4945,12 +4784,12 @@ function pairPlan(followerId, leaderId, peers) {
   };
 }
 const isSim = (p) => (p == null ? void 0 : p.robot_type) === "sim";
-const jointCount$1 = (p) => typeof (p == null ? void 0 : p.joints) === "number" && p.joints > 0 ? p.joints : 0;
+const jointCount = (p) => typeof (p == null ? void 0 : p.joints) === "number" && p.joints > 0 ? p.joints : 0;
 function twinFollowerOf(peerId, peers) {
   const list = (peers ?? []).filter((p) => p && p.peer_id);
   const twinId = `${peerId}-twin`;
   const process = list.find((p) => p.peer_id === twinId) ?? null;
-  const arm = list.find((p) => isChildOf(p.peer_id, twinId) && jointCount$1(p) > 0) ?? null;
+  const arm = list.find((p) => isChildOf(p.peer_id, twinId) && jointCount(p) > 0) ?? null;
   return { process, arm };
 }
 function mirrorPlan(peerId, peers) {
@@ -4964,7 +4803,7 @@ function mirrorPlan(peerId, peers) {
   if (isSim(subject)) {
     return { follower: null, blockers: ["this peer is already a simulation — the mirror follows a REAL arm"], notes };
   }
-  if (!jointCount$1(subject)) {
+  if (!jointCount(subject)) {
     blockers.push("this arm reports no joints, so it has no position to publish (its log — devices › logs — says why)");
   }
   const { process, arm } = twinFollowerOf(peerId, list);
@@ -4982,8 +4821,8 @@ function mirrorPlan(peerId, peers) {
   } else {
     notes.push("role not measured — if the arm resists being hand-moved, its motors hold torque; relaxing it is done at the arm, not from this screen");
   }
-  const fj = jointCount$1(arm ?? void 0);
-  const lj = jointCount$1(subject);
+  const fj = jointCount(arm ?? void 0);
+  const lj = jointCount(subject);
   if (arm && fj && lj && fj !== lj) {
     notes.push(`this arm reports ${lj} joints and ${arm.peer_id} reports ${fj} — only the names they share can be mirrored`);
   }
@@ -5075,10 +4914,10 @@ function sensorVerdict(kind, reading, nowS, declared = false) {
   if (typeof t !== "number" || !Number.isFinite(t) || t <= 0) {
     return { kind, tone: "live", text: "arriving (no timestamp in the payload)", ageS: null };
   }
-  const ageS2 = nowS - t;
-  if (ageS2 < 0) return { kind, tone: "live", text: "arriving", ageS: 0 };
-  if (ageS2 <= SENSOR_QUIET_S) return { kind, tone: "live", text: "arriving", ageS: ageS2 };
-  return { kind, tone: "stale", text: `last reading ${agoText(ageS2)}`, ageS: ageS2 };
+  const ageS = nowS - t;
+  if (ageS < 0) return { kind, tone: "live", text: "arriving", ageS: 0 };
+  if (ageS <= SENSOR_QUIET_S) return { kind, tone: "live", text: "arriving", ageS };
+  return { kind, tone: "stale", text: `last reading ${agoText(ageS)}`, ageS };
 }
 function rowsToShow(topics, sensors) {
   const declared = new Set(declaredKinds(topics));
@@ -5963,7 +5802,7 @@ function parseInterruptEvent(ev) {
   if (!ev || ev.type !== "interrupt" || typeof ev.id !== "string" || !ev.id.trim()) return null;
   const r = ev.reason && typeof ev.reason === "object" ? ev.reason : {};
   const dur = typeof r.duration === "number" && isFinite(r.duration) && r.duration > 0 ? r.duration : null;
-  const rawTarget = str$1(r.target) || (str$1(r.session_id) ? `sim session ${str$1(r.session_id)}` : "");
+  const rawTarget = str$1(r.target);
   let command = "";
   if (r.command != null && r.command !== "") {
     try {
@@ -8641,7 +8480,7 @@ function calibratePlan(facts, family) {
   const id = deviceId(facts, role);
   const prefix = role === "follower" ? "robot" : "teleop";
   const command = `lerobot-calibrate --${prefix}.type=${model} --${prefix}.id=${shellArg(id)} --${prefix}.port=${shellArg(facts.device)}`;
-  const measured2 = facts.role_volts != null ? `measured ${facts.role_volts}V on the servo bus` : `role recorded as ${role}`;
+  const measured = facts.role_volts != null ? `measured ${facts.role_volts}V on the servo bus` : `role recorded as ${role}`;
   return {
     command,
     deviceType,
@@ -8649,7 +8488,7 @@ function calibratePlan(facts, family) {
     deviceId: id,
     idNote: idNote(facts, role),
     idWarn: idNameContradictsRole(id, role),
-    reason: `${measured2}, so this arm is the ${role} — a ${role} is a lerobot "${deviceType}" device. Run this in a terminal: it will ask you to move the arm through its range by hand.`
+    reason: `${measured}, so this arm is the ${role} — a ${role} is a lerobot "${deviceType}" device. Run this in a terminal: it will ask you to move the arm through its range by hand.`
   };
 }
 function knownCalibrationId(profiles, facts) {
@@ -9087,7 +8926,7 @@ function sanitizePeerName(raw) {
   const s = (raw ?? "").trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._:-]/g, "").replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
   return s === "" ? null : s;
 }
-function freeVariant$1(name, taken) {
+function freeVariant(name, taken) {
   const m = name.match(/^(.*?)-(\d+)$/);
   const stem = m ? m[1] : name;
   let n = m ? Number(m[2]) : 1;
@@ -9133,7 +8972,7 @@ function peerNameField(raw, opts = {}) {
       value: null,
       problem: `${typed} already exists — the server refuses a duplicate peer id rather than shadowing the one that is running`,
       note: null,
-      suggestion: freeVariant$1(typed, taken)
+      suggestion: freeVariant(typed, taken)
     };
   }
   return { value: typed, problem: null, note: null, suggestion: null };
@@ -9355,7 +9194,7 @@ function DevicePanel({ open, onClose }) {
     // shared-index warning: sendable, but said out loud
   ].filter(Boolean).join(" · ") || null;
   const anyCam = camRows.some((r) => r.index !== "");
-  const nameVerdict2 = peerNameField(peerName, {
+  const nameVerdict = peerNameField(peerName, {
     existing: [
       ...Object.keys((doc == null ? void 0 : doc.managed) ?? {}),
       ...Object.values(profiles ?? {}).map((p) => p == null ? void 0 : p.peer_id).filter(Boolean)
@@ -9363,9 +9202,9 @@ function DevicePanel({ open, onClose }) {
     robotName,
     mode
   });
-  const spawn = () => act(() => (forgetJointFailure(nameVerdict2.value), post("/api/devices/spawn", {
+  const spawn = () => act(() => (forgetJointFailure(nameVerdict.value), post("/api/devices/spawn", {
     robot_name: robotName,
-    peer_id: nameVerdict2.value,
+    peer_id: nameVerdict.value,
     mode,
     port: mode === "real" ? port || null : null,
     // The camera config must be a MAPPING per entry ({index_or_path: N, ...}); a bare int here is
@@ -9549,30 +9388,30 @@ function DevicePanel({ open, onClose }) {
             {
               value: peerName,
               placeholder: "left-arm (optional)",
-              "aria-invalid": nameVerdict2.problem ? true : void 0,
+              "aria-invalid": nameVerdict.problem ? true : void 0,
               onChange: (e) => setPeerName(e.target.value)
             }
           )
         ] }),
-        nameVerdict2.problem ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint bad", role: "alert", children: [
+        nameVerdict.problem ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint bad", role: "alert", children: [
           "⚠ ",
-          nameVerdict2.problem,
-          nameVerdict2.suggestion && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          nameVerdict.problem,
+          nameVerdict.suggestion && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
             " ",
             /* @__PURE__ */ jsxRuntimeExports.jsxs(
               "button",
               {
                 type: "button",
                 className: "btn ghost tiny",
-                onClick: () => setPeerName(nameVerdict2.suggestion),
+                onClick: () => setPeerName(nameVerdict.suggestion),
                 children: [
                   "use ",
-                  nameVerdict2.suggestion
+                  nameVerdict.suggestion
                 ]
               }
             )
           ] })
-        ] }) : nameVerdict2.note ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: nameVerdict2.note }) : null,
+        ] }) : nameVerdict.note ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: nameVerdict.note }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Robot" }),
@@ -9775,7 +9614,7 @@ function DevicePanel({ open, onClose }) {
           "button",
           {
             className: "btn go",
-            disabled: busy || !robotName || mode === "real" && !port || !!camProblem || !!nameVerdict2.problem || mode === "real" && blocksSpawn(portVerdict),
+            disabled: busy || !robotName || mode === "real" && !port || !!camProblem || !!nameVerdict.problem || mode === "real" && blocksSpawn(portVerdict),
             onClick: spawn,
             children: "spawn"
           }
@@ -10078,7 +9917,6 @@ function verdict(joiner, route) {
   return { text: `${ABSENCE}${joiner}${route}`, route, offerDevices: true };
 }
 function noArmsVerdict(peerCount, remembered) {
-  if (peerCount > 0) return null;
   if (remembered == null) {
     return verdict(
       ", and ",
@@ -10375,7 +10213,6 @@ const DOC_LINKS = [
 ];
 const REPO_DOC_PATHS = [
   "docs/dashboard/quickstart.md — this screen, with an SO-101",
-  "docs/dashboard/collect-train-deploy.md — the full loop",
   "docs/dashboard/troubleshooting.md — when a camera or an arm stays dark",
   "docs/dashboard/remote-access.md — reaching this dashboard from outside"
 ];
@@ -10403,12 +10240,11 @@ const HELP_TOPICS = [
     ]
   },
   {
-    title: "Collect → train → deploy",
+    title: "Your fleet, and the agent that drives it",
     lines: [
-      "1. ⚙ devices — see the USB arms and cameras this machine can find, name them, and spawn one as a peer.",
-      "2. ⏺ record — teleoperate a leader arm and capture episodes into a LeRobot dataset.",
-      "3. 🎓 train — point a trainer at that dataset (local folder or a Hugging Face repo) and watch the loss.",
-      "4. Deploy the checkpoint from the training screen: it prefills the run form on a robot card, and you press ▶."
+      "1. ⚙ devices — see the USB arms and cameras this machine can find, name them, and spawn one as a peer. Every card on this page is a peer on the robot mesh.",
+      "2. The chat dock is an agent whose tools are those same peers: ask it to spawn a robot, read a state, or run a policy, and watch the card move.",
+      "3. A run on a real arm is put to you first; recording and training live in the Python library (strands_robots.record, create_trainer), not on this screen."
     ]
   },
   {
@@ -10543,2712 +10379,6 @@ class ErrorBoundary extends reactExports.Component {
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Details are in the browser console. If it crashes again on the same screen, that screen's data is the problem, not your fleet." })
     ] });
   }
-}
-const TRAINING_POLL_S = 5;
-const TRAINING_STALE_POLLS = 3;
-function trainingFreshness(input) {
-  const { polledAtS, nowS } = input;
-  const failures = input.failures ?? 0;
-  const state = (input.state ?? "").toLowerCase();
-  const staleAfterS = input.staleAfterS ?? TRAINING_POLL_S * TRAINING_STALE_POLLS;
-  const ageS2 = polledAtS != null && Number.isFinite(polledAtS) && polledAtS > 0 ? Math.max(0, nowS - polledAtS) : null;
-  const settled = state === "success" || state === "failed" || state === "cancelled";
-  if (ageS2 === null) {
-    const why2 = failures > 0 ? `${failures} status poll${failures === 1 ? "" : "s"} failed${input.error ? `: ${input.error}` : ""}` : "no status read yet";
-    return {
-      stale: !settled && failures > 0,
-      ageS: null,
-      note: failures > 0 ? `⚠ never read this job's status — ${why2}` : "",
-      title: `no status has been read for this job (${why2})`
-    };
-  }
-  const stale = !settled && ageS2 > staleAfterS;
-  const agoStr = ageS2 < 90 ? `${Math.round(ageS2)}s` : `${Math.round(ageS2 / 60)}m`;
-  const failPart = failures > 0 ? ` (${failures} failed poll${failures === 1 ? "" : "s"}${input.error ? `: ${input.error}` : ""})` : "";
-  return {
-    stale,
-    ageS: ageS2,
-    // The numbers are the claim, so the sentence names them rather than the poll.
-    note: stale ? `⚠ these numbers are ${agoStr} old — the status feed stopped${failPart}, so the run may have died, finished, or moved on` : "",
-    title: settled ? `final status, read ${agoStr} ago` : `status read ${agoStr} ago${failPart}`
-  };
-}
-const EMBODIMENT = {
-  key: "embodiment",
-  label: "embodiment",
-  placeholder: "new_embodiment",
-  say: "GR00T needs an embodiment tag (--embodiment_tag): which robot body the data came from",
-  required: true
-};
-function extraFields(provider) {
-  return provider === "groot" ? [EMBODIMENT] : [];
-}
-function missingForProvider(provider, values) {
-  const missing = extraFields(provider).filter((f) => f.required && !(values[f.key] || "").trim());
-  if (!missing.length) return "";
-  return missing.map((f) => f.say).join(" · ");
-}
-function datasetName(sel) {
-  const src = (sel.dataset_root ?? "").trim() || (sel.dataset_repo_id ?? "").trim();
-  if (!src) return null;
-  const seg = src.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
-  const clean = seg.replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[_.]+|[_.]+$/g, "");
-  return clean || null;
-}
-function suggestOutputDir(sel, currentValue) {
-  if ((currentValue ?? "").trim()) return null;
-  const name = datasetName(sel);
-  if (!name) return null;
-  return `/tmp/train_${name}`;
-}
-const NO_SPLIT = "empty: trains on every episode and reports training loss only — a validation split is what tells learning from memorising";
-function holdout(raw, episodeCount) {
-  const text = (raw ?? "").trim();
-  if (!text) return { send: null, problem: null, say: NO_SPLIT };
-  const n = Number(text);
-  if (!Number.isFinite(n)) {
-    return { send: null, problem: `“${text}” is not a number`, say: NO_SPLIT };
-  }
-  if (n <= 0) {
-    return {
-      send: null,
-      problem: `a holdout of ${n} reserves no episodes at all — leave it empty to train on every episode`,
-      say: NO_SPLIT
-    };
-  }
-  if (!Number.isInteger(n)) {
-    return {
-      send: null,
-      problem: `${text} would reserve ${Math.ceil(n)} episodes, not ${Math.floor(n)} — enter a whole number`,
-      say: NO_SPLIT
-    };
-  }
-  const known = typeof episodeCount === "number" && Number.isFinite(episodeCount) && episodeCount > 0;
-  if (known && n >= episodeCount) {
-    return {
-      send: null,
-      problem: `this dataset has ${episodeCount} episodes — holding out ${n} leaves ${Math.max(0, episodeCount - n)} to train on`,
-      say: NO_SPLIT
-    };
-  }
-  const rest = known ? `${episodeCount - n} to train on, ` : "";
-  return {
-    send: n,
-    problem: null,
-    say: `holds out the last ${n} episode${n === 1 ? "" : "s"} for validation (${rest}so an eval loss is logged alongside the training loss)`
-  };
-}
-function labelsGate(row) {
-  if (!row) return { ok: false, reason: "no dataset selected" };
-  if (!row.root) {
-    return { ok: false, reason: "labels live in a sidecar next to the dataset on disk — download this Hub dataset first" };
-  }
-  if (row.recording) {
-    return { ok: false, reason: "this dataset is being recorded right now — episodes are judged after the session" };
-  }
-  return { ok: true, reason: "show the deterministic verdicts and judge annotations for each episode" };
-}
-function labelSummary(view, error) {
-  if (error) return { text: `Labels could not be read — ${error}`, tone: "warn" };
-  if (!view) return { text: "Reading labels…", tone: "plain" };
-  if (view.sidecar_error) return { text: `Labels may be damaged — ${view.why}`, tone: "warn" };
-  if (!view.episodes.length || !view.can_annotate) {
-    return { text: view.why, tone: "plain" };
-  }
-  const parts = [
-    `${view.labelled}/${view.with_verdict} judged`,
-    view.total_episodes != null ? `${view.total_episodes} episodes recorded` : null,
-    view.benchmark ? `benchmark ${view.benchmark}` : null,
-    view.disputed ? `${view.disputed} disputing the verdict` : null
-  ].filter(Boolean);
-  return { text: parts.join(" · "), tone: view.disputed ? "warn" : "plain" };
-}
-function labelRowLine(row) {
-  if (!row.annotatable) {
-    return {
-      badge: "—",
-      detail: "no deterministic verdict, so it cannot be annotated",
-      muted: true
-    };
-  }
-  const badge = row.verdict === "success" ? "✓" : row.verdict === "failure" ? "✗" : "—";
-  const bits = [
-    row.quality ? `quality ${row.quality}` : "awaiting a quality grade",
-    row.failure_mode || null,
-    row.disputes_verdict ? "judge disputes this verdict" : null,
-    row.note || null,
-    row.model ? `by ${row.model}` : null
-  ].filter(Boolean);
-  return { badge, detail: bits.join(" · "), muted: !row.quality };
-}
-function fieldSupport(fields, key, loaded) {
-  if (!loaded) return { ok: true, why: "" };
-  if (Array.isArray(fields)) {
-    if (fields.includes(key)) return { ok: true, why: "" };
-    return {
-      ok: false,
-      why: `this dashboard's server does not accept ${key} — it is running code from before the field existed. Restart the dashboard to pick it up.`
-    };
-  }
-  return {
-    ok: false,
-    why: `this dashboard's server is older than ${key} (it does not publish the field list yet). Restart the dashboard to pick it up.`
-  };
-}
-const NOUN = {
-  training: "the training job",
-  collect: "the collection run",
-  replay: "the replay",
-  export: "the export"
-};
-const DUPLICATE = {
-  training: "Pressing train again could start a SECOND run on the same GPU, writing into the same output_dir — check the job list below (it refreshes now) before you do.",
-  collect: "Pressing collect again could spawn a SECOND recorder appending to the same dataset — look for a new peer in the fleet grid first.",
-  replay: "Pressing replay again could spawn a SECOND peer driving the same arm — look for a new peer in the fleet grid first.",
-  export: "It is safe to retry an export, but check the artifact path before assuming nothing was written."
-};
-function sideEffectVerdict(input) {
-  const noun = NOUN[input.kind] ?? "the request";
-  const why2 = String(input.message ?? "").trim() || "no detail";
-  if (refusedBeforeActing(input.status)) {
-    return {
-      text: `✗ refused (${input.status}: ${why2}) — ${noun} was NOT started, nothing is running.`,
-      delivered: "no",
-      doubleRunRisk: false
-    };
-  }
-  const transport = !Number(input.status ?? 0);
-  const head = transport ? `⚠ no answer came back (${why2}) — ${noun} MAY have started; this page cannot tell.` : `⚠ the server failed mid-request (${input.status}: ${why2}) — ${noun} MAY have started anyway.`;
-  return {
-    text: `${head} ${DUPLICATE[input.kind] ?? ""}`.trim(),
-    delivered: "unknown",
-    doubleRunRisk: input.kind !== "export"
-  };
-}
-function pushLoss(trace, step, loss, cap = 240) {
-  const s = typeof step === "number" && Number.isFinite(step) ? step : null;
-  const l = typeof loss === "number" && Number.isFinite(loss) ? loss : null;
-  if (s === null || l === null) return trace;
-  const last = trace[trace.length - 1];
-  if (last) {
-    if (s === last.step) {
-      if (l === last.loss) return trace;
-      return [...trace.slice(0, -1), { step: s, loss: l }];
-    }
-    if (s < last.step) return [{ step: s, loss: l }];
-  }
-  let next = [...trace, { step: s, loss: l }];
-  if (next.length > cap) {
-    const half = Math.floor(next.length / 2);
-    next = [...next.slice(0, half).filter((_, i) => i % 2 === 0), ...next.slice(half)];
-  }
-  return next;
-}
-function lossBand(points) {
-  let lo = Infinity;
-  let hi = -Infinity;
-  for (const p of points) {
-    if (p.loss < lo) lo = p.loss;
-    if (p.loss > hi) hi = p.loss;
-  }
-  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { lo: 0, hi: 1, flat: true };
-  const spread = hi - lo;
-  const magnitude = Math.max(Math.abs(hi), Math.abs(lo));
-  const floorSpan = magnitude > 0 ? magnitude * 0.02 : 1;
-  if (spread >= floorSpan) return { lo, hi, flat: false };
-  const mid = (lo + hi) / 2;
-  return { lo: mid - floorSpan / 2, hi: mid + floorSpan / 2, flat: true };
-}
-function lossPath(points, width, height, pad = 2) {
-  if (points.length < 2 || width <= 0 || height <= 0) return [];
-  const s0 = points[0].step;
-  const s1 = points[points.length - 1].step;
-  const { lo, hi } = lossBand(points);
-  const sSpan = Math.max(1e-9, s1 - s0);
-  const lSpan = Math.max(1e-9, hi - lo);
-  const w = width - pad * 2;
-  const h = height - pad * 2;
-  return points.map((p) => [
-    pad + (p.step - s0) / sSpan * w,
-    // loss falls downward on the chart: low loss = low y? No - low loss is
-    // GOOD, so it sits at the BOTTOM (large y), matching every loss curve
-    // a practitioner has ever seen.
-    pad + (1 - (p.loss - lo) / lSpan) * h
-  ]);
-}
-function fmtStep(step) {
-  if (!Number.isFinite(step)) return "?";
-  if (step >= 1e6) return `${(step / 1e6).toFixed(1)}M`;
-  if (step >= 1e3) return `${(step / 1e3).toFixed(1)}k`;
-  return String(step);
-}
-function LossSpark({ trace, height = 34 }) {
-  const ref = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const parent = canvas.parentElement;
-    const cssW = Math.max(1, (parent == null ? void 0 : parent.clientWidth) ?? 160);
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = Math.round(cssW * dpr);
-    canvas.height = Math.round(height * dpr);
-    canvas.style.width = `${cssW}px`;
-    canvas.style.height = `${height}px`;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, height);
-    const pts = lossPath(trace, cssW, height, 3);
-    if (!pts.length) return;
-    ctx.strokeStyle = "rgba(124, 192, 255, 0.9)";
-    ctx.lineWidth = 1.5;
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    pts.forEach(([x, y], i) => i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y));
-    ctx.stroke();
-    const [lx, ly] = pts[pts.length - 1];
-    ctx.fillStyle = "#7cc0ff";
-    ctx.beginPath();
-    ctx.arc(lx, ly, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }, [trace, height]);
-  if (trace.length < 2) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "loss-spark empty", children: trace.length === 1 ? `first reading: loss ${trace[0].loss.toPrecision(3)} @ ${fmtStep(trace[0].step)} steps — curve appears as polling continues` : "no loss readings yet" });
-  }
-  const first = trace[0];
-  const last = trace[trace.length - 1];
-  const flat = lossBand(trace).flat;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "loss-spark", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("canvas", { ref }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "loss-spark-label", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        "loss ",
-        last.loss.toPrecision(3)
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dim", children: [
-        fmtStep(first.step),
-        " → ",
-        fmtStep(last.step),
-        " steps (observed)",
-        flat ? " · flat across this window" : ""
-      ] })
-    ] })
-  ] });
-}
-const DONE_OK = /* @__PURE__ */ new Set(["succeeded", "success", "completed", "complete", "finished"]);
-const DONE_BAD = /* @__PURE__ */ new Set(["failed", "error", "crashed", "cancelled", "canceled", "stopped", "killed"]);
-function isTerminal(state) {
-  const s = (state ?? "").toLowerCase();
-  return DONE_OK.has(s) || DONE_BAD.has(s);
-}
-function shortJob(id) {
-  const s = String(id ?? "");
-  return s.length <= 12 ? s : `${s.slice(0, 8)}…`;
-}
-function jobTransitions(prev, now) {
-  const ok = [];
-  const bad = [];
-  for (const [id, state] of Object.entries(now)) {
-    const was = prev[id];
-    if (was === void 0) continue;
-    if (!isTerminal(state) || isTerminal(was)) continue;
-    const s = (state ?? "").toLowerCase();
-    (DONE_BAD.has(s) ? bad : ok).push(`${shortJob(id)} ${s}`);
-  }
-  if (!bad.length && !ok.length) return "";
-  const parts = [...bad, ...ok];
-  const head = bad.length ? "training job failed" : "training job finished";
-  return parts.length === 1 ? `${head}: ${parts[0]}` : `${bad.length ? "training jobs ended, some badly" : "training jobs finished"}: ${parts.join(", ")}`;
-}
-const EMPTY = { dataset_root: "", dataset_repo_id: "", fromHub: false, label: "" };
-function datasetKey(d) {
-  return d.root ?? `hub:${d.repo_id}`;
-}
-function selectDataset(rows, key) {
-  if (!key) return EMPTY;
-  const d = rows.find((r) => datasetKey(r) === key);
-  if (!d) return EMPTY;
-  if (d.root) {
-    return {
-      dataset_root: d.root,
-      dataset_repo_id: "",
-      fromHub: false,
-      label: `${d.repo_id}${d.total_episodes ? ` (${d.total_episodes} eps)` : ""}`
-    };
-  }
-  return {
-    dataset_root: "",
-    dataset_repo_id: d.repo_id,
-    fromHub: true,
-    label: `${d.repo_id} — downloaded from the Hub at start`
-  };
-}
-function selectionKey(sel) {
-  if (sel.dataset_root) return sel.dataset_root;
-  return sel.dataset_repo_id ? `hub:${sel.dataset_repo_id}` : "";
-}
-function noEpisodes(d) {
-  if (d.usable !== void 0) return false;
-  return d.total_episodes === 0 || d.total_frames === 0;
-}
-const EMPTY_ROW = "0 episodes. meta/info.json is written when a recording session OPENS, before the first episode is captured, so a directory like this is what an abandoned session leaves behind — not a dataset. Record into it, or delete it.";
-function replayable(d) {
-  if (!d.root) return { ok: false, reason: "on the Hub, not on this machine — training downloads it; replay needs it local" };
-  if (d.usable === false) return { ok: false, reason: d.problem ?? "this dataset has no episodes to replay" };
-  if (noEpisodes(d)) return { ok: false, reason: EMPTY_ROW };
-  return { ok: true, reason: "Replay in a live mesh sim — appears in the fleet grid" };
-}
-function datasetMark(d) {
-  if (d.recording) return { glyph: "⏺ ", kind: "recording" };
-  if (d.usable === false) return { glyph: "⚠ ", kind: "problem" };
-  if (noEpisodes(d)) return { glyph: "⚠ ", kind: "problem" };
-  return { glyph: "", kind: "ok" };
-}
-function trainable(d) {
-  if (!d) return { ok: true, reason: "" };
-  if (d.usable === false) return { ok: false, reason: d.problem ?? "this dataset has no episodes to train on" };
-  if (noEpisodes(d)) return { ok: false, reason: EMPTY_ROW };
-  return { ok: true, reason: "" };
-}
-function selectedRow(rows, sel) {
-  return rows.find((r) => datasetKey(r) === selectionKey(sel)) ?? null;
-}
-function episodeChoice(d, requested) {
-  const total = typeof d.total_episodes === "number" && Number.isFinite(d.total_episodes) ? d.total_episodes : null;
-  const countKnown = total !== null && total > 0;
-  const raw = typeof requested === "string" ? requested.trim() : requested;
-  if (raw === void 0 || raw === null || raw === "") {
-    return { ok: true, episode: 0, reason: countKnown ? `episode 0 of ${total}` : "episode 0", countKnown };
-  }
-  const n = Number(raw);
-  if (!Number.isInteger(n)) {
-    return { ok: false, episode: 0, reason: `“${raw}” is not a whole episode number`, countKnown };
-  }
-  if (n < 0) return { ok: false, episode: 0, reason: "episode numbers start at 0", countKnown };
-  if (total !== null && total <= 0) {
-    return { ok: false, episode: 0, reason: "this dataset records no episodes yet", countKnown };
-  }
-  if (total !== null && n >= total) {
-    return {
-      ok: false,
-      episode: 0,
-      reason: `this dataset has ${total} episode${total === 1 ? "" : "s"}, numbered 0–${total - 1}`,
-      countKnown
-    };
-  }
-  return {
-    ok: true,
-    episode: n,
-    reason: countKnown ? `episode ${n} of ${total}` : `episode ${n} (this server does not report a count)`,
-    countKnown
-  };
-}
-function datasetHint(input) {
-  const q = input.query.trim();
-  const shown = input.shownQuery === null ? null : input.shownQuery.trim();
-  const stale = shown !== q;
-  const auth = input.anonymous && q ? `Hub results are public only${input.authDetail ? ` (${input.authDetail})` : ""} — a private or gated dataset will look like “no match”.` : null;
-  if (input.problem && !stale) {
-    return { text: `⚠ ${input.problem}`, tone: "warn", auth };
-  }
-  if (stale) {
-    return {
-      text: q ? `searching for “${q}”…${input.count > 0 && shown ? ` — the rows below are still the results for “${shown}”` : ""}` : null,
-      tone: "pending",
-      auth
-    };
-  }
-  if (input.count === 0 && q) {
-    return {
-      text: `nothing here or on the Hub matches “${q}” — the Hub answered, it simply has no match.`,
-      tone: "info",
-      auth
-    };
-  }
-  return { text: null, tone: "info", auth };
-}
-function jobsLedgerNotice({ count, problem }) {
-  const trimmed = (problem ?? "").trim();
-  if (trimmed) {
-    const lead = count > 0 ? "Some earlier runs may be missing from this list" : "This list is empty because the history could not be read, not because nothing ran";
-    return { text: `⚠ ${lead} — ${trimmed}`, tone: "warn", partial: true };
-  }
-  if (count === 0) {
-    return { text: "No training jobs yet.", tone: "info", partial: false };
-  }
-  return { text: null, tone: "info", partial: false };
-}
-function knownTime(v) {
-  return typeof v === "number" && Number.isFinite(v) && v > 0;
-}
-function orderJobsNewestFirst(jobs) {
-  const timed = [];
-  const untimed = [];
-  for (const j of jobs) (knownTime(j == null ? void 0 : j.submitted_at) ? timed : untimed).push(j);
-  timed.sort((a, b) => b.submitted_at - a.submitted_at);
-  untimed.reverse();
-  return [...timed, ...untimed];
-}
-function outputDirSay(v) {
-  const none = { text: null, tone: "info", confirmable: false, confirmLabel: null, blocked: false };
-  if (!v || !v.state) return none;
-  const detail = (v.detail ?? "").trim();
-  switch (v.state) {
-    case "free":
-      return none;
-    case "occupied":
-      return {
-        text: `⚠ ${detail}`,
-        tone: "bad",
-        confirmable: true,
-        confirmLabel: `delete ${v.total ?? "the"} item(s) in ${v.path ?? "this directory"} and train here`,
-        blocked: false
-      };
-    case "resumable":
-      return { text: `⚠ ${detail}`, tone: "warn", confirmable: false, confirmLabel: null, blocked: true };
-    case "not_a_dir":
-      return { text: `✗ ${detail}`, tone: "bad", confirmable: false, confirmLabel: null, blocked: true };
-    case "unknown":
-      return { text: `⚠ ${detail}`, tone: "warn", confirmable: false, confirmLabel: null, blocked: true };
-    default:
-      return none;
-  }
-}
-function trainGate(args) {
-  var _a, _b;
-  const path = (args.path ?? "").trim();
-  if (!path) return { ok: false, confirmClear: false, why: "an output dir is required" };
-  const say = outputDirSay(args.verdict);
-  if (say.blocked) {
-    return { ok: false, confirmClear: false, why: ((_a = args.verdict) == null ? void 0 : _a.detail) ?? "that output dir cannot be used" };
-  }
-  if (say.confirmable) {
-    const armed = !!args.armedFor && args.armedFor === (((_b = args.verdict) == null ? void 0 : _b.path) ?? path);
-    if (!armed) {
-      return {
-        ok: false,
-        confirmClear: false,
-        why: "that directory is not empty — tick the box to confirm what gets deleted"
-      };
-    }
-    return { ok: true, confirmClear: true, why: null };
-  }
-  return { ok: true, confirmClear: false, why: null };
-}
-function guessPolicyType(baseModel) {
-  const m = (baseModel ?? "").replace(/_/g, "-").match(/\b(smolvla|act|diffusion|pi0-fast|pi05|pi0|tdmpc|vqbet)\b/i);
-  return m ? m[1].toLowerCase().replace("-", "_").replace("pi0fast", "pi0_fast") : null;
-}
-function TrainingTab({ onClose, prefill }) {
-  var _a;
-  const [trainers, setTrainers] = reactExports.useState([]);
-  const [unsupported, setUnsupported] = reactExports.useState({});
-  const [srvFields, setSrvFields] = reactExports.useState(null);
-  const [srvHeard, setSrvHeard] = reactExports.useState(false);
-  const sheetRef = reactExports.useRef(null);
-  useDialogFocus(sheetRef);
-  const [datasets, setDatasets] = reactExports.useState([]);
-  const [jobs, setJobs] = reactExports.useState([]);
-  const [statuses, setStatuses] = reactExports.useState({});
-  const [jobSay, setJobSay] = reactExports.useState("");
-  const seenStates = reactExports.useRef({});
-  const [polledAt, setPolledAt] = reactExports.useState({});
-  const [pollFail, setPollFail] = reactExports.useState({});
-  const [nowS, setNowS] = reactExports.useState(() => Date.now() / 1e3);
-  const [traces, setTraces] = reactExports.useState({});
-  const [form, setForm] = reactExports.useState({ provider: "lerobot_local", dataset_root: (prefill == null ? void 0 : prefill.dataset_root) ?? "", dataset_repo_id: "", base_model: "lerobot/smolvla_base", output_dir: "", steps: "10000", method: "lora", embodiment: "", val_episodes: "" });
-  const [dsQuery, setDsQuery] = reactExports.useState("");
-  const [dsProblem, setDsProblem] = reactExports.useState(null);
-  const [dsShownQuery, setDsShownQuery] = reactExports.useState(null);
-  const dsSeq = reactExports.useRef(0);
-  const tick = reactExports.useRef(0);
-  const tickBusy = reactExports.useRef(false);
-  const applied = reactExports.useRef({});
-  const [dsAuth, setDsAuth] = reactExports.useState(null);
-  const [jobsProblem, setJobsProblem] = reactExports.useState(null);
-  const [busy, setBusy] = reactExports.useState(false);
-  const [msg, setMsg] = reactExports.useState(null);
-  const [episodeBox, setEpisodeBox] = reactExports.useState({});
-  const refresh = async () => {
-    const seq = ++dsSeq.current;
-    try {
-      const [t, d, j] = await Promise.all([
-        api("/api/training/trainers"),
-        api(`/api/training/datasets?q=${encodeURIComponent(dsQuery)}`),
-        api("/api/training/jobs")
-      ]);
-      setTrainers(t.trainers ?? []);
-      setUnsupported(t.unsupported ?? {});
-      setSrvFields(Array.isArray(t.fields) ? t.fields : null);
-      setSrvHeard(true);
-      setJobs(orderJobsNewestFirst(j.jobs ?? []));
-      setJobsProblem(j.problem ?? null);
-      if (isLatestRequest(seq, dsSeq.current)) {
-        setDatasets(d.datasets ?? []);
-        setDsProblem(d.problem ?? null);
-        setDsAuth(d.hf_auth ?? null);
-        setDsShownQuery(dsQuery);
-      }
-    } catch (e) {
-      setMsg(`⚠ ${(e == null ? void 0 : e.message) ?? e}`);
-    }
-  };
-  reactExports.useEffect(() => {
-    refresh();
-  }, []);
-  const outSeq = reactExports.useRef(0);
-  reactExports.useEffect(() => {
-    const path = form.output_dir.trim();
-    setClearArmedFor(null);
-    if (!path) {
-      setOutDir(null);
-      return;
-    }
-    const seq = ++outSeq.current;
-    const t = setTimeout(async () => {
-      try {
-        const v = await api(`/api/training/output-dir?path=${encodeURIComponent(path)}`);
-        if (!isLatestRequest(seq, outSeq.current)) return;
-        setOutDir(v);
-      } catch {
-        if (!isLatestRequest(seq, outSeq.current)) return;
-        setOutDir(null);
-      }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [form.output_dir]);
-  reactExports.useEffect(() => {
-    const t = setTimeout(async () => {
-      const seq = ++dsSeq.current;
-      const asked = dsQuery;
-      try {
-        const d = await api(`/api/training/datasets?q=${encodeURIComponent(asked)}`);
-        if (!isLatestRequest(seq, dsSeq.current)) return;
-        setDatasets(d.datasets ?? []);
-        setDsProblem(d.problem ?? null);
-        setDsAuth(d.hf_auth ?? null);
-        setDsShownQuery(asked);
-      } catch (e) {
-        if (!isLatestRequest(seq, dsSeq.current)) return;
-        setDsProblem(`search failed: ${(e == null ? void 0 : e.message) ?? e}`);
-        setDsShownQuery(asked);
-      }
-    }, 250);
-    return () => clearTimeout(t);
-  }, [dsQuery]);
-  reactExports.useEffect(() => {
-    var _a2;
-    const now = {};
-    for (const [id, st] of Object.entries(statuses)) {
-      const state = (_a2 = st == null ? void 0 : st.data) == null ? void 0 : _a2.status;
-      if (typeof state === "string" && state) now[id] = state;
-    }
-    const said = jobTransitions(seenStates.current, now);
-    seenStates.current = { ...seenStates.current, ...now };
-    if (said) setJobSay(said);
-  }, [statuses]);
-  reactExports.useEffect(() => {
-    const id = setInterval(async () => {
-      var _a2;
-      if (tickBusy.current) return;
-      tickBusy.current = true;
-      const round = ++tick.current;
-      try {
-        for (const job of jobs.slice(0, 5)) {
-          if (!job.job_id) continue;
-          try {
-            const s = await api(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`);
-            if (!newerThanApplied(round, applied.current[job.job_id])) continue;
-            applied.current[job.job_id] = round;
-            setStatuses((prev) => ({ ...prev, [job.job_id]: s }));
-            setPolledAt((prev) => ({ ...prev, [job.job_id]: Date.now() / 1e3 }));
-            setPollFail((prev) => prev[job.job_id] ? { ...prev, [job.job_id]: { n: 0, msg: "" } } : prev);
-            const m = (_a2 = s == null ? void 0 : s.data) == null ? void 0 : _a2.metrics;
-            if (m) setTraces((prev) => ({
-              ...prev,
-              [job.job_id]: pushLoss(prev[job.job_id] ?? [], m.latest_step, m.latest_loss)
-            }));
-          } catch (e) {
-            const msg2 = String((e == null ? void 0 : e.message) ?? e).slice(0, 120);
-            setPollFail((prev) => {
-              var _a3;
-              return { ...prev, [job.job_id]: { n: (((_a3 = prev[job.job_id]) == null ? void 0 : _a3.n) ?? 0) + 1, msg: msg2 } };
-            });
-          }
-        }
-      } finally {
-        tickBusy.current = false;
-      }
-    }, 5e3);
-    return () => clearInterval(id);
-  }, [jobs]);
-  reactExports.useEffect(() => {
-    const id = setInterval(() => setNowS(Date.now() / 1e3), 5e3);
-    return () => clearInterval(id);
-  }, []);
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const failed = (kind, e) => {
-    const v = sideEffectVerdict({
-      kind,
-      status: e instanceof HttpError ? e.status : 0,
-      message: (e == null ? void 0 : e.message) ?? String(e)
-    });
-    setMsg(v.text);
-    if (v.delivered === "unknown") refresh();
-  };
-  const submit = async (validateOnly) => {
-    var _a2, _b;
-    const picked = selectedRow(datasets, form);
-    const can = trainable(picked);
-    if (!can.ok) {
-      if (dsOverride !== selectionKey(form)) {
-        setDsWarn({ key: selectionKey(form), reason: can.reason, recording: (picked == null ? void 0 : picked.recording) === true });
-        setMsg(null);
-        return;
-      }
-      setDsOverride(null);
-    }
-    if (!validateOnly && !gate.ok) {
-      setMsg(`✗ ${gate.why}`);
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    const body = {
-      provider: form.provider,
-      dataset_root: form.dataset_root || void 0,
-      dataset_repo_id: form.dataset_repo_id || void 0,
-      base_model: form.base_model || void 0,
-      output_dir: form.output_dir || void 0,
-      ...gate.confirmClear ? { confirm_clear: true } : {},
-      steps: wantedSteps.value,
-      method: form.method || void 0,
-      ...extraFields(form.provider).some((f) => f.key === "embodiment") && form.embodiment.trim() ? { embodiment: form.embodiment.trim() } : {},
-      // Held out only when the operator asked for it: `null` and an absent key both mean "train
-      // on every episode", and sending 0 would show a split in the form that the backend drops.
-      ...wantedHoldout.send !== null && holdoutSupport.ok ? { val_episodes: wantedHoldout.send } : {}
-    };
-    try {
-      const j = await post(validateOnly ? "/api/training/validate" : "/api/training/submit", body);
-      setMsg(j.status === "success" ? `✓ ${(_a2 = j.text) == null ? void 0 : _a2.slice(0, 200)}` : `✗ ${(_b = j.text) == null ? void 0 : _b.slice(0, 300)}`);
-      if (!validateOnly && j.status === "success") refresh();
-    } catch (e) {
-      failed(validateOnly ? "export" : "training", e);
-    }
-    setBusy(false);
-  };
-  const [dsWarn, setDsWarn] = reactExports.useState(null);
-  const [dsOverride, setDsOverride] = reactExports.useState(null);
-  const [outDir, setOutDir] = reactExports.useState(null);
-  const [clearArmedFor, setClearArmedFor] = reactExports.useState(null);
-  const outSay = outputDirSay(outDir);
-  const gate = trainGate({ path: form.output_dir, verdict: outDir, armedFor: clearArmedFor });
-  const [collect, setCollect] = reactExports.useState({ dataset_root: "", instruction: "pick up the red cube", n_episodes: "5", duration: "10", robot_name: "so101" });
-  const [showCollect, setShowCollect] = reactExports.useState(false);
-  const STEP_RULES = { what: "steps", min: 1, max: 2e6, remedy: "submit a shorter run" };
-  const wantedSteps = numField(form.steps, STEP_RULES);
-  const [labelsFor, setLabelsFor] = reactExports.useState(null);
-  const [labelData, setLabelData] = reactExports.useState(null);
-  const [labelErr, setLabelErr] = reactExports.useState(null);
-  async function openLabels(d) {
-    const key = datasetKey(d);
-    if (labelsFor === key) {
-      setLabelsFor(null);
-      return;
-    }
-    setLabelsFor(key);
-    setLabelData(null);
-    setLabelErr(null);
-    const path = "/api/datasets/labels";
-    try {
-      setLabelData(await api(`${path}?root=${encodeURIComponent(d.root || "")}`));
-    } catch (e) {
-      setLabelErr(e instanceof HttpError ? e.message : String(e));
-    }
-  }
-  const wantedHoldout = holdout(form.val_episodes, ((_a = selectedRow(datasets, form)) == null ? void 0 : _a.total_episodes) ?? null);
-  const holdoutSupport = fieldSupport(srvFields, "val_episodes", srvHeard);
-  const wantedEpisodes = numField(collect.n_episodes, { what: "episodes", min: 1, max: 500, remedy: "collect in batches" });
-  const wantedSeconds = numField(collect.duration, { what: "seconds per episode", min: 1, max: 600 });
-  const submitCollect = async () => {
-    if (!collect.dataset_root.trim()) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const j = await post("/api/collect", {
-        dataset_root: collect.dataset_root,
-        instruction: collect.instruction,
-        n_episodes: wantedEpisodes.value,
-        duration: wantedSeconds.value,
-        robot_name: collect.robot_name
-      });
-      setMsg(j.peer_id ? `▶ collecting ${j.n_episodes} episodes as ${j.peer_id} — watch it in the fleet grid; dataset appears below when done` : `⚠ ${JSON.stringify(j).slice(0, 200)}`);
-      if (j.peer_id) setTimeout(refresh, 15e3);
-    } catch (e) {
-      failed("collect", e);
-    }
-    setBusy(false);
-  };
-  const replay = async (d) => {
-    if (!d.root) {
-      setMsg(`⚠ ${d.repo_id} is on the Hub, not on this machine — train with it (the trainer downloads it) or clone it locally to replay`);
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    try {
-      const choice = episodeChoice(d, episodeBox[datasetKey(d)]);
-      if (!choice.ok) {
-        setMsg(`⚠ ${choice.reason}`);
-        return;
-      }
-      const j = await post("/api/replay", { repo_id: d.repo_id, root: d.root, episode: choice.episode });
-      setMsg(j.peer_id ? `▶ replaying ${d.repo_id} ep${choice.episode} as ${j.peer_id} — watch it in the fleet grid` : `⚠ ${JSON.stringify(j).slice(0, 200)}`);
-    } catch (e) {
-      failed("replay", e);
-    }
-    setBusy(false);
-  };
-  const [stageAnyway, setStageAnyway] = reactExports.useState(null);
-  const exportCkpt = async (job) => {
-    var _a2, _b;
-    setBusy(true);
-    try {
-      const j = await post("/api/training/export", { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model });
-      const art = j == null ? void 0 : j.artifact;
-      if (j.status !== "success") setMsg(`✗ ${(_a2 = j.text) == null ? void 0 : _a2.slice(0, 250)}`);
-      else if (j.deployable === false) {
-        setMsg(`⚠ the export succeeded but the artifact is not usable: ${(art == null ? void 0 : art.message) ?? "the checkpoint could not be confirmed on disk"}`);
-      } else setMsg(`✓ ${(_b = j.text) == null ? void 0 : _b.slice(0, 250)}${(art == null ? void 0 : art.warning) ? ` — ⚠ ${art.warning}` : ""}`);
-    } catch (e) {
-      failed("export", e);
-    }
-    setBusy(false);
-  };
-  const deployCkpt = async (job) => {
-    var _a2, _b;
-    setBusy(true);
-    try {
-      const j = await post("/api/training/export", { provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset, base_model: job.base_model });
-      const ckpt = (_a2 = j == null ? void 0 : j.data) == null ? void 0 : _a2.exported_model;
-      const art = j == null ? void 0 : j.artifact;
-      if (j.status !== "success" || typeof ckpt !== "string" || !ckpt) {
-        setMsg(`✗ nothing deployable: ${((_b = j.text) == null ? void 0 : _b.slice(0, 200)) ?? "export returned no artifact path"}`);
-      } else if (j.deployable === false) {
-        setStageAnyway({ job, ckpt, message: (art == null ? void 0 : art.message) ?? "the checkpoint could not be confirmed on disk" });
-        setMsg(null);
-      } else {
-        setDeployIntent({
-          checkpoint: ckpt,
-          policy_type: guessPolicyType(job.base_model),
-          source: `training job ${job.job_id} (${job.base_model || job.provider})`
-        });
-        setMsg("🚀 checkpoint staged — close this sheet and open a robot’s run form: it will be prefilled, and nothing runs until you press Run there");
-      }
-    } catch (e) {
-      failed("export", e);
-    }
-    setBusy(false);
-  };
-  const stageRegardless = () => {
-    if (!stageAnyway) return;
-    const { job, ckpt } = stageAnyway;
-    setDeployIntent({
-      checkpoint: ckpt,
-      policy_type: guessPolicyType(job.base_model),
-      source: `training job ${job.job_id} (${job.base_model || job.provider}) — staged over an unconfirmed artifact`
-    });
-    setStageAnyway(null);
-    setMsg("🚀 checkpoint staged over the warning — open a robot’s run form; nothing runs until you press Run there");
-  };
-  const datasetPicked = form.dataset_root || form.dataset_repo_id;
-  const datasetLabel = selectDataset(datasets, selectionKey(form)).label || null;
-  const stepsPhrase = wantedSteps.problem ? `an unset number of` : fmtStep(wantedSteps.value);
-  const missingExtra = missingForProvider(form.provider, form);
-  const story = datasetPicked ? `Fine-tune ${form.base_model || "lerobot/smolvla_base"} on ${datasetLabel ?? datasetPicked} for ${stepsPhrase} steps (${form.method}), saving to ${form.output_dir || "…pick an output dir"}.${wantedHoldout.send ? ` Holding out the last ${wantedHoldout.send} episodes to score it.` : ""}` + (missingExtra ? ` This will be refused until you fill it in: ${missingExtra}.` : "") : "Pick a dataset to begin — the plan reads back here before anything runs.";
-  return (
-    /**
-     * role + label like RecordPanel's sheet: this is a full-bleed layer over the fleet, and a
-     * screen reader that is not told it entered a dialog reads it as more of the page it just
-     * left.
-     */
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: sheetRef, className: "train-sheet", role: "dialog", "aria-label": "Training", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-head", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "🎓 Training" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "dock-min", onClick: onClose, "aria-label": "close training", title: "Escape", children: "✕" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-form", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `train-story${datasetPicked ? "" : " empty"}`, children: story }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "provider" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("select", { value: form.provider, onChange: (e) => set("provider", e.target.value), disabled: busy, children: trainers.map((t) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "option",
-            {
-              disabled: t in unsupported,
-              title: unsupported[t] ?? void 0,
-              children: [
-                t,
-                t in unsupported ? " — not from this form" : ""
-              ]
-            },
-            t
-          )) })
-        ] }),
-        Object.keys(unsupported).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "hint", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("summary", { children: [
-            Object.keys(unsupported).length,
-            " provider",
-            Object.keys(unsupported).length === 1 ? " is" : "s are",
-            " not trainable from this form — why?"
-          ] }),
-          [...new Set(Object.values(unsupported))].map((reason2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
-            Object.keys(unsupported).filter((k) => unsupported[k] === reason2).sort().join(" and "),
-            " cannot be trained from here: ",
-            reason2,
-            "."
-          ] }, reason2))
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "dataset" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              value: dsQuery,
-              onChange: (e) => setDsQuery(e.target.value),
-              disabled: busy,
-              placeholder: "search this machine and the Hub — e.g. pusht, so101, your org"
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "select",
-            {
-              value: selectionKey(form),
-              onChange: (e) => {
-                const sel = selectDataset(datasets, e.target.value);
-                setForm((f) => ({ ...f, dataset_root: sel.dataset_root, dataset_repo_id: sel.dataset_repo_id }));
-              },
-              disabled: busy,
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "— pick a dataset —" }),
-                datasets.filter((d) => d.local !== false).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("optgroup", { label: "on this machine", children: datasets.filter((d) => d.local !== false).map((d) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: datasetKey(d), children: [
-                  datasetMark(d).glyph,
-                  d.repo_id,
-                  " (",
-                  d.total_episodes ?? "?",
-                  " eps",
-                  d.robot_type && d.robot_type !== "unknown" ? `, ${d.robot_type}` : "",
-                  ")"
-                ] }, datasetKey(d))) }),
-                datasets.filter((d) => d.local === false).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("optgroup", { label: "HuggingFace Hub — downloaded when training starts", children: datasets.filter((d) => d.local === false).map((d) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: datasetKey(d), children: [
-                  d.repo_id,
-                  d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ""
-                ] }, datasetKey(d))) })
-              ]
-            }
-          ),
-          (() => {
-            const h = datasetHint({
-              query: dsQuery,
-              shownQuery: dsShownQuery,
-              count: datasets.length,
-              problem: dsProblem,
-              anonymous: (dsAuth == null ? void 0 : dsAuth.authenticated) === false,
-              authDetail: (dsAuth == null ? void 0 : dsAuth.detail) ?? null
-            });
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-              h.text && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `hint${h.tone === "warn" ? " warn" : ""}`, role: "status", "aria-live": "polite", children: h.text }),
-              h.auth && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", children: h.auth })
-            ] });
-          })()
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "base model" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { value: form.base_model, onChange: (e) => set("base_model", e.target.value), disabled: busy, placeholder: "lerobot/smolvla_base" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "output dir" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              value: form.output_dir,
-              onChange: (e) => set("output_dir", e.target.value),
-              disabled: busy,
-              placeholder: "/tmp/my_policy_ckpt",
-              "aria-describedby": "train-outdir-say",
-              "aria-invalid": outSay.blocked || outSay.confirmable
-            }
-          ),
-          (() => {
-            const sug = suggestOutputDir(form, form.output_dir);
-            return sug ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                type: "button",
-                className: "btn ghost suggest",
-                disabled: busy,
-                onClick: () => set("output_dir", sug),
-                children: [
-                  "use ",
-                  sug
-                ]
-              }
-            ) : null;
-          })(),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "train-outdir-say", className: `fieldsay${outSay.tone === "info" ? "" : " bad"}`, role: "status", "aria-live": "polite", children: outSay.text ?? "" })
-        ] }),
-        outSay.confirmable && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field check consent-clear", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              type: "checkbox",
-              checked: clearArmedFor === ((outDir == null ? void 0 : outDir.path) ?? form.output_dir.trim()),
-              onChange: (e) => setClearArmedFor(e.target.checked ? (outDir == null ? void 0 : outDir.path) ?? form.output_dir.trim() : null),
-              disabled: busy
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: outSay.confirmLabel })
-        ] }),
-        extraFields(form.provider).map((f) => /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: f.label }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              value: form[f.key],
-              onChange: (e) => set(f.key, e.target.value),
-              disabled: busy,
-              placeholder: f.placeholder,
-              "aria-describedby": `train-${f.key}-say`,
-              "aria-invalid": f.required && !form[f.key].trim()
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: `train-${f.key}-say`, className: `fieldsay${f.required && !form[f.key].trim() ? " bad" : ""}`, children: f.say })
-        ] }, f.key)),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-row", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "steps" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                type: "number",
-                value: form.steps,
-                onChange: (e) => set("steps", e.target.value),
-                disabled: busy,
-                "aria-invalid": !!wantedSteps.problem,
-                "aria-describedby": "train-steps-say"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "train-steps-say", className: `fieldsay${wantedSteps.problem ? " bad" : ""}`, children: wantedSteps.problem ?? wantedSteps.note ?? "" })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "val episodes" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                type: "number",
-                value: holdoutSupport.ok ? form.val_episodes : "",
-                placeholder: "none",
-                onChange: (e) => set("val_episodes", e.target.value),
-                disabled: busy || !holdoutSupport.ok,
-                "aria-invalid": !!wantedHoldout.problem,
-                "aria-describedby": "train-val-say"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "train-val-say", className: `fieldsay${wantedHoldout.problem || !holdoutSupport.ok ? " bad" : ""}`, children: holdoutSupport.why || wantedHoldout.problem || wantedHoldout.say })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "method" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value: form.method, onChange: (e) => set("method", e.target.value), disabled: busy, children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "lora", children: "lora" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "full", children: "full" })
-            ] })
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-actions", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => submit(true), disabled: busy || !!wantedSteps.problem, children: "✓ validate" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "btn go wide",
-              onClick: () => submit(false),
-              disabled: busy || !datasetPicked || !!wantedSteps.problem || holdoutSupport.ok && !!wantedHoldout.problem || !gate.ok,
-              title: gate.why ?? void 0,
-              children: outSay.confirmable && gate.ok ? "▶ delete and train" : "▶ train"
-            }
-          )
-        ] }),
-        msg && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg", children: msg }),
-        dsWarn && dsWarn.key === selectionKey(form) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn artifact-hold", role: "alert", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            dsWarn.recording ? "⏺" : "⚠",
-            " not started: ",
-            dsWarn.reason
-          ] }),
-          dsWarn.recording && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "jstate", children: "the record screen shows this session's progress; training can start the moment it closes" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "artifact-hold-actions", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => {
-              setDsWarn(null);
-              setDsOverride(null);
-            }, children: "pick another dataset" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn",
-                onClick: () => {
-                  setDsOverride(dsWarn.key);
-                  setDsWarn(null);
-                  setMsg("⚠ dataset warning overridden — press start training again");
-                },
-                title: dsWarn.recording ? "the trainer would read episodes as they are still being written - only useful if the session is about to close" : "the check reads metadata only - insist if you know the episodes are there",
-                children: "train on it anyway"
-              }
-            )
-          ] })
-        ] }),
-        stageAnyway && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn artifact-hold", role: "alert", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            "⚠ not staged: ",
-            stageAnyway.message
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "artifact-hold-actions", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => setStageAnyway(null), children: "keep it unstaged" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn",
-                onClick: stageRegardless,
-                title: "the disk check can be wrong - stage it and find out on the run form",
-                children: "stage it anyway"
-              }
-            )
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-form", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost", onClick: () => setShowCollect((s) => !s), children: [
-          showCollect ? "▾" : "▸",
-          " 📹 collect new dataset (sim rollouts)"
-        ] }),
-        showCollect && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "dataset root (path)" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                value: collect.dataset_root,
-                placeholder: "/tmp/my_demos",
-                onChange: (e) => setCollect((c) => ({ ...c, dataset_root: e.target.value })),
-                disabled: busy
-              }
-            )
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "instruction" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                value: collect.instruction,
-                onChange: (e) => setCollect((c) => ({ ...c, instruction: e.target.value })),
-                disabled: busy
-              }
-            )
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-row", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "episodes" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "input",
-                {
-                  type: "number",
-                  value: collect.n_episodes,
-                  "aria-invalid": !!wantedEpisodes.problem,
-                  "aria-describedby": "collect-episodes-say",
-                  onChange: (e) => setCollect((c) => ({ ...c, n_episodes: e.target.value })),
-                  disabled: busy
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "collect-episodes-say", className: `fieldsay${wantedEpisodes.problem ? " bad" : ""}`, children: wantedEpisodes.problem ?? wantedEpisodes.note ?? "" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "sec/episode" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "input",
-                {
-                  type: "number",
-                  value: collect.duration,
-                  "aria-invalid": !!wantedSeconds.problem,
-                  "aria-describedby": "collect-seconds-say",
-                  onChange: (e) => setCollect((c) => ({ ...c, duration: e.target.value })),
-                  disabled: busy
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "collect-seconds-say", className: `fieldsay${wantedSeconds.problem ? " bad" : ""}`, children: wantedSeconds.problem ?? wantedSeconds.note ?? "" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "robot" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "input",
-                {
-                  value: collect.robot_name,
-                  onChange: (e) => setCollect((c) => ({ ...c, robot_name: e.target.value })),
-                  disabled: busy
-                }
-              )
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "btn go wide",
-              onClick: submitCollect,
-              disabled: busy || !collect.dataset_root.trim() || !!wantedEpisodes.problem || !!wantedSeconds.problem,
-              children: "📹 collect"
-            }
-          ) })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-jobs", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Datasets" }),
-        datasets.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dock-hint", children: dsShownQuery !== null && dsShownQuery.trim() !== dsQuery.trim() ? `Searching for “${dsQuery.trim()}”…` : dsProblem ? `No local LeRobotDatasets, and the Hub could not be searched — ${dsProblem}` : dsQuery ? `Nothing matches “${dsQuery}” here or on the Hub.` : "No LeRobotDatasets on this machine — type above to search the Hub, or record one in Collect." }),
-        datasets.map((d) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job-head", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: d.repo_id }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "jstate", children: d.recording ? "⏺ recording now" : d.root ? `${d.total_episodes ?? "?"} eps · ${d.fps ?? "?"} fps` : `Hub${d.downloads ? ` · ${d.downloads.toLocaleString()} downloads` : ""}` })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job-actions", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                className: "ep-box",
-                type: "number",
-                min: 0,
-                inputMode: "numeric",
-                value: episodeBox[datasetKey(d)] ?? "",
-                placeholder: typeof d.total_episodes === "number" && d.total_episodes > 0 ? `0–${d.total_episodes - 1}` : "0",
-                "aria-label": `episode to replay from ${d.repo_id}`,
-                title: typeof d.total_episodes === "number" && d.total_episodes > 0 ? `This dataset has ${d.total_episodes} episode${d.total_episodes === 1 ? "" : "s"} — blank replays episode 0` : "Episode index — blank replays episode 0",
-                disabled: busy || !replayable(d).ok,
-                onChange: (e) => setEpisodeBox((prev) => ({ ...prev, [datasetKey(d)]: e.target.value }))
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn ghost",
-                onClick: () => replay(d),
-                disabled: busy || !replayable(d).ok,
-                title: episodeChoice(d, episodeBox[datasetKey(d)]).ok ? `${replayable(d).reason} — ${episodeChoice(d, episodeBox[datasetKey(d)]).reason}` : episodeChoice(d, episodeBox[datasetKey(d)]).reason,
-                children: "🎬 replay in sim"
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                className: "btn ghost",
-                onClick: () => openLabels(d),
-                disabled: !labelsGate(d).ok,
-                title: labelsGate(d).reason,
-                "aria-expanded": labelsFor === datasetKey(d),
-                children: "🏷 labels"
-              }
-            )
-          ] }),
-          labelsFor === datasetKey(d) && (() => {
-            const sum = labelSummary(labelData, labelErr);
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ds-labels", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: sum.tone === "warn" ? "dock-hint warn" : "dock-hint", children: sum.text }),
-              ((labelData == null ? void 0 : labelData.episodes) ?? []).map((ep) => {
-                const line = labelRowLine(ep);
-                return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: line.muted ? "ds-label-row muted" : "ds-label-row", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ds-label-badge", children: line.badge }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
-                    "episode ",
-                    ep.episode_index
-                  ] }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "jstate", children: line.detail })
-                ] }, ep.episode_index);
-              })
-            ] });
-          })()
-        ] }, datasetKey(d))),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Jobs" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true", children: jobSay }),
-        (() => {
-          const notice = jobsLedgerNotice({ count: jobs.length, problem: jobsProblem });
-          return notice.text ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: notice.tone === "warn" ? "dock-hint warn" : "dock-hint", children: notice.text }) : null;
-        })(),
-        jobs.map((job) => {
-          var _a2, _b, _c, _d, _e;
-          const st = statuses[job.job_id];
-          const state = ((_a2 = st == null ? void 0 : st.data) == null ? void 0 : _a2.status) ?? "…";
-          const fresh = trainingFreshness({
-            polledAtS: polledAt[job.job_id],
-            nowS,
-            failures: (_b = pollFail[job.job_id]) == null ? void 0 : _b.n,
-            error: ((_c = pollFail[job.job_id]) == null ? void 0 : _c.msg) || null,
-            state: ((_d = st == null ? void 0 : st.data) == null ? void 0 : _d.status) ?? null
-          });
-          return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `train-job${fresh.stale ? " stalefeed" : ""}`, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job-head", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: job.provider }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `jstate ${state}`, title: fresh.title, children: state }),
-              fresh.stale && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "jstale", title: fresh.title, children: [
-                "as of ",
-                fresh.ageS != null && fresh.ageS < 90 ? `${Math.round(fresh.ageS)}s` : `${Math.round((fresh.ageS ?? 0) / 60)}m`,
-                " ago"
-              ] })
-            ] }),
-            fresh.note && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg warn", children: fresh.note }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job-meta", children: [
-              (_e = job.dataset) == null ? void 0 : _e.split("/").slice(-2).join("/"),
-              " → ",
-              job.output_dir,
-              " · ",
-              job.steps,
-              " steps"
-            ] }),
-            (() => {
-              var _a3;
-              const m = (_a3 = st == null ? void 0 : st.data) == null ? void 0 : _a3.metrics;
-              if (!m || Object.keys(m).length === 0) return null;
-              const step = typeof m.latest_step === "number" ? m.latest_step : null;
-              const total = typeof job.steps === "number" ? job.steps : Number(job.steps) || null;
-              return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                step !== null && total ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "div",
-                  {
-                    className: "train-progress",
-                    role: "progressbar",
-                    "aria-valuemin": 0,
-                    "aria-valuemax": total,
-                    "aria-valuenow": Math.min(step, total),
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(
-                        "div",
-                        {
-                          className: "train-progress-fill",
-                          style: { width: `${Math.min(100, step / total * 100)}%` }
-                        }
-                      ),
-                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "train-progress-label", children: [
-                        fmtStep(step),
-                        " / ",
-                        fmtStep(total),
-                        " steps"
-                      ] })
-                    ]
-                  }
-                ) : null,
-                /* @__PURE__ */ jsxRuntimeExports.jsx(LossSpark, { trace: traces[job.job_id] ?? [] }),
-                m.latest_loss !== void 0 && !Number.isFinite(m.latest_loss) && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg", children: "⚠ loss is NaN — the run is executing but NOT learning (check LR / data)" }),
-                m.liveness_ok === false && state === "running" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg", children: "⚠ no step lines in the log yet — still warming up, or stalled" })
-              ] });
-            })(),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-job-actions", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => exportCkpt(job), disabled: busy, children: "📦 export checkpoint" }),
-              state === "success" && /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "button",
-                {
-                  className: "btn ghost",
-                  onClick: () => deployCkpt(job),
-                  disabled: busy,
-                  title: "stages this checkpoint into a robot's run form — never starts it",
-                  children: "🚀 deploy…"
-                }
-              )
-            ] })
-          ] }, job.job_id ?? Math.random());
-        })
-      ] })
-    ] })
-  );
-}
-let _module = null;
-const TWIN_URL = "/static/twin.js";
-function loadTwinModule() {
-  if (!_module) {
-    _module = import(
-      /* @vite-ignore */
-      TWIN_URL
-    ).catch((e) => {
-      _module = null;
-      throw e;
-    });
-  }
-  return _module;
-}
-async function makeTwin(canvas, sessionId) {
-  const { Twin } = await loadTwinModule();
-  const token = authToken();
-  const base = apiUrl("");
-  return new Twin(canvas, sessionId, { base, headers: token ? { Authorization: `Bearer ${token}` } : {} });
-}
-async function simRobots() {
-  try {
-    const f = await api("/api/fleet?mode=sim");
-    const rows = (f.robots ?? []).filter((r) => r && typeof r.name === "string" && (r.has_sim ?? true));
-    if (rows.length) return rows.map((r) => ({ name: r.name, label: `${r.name}${r.joints ? ` · ${r.joints} dof` : ""}${r.model_local === false ? " · asset not downloaded" : ""}` }));
-  } catch {
-  }
-  const reg = await api("/api/robots/registry");
-  return (reg.robots ?? []).filter((r) => r && r.has_sim).map((r) => ({ name: r.name, label: `${r.name}${r.joints ? ` · ${r.joints} dof` : ""}` }));
-}
-function lockoutText(l) {
-  if (!l) return "lockout not read yet";
-  if (l.state === "locked") return `e-stop engaged · ${l.by || "dashboard"} · ${l.reason ?? ""}`;
-  if (l.state === "unknown") return `lockout unknown · ${l.reason ?? ""}`;
-  return `clear · ${l.reason ?? ""}`;
-}
-function SimTab({ onClose }) {
-  const [robots, setRobots] = reactExports.useState([]);
-  const [robot, setRobot] = reactExports.useState("so101");
-  const [ports2, setPorts] = reactExports.useState([]);
-  const [mirror, setMirror] = reactExports.useState("");
-  const [sessions, setSessions] = reactExports.useState([]);
-  const [lockout, setLockout] = reactExports.useState(null);
-  const [msg, setMsg] = reactExports.useState(null);
-  const [starting, setStarting] = reactExports.useState(false);
-  const readLockout = reactExports.useCallback(async () => {
-    try {
-      setLockout((await api("/api/safety")).lockout);
-    } catch {
-    }
-  }, []);
-  const failed = reactExports.useCallback(async (e) => {
-    setMsg(e instanceof HttpError && e.status === 423 ? `refused: ${e.message}` : (e == null ? void 0 : e.message) ?? String(e));
-    await readLockout();
-  }, [readLockout]);
-  const refresh = reactExports.useCallback(async () => {
-    try {
-      const { sessions: sessions2 } = await api("/api/sim");
-      setSessions(sessions2);
-    } catch (e) {
-      await failed(e);
-    }
-    await readLockout();
-  }, [failed, readLockout]);
-  reactExports.useEffect(() => {
-    void refresh();
-    simRobots().then((list) => {
-      setRobots(list);
-      if (list.length && !list.some((r) => r.name === "so101")) setRobot(list[0].name);
-    }).catch((e) => setMsg(`registry: ${(e == null ? void 0 : e.message) ?? e}`));
-    api("/api/sim/ports").then((r) => setPorts(r.ports ?? [])).catch(() => setPorts([]));
-  }, [refresh]);
-  const start = async (e) => {
-    e.preventDefault();
-    setStarting(true);
-    setMsg(null);
-    try {
-      const body = { robot };
-      if (mirror) body.mirror = { port: mirror };
-      await post("/api/sim", body);
-      await refresh();
-    } catch (err) {
-      await failed(err);
-    } finally {
-      setStarting(false);
-    }
-  };
-  const toggleEstop = async () => {
-    const route = (lockout == null ? void 0 : lockout.state) === "locked" ? "/api/safety/resume" : "/api/safety/estop";
-    try {
-      setLockout((await post(route)).lockout);
-      setMsg(null);
-    } catch (e) {
-      await failed(e);
-    }
-  };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-sheet sim-sheet", role: "dialog", "aria-label": "Simulation", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "🧊 Simulation" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "dock-min", onClick: onClose, "aria-label": "close simulation", title: "Escape", children: "✕" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { className: "train-form sim-new", onSubmit: start, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-row", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "robot" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value: robot, onChange: (e) => setRobot(e.target.value), disabled: starting, children: [
-            !robots.some((r) => r.name === robot) && /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: robot, children: robot }),
-            robots.map((r) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: r.name, children: r.label }, r.name))
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "source" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value: mirror, onChange: (e) => setMirror(e.target.value), disabled: starting, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "physics (steps in this process)" }),
-            ports2.map((p) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: p.port, children: [
-              "mirror ",
-              p.port.replace(/^\/dev\//, ""),
-              p.likely_servo_bus ? " · servo bus" : ""
-            ] }, p.port))
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-actions sim-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "submit", disabled: starting || (lockout == null ? void 0 : lockout.state) === "locked", children: starting ? "starting…" : "start" }) })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `sim-lockout ${(lockout == null ? void 0 : lockout.state) ?? "unknown"}`, role: "status", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: lockoutText(lockout) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: (lockout == null ? void 0 : lockout.state) === "locked" ? "btn go" : "btn danger", onClick: toggleEstop, children: (lockout == null ? void 0 : lockout.state) === "locked" ? "RESUME" : "E-STOP (sim)" })
-      ] }),
-      msg && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg warn", role: "alert", children: msg }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "A mirror session reads the servo bus at that port and never writes it: the arm decides the pose, the twin follows. A physics session accepts joint targets from the sliders below and from the agent (which asks first)." })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sim-sessions", children: [
-      sessions.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "No session yet. Pick a robot and press start - it steps in this process and streams here." }),
-      sessions.map((s) => /* @__PURE__ */ jsxRuntimeExports.jsx(SessionCard, { initial: s, onLockout: setLockout, onGone: refresh, onFailed: failed }, s.id))
-    ] })
-  ] });
-}
-function SessionCard({ initial, onLockout, onGone, onFailed }) {
-  const [snap, setSnap] = reactExports.useState(initial);
-  const [view, setView] = reactExports.useState("twin");
-  const [twinErr, setTwinErr] = reactExports.useState(null);
-  const [targets, setTargets] = reactExports.useState({});
-  const canvasRef = reactExports.useRef(null);
-  const twinRef = reactExports.useRef(null);
-  const sendTimer = reactExports.useRef(null);
-  const pending = reactExports.useRef({});
-  const mirror = !!snap.source && snap.source.startsWith("real:");
-  const live = snap.state !== "stopped" && snap.state !== "error";
-  reactExports.useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let disposed = false;
-    makeTwin(canvas, initial.id).then((t) => {
-      if (disposed) {
-        t.dispose();
-        return;
-      }
-      twinRef.current = t;
-      t.load().catch((e) => setTwinErr(`twin: ${(e == null ? void 0 : e.message) ?? e}`));
-    }).catch((e) => setTwinErr(`twin unavailable: ${(e == null ? void 0 : e.message) ?? e}`));
-    return () => {
-      var _a;
-      disposed = true;
-      (_a = twinRef.current) == null ? void 0 : _a.dispose();
-      twinRef.current = null;
-    };
-  }, [initial.id]);
-  reactExports.useEffect(() => {
-    const ws = new WebSocket(wsUrl(`/ws/telemetry/${initial.id}?poses=1`));
-    ws.binaryType = "arraybuffer";
-    ws.onmessage = (ev) => {
-      var _a;
-      if (ev.data instanceof ArrayBuffer) {
-        (_a = twinRef.current) == null ? void 0 : _a.poses(ev.data);
-        return;
-      }
-      let m;
-      try {
-        m = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
-      setSnap(m);
-      if (m.lockout) onLockout(m.lockout);
-      if (m.state === "stopped" || m.state === "error") ws.close();
-    };
-    ws.onclose = (ev) => {
-      if (ev.code === 4404) void onGone();
-    };
-    return () => ws.close();
-  }, [initial.id, onLockout, onGone]);
-  const setJoint = (name, value) => {
-    setTargets((t) => ({ ...t, [name]: value }));
-    pending.current[name] = value;
-    if (sendTimer.current != null) return;
-    sendTimer.current = window.setTimeout(async () => {
-      sendTimer.current = null;
-      const positions = pending.current;
-      pending.current = {};
-      try {
-        await post(`/api/sim/${initial.id}/joints`, { positions });
-      } catch (e) {
-        setTargets({});
-        await onFailed(e);
-      }
-    }, 80);
-  };
-  const reset = async () => {
-    setTargets({});
-    try {
-      await post(`/api/sim/${initial.id}/reset`);
-    } catch (e) {
-      await onFailed(e);
-    }
-  };
-  const stop = async () => {
-    try {
-      await del(`/api/sim/${initial.id}`);
-    } catch (e) {
-      await onFailed(e);
-    }
-    await onGone();
-  };
-  const camSrc = view === "cam" ? apiUrl(`/api/sim/${initial.id}/stream.mjpg`) : "";
-  const busLine = snap.bus ? snap.error || snap.bus.error || (snap.bus.age_ms == null ? "waiting for the bus" : `read ${snap.bus.age_ms} ms ago · torque untouched`) : snap.error;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: `sim-session ${snap.state}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sim-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: snap.robot }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge mono", children: snap.id }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `badge ${snap.state === "frozen" || snap.state === "error" ? "danger" : snap.state === "running" ? "" : "warn"}`, children: snap.state }),
-      mirror && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge warn", title: `Reads the servo bus at ${snap.source.slice(5)}; never writes it`, children: "mirror · read-only" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spacer" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "viewsel", role: "tablist", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", role: "tab", className: `chip${view === "twin" ? " on" : ""}`, "aria-selected": view === "twin", onClick: () => setView("twin"), children: "Twin" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", role: "tab", className: `chip${view === "cam" ? " on" : ""}`, "aria-selected": view === "cam", onClick: () => setView("cam"), children: "Camera" })
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sim-view", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("canvas", { ref: canvasRef, className: "twin", hidden: view !== "twin" }),
-      view === "cam" && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { className: "cam", alt: `${snap.robot} camera`, src: camSrc }),
-      twinErr && view === "twin" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint warn sim-overlay", children: twinErr })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sim-joints", children: snap.joint_names.map((name, i) => {
-      const q = snap.qpos[i] ?? 0;
-      const v = targets[name] ?? q;
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "sim-joint", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "label", children: name }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            type: "range",
-            min: -Math.PI,
-            max: Math.PI,
-            step: 5e-3,
-            value: v,
-            disabled: mirror || !live,
-            "aria-label": `${name} target, radians`,
-            onChange: (e) => setJoint(name, Number(e.target.value))
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "val mono", children: q.toFixed(3) })
-      ] }, name);
-    }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sim-foot", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono", children: snap.bus ? `${snap.bus.hz ?? 0} Hz bus` : `t=${snap.sim_time.toFixed(2)}s` }),
-      snap.fps ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "mono", children: [
-        snap.fps,
-        " fps"
-      ] }) : null,
-      busLine && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", title: busLine, children: busLine }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spacer" }),
-      !mirror && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "btn ghost", onClick: reset, disabled: !live, children: "reset" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "btn ghost danger", onClick: stop, children: "stop" })
-    ] })
-  ] });
-}
-function diskNoticeView(notice, opts = {}) {
-  if (!notice) return null;
-  const level = notice.level === "critical" ? "critical" : notice.level === "tight" ? "tight" : null;
-  if (!level) return null;
-  const headline = (notice.headline ?? "").trim();
-  if (!headline) return null;
-  const backendAdvice = (notice.advice ?? "").trim();
-  const recording = !!opts.recording;
-  if (level === "critical" && recording) {
-    return {
-      tone: "bad",
-      urgent: true,
-      headline,
-      // Deliberately NOT the backend's "free space first": that is unreachable advice for someone
-      // holding an arm over a live dataset.
-      advice: "Stop after this episode. The episodes already written are complete and safe — it is the one that runs out mid-write that leaves a dataset whose meta promises more than its data holds. Close the session, free space, then open a new one and keep going.",
-      testid: "disk-critical-recording"
-    };
-  }
-  if (level === "critical") {
-    return { tone: "bad", urgent: true, headline, advice: backendAdvice, testid: "disk-critical" };
-  }
-  return {
-    tone: "warn",
-    // A tight disk is a fact to notice, not an emergency, and this document is polled about once a
-    // second — role="alert" on it would interrupt a screen reader repeatedly for unchanged news.
-    urgent: false,
-    headline,
-    advice: backendAdvice,
-    testid: recording ? "disk-tight-recording" : "disk-tight"
-  };
-}
-const REAL_HINT = "Both arms leave the fleet while recording: their peers are despawned and the ports handed to the recorder, and the follower is energised to hold position. Nothing is written until you start an episode.";
-const MOCK_HINT = "Rehearsal: this backend has no /api/record, so no arm is touched, no port is taken and no dataset is written. The buttons work so you can learn the flow.";
-function openActionCopy(mock) {
-  if (mock === true) {
-    return {
-      label: "open a rehearsal session",
-      hint: MOCK_HINT,
-      cls: "rehearsal",
-      aria: "open a rehearsal session — no arm is touched and nothing is written"
-    };
-  }
-  if (mock === false) {
-    return {
-      label: "open the arms for recording",
-      hint: REAL_HINT,
-      cls: "",
-      aria: "open the arms for recording — despawns both peers and energises the follower"
-    };
-  }
-  return {
-    label: "open the arms for recording",
-    hint: REAL_HINT,
-    cls: "",
-    aria: "open the arms for recording — despawns both peers and energises the follower"
-  };
-}
-const STALE_AFTER_MS = 3200;
-function sessionFreshness(input) {
-  const { lastOkAtMs, nowMs, recording } = input;
-  const staleAfter = input.staleAfterMs ?? STALE_AFTER_MS;
-  const why2 = String(input.lastError ?? "").trim();
-  if (lastOkAtMs == null || !Number.isFinite(lastOkAtMs)) {
-    return { stale: false, ageS: 0, text: null, tone: "warn" };
-  }
-  const ageMs = Math.max(0, nowMs - lastOkAtMs);
-  const ageS2 = Math.floor(ageMs / 1e3);
-  if (ageMs < staleAfter) return { stale: false, ageS: ageS2, text: null, tone: "warn" };
-  const reason2 = why2 ? ` (${why2})` : "";
-  const text = recording ? `⚠ the frame counter is NOT updating — last session read ${ageS2}s ago${reason2}. It may still be recording, or the episode may already have ended: this page cannot tell. The counts below are that old, not live.` : `⚠ session state is ${ageS2}s old — polling is not landing${reason2}. Buttons still work, but what you see may already have changed.`;
-  return { stale: true, ageS: ageS2, text, tone: recording ? "bad" : "warn" };
-}
-function staleSuffix(f) {
-  return f.stale ? ` · ${f.ageS}s old` : "";
-}
-const INERT = {
-  open: "no session was opened and nothing was recorded — and unless the message above says otherwise, the arms are back in the fleet.",
-  start: "no episode was started — nothing is being recorded.",
-  stop: "the episode was NOT stopped — if one was recording, it still is.",
-  redo: "nothing was thrown away — the take is still there.",
-  discard: "nothing was discarded — that episode is still there.",
-  close: "the dataset was NOT finished — the session is still open, and nothing was uploaded."
-};
-const MAYBE = {
-  open: "the session MAY be open: both arms despawned, ports handed to the recorder, follower energised and stiff.",
-  start: "the episode MAY already be recording — do the demonstration only once you know, and do not walk away assuming it is idle.",
-  stop: "the take MAY already be saved, or MAY still be recording — this panel cannot tell which.",
-  redo: "the take MAY already have been thrown away, and that cannot be undone.",
-  discard: "that episode MAY already have been discarded, and that cannot be undone.",
-  close: "the dataset MAY already be finished — and if you ticked upload, MAY already be on the Hub."
-};
-const WATCH = "Re-reading the session now — the episode list and the recording pill are the truth, they refresh every second.";
-function recordFailure(input) {
-  const why2 = String(input.message ?? "").trim() || "no detail";
-  if (refusedBeforeActing(input.status)) {
-    return {
-      text: `✗ refused (${input.status}): ${why2} — ${INERT[input.kind]}`,
-      ambiguous: false,
-      destructive: false
-    };
-  }
-  const head = Number(input.status ?? 0) ? `⚠ unknown — the server failed mid-request (${input.status}: ${why2})` : `⚠ unknown — no answer came back (${why2})`;
-  return {
-    text: `${head}: ${MAYBE[input.kind]} ${WATCH}`,
-    ambiguous: true,
-    destructive: input.kind === "redo" || input.kind === "discard"
-  };
-}
-const NAMED_LEADER = /(^|[^a-z])leader([^a-z]|$)/i;
-const NAMED_FOLLOWER = /(^|[^a-z])follower([^a-z]|$)/i;
-function measured(candidates, role) {
-  return candidates.filter((c) => c.role === role);
-}
-function pairArms(candidates) {
-  var _a, _b;
-  const leaders = measured(candidates, "leader");
-  const followers = measured(candidates, "follower");
-  if (leaders.length === 1 && followers.length === 1) {
-    return { leader: leaders[0].peer_id, follower: followers[0].peer_id, basis: "measured" };
-  }
-  if (leaders.length === 1 && followers.length !== 1) {
-    return {
-      leader: leaders[0].peer_id,
-      follower: "",
-      basis: "measured",
-      note: followers.length === 0 ? `${leaders[0].peer_id} measured as the leader; no arm has measured as a 12V follower yet — pick the follower yourself, or measure it on the devices screen` : `${leaders[0].peer_id} measured as the leader, but ${followers.length} arms measured as followers — which one it drives is your call, so check the volts next to each name`
-    };
-  }
-  if (followers.length === 1 && leaders.length !== 1) {
-    return {
-      leader: "",
-      follower: followers[0].peer_id,
-      basis: "measured",
-      note: leaders.length === 0 ? `${followers[0].peer_id} measured as the follower; no arm has measured as a 7.4V leader yet (an unpowered arm reads 5.5V on the USB rail) — pick the leader yourself, or measure it on the devices screen` : `${followers[0].peer_id} measured as the follower, but ${leaders.length} arms measured as leaders — which one drives is your call, so check the volts next to each name`
-    };
-  }
-  if (leaders.length > 1 || followers.length > 1) {
-    const parts = [];
-    if (leaders.length > 1) parts.push(`${leaders.length} arms measured as the leader`);
-    if (followers.length > 1) {
-      parts.push(parts.length ? `${followers.length} as the follower` : `${followers.length} arms measured as the follower`);
-    }
-    return {
-      leader: "",
-      follower: "",
-      basis: "none",
-      note: `${parts.join(" and ")}, so which one drives is your call — check the volts next to each name`
-    };
-  }
-  const named = {
-    leader: ((_a = candidates.find((c) => NAMED_LEADER.test(c.peer_id))) == null ? void 0 : _a.peer_id) ?? "",
-    follower: ((_b = candidates.find((c) => NAMED_FOLLOWER.test(c.peer_id))) == null ? void 0 : _b.peer_id) ?? ""
-  };
-  if (named.leader && named.follower && named.leader !== named.follower) {
-    return {
-      ...named,
-      basis: "named",
-      note: "paired from the peer names — nobody has measured these buses, so the names are being taken at their word"
-    };
-  }
-  if (named.leader !== named.follower && (named.leader || named.follower)) {
-    const stated = named.leader ? "leader" : "follower";
-    return {
-      leader: named.leader,
-      follower: named.follower,
-      basis: "named",
-      note: `only ${named.leader || named.follower} states a role in its name, so it fills the ${stated} slot — nobody has measured these buses, and the other arm is left to you (the leader is the lighter 7.4V arm)`
-    };
-  }
-  return {
-    leader: "",
-    follower: "",
-    basis: "none",
-    note: candidates.length ? "no arm has been measured, and the names do not say which is which — the leader is the lighter 7.4V arm, or measure both on the devices screen" : "no arms on the mesh"
-  };
-}
-function roleLabel(c) {
-  if (!c.role) return `${c.peer_id} — role not measured`;
-  const v = typeof c.role_volts === "number" ? ` · ${c.role_volts}V` : "";
-  return `${c.peer_id} — ${c.role}${v}`;
-}
-function contradiction(candidates, slot, chosen) {
-  if (!chosen) return null;
-  const c = candidates.find((x) => x.peer_id === chosen);
-  if (!(c == null ? void 0 : c.role)) return null;
-  if (c.role === slot) return null;
-  const v = typeof c.role_volts === "number" ? `${c.role_volts}V` : "its bus";
-  if (c.role === "unpowered") {
-    return `${chosen} read ${v} — that is the USB logic rail, so its power supply is off. It can report positions but it cannot hold or mirror anything.`;
-  }
-  if (c.role === "mixed") {
-    return `${chosen} reported inconsistent voltages across its servos — that is a wiring fault, not a role. Fix it before recording an episode with it.`;
-  }
-  return `${chosen} measured ${v} — it is the ${c.role}, not the ${slot}. ` + (slot === "leader" ? "You would be hand-moving a torqued 12V arm while the 7.4V one tries to mirror it." : "The arm being recorded should be the 12V one that mirrors your hand.");
-}
-const MAX_AGE_S = 30;
-function jointCount(peer) {
-  var _a;
-  const joints = (_a = peer == null ? void 0 : peer.state) == null ? void 0 : _a.joints;
-  if ((peer == null ? void 0 : peer.state) == null) return null;
-  if (joints == null) return 0;
-  if (Array.isArray(joints)) return joints.length;
-  if (typeof joints === "object") return Object.keys(joints).length;
-  return null;
-}
-function ageS(peer, nowS) {
-  const seen = peer == null ? void 0 : peer.last_seen;
-  if (typeof seen !== "number" || !Number.isFinite(seen) || seen <= 0) return null;
-  return Math.max(0, nowS - seen);
-}
-function armJointWarning(peer, { slot, nowS }) {
-  const count = jointCount(peer);
-  if (count === null || count > 0) return null;
-  const age = ageS(peer, nowS);
-  if (age === null || age > MAX_AGE_S) return null;
-  const note = jointAbsence({
-    state: peer == null ? void 0 : peer.state,
-    presence: peer == null ? void 0 : peer.presence,
-    problem: peer == null ? void 0 : peer.joint_problem,
-    nowS
-  });
-  const why2 = [note.text, note.hint].filter(Boolean).join(" — ");
-  return `${slot} ${(peer == null ? void 0 : peer.peer_id) ?? ""} reports no joint positions, so the episodes would carry no ${slot === "leader" ? "actions" : "observations"} to learn from` + (why2 ? `: ${why2}` : "") + ". The recording will be refused until this arm reads.";
-}
-const EPISODE_MAX = 500;
-function episodeTarget(raw) {
-  const text = (raw ?? "").trim();
-  if (!text) return { value: 0, problem: "how many episodes? enter a number", note: null };
-  const n = Number(text);
-  if (!Number.isFinite(n)) return { value: 0, problem: `“${text}” is not a number`, note: null };
-  if (n <= 0) {
-    return { value: 0, problem: n === 0 ? "zero episodes would record nothing" : "that is a negative number of episodes", note: null };
-  }
-  if (n > EPISODE_MAX) {
-    return { value: 0, problem: `${n} episodes is more than this screen will start (max ${EPISODE_MAX}) — record in batches`, note: null };
-  }
-  if (!Number.isInteger(n)) {
-    const floored = Math.floor(n);
-    return { value: floored, problem: null, note: `recording ${floored} episodes — ${text} is not a whole number` };
-  }
-  return { value: n, problem: null, note: null };
-}
-const DEFAULT_FPS = 30;
-const MIN_FPS = 1;
-const MAX_FPS = 60;
-function fpsField(raw) {
-  const text = (raw ?? "").trim();
-  if (!text) return { value: DEFAULT_FPS, problem: null, note: null };
-  const n = Number(text);
-  if (!Number.isFinite(n)) {
-    return { value: DEFAULT_FPS, problem: `"${text}" is not a number of frames per second`, note: null };
-  }
-  if (n < MIN_FPS || n > MAX_FPS) {
-    return {
-      value: DEFAULT_FPS,
-      problem: `fps must be between ${MIN_FPS} and ${MAX_FPS} — ${n} is outside what a dataset can declare`,
-      note: null
-    };
-  }
-  const rounded = Math.round(n);
-  return {
-    value: rounded,
-    problem: null,
-    note: rounded !== n ? `recording at ${rounded} fps (a dataset's rate is a whole number)` : null
-  };
-}
-function fpsSuggestion(notice) {
-  if (!notice || !Number.isFinite(notice.measured_fps)) return null;
-  const measured2 = Math.round(notice.measured_fps);
-  if (measured2 < MIN_FPS || measured2 > MAX_FPS) return null;
-  if (measured2 === Math.round(notice.declared_fps)) return null;
-  return {
-    fps: String(measured2),
-    label: `use ${measured2} fps next session`,
-    // Deliberately future-tense: the current session's episodes keep their declaration, and
-    // pretending otherwise would be the third lie in this chain.
-    why: notice.slower ? `this session is already stamped ${notice.declared_fps} fps and cannot be re-declared; recording the next one at ${measured2} makes its timestamps match real time` : `capture is running faster than declared; ${measured2} fps would describe it honestly`
-  };
-}
-function AuthedImg({ path, alt, className }) {
-  const [url, setUrl] = reactExports.useState("");
-  const [failed, setFailed] = reactExports.useState(false);
-  reactExports.useEffect(() => {
-    let alive = true;
-    let made = "";
-    setFailed(false);
-    setUrl("");
-    void apiBlob(path).then((u) => {
-      if (!alive) {
-        URL.revokeObjectURL(u);
-        return;
-      }
-      made = u;
-      setUrl(u);
-    }).catch(() => {
-      if (alive) setFailed(true);
-    });
-    return () => {
-      alive = false;
-      if (made) URL.revokeObjectURL(made);
-    };
-  }, [path]);
-  if (failed) return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "hint small", title: path, children: [
-    alt,
-    " — unavailable"
-  ] });
-  if (!url) return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "thumb-loading", "aria-label": `${alt} loading` });
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: url, alt, className, loading: "lazy" });
-}
-function localNames(known) {
-  const out = /* @__PURE__ */ new Map();
-  for (const d of known) {
-    if (d.local === false) continue;
-    const id = (d.repo_id ?? "").trim();
-    if (id) out.set(id, typeof d.total_episodes === "number" ? d.total_episodes : void 0);
-  }
-  return out;
-}
-function freeVariant(name, known) {
-  const taken = localNames(known);
-  const base = name.trim();
-  if (!base) return null;
-  const m = base.match(/^(.*?)-(\d+)$/);
-  const stem = m ? m[1] : base;
-  let n = m ? Number(m[2]) : 1;
-  for (let i = 0; i < 200; i += 1) {
-    n += 1;
-    const candidate = `${stem}-${n}`;
-    if (!taken.has(candidate)) return candidate;
-  }
-  return null;
-}
-function nameVerdict(name, known) {
-  const id = (name ?? "").trim();
-  if (!id || !known) return null;
-  const taken = localNames(known);
-  if (!taken.has(id)) return null;
-  const episodes = taken.get(id);
-  const what = typeof episodes === "number" && episodes > 0 ? `already exists with ${episodes} episode(s)` : "already exists on disk (no episodes recorded — probably an interrupted session)";
-  return {
-    message: `“${id}” ${what}. Recording refuses to reuse a dataset directory, so this will be turned away when you press start.`,
-    suggestion: freeVariant(id, known)
-  };
-}
-function slugFromTask(task) {
-  const words2 = (task ?? "").toLowerCase().replace(/[^a-z0-9\s_-]+/g, " ").split(/[\s_]+/).filter(Boolean);
-  if (words2.length === 0) return null;
-  return words2.slice(0, 4).join("-");
-}
-function suggestDatasetName(task, currentValue, known) {
-  if ((currentValue ?? "").trim()) return null;
-  const slug = slugFromTask(task);
-  if (!slug) return null;
-  const taken = (known ?? []).some((d) => d.local !== false && (d.repo_id ?? "").trim() === slug);
-  if (!taken) return slug;
-  return freeVariant(slug, known ?? []);
-}
-const OVERRIDES = [
-  {
-    flag: "ignore_dead_cameras",
-    label: "I know this camera is stale — record without waiting for it",
-    cost: "the episodes may carry a frozen image, or none, for that view"
-  },
-  {
-    flag: "ignore_missing_cameras",
-    label: "record without the camera this machine cannot see",
-    cost: "that view is simply absent from every episode"
-  },
-  {
-    flag: "ignore_camera_identity",
-    label: "my cameras really are at these indices — record with them as they stand",
-    cost: "if the numbering did shift, every episode records the WRONG view while looking healthy"
-  }
-];
-function overrideOffered(message) {
-  if (typeof message !== "string" || !message) return null;
-  const named = OVERRIDES.filter((o) => message.includes(o.flag));
-  return named.length === 1 ? named[0] : null;
-}
-const FLAGS = OVERRIDES.map((o) => o.flag);
-function nextAcknowledged(prev, offered, acknowledged) {
-  const kept = FLAGS.filter((f) => prev.includes(f));
-  if (!offered || !acknowledged || kept.includes(offered.flag)) return kept;
-  return FLAGS.filter((f) => kept.includes(f) || f === offered.flag);
-}
-function overrideBodyFlags(flags) {
-  const body = {};
-  for (const f of FLAGS) if (flags.includes(f)) body[f] = true;
-  return body;
-}
-function trainHandoff(r) {
-  var _a, _b;
-  if (!(r == null ? void 0 : r.ok)) return null;
-  if (!r.episodes_kept || r.episodes_kept <= 0) return null;
-  const where = (r.root ?? "").trim() || (r.dataset ?? "").trim();
-  if (!where) return null;
-  const caveat = r.camera_notice && (((_a = r.camera_notice.missing) == null ? void 0 : _a.length) ?? 0) > 0 ? (((_b = r.camera_notice.present) == null ? void 0 : _b.length) ?? 0) > 0 ? "some image channels are missing — a visual policy trains on less than you saw" : "no image channel at all — this dataset cannot train a visual policy" : null;
-  return {
-    prefill: { dataset_root: where },
-    label: `train on it (${r.episodes_kept} episode${r.episodes_kept === 1 ? "" : "s"}) →`,
-    caveat
-  };
-}
-function RecordPanel({ peers, onClose, onDevices, onTrain }) {
-  var _a;
-  const peerIds = peers.map((p) => p.peer_id);
-  const [api$1, setApi] = reactExports.useState(null);
-  const sheetRef = reactExports.useRef(null);
-  useDialogFocus(sheetRef);
-  const [s, setS] = reactExports.useState(null);
-  const [busy, setBusy] = reactExports.useState(false);
-  const [err, setErr] = reactExports.useState(null);
-  const [roles, setRoles] = reactExports.useState({});
-  const hosts = armHosts(peers.map((p) => {
-    var _a2;
-    return {
-      peer_id: p.peer_id,
-      joints: ((_a2 = p.state) == null ? void 0 : _a2.joints) ? Array.isArray(p.state.joints) ? p.state.joints.length : typeof p.state.joints === "object" ? Object.keys(p.state.joints).length : null : 0
-    };
-  }));
-  const candidates = peerIds.filter((id) => !hosts[id]).map((id) => roles[id] ?? { peer_id: id });
-  const [boards, setBoards] = reactExports.useState(void 0);
-  const suggestion = pairArms(candidates);
-  const noArms = noArmsVerdict(peerIds.length, boards === void 0 ? null : boards);
-  const [form, setForm] = reactExports.useState({
-    dataset: "",
-    task: "",
-    leader: "",
-    follower: "",
-    target_episodes: "20",
-    fps: ""
-  });
-  const [touched, setTouched] = reactExports.useState({ leader: false, follower: false });
-  const wanted = episodeTarget(form.target_episodes);
-  const rate = fpsField(form.fps);
-  const [ack, setAck] = reactExports.useState(false);
-  const problems = ["leader", "follower"].map((slot) => ({ slot, msg: contradiction(candidates, slot, form[slot]) })).filter((x) => !!x.msg);
-  const [upload, setUpload] = reactExports.useState(false);
-  const [pre, setPre] = reactExports.useState(null);
-  const [preErr, setPreErr] = reactExports.useState(false);
-  const [uploadForce, setUploadForce] = reactExports.useState(false);
-  reactExports.useEffect(() => {
-    if (!upload || !api$1) {
-      setPre(null);
-      setPreErr(false);
-      return;
-    }
-    let alive = true;
-    void api$1.uploadPreflight().then((v) => {
-      if (alive) {
-        setPre(v);
-        setPreErr(false);
-      }
-    }).catch(() => {
-      if (alive) {
-        setPre(null);
-        setPreErr(true);
-      }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [upload, api$1, s == null ? void 0 : s.dataset]);
-  const uploadBlocked = !!upload && (!pre || !pre.ok && !(pre.needs_force && uploadForce));
-  const armedUpload = upload && !uploadBlocked;
-  const [known, setKnown] = reactExports.useState(null);
-  reactExports.useEffect(() => {
-    let alive = true;
-    api("/api/training/datasets?hub=false").then((r) => {
-      if (alive) setKnown(r.datasets ?? []);
-    }).catch(() => {
-      if (alive) setKnown(null);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const nameWarn = nameVerdict(form.dataset, known);
-  const [closed, setClosed] = reactExports.useState(null);
-  const [receipt, setReceipt] = reactExports.useState(null);
-  const [lastOkAt, setLastOkAt] = reactExports.useState(null);
-  const [pollErr, setPollErr] = reactExports.useState(null);
-  const [nowMs, setNowMs] = reactExports.useState(() => Date.now());
-  const followerPeer = peers.find((p) => p.peer_id === form.follower);
-  const deadCams = stoppedCameras(followerPeer == null ? void 0 : followerPeer.cameras, Date.now() / 1e3);
-  const camWarning = cameraWarning(deadCams, { peerId: form.follower });
-  const jointWarnings = [
-    ["leader", form.leader],
-    ["follower", form.follower]
-  ].map(([slot, pid]) => ({
-    slot,
-    msg: armJointWarning(peers.find((p) => p.peer_id === pid), { slot, nowS: Date.now() / 1e3 })
-  })).filter((x) => !!x.msg);
-  const [camAck, setCamAck] = reactExports.useState(false);
-  const [refusalAck, setRefusalAck] = reactExports.useState(false);
-  const offered = overrideOffered(err);
-  const [ackedFlags, setAckedFlags] = reactExports.useState([]);
-  reactExports.useEffect(() => {
-    setAckedFlags([]);
-  }, [form.follower, form.leader, form.dataset]);
-  reactExports.useEffect(() => {
-    let alive = true;
-    api("/api/devices").then((doc) => {
-      if (!alive) return;
-      const next = {};
-      for (const m of Object.values(doc.managed ?? {})) {
-        if (m == null ? void 0 : m.peer_id) next[m.peer_id] = { peer_id: m.peer_id, role: m.role, role_volts: m.role_volts };
-      }
-      setRoles(next);
-      const claimed = new Set(Object.values(doc.managed ?? {}).filter((m) => (m == null ? void 0 : m.alive) && (m == null ? void 0 : m.port)).map((m) => m.port));
-      setBoards((doc.serial_ports ?? []).filter((p) => {
-        var _a2;
-        return (_a2 = p.remembered) == null ? void 0 : _a2.peer_id;
-      }).map((p) => ({ peer_id: p.remembered.peer_id, claimed: claimed.has(p.device) })));
-    }).catch(() => {
-      setBoards(null);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  reactExports.useEffect(() => {
-    setForm((f) => ({
-      ...f,
-      leader: touched.leader ? f.leader : suggestion.leader,
-      follower: touched.follower ? f.follower : suggestion.follower
-    }));
-  }, [suggestion.leader, suggestion.follower, touched.leader, touched.follower]);
-  reactExports.useEffect(() => {
-    let alive = true;
-    getRecordApi().then((a) => {
-      if (!alive) return;
-      setApi(a);
-      a.session().then((sess) => {
-        if (alive) {
-          setS(sess);
-          setLastOkAt(Date.now());
-        }
-      }).catch((e) => alive && setErr(String(e)));
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const sRef = reactExports.useRef(s);
-  sRef.current = s;
-  reactExports.useEffect(() => {
-    if (!api$1 || !(s == null ? void 0 : s.dataset)) return;
-    let alive = true;
-    let pending = false;
-    const t = setInterval(() => {
-      setNowMs(Date.now());
-      if (pending) return;
-      pending = true;
-      api$1.session().then((sess) => {
-        if (alive) {
-          setS(sess);
-          setLastOkAt(Date.now());
-          setPollErr(null);
-        }
-      }).catch((e) => {
-        if (alive) setPollErr(e instanceof Error ? e.message : String(e));
-      }).finally(() => {
-        pending = false;
-      });
-    }, 1e3);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [api$1, s == null ? void 0 : s.dataset]);
-  const run = async (fn, kind) => {
-    if (busy) return;
-    setBusy(true);
-    setErr(null);
-    setRefusalAck(false);
-    try {
-      setS(await fn());
-      setLastOkAt(Date.now());
-      setPollErr(null);
-    } catch (e) {
-      const v = recordFailure({
-        kind,
-        status: e instanceof HttpError ? e.status : 0,
-        message: e instanceof Error ? e.message : String(e)
-      });
-      setErr(v.text);
-      if (v.ambiguous && api$1) {
-        try {
-          setS(await api$1.session());
-          setLastOkAt(Date.now());
-          setPollErr(null);
-        } catch {
-        }
-      }
-    }
-    setBusy(false);
-  };
-  const runRef = reactExports.useRef(run);
-  runRef.current = run;
-  const apiRef = reactExports.useRef(api$1);
-  apiRef.current = api$1;
-  reactExports.useEffect(() => {
-    const onKey = (e) => {
-      const cur = sRef.current;
-      const a = apiRef.current;
-      if (!a || !(cur == null ? void 0 : cur.dataset)) return;
-      const el = e.target;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
-      if (e.code === "Space") {
-        e.preventDefault();
-        const recording2 = cur.phase === "recording";
-        void runRef.current(() => recording2 ? a.stopEpisode() : a.startEpisode(), recording2 ? "stop" : "start");
-      } else if (e.key === "x" || e.key === "X") {
-        if (cur.phase !== "recording") return;
-        e.preventDefault();
-        void runRef.current(() => a.redoEpisode(), "redo");
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const open = !!(s == null ? void 0 : s.dataset);
-  const recording = (s == null ? void 0 : s.phase) === "recording";
-  const episodes = Array.isArray(s == null ? void 0 : s.episodes) ? s.episodes : [];
-  const finished = recording ? episodes.slice(0, -1) : episodes;
-  const kept = finished.filter((e) => !(e == null ? void 0 : e.discarded)).length;
-  const liveFrames = recording && episodes.length > 0 ? ((_a = episodes[episodes.length - 1]) == null ? void 0 : _a.frames) ?? null : null;
-  const fresh = sessionFreshness({ lastOkAtMs: lastOkAt, nowMs, lastError: pollErr, recording });
-  const openCopy = openActionCopy(api$1 ? api$1.mock : null);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: sheetRef, className: "train-sheet", role: "dialog", "aria-label": "Record episodes", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "⏺ Record" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "dock-min", onClick: onClose, "aria-label": "close", children: "✕" })
-    ] }),
-    (api$1 == null ? void 0 : api$1.mock) && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toast warn", children: "This backend has no /api/record (older server?) — this is a rehearsal. Nothing is written to disk." }),
-    !open && (s == null ? void 0 : s.interrupted) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "artifact-hold", role: "status", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        "⏹ ",
-        s.interrupted.text
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "hold-next", children: s.interrupted.next.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: n }, n)) })
-    ] }),
-    !open && s && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { className: "train-form", onSubmit: (e) => {
-      e.preventDefault();
-      setAckedFlags(nextAcknowledged(ackedFlags, offered, refusalAck));
-      void run(() => api$1.open({
-        dataset: form.dataset.trim(),
-        task: form.task.trim(),
-        leader: form.leader,
-        follower: form.follower,
-        target_episodes: wanted.value,
-        fps: rate.value,
-        // Only ever sent when the operator ticked the box in front of the
-        // named camera and its age - never a default, never remembered.
-        ...camWarning && camAck ? { ignore_dead_cameras: true } : {},
-        ...overrideBodyFlags(nextAcknowledged(ackedFlags, offered, refusalAck))
-      }), "open");
-    }, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "dataset (name or hf repo id)" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            value: form.dataset,
-            placeholder: "cagatay/so101-pick-cube",
-            onChange: (e) => set("dataset", e.target.value)
-          }
-        )
-      ] }),
-      nameWarn && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg", role: "status", children: [
-        "⚠ ",
-        nameWarn.message,
-        nameWarn.suggestion && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          " ",
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "button",
-            {
-              type: "button",
-              className: "btn ghost",
-              onClick: () => set("dataset", nameWarn.suggestion),
-              children: [
-                "use ",
-                nameWarn.suggestion
-              ]
-            }
-          )
-        ] })
-      ] }),
-      (() => {
-        const sug = suggestDatasetName(form.task, form.dataset, known);
-        return sug ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg rec-hint", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            type: "button",
-            className: "btn ghost suggest",
-            onClick: () => set("dataset", sug),
-            children: [
-              "name it ",
-              sug
-            ]
-          }
-        ) }) : null;
-      })(),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "task — what the arm is being taught" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            value: form.task,
-            placeholder: "pick up the red cube and place it in the bin",
-            onChange: (e) => set("task", e.target.value)
-          }
-        )
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-row", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "leader — you move this one" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "select",
-            {
-              value: form.leader,
-              onChange: (e) => {
-                setTouched((t) => ({ ...t, leader: true }));
-                set("leader", e.target.value);
-              },
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "select…" }),
-                candidates.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: c.peer_id, children: roleLabel(c) }, c.peer_id)),
-                Object.entries(hosts).map(([id, h]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: id, disabled: true, children: [
-                  id,
-                  " — ",
-                  h.why
-                ] }, id))
-              ]
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "follower — gets recorded" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "select",
-            {
-              value: form.follower,
-              onChange: (e) => {
-                setTouched((t) => ({ ...t, follower: true }));
-                set("follower", e.target.value);
-              },
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "select…" }),
-                candidates.map((c) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: c.peer_id, children: roleLabel(c) }, c.peer_id)),
-                Object.entries(hosts).map(([id, h]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: id, disabled: true, children: [
-                  id,
-                  " — ",
-                  h.why
-                ] }, id))
-              ]
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "fps" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              inputMode: "numeric",
-              value: form.fps,
-              placeholder: "30",
-              "aria-invalid": !!rate.problem,
-              "aria-describedby": "rec-fps-say",
-              onChange: (e) => set("fps", e.target.value)
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "rec-fps-say", className: `fieldsay${rate.problem ? " bad" : ""}`, children: rate.problem ?? rate.note ?? "timestamps are derived from this — match your real capture rate" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "episodes" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              inputMode: "numeric",
-              value: form.target_episodes,
-              "aria-invalid": !!wanted.problem,
-              "aria-describedby": "rec-episodes-say",
-              onChange: (e) => set("target_episodes", e.target.value)
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { id: "rec-episodes-say", className: `fieldsay${wanted.problem ? " bad" : ""}`, children: wanted.problem ?? wanted.note ?? "" })
-        ] })
-      ] }),
-      suggestion.basis === "measured" && !suggestion.note && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg rec-hint", children: "paired from the servo buses — measured, not guessed from the names." }),
-      noArms ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg rec-hint", role: "status", children: [
-        noArms.text,
-        noArms.offerDevices && onDevices && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          " ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "btn ghost", onClick: onDevices, children: "open the devices screen" })
-        ] })
-      ] }) : suggestion.note && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg rec-hint", children: suggestion.note }),
-      problems.map(({ slot, msg }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn", children: [
-        "⚠ ",
-        msg
-      ] }, slot)),
-      problems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "ackrow", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", checked: ack, onChange: (e) => setAck(e.target.checked) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "my arms really are wired that way — record anyway",
-          problems.some((x) => x.slot === "leader") ? " (hand-moving a torqued arm can strip a gear: cut its power first)" : ""
-        ] })
-      ] }),
-      jointWarnings.map(({ slot, msg }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn", role: "alert", children: [
-        "⚠ ",
-        msg
-      ] }, `joints-${slot}`)),
-      camWarning && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn", children: [
-        "⚠ ",
-        camWarning
-      ] }),
-      camWarning && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "ackrow", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", checked: camAck, onChange: (e) => setCamAck(e.target.checked) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          "record without ",
-          deadCams.length > 1 ? "those cameras" : `the ${deadCams[0].camera} camera`,
-          " anyway"
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "rec-hint", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { children: "not sure which arm is which?" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg rec-hint", children: "the leader is the lighter 7.4V arm (no gearbox load — easy to move by hand); the follower is the stronger 12V arm that mirrors it." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `train-msg rec-hint${openCopy.cls ? " warn" : ""}`, children: openCopy.hint }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: `btn go wide${openCopy.cls ? ` ${openCopy.cls}` : ""}`,
-          type: "submit",
-          "aria-label": openCopy.aria,
-          disabled: busy || !api$1 || !form.dataset.trim() || !form.task.trim() || !form.leader || !form.follower || form.leader === form.follower || !!wanted.problem || !!rate.problem || problems.length > 0 && !ack || !!camWarning && !camAck || jointWarnings.length > 0,
-          children: openCopy.label
-        }
-      ) }),
-      !!form.leader && form.leader === form.follower && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg", children: "⚠ leader and follower must be different arms" })
-    ] }),
-    (() => {
-      const d = diskNoticeView(s == null ? void 0 : s.disk_notice, { recording: open });
-      if (!d) return null;
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
-        {
-          className: `train-msg ${d.tone}`,
-          "data-testid": d.testid,
-          ...d.urgent ? { role: "alert" } : { "aria-live": "polite" },
-          children: [
-            "⚠ ",
-            d.headline,
-            d.advice && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fieldsay", children: d.advice })
-          ]
-        }
-      );
-    })(),
-    open && (s == null ? void 0 : s.camera_notice) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn rec-camera-notice", role: "alert", children: [
-      "⚠ ",
-      s.camera_notice.message
-    ] }),
-    open && (s == null ? void 0 : s.fps_notice) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn rec-fps-notice", role: "alert", children: [
-      "⚠ ",
-      s.fps_notice.detail,
-      (() => {
-        const sug = fpsSuggestion(s.fps_notice);
-        if (!sug) return null;
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rec-fps-fix", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              className: "btn ghost",
-              type: "button",
-              onClick: () => set("fps", sug.fps),
-              children: sug.label
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "fieldsay", children: sug.why })
-        ] });
-      })()
-    ] }),
-    open && (s == null ? void 0 : s.motion_notice) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg warn rec-motion-notice", role: "alert", children: [
-      "⚠ ",
-      s.motion_notice.message
-    ] }),
-    open && s && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-form", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rec-counter", "aria-live": "polite", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: kept }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          " / ",
-          s.target_episodes,
-          " episodes"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rec-task", children: [
-          s.dataset,
-          " — “",
-          s.task,
-          "”"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rec-rate", title: "declared fps vs the rate actually captured", children: [
-          s.fps,
-          " fps",
-          s.fps_achieved != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: s.fps_notice ? "rec-rate-bad" : "rec-rate-ok", children: [
-            " ",
-            "· ",
-            s.fps_achieved,
-            " captured"
-          ] }),
-          s.motion_notice && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rec-rate-bad", title: s.motion_notice.message, children: [
-            " ",
-            "· not moving"
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-actions", children: !recording ? /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn go wide", onClick: () => void run(() => api$1.startEpisode(), "start"), disabled: busy, children: [
-        "⏺ start episode ",
-        kept + 1
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn wide", onClick: () => void run(() => api$1.redoEpisode(), "redo"), disabled: busy, children: "↺ redo" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn go wide rec-live", onClick: () => void run(() => api$1.stopEpisode(), "stop"), disabled: busy, children: [
-          "⏹ stop & keep",
-          liveFrames !== null ? ` · ${liveFrames}f${staleSuffix(fresh)}` : ""
-        ] })
-      ] }) }),
-      fresh.text && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `toast ${fresh.tone === "bad" ? "bad" : "warn"}`, children: fresh.text }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-msg", children: recording ? `recording — drive ${s.follower} with ${s.leader}, then stop (or redo to throw this one away)` : "start when both arms are in position" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg rec-keys", "aria-hidden": "true", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "space" }),
-        " ",
-        recording ? "stop & keep" : "start",
-        " · ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("kbd", { children: "X" }),
-        " redo"
-      ] })
-    ] }),
-    open && s && /* @__PURE__ */ jsxRuntimeExports.jsx(FollowerLive, { peer: peers.find((p) => p.peer_id === s.follower), recording }),
-    open && s && episodes.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rec-strip", role: "list", "aria-label": "recorded episodes", children: finished.slice().reverse().map((ep) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "listitem", className: `rec-ep${ep.discarded ? " dead" : ""}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rec-ep-head", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
-          "ep ",
-          ep.index
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-          ep.frames,
-          "f · ",
-          ep.duration_s,
-          "s"
-        ] })
-      ] }),
-      Object.entries(ep.thumbnails).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rec-thumbs", children: Object.entries(ep.thumbnails).slice(0, 3).map(([cam, url]) => /* @__PURE__ */ jsxRuntimeExports.jsx(AuthedImg, { path: url, alt: `${cam} thumbnail of episode ${ep.index}` }, cam)) }),
-      ep.discarded ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rec-ep-gone", children: "discarded" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => void run(() => api$1.discard(ep.index), "discard"), disabled: busy, children: "✕ discard" })
-    ] }, ep.index)) }),
-    open && s && !recording && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-form", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field check", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", checked: upload, onChange: (e) => setUpload(e.target.checked) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "upload to the Hugging Face Hub after finishing" })
-      ] }),
-      upload && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: pre && !pre.ok ? "hint bad" : "hint", children: [
-          "publishes as ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: (pre == null ? void 0 : pre.destination) ?? s.dataset ?? "(unnamed)" }),
-          " — a dataset can only be pushed under the name it was recorded with. It will be ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: "public" }),
-          " unless your Hub namespace defaults to private, and if the push fails the episodes stay on this machine: finishing closes the session, so a retry is a ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "huggingface-cli" }),
-          " job."
-        ] }),
-        !pre && !preErr && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "checking whether this machine can publish…" }),
-        preErr && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint bad", children: [
-          "could not check whether this machine can publish — leaving the upload OFF rather than finding out after the session. Finish without it and push with",
-          " ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "huggingface-cli upload" }),
-          ", or retry by unticking and ticking again."
-        ] }),
-        pre && !pre.ok && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint bad", role: "alert", children: [
-          "⚠ ",
-          pre.detail
-        ] }),
-        pre && !pre.ok && pre.needs_force && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field check", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "input",
-            {
-              type: "checkbox",
-              checked: uploadForce,
-              onChange: (e) => setUploadForce(e.target.checked)
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: pre.state === "destination_exists" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            "Replace the dataset already published at ",
-            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: pre.destination }),
-            " with this session"
-          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            "I can write to ",
-            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: pre.destination }),
-            " — publish there anyway"
-          ] }) })
-        ] }),
-        (pre == null ? void 0 : pre.ok) && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
-          "✓ logged in as ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: pre.user })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "train-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn wide", disabled: busy, onClick: () => {
-        void (async () => {
-          setBusy(true);
-          setErr(null);
-          try {
-            const r = await api$1.close(armedUpload ? { upload: true } : {});
-            setClosed(r.detail ?? (r.ok ? `dataset finished with ${kept} episode(s)` : "close failed"));
-            setReceipt(r);
-            setS(await api$1.session());
-          } catch (e) {
-            const v = recordFailure({
-              kind: "close",
-              status: e instanceof HttpError ? e.status : 0,
-              message: e instanceof Error ? e.message : String(e)
-            });
-            setErr(v.text);
-            if (v.ambiguous) {
-              try {
-                setS(await api$1.session());
-                setLastOkAt(Date.now());
-                setPollErr(null);
-              } catch {
-              }
-            }
-          }
-          setBusy(false);
-        })();
-      }, children: [
-        "✓ ",
-        uploadBlocked ? "finish WITHOUT uploading" : armedUpload ? "finish + publish" : "finish dataset",
-        " ",
-        "(",
-        kept,
-        " kept",
-        episodes.length - kept ? `, ${episodes.length - kept} discarded` : "",
-        ")"
-      ] }) })
-    ] }),
-    closed && !open && (() => {
-      const h = trainHandoff(receipt);
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toast", role: "status", children: [
-        "✓ ",
-        closed,
-        h && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-          (receipt == null ? void 0 : receipt.root) && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint mono small", children: receipt.root }),
-          h.caveat && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hint warn", children: [
-            "⚠ ",
-            h.caveat
-          ] }),
-          onTrain && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "row", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn", onClick: () => onTrain(h.prefill), children: h.label }) })
-        ] })
-      ] });
-    })(),
-    err && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg", role: "alert", children: [
-      "✗ ",
-      err
-    ] }),
-    err && offered && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "ackrow", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "input",
-        {
-          type: "checkbox",
-          checked: refusalAck,
-          onChange: (e) => setRefusalAck(e.target.checked)
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        offered.label,
-        " ",
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "hint", children: [
-          "— ",
-          offered.cost
-        ] })
-      ] })
-    ] })
-  ] });
-}
-function FollowerLive({ peer, recording }) {
-  var _a;
-  if (!peer) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "toast warn", children: "The follower is not on the mesh — its card left the fleet. Recording would capture nothing." });
-  }
-  const evidence = cameraEvidence(
-    peer.peer_id,
-    (_a = peer.presence) == null ? void 0 : _a.cameras,
-    Object.keys(peer.cameras ?? {}),
-    peer.cameras_requested
-  );
-  const cams = evidence.kind === "ok" ? evidence.cams : [];
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `train-form rec-live-view${recording ? " armed" : ""}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rec-live-head", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        peer.peer_id,
-        " — what the dataset sees"
-      ] }),
-      recording && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rec-dot", "aria-hidden": "true" })
-    ] }),
-    cams.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cams.length > 1 ? "cams multi" : "cams", children: cams.slice(0, 4).map((c) => {
-      var _a2;
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(CameraTile, { peerId: peer.peer_id, cam: c, meta: (_a2 = peer.cameras) == null ? void 0 : _a2[c] }, c);
-    }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "train-msg", title: evidence.kind === "mute" ? "presence lists cameras; no frames have arrived" : void 0, children: [
-      "⚠ ",
-      evidence.kind === "ok" ? "" : evidence.message
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(JointStrip, { state: peer.state, presence: peer.presence, problem: peer.joint_problem, peerStale: peer.stale })
-  ] });
 }
 function b64uToBuf(s) {
   const norm2 = s.replace(/-/g, "+").replace(/_/g, "/");
@@ -13628,7 +10758,7 @@ function AuthGate({ children }) {
     ] })
   ] }) });
 }
-const PANELS = ["settings", "activity", "devices", "estop", "training", "record", "sim", "help"];
+const PANELS = ["settings", "activity", "devices", "estop", "help"];
 function panelFromHash(hash) {
   const want = hash.replace(/^#/, "");
   return PANELS.includes(want) ? want : null;
@@ -13660,13 +10790,11 @@ function Dashboard() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  const [trainPrefill, setTrainPrefill] = reactExports.useState(void 0);
   const [snipCopied, setSnipCopied] = reactExports.useState(null);
   const [boards, setBoards] = reactExports.useState(void 0);
   const [settingsTab, setSettingsTab] = reactExports.useState(void 0);
   const [detail, setDetail] = reactExports.useState(null);
   const [busyPeers, setBusyPeers] = reactExports.useState({});
-  const [recordMock, setRecordMock] = reactExports.useState(null);
   const liveTwins = reactExports.useMemo(() => new Set(
     Object.values(peers).filter((p) => p.peer_id.endsWith("-twin") && !p.stale).map((p) => p.peer_id)
   ), [peers]);
@@ -13742,16 +10870,6 @@ function Dashboard() {
       live = false;
     };
   }, [backendKey()]);
-  reactExports.useEffect(() => {
-    let live = true;
-    void getRecordApi().then((a) => {
-      if (live) setRecordMock(a.mock);
-    }).catch(() => {
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
   reactExports.useEffect(() => {
     const onKey = (e) => {
       const el = e.target;
@@ -13834,7 +10952,6 @@ function Dashboard() {
         activityCount: activity.length,
         absentChildren,
         quietChildren,
-        recordMock,
         onInstall: () => void pwa.install(),
         onSettings: () => {
           setSettingsTab(void 0);
@@ -13846,12 +10963,6 @@ function Dashboard() {
         },
         onActivity: () => route("activity"),
         onDevices: () => route("devices"),
-        onTraining: () => {
-          setTrainPrefill(void 0);
-          route("training");
-        },
-        onRecord: () => route("record"),
-        onSim: () => route("sim"),
         onHelp: () => route("help")
       }
     ),
@@ -13990,20 +11101,6 @@ function Dashboard() {
         meshBacked: mesh.online === true
       }
     ),
-    panel === "training" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the training screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(TrainingTab, { onClose: () => route(null), prefill: trainPrefill }) }),
-    panel === "sim" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the simulation screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SimTab, { onClose: () => route(null) }) }),
-    panel === "record" && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the record screen", onDismiss: () => route(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-      RecordPanel,
-      {
-        peers: list.filter((p) => !p.stale),
-        onClose: () => route(null),
-        onDevices: () => route("devices"),
-        onTrain: (prefill) => {
-          setTrainPrefill(prefill);
-          route("training");
-        }
-      }
-    ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the chat dock", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       AgentDock,
       {

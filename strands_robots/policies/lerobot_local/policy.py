@@ -48,6 +48,7 @@ from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridg
 from .resolution import (
     accepts_partial_images,
     config_for_untagged_checkpoint,
+    declared_action_dim,
     declared_image_features,
     resolve_policy_class_by_name,
     resolve_policy_class_from_hub,
@@ -125,6 +126,29 @@ def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     if isinstance(type_name, str):
         return type_name == "VISUAL"
     return "image" in name
+
+
+def _action_width_error(embodiment: Any, policy_config: dict[str, Any]) -> str | None:
+    """The embodiment's action-width verdict against the checkpoint's declared head.
+
+    Args:
+        embodiment: The resolved :class:`~strands_robots.policies.lerobot_local.embodiment.EmbodimentMap`.
+        policy_config: Provider kwargs (``pretrained_name_or_path``, ``revision``).
+
+    Returns:
+        ``EmbodimentMap.action_dim_error`` for the declared width, or ``None``
+        when the embodiment names no ``action_keys``, no checkpoint reference is
+        configured, or the width cannot be read before the download.
+    """
+    if not getattr(embodiment, "action_keys", None):
+        return None
+    reference = policy_config.get("pretrained_name_or_path") or ""
+    if not reference:
+        return None
+    width = declared_action_dim(reference, policy_config.get("revision"))
+    if width is None:
+        return None
+    return embodiment.action_dim_error(width)
 
 
 def embodiment_spec_error(spec: Any) -> str | None:
@@ -2211,6 +2235,15 @@ class LerobotLocalPolicy(Policy):
             _route_camera_key_map(embodiment.obs_rename, policy_config.get("camera_key_map")),
             policy_config.get("obs_rename_override"),
         )
+
+        # The action width, from the checkpoint's own config.json: the rule
+        # ``EmbodimentMap.validate`` applies after the weights load, applied
+        # before they download. Measured on ``lerobot/pi0_base`` with a six-key
+        # embodiment: ``create_policy`` took 126 s and then refused "6
+        # action_keys but model action dim is 32". A checkpoint whose width
+        # cannot be read is left to ``validate`` rather than guessed at.
+        if width_error := _action_width_error(embodiment, policy_config):
+            raise ValueError(width_error)
 
         # Group source keys by the image feature TARGET they feed. A target is
         # satisfied when ANY of its sources is present in the observation, so an
