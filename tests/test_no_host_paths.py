@@ -218,6 +218,41 @@ def test_no_host_specific_absolute_paths() -> None:
         raise AssertionError("\n".join(msg))
 
 
+#: Captured text the docs ship verbatim (an agent transcript quoted on a Start page). The
+#: capture tools report absolute paths under the capturing user's home, so these files are
+#: swept with the same patterns as the Python tree; the capture script writes ``~`` for it.
+COMMITTED_TRANSCRIPTS = REPO_ROOT / "docs" / "assets" / "transcripts"
+
+
+def _transcript_offenders(root: Path = COMMITTED_TRANSCRIPTS) -> list[tuple[str, int, str]]:
+    """Return every host-specific path literal in the committed transcripts under ``root``."""
+    offenders: list[tuple[str, int, str]] = []
+    for path in sorted(root.glob("*.txt")) if root.is_dir() else []:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if any(pat.search(line) for pat in HOST_PATH_PATTERNS):
+                rel = path.relative_to(REPO_ROOT).as_posix() if path.is_relative_to(REPO_ROOT) else path.name
+                offenders.append((rel, lineno, line.strip()[:120]))
+    return offenders
+
+
+def test_committed_transcripts_quote_no_host_path() -> None:
+    """A transcript the docs quote names no ``/Users/<name>`` or ``/home/<name>``; the capture writes ``~``."""
+    offenders = _transcript_offenders()
+    assert not offenders, "\n".join(
+        ["Host paths in committed transcripts (the capture script replaces the home directory with ~):"]
+        + [f"  {rel}:{lineno}: {snippet}" for rel, lineno, snippet in offenders]
+    )
+
+
+def test_transcript_sweep_catches_a_home_path(tmp_path: Path) -> None:
+    """Non-vacuity: a constructed transcript with a home path is reported with its line."""
+    (tmp_path / "run.txt").write_text("ok line\nsaved /Users/somebody/.strands_robots/x.png\n", encoding="utf-8")
+    hits = _transcript_offenders(tmp_path)
+    assert [(lineno, "saved /Users/somebody/.strands_robots/x.png") for _, lineno, snippet in hits] == [
+        (2, "saved /Users/somebody/.strands_robots/x.png")
+    ]
+
+
 def test_host_path_sweep_disables_global_timeout() -> None:
     """Guard the flake fix: the sweep must opt out of the global per-test timeout.
 
