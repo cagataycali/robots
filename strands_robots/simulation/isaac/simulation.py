@@ -34,13 +34,18 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 from strands.tools.tools import AgentTool
 
-from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.base import (
+    SimEngine,
+    outside_joint_range,
+    unknown_kwargs_error,
+    unknown_model_msg,
+)
 from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
@@ -55,7 +60,9 @@ from strands_robots.simulation.isaac.mjcf_assets import MJCF_EXTENSIONS, convert
 from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
+from strands_robots.simulation.isaac.site_drives import SiteDrive, mjcf_site_drive, site_wrenches
 from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
@@ -131,32 +138,6 @@ def _vertical_fov_lens_mm(
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
     return vertical_aperture_mm, focal_length_mm
-
-
-def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
-    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
-
-    ``R(q)^T @ vec``. Used for ``base_ang_vel``, which this schema reports in the
-    BODY frame - the IMU-gyro convention a locomotion policy is trained against -
-    while Isaac's ``get_angular_velocity()`` returns the WORLD frame. ``base_pos``
-    and ``base_lin_vel`` stay world-frame on all three backends and are not routed
-    through here.
-
-    Equivalent to the Newton backend's ``_quat_rotate_inverse_wxyz``, where the
-    convention is documented; verified equal to 1.3e-15 over 400 random
-    (quaternion, vector) pairs. Kept as a separate implementation rather than an
-    import because importing the Newton backend would pull ``warp`` into Isaac's
-    import path.
-
-    A ~zero-norm quaternion returns ``vec`` unchanged, matching Newton: an
-    unreadable orientation is not grounds for scaling a real velocity by garbage,
-    and the caller already has ``base_quat`` to see it with.
-    """
-    q = np.asarray(quat_wxyz, dtype=np.float64)
-    if float(np.linalg.norm(q)) < 1e-8:
-        return [float(v) for v in np.asarray(vec, dtype=np.float64)]
-    rotated = _quat_wxyz_to_rotmat(q).T @ np.asarray(vec, dtype=np.float64)
-    return [float(v) for v in rotated]
 
 
 def _quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
@@ -560,6 +541,21 @@ def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
 #: product delivers one tick behind, so one tick still returned the pre-action
 #: frame and two returned the current one (measured on one L40S, Isaac Sim 6.1).
 _RENDER_LAG_TICKS = 2
+
+
+def _raw_world_clock(world: Any) -> float | None:
+    """``World.current_time`` as a float, or ``None`` when the runtime does not expose it.
+
+    Module-level for the reason :func:`_physics_view_stale_error` is: the
+    cross-backend suites step a ``SimpleNamespace`` engine.
+    """
+    current = getattr(world, "current_time", None)
+    if current is None:
+        return None
+    try:
+        return float(current)
+    except (TypeError, ValueError):
+        return None
 
 
 def _split_joint_action(
@@ -1087,6 +1083,67 @@ def _get_or_create_simulation_app(
 # their fake: the compat module resolves each name at import time.
 
 
+def _kit_args(config: IsaacConfig) -> list[str]:
+    """The Kit command-line settings ``config`` asks for: ``kit_args`` plus ``task_threads``."""
+    args = list(getattr(config, "kit_args", ()) or ())
+    threads = getattr(config, "task_threads", None)
+    if threads is not None:
+        args.append(f"--/plugins/carb.tasking.plugin/threadCount={int(threads)}")
+    return args
+
+
+#: Exit status of a process whose ``SimulationApp`` did not start within
+#: ``IsaacConfig.boot_timeout_s`` (EX_SOFTWARE).
+BOOT_TIMEOUT_EXIT_STATUS = 70
+
+
+@contextlib.contextmanager
+def _boot_watchdog(timeout_s: float | None) -> Iterator[None]:
+    """Exit the process with its stacks if the block does not finish within ``timeout_s``.
+
+    ``SimulationApp`` start-up can hang inside Kit (measured: waiting for the
+    viewport, with other Isaac processes starting on the same host), in native
+    code no Python exception can interrupt. A caller who set a timeout would
+    rather have a dead process with a stack than a live one that never
+    answers. ``None`` watches nothing.
+    """
+    if timeout_s is None:
+        yield
+        return
+    done = threading.Event()
+
+    def _watch() -> None:
+        if done.wait(timeout_s):
+            return
+        import faulthandler
+        import sys
+
+        # The exit is the only guarantee this watchdog gives, so it is
+        # unconditional: every diagnostic below may raise on a closed or
+        # broken stderr (a batch driver that died leaves each child's pipe
+        # broken), and none of them may take the exit with it.
+        try:
+            sys.stderr.write(
+                f"strands_robots: Isaac SimulationApp did not start within boot_timeout_s={timeout_s:g}; "
+                "exiting with status 70. Several Isaac processes starting at once on one host is the "
+                "known cause: set IsaacConfig(task_threads=4) or start them one after another. "
+                "Thread stacks follow.\n"
+            )
+            faulthandler.dump_traceback(all_threads=True)
+            sys.stderr.flush()
+        except (ValueError, OSError, AttributeError):  # a stderr that is closed, broken or has no fd
+            pass
+        finally:
+            os._exit(BOOT_TIMEOUT_EXIT_STATUS)
+
+    watcher = threading.Thread(target=_watch, name="isaac-boot-watchdog", daemon=True)
+    watcher.start()
+    try:
+        yield
+    finally:
+        done.set()
+
+
 def _accepts_config_kw(cls: Any) -> bool:
     """True if ``cls.__init__`` accepts a ``config`` keyword argument."""
     try:
@@ -1447,6 +1504,11 @@ def _import_articulation_cls() -> Any:
     return articulation_cls()
 
 
+def _has_site_drives(sim: Any) -> bool:
+    """Whether any robot is a site-actuated free body whose motors act each tick."""
+    return any(getattr(r, "site_drive", None) is not None for r in getattr(sim, "_robots", {}).values())
+
+
 class _RobotState:
     """Internal bookkeeping for a robot in the Isaac simulation."""
 
@@ -1472,6 +1534,16 @@ class _RobotState:
         #: this backend did not import: what the importer was told is knowable,
         #: what an arbitrary USD asset declares is not always.
         self.fixed_base = fixed_base
+        # A site-actuated free body (a MuJoCo quadrotor): no articulation, its
+        # motors are wrenches applied every tick. None for an articulated robot.
+        self.site_drive: SiteDrive | None = None
+        # The joint position targets standing on every joint after the last
+        # command an installed action controller converted, by joint name - the
+        # command a recording stores as ``action`` (see _recorded_action).
+        self.commanded_targets: dict[str, float] | None = None
+        # Whether the targets were seeded from a successful measured read; until
+        # then the joints no command named have no target (and no zero).
+        self.commanded_targets_seeded = False
         # Joint positions (USD DOF name -> value) a keyframe spawn made this
         # robot's default state; None for the zero-configuration spawn.
         self.spawn_joint_positions: dict[str, float] | None = None
@@ -2244,10 +2316,14 @@ class IsaacSimulation(
                 # maps to no ``renderer`` key: no frames are rendered, so
                 # Kit's default is left alone.
                 renderer = _RENDERER_BY_MODE.get(self._config.render_mode)
-                self._app = _get_or_create_simulation_app(
-                    headless=self._config.headless,
-                    launch_config={"renderer": renderer} if renderer is not None else None,
-                )
+                launch: dict[str, Any] = {"renderer": renderer} if renderer is not None else {}
+                if kit_args := _kit_args(self._config):
+                    launch["extra_args"] = kit_args
+                with _boot_watchdog(self._config.boot_timeout_s):
+                    self._app = _get_or_create_simulation_app(
+                        headless=self._config.headless,
+                        launch_config=launch or None,  # type: ignore[arg-type]
+                    )
 
                 # Now safe to import Isaac core modules. Isaac Sim 6.0
                 # exposes ``World`` under ``isaacsim.core.api``; the legacy
@@ -2811,6 +2887,12 @@ class IsaacSimulation(
                     # ``get_observation`` degrades to its documented
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
+                    self._reset_site_drives()
+                    # A reset puts the drives back on the default state; the
+                    # next command re-seeds from the measured positions.
+                    for _robot in self._robots.values():
+                        _robot.commanded_targets = None
+                        _robot.commanded_targets_seeded = False
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -2836,6 +2918,7 @@ class IsaacSimulation(
                     and self._config.render_mode != "headless"
                 ):
                     self._light_cameras_after_reset()
+                self._settle_after_reset()
                 self._rewind_clock()
 
                 # One wording, because there is one reset. The branch that used
@@ -2843,6 +2926,47 @@ class IsaacSimulation(
                 return {"status": "success", "content": [{"text": f"{flush_note}Full reset complete."}]}
 
         return self._marshal_main_thread_affine("reset", _reset_impl)
+
+    def _settle_after_reset(self) -> None:
+        """Zero every robot's and dynamic object's velocity after ``world.reset()``.
+
+        ``World.reset()`` integrates warm-up physics steps from the authored
+        pose, so the first observation of every episode already carried the
+        velocity gravity gave it in that time: so100 ``Pitch.vel`` 0.075 rad/s,
+        a go2 base falling at 0.187 m/s at t=0 (MuJoCo: exact zeros). Recorded
+        datasets therefore began each episode off the reset state. Poses are
+        left where the reset put them; only velocities are zeroed. Best-effort
+        per body: a handle that cannot be written is skipped, never fails the
+        reset.
+        """
+        for robot in list(getattr(self, "_robots", {}).values()):
+            articulation = getattr(robot, "articulation", None)
+            if articulation is None:
+                continue
+            n = len(getattr(robot, "joint_names", []) or [])
+            for write, value in (
+                ("set_joint_velocities", np.zeros(n, dtype=np.float32) if n else None),
+                ("set_linear_velocity", np.zeros(3, dtype=np.float32)),
+                ("set_angular_velocity", np.zeros(3, dtype=np.float32)),
+            ):
+                fn = getattr(articulation, write, None)
+                if fn is None or value is None:
+                    continue
+                try:
+                    fn(value)
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    logger.debug("reset: %s on robot %r failed: %s", write, getattr(robot, "name", "?"), exc)
+        for obj in list(getattr(self, "_objects", {}).values()):
+            if getattr(obj, "is_static", True) or getattr(obj, "handle", None) is None:
+                continue
+            for write in ("set_linear_velocity", "set_angular_velocity"):
+                fn = getattr(obj.handle, write, None)
+                if fn is None:
+                    continue
+                try:
+                    fn(np.zeros(3, dtype=np.float32))
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    logger.debug("reset: %s on object %r failed: %s", write, getattr(obj, "name", "?"), exc)
 
     #: Upper bound on the rendering ticks a reset spends lighting its cameras.
     _RESET_LIGHT_TICKS_MAX = 12
@@ -3048,7 +3172,7 @@ class IsaacSimulation(
                         # boolean stale-view gate a CLASS-level ``{}`` here
                         # would be one dict shared by every instance. An absent
                         # registry reads as what it is - no latched wrenches.
-                        if getattr(self, "_applied_wrenches", None):
+                        if getattr(self, "_applied_wrenches", None) or _has_site_drives(self):
                             self._reapply_wrenches()
                         # One app update = one physics_dt (rendering_dt == physics_dt,
                         # see create_world) that also refreshes every camera.
@@ -3106,6 +3230,14 @@ class IsaacSimulation(
         self._sim_time = 0.0
         self._step_count = 0
         self._contact_epoch += 1
+        # The World's own clock is not rewound with ours: ``World.reset()`` runs
+        # warm-up physics steps and leaves ``current_time`` past zero, and
+        # ``_world_clock`` read it as-is, so every episode's clock started ahead.
+        # Measured on one L40S (Isaac Sim 6.1, ``timestep=1/500``): ``step(10)``
+        # right after ``reset()`` reported ``sim_time=0.024`` with
+        # ``step_count=10``, and 500 steps 1.004 s. The clock is now measured
+        # from where the World stood at this rewind.
+        self._clock_origin = _raw_world_clock(getattr(self, "_world", None)) or 0.0
 
     def _world_clock(self) -> float:
         """The simulated time the World has integrated to, in seconds.
@@ -3120,12 +3252,9 @@ class IsaacSimulation(
         accumulation when the runtime does not expose the clock (the stubbed worlds
         the unit tests build), where every tick advances exactly one ``physics_dt``.
         """
-        current = getattr(self._world, "current_time", None)
+        current = _raw_world_clock(getattr(self, "_world", None))
         if current is not None:
-            try:
-                return float(current)
-            except (TypeError, ValueError):
-                pass
+            return max(0.0, current - float(getattr(self, "_clock_origin", 0.0) or 0.0))
         return self._sim_time + float(self._config.physics_dt)
 
     def _physics_tick(self, *, render: bool) -> None:
@@ -3610,7 +3739,12 @@ class IsaacSimulation(
                 # alongside the joint names. Pre-Phase-2 it returned
                 # joint_names=[] and silently did nothing.
                 try:
-                    joint_names, articulation = self._load_usd_robot(prim_path, usd_path, pos)
+                    site_drive = mjcf_site_drive(source_mjcf) if source_mjcf else None
+                    if site_drive is not None:
+                        joint_names, articulation = list[str](), None
+                        self._load_site_driven_body(prim_path, usd_path, pos, site_drive)
+                    else:
+                        joint_names, articulation = self._load_usd_robot(prim_path, usd_path, pos)
                 except (RuntimeError, ValueError, OSError, AttributeError, TypeError, ImportError) as e:
                     # Cleanup-clause shape mirrors create_world (#52
                     # precedent): RuntimeError (Carb / sim init), ValueError
@@ -3660,6 +3794,7 @@ class IsaacSimulation(
                     # note where ``mjcf_floating_base`` is resolved.
                     fixed_base=not mjcf_floating_base,
                 )
+                robot_state.site_drive = site_drive
                 self._robots[name] = robot_state
                 if spawn_pose is not None:
                     self._apply_spawn_pose(robot_state, spawn_pose)
@@ -3685,6 +3820,8 @@ class IsaacSimulation(
                     "position": pos,
                     "articulation_wired": articulation is not None,
                 }
+                if site_drive is not None:
+                    payload["actuators"] = [a.name for a in site_drive.actuators]
                 if source_mjcf is not None:
                     payload["mjcf_path"] = source_mjcf
                 if spawn_pose is not None:
@@ -3693,7 +3830,12 @@ class IsaacSimulation(
                     "status": "success",
                     "content": [
                         {
-                            "text": (f"Robot '{name}' added ({origin}, {len(joint_names)} joints)"),
+                            "text": (
+                                f"Robot '{name}' added ({origin}, {len(joint_names)} joints)"
+                                if site_drive is None
+                                else f"Robot '{name}' added ({origin}, a free body driven by "
+                                f"{len(site_drive.actuators)} site motors: {[a.name for a in site_drive.actuators]})"
+                            ),
                             "json": payload,
                         }
                     ],
@@ -5618,14 +5760,24 @@ class IsaacSimulation(
                         # and the error grows only as it turns - which is exactly
                         # when a locomotion policy is relying on it.
                         #
-                        # Expressed with this module's own quaternion primitive:
-                        # body-frame is R(q)^T @ v, and _world_to_body_frame wraps
-                        # that. Verified equal to the Newton backend's
-                        # _quat_rotate_inverse_wxyz to 1.3e-15 over 400 random
-                        # (quaternion, vector) pairs, so the two backends agree
-                        # numerically without Isaac importing Newton - which would
-                        # drag warp into this import path.
-                        obs["base_ang_vel"] = _world_to_body_frame(quat_wxyz, [float(v) for v in ang_vel])
+                        # Body-frame is R(q)^T @ v, through the one rotation
+                        # the Newton backend and the reward DSL also use.
+                        obs["base_ang_vel"] = _quat_rotate_inverse_wxyz(quat_wxyz, [float(v) for v in ang_vel])
+            elif robot.site_drive is not None and robot.site_drive.handle is not None:
+                # A free body has no joints; its state is the base, as on MuJoCo.
+                body = robot.site_drive.handle
+                try:
+                    base_pos, base_quat = body.get_world_pose()  # type: ignore[attr-defined]
+                    lin_vel = body.get_linear_velocity()  # type: ignore[attr-defined]
+                    ang_vel = body.get_angular_velocity()  # type: ignore[attr-defined]
+                except (RuntimeError, ValueError, AttributeError, TypeError) as e:
+                    logger.debug("Failed to read the free body state: %s", e)
+                else:
+                    quat_wxyz = [float(v) for v in base_quat]
+                    obs["base_pos"] = [float(v) for v in base_pos]
+                    obs["base_quat"] = quat_wxyz
+                    obs["base_lin_vel"] = [float(v) for v in lin_vel]
+                    obs["base_ang_vel"] = _quat_rotate_inverse_wxyz(quat_wxyz, [float(v) for v in ang_vel])
 
             # Camera frames keyed by camera name (RGB HxWx3 uint8), so callers
             # (e.g. the SO-101 collector / Gradio render) get images the same way
@@ -5913,6 +6065,7 @@ class IsaacSimulation(
             except (RuntimeError, ValueError, AttributeError, TypeError) as e:
                 del self._applied_wrenches[name]
                 logger.error("apply_force: dropping the latched wrench on '%s' - reapply failed: %s", name, e)
+        self._apply_site_drives()
 
     def raycast(
         self,
@@ -6415,7 +6568,9 @@ class IsaacSimulation(
             # in the envelope rather than being silently dropped (parity with
             # the MuJoCo backend).
             joint_set = set(robot.joint_names)
-            unresolved = [k for k in action_map if k not in joint_set]
+            # A site-actuated free body is driven by its motors, named as MuJoCo names them.
+            motors = {a.name for a in robot.site_drive.actuators} if robot.site_drive is not None else set()
+            unresolved = [k for k in action_map if k not in joint_set and k not in motors]
             # ``joint_indices`` restricts an ``ArticulationAction`` to a subset
             # of the articulation's DOFs. Command ONLY the named joints and
             # leave the rest at their current PD targets (parity with the
@@ -6444,6 +6599,10 @@ class IsaacSimulation(
                 if stale := _physics_view_stale_error(self, "send_action"):
                     return stale
 
+                if robot.site_drive is not None:
+                    for key in motors & set(action_map):
+                        robot.site_drive.set_ctrl(key, float(action_map[key]))
+
                 # Apply to articulation. Isaac Sim 6.0's articulation
                 # (``isaacsim.core.prims.SingleArticulation``) drives PD position
                 # targets via ``apply_action(ArticulationAction(joint_positions=...))``
@@ -6461,6 +6620,8 @@ class IsaacSimulation(
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                             )
+                            if controller is not None:
+                                self._note_commanded_targets(robot, joint_indices, action_array)
                         if effort_array.size > 0:
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -6501,7 +6662,7 @@ class IsaacSimulation(
                         # Replay the latched wrench, as ``step`` does: PhysX's
                         # ``apply_force_at_pos`` acts for ONE tick, so a tick that
                         # does not re-push it is a tick the force is absent from.
-                        if getattr(self, "_applied_wrenches", None):
+                        if getattr(self, "_applied_wrenches", None) or _has_site_drives(self):
                             self._reapply_wrenches()
                         self._world.step(render=render_on and last)
                         self._rendered_this_tick = render_on and last
@@ -6639,6 +6800,8 @@ class IsaacSimulation(
                 robot.articulation.apply_action(
                     ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                 )
+                if controller is not None:
+                    self._note_commanded_targets(robot, joint_indices, action_array)
             if effort_array.size > 0:
                 robot.articulation.apply_action(
                     ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -6981,7 +7144,7 @@ class IsaacSimulation(
                 # Same replay as ``step`` and ``send_action``: this tick advances
                 # ``_sim_time``, so a latched wrench has to act on it.
                 for tick in range(n_substeps):
-                    if getattr(self, "_applied_wrenches", None):
+                    if getattr(self, "_applied_wrenches", None) or _has_site_drives(self):
                         self._reapply_wrenches()
                     # Render once, after the last tick, as ``send_action`` does:
                     # the frame read next is of the state this period ends in.
@@ -7068,7 +7231,8 @@ class IsaacSimulation(
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
                         images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
-                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
+                        recorded = {r: self._recorded_action(r, a) for r, a in per_robot_action.items()}
+                        frame.write(recorder, per_robot_obs, recorded, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
@@ -7761,7 +7925,7 @@ class IsaacSimulation(
                     # replays the latch too. Exempting it would make a latched wrench
                     # act on a tick count that depends on how many warmup passes the
                     # RTX product happened to need.
-                    if getattr(self, "_applied_wrenches", None):
+                    if getattr(self, "_applied_wrenches", None) or _has_site_drives(self):
                         self._reapply_wrenches()
                     self._world.step(render=True)
                     self._sim_time += self._config.physics_dt
@@ -9079,6 +9243,153 @@ class IsaacSimulation(
             }
 
     # --- Private Implementation ----------------------------------------------
+
+    def _load_site_driven_body(self, prim_path: str, usd_path: str, position: list[float], drive: SiteDrive) -> None:
+        """Reference a site-actuated free body (a quadrotor) and bind *drive* to its rigid body.
+
+        PhysX builds no articulation from a body with no joints, so the
+        articulation path fails on it ("pattern list did not match any
+        articulations"). The converted USD still holds one rigid body; that is
+        what the motors push on, through :meth:`_apply_site_drives`.
+        """
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import PhysicsSchemaTools, Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        from strands_robots.simulation.isaac._deprecated_api import SingleRigidPrim, add_reference_to_stage
+
+        add_reference_to_stage(usd_path=usd_path, prim_path=prim_path)
+        _select_physics_variant(prim_path)
+        root = omni.usd.get_context().get_stage().GetPrimAtPath(prim_path)
+        bodies = [str(p.GetPath()) for p in Usd.PrimRange(root) if p.HasAPI(UsdPhysics.RigidBodyAPI)]
+        if len(bodies) != 1:
+            raise RuntimeError(
+                f"a site-actuated robot must convert to exactly one rigid body; {prim_path} holds {len(bodies)}"
+            )
+        handle = SingleRigidPrim(bodies[0], name=f"{prim_path.rsplit('/', 1)[-1]}__{drive.body_name}")
+        start, orient = handle.get_world_pose()
+        spawn = np.asarray(start, dtype=float) + np.asarray(
+            position if position is not None else [0.0] * 3, dtype=float
+        )
+        handle.set_world_pose(position=spawn, orientation=orient)
+        handle.set_default_state(position=spawn, orientation=orient)
+        try:
+            handle.initialize(getattr(self._world, "physics_sim_view", None))
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.debug("site-driven body %s initializes at the next reset: %s", bodies[0], exc)
+        drive.body_prim_path = bodies[0]
+        drive.body_int = int(PhysicsSchemaTools.sdfPathToInt(bodies[0]))
+        drive.handle = handle
+        drive.ctrl.clear()
+
+    def _reset_site_drives(self) -> None:
+        """Back to the spawn pose at rest with every motor off - MuJoCo's reset zeroes ``ctrl``."""
+        if not hasattr(self, "_robots") or self._physics_view_stale:
+            return
+        for robot in list(self._robots.values()):
+            drive = getattr(robot, "site_drive", None)
+            if drive is None or drive.handle is None:
+                continue
+            drive.ctrl.clear()
+            body = drive.handle
+            try:
+                body.initialize(getattr(self._world, "physics_sim_view", None))  # type: ignore[attr-defined]
+                body.post_reset()  # type: ignore[attr-defined]
+                body.set_linear_velocity(np.zeros(3))  # type: ignore[attr-defined]
+                body.set_angular_velocity(np.zeros(3))  # type: ignore[attr-defined]
+            except (RuntimeError, ValueError, AttributeError, TypeError) as e:
+                logger.warning("reset: could not put %r back at its spawn pose: %s", robot.name, e)
+
+    def _apply_site_drives(self) -> None:
+        """Push every site motor's wrench into PhysX for the next tick (MuJoCo's site transmission)."""
+        drives = [r.site_drive for r in list(getattr(self, "_robots", {}).values()) if getattr(r, "site_drive", None)]
+        if not drives or self._physics_view_stale:
+            return
+        try:
+            import omni.usd  # type: ignore[import-not-found]
+            from omni.physx import get_physx_simulation_interface  # type: ignore[import-not-found]
+        except ImportError:
+            return
+        physx = get_physx_simulation_interface()
+        stage_id = omni.usd.get_context().get_stage_id()
+        for drive in drives:
+            if drive is None or drive.handle is None or drive.body_int is None or not any(drive.ctrl.values()):
+                continue
+            try:
+                pos, quat = drive.handle.get_world_pose()  # type: ignore[attr-defined]
+                for force, torque, point in site_wrenches(drive, np.asarray(pos), np.asarray(quat)):
+                    if force.any():
+                        physx.apply_force_at_pos(
+                            stage_id, drive.body_int, tuple(float(v) for v in force), tuple(float(v) for v in point)
+                        )
+                    if torque.any():
+                        # Right-handed world frame, as MuJoCo's: measured on Isaac Sim
+                        # 6.1, a crazyflie z_moment of +0.5 spins the same way on both.
+                        physx.apply_torque(stage_id, drive.body_int, tuple(float(v) for v in torque))
+            except (RuntimeError, ValueError, AttributeError, TypeError) as e:
+                logger.error("site motors on %s: could not apply this tick's wrench: %s", drive.body_prim_path, e)
+
+    def _note_commanded_targets(self, robot: _RobotState, joint_indices: np.ndarray, values: np.ndarray) -> None:
+        """Fold one converted command into the standing target of every joint.
+
+        A task-space controller names only the joints a step moves (an all-zero
+        delta names no arm joint, an absent gripper names no finger), yet each
+        recorded frame owes a value for every joint: the PD target standing on
+        it. Seeded from the measured positions - what the drives hold before any
+        command - and updated with each command, on the thread that applied it.
+        """
+        if robot.commanded_targets is None or not robot.commanded_targets_seeded:
+            # Seed from the measured positions. When that read fails, the joints
+            # this command does not name get NO target rather than a zero: a
+            # zero here is a home pose nothing commanded, and it would flow into
+            # every recorded frame's action column with nothing to tell it apart
+            # (Key Conventions #6). Left absent, the recorder refuses the frame
+            # for the columns without a value, and the seed is retried on the
+            # next command.
+            q = None
+            why = "the physics view is stale"
+            if not self._physics_view_stale:  # both callers gate first; this read keeps its own
+                try:
+                    q = robot.articulation.get_joint_positions()  # type: ignore[union-attr]
+                    why = "get_joint_positions() returned None"
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    why = f"get_joint_positions() raised {type(exc).__name__}: {exc}"
+            if robot.commanded_targets is None:
+                robot.commanded_targets = {}
+            if q is None:
+                logger.warning(
+                    "isaac: %s's measured positions could not be read (%s); the standing target of "
+                    "every joint this command does not name stays absent until a read succeeds, so a "
+                    "recorded frame refuses those columns instead of carrying zeros nobody commanded",
+                    robot.name,
+                    why,
+                )
+            else:
+                measured = np.asarray(q, dtype=float).reshape(-1)
+                for i, name in enumerate(robot.joint_names):
+                    if i < measured.size:
+                        robot.commanded_targets.setdefault(name, float(measured[i]))
+                robot.commanded_targets_seeded = True
+        for idx, value in zip(joint_indices.tolist(), values.tolist(), strict=False):
+            if 0 <= idx < len(robot.joint_names):
+                robot.commanded_targets[robot.joint_names[idx]] = float(value)
+
+    def _recorded_action(self, robot_name: str, action: Mapping[str, Any]) -> Mapping[str, Any]:
+        """The action a recorded frame stores for *robot_name*.
+
+        With an action controller installed the policy's action is task-space
+        (``{x, y, z, roll, pitch, yaw, gripper}``) while the dataset's action
+        columns are the robot's joints, so the policy's dict has no value for
+        any of them and the recorder refused every frame. What was commanded is
+        the joint targets the controller produced; that is what is recorded.
+        Without a controller the policy's action is the command and is recorded
+        as is.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is None or registry_entry(self._action_controllers, robot_name) is None:
+            return action
+        if robot.commanded_targets is None:
+            return action
+        return dict(robot.commanded_targets)
 
     def _apply_spawn_pose(self, robot: _RobotState, pose: dict[str, float]) -> None:
         """Make *pose* (MJCF joint name -> position) the robot's default joint state and its drive targets.
@@ -10701,7 +11012,7 @@ class IsaacSimulation(
             if span is None:
                 continue
             lo, hi = span
-            if lo <= float(value) <= hi:
+            if not outside_joint_range(float(value), lo, hi):
                 continue
             unit = units[dof]
             detail = f"{name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]" + (f" {unit}" if unit else "")

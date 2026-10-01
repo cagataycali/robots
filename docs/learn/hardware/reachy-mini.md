@@ -1,5 +1,5 @@
 ---
-description: A Reachy Mini over its daemon: four axes, the envelope that refuses the rest, the reachy_* agent verbs.
+description: "A Reachy Mini over its daemon: four axes, the envelope that refuses the rest, the reachy_* agent verbs."
 ---
 
 # Reachy Mini

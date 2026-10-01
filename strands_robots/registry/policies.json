@@ -297,11 +297,15 @@
     "rl": {
       "module": "strands_robots.policies.rl",
       "class": "RLCheckpointPolicy",
-      "description": "Deterministic rollout of an RL training checkpoint's actor (policy.pt + policy_meta.json written by create_trainer('ppo'|'fast_sac'|'fast_td3'))",
+      "description": "Deterministic rollout of an RL training checkpoint's actor: policy.pt + policy_meta.json written by create_trainer('ppo'|'fast_sac'|'fast_td3'), or an rsl_rl run from Isaac Lab (a model_<n>.pt directory, one such file, or a HuggingFace repo id holding either)",
       "requires": [],
       "config_keys": [
         "checkpoint_dir",
-        "device"
+        "device",
+        "raw_actions",
+        "joint_map",
+        "command",
+        "obs_terms"
       ],
       "defaults": {
         "device": "cpu"

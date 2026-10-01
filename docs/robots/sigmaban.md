@@ -13,11 +13,15 @@ URDF from [Rhoban/sigmaban_urdf@d5d023f](https://github.com/Rhoban/sigmaban_urdf
 
 <img class="sr-thumb" src="../assets/img/robots/sigmaban.webp" alt="sigmaban, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("sigmaban")
+robot = Robot("sigmaban")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("sigmaban"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

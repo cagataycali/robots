@@ -15,7 +15,11 @@ description: "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)"
 from strands_robots import Robot
 
 robot = Robot("microduck")
+print(robot.robot_joint_names("microduck"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("microduck", mode="real", port="ssh://radxa@microduck.local")  # MicroduckDriver

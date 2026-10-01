@@ -13,11 +13,15 @@ URDF from [ROBOTIS-GIT/open_manipulator@bc555a9](https://github.com/ROBOTIS-GIT/
 
 <img class="sr-thumb" src="../assets/img/robots/omy_f3m.webp" alt="omy_f3m, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("omy_f3m")
+robot = Robot("omy_f3m")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("omy_f3m"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 

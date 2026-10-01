@@ -13,11 +13,15 @@ URDF from [timqian/bambot@04d9026](https://github.com/timqian/bambot/tree/04d902
 
 <img class="sr-thumb" src="../assets/img/robots/bambot.webp" alt="bambot, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("bambot")
+robot = Robot("bambot")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("bambot"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ## Policies verified on this robot
 

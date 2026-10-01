@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENTRY_POINTS = (
     "README.md",
     "docs/start/install.md",
-    "docs/project/contributing.md",
+    "docs/reference/project/contributing.md",
 )
 
 

@@ -15,7 +15,11 @@ description: "Unitree Aliengo Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("aliengo")
+print(robot.robot_joint_names("aliengo"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 Aliases: `unitree_aliengo`.
 

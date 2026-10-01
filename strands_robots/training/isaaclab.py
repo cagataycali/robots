@@ -48,6 +48,7 @@ import re
 import subprocess
 import time
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -155,6 +156,14 @@ _TASK_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}\Z")
 # A physics preset name, passed as the ``physics=<name>`` override.
 _PHYSICS_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}\Z")
 
+# The two override shapes :func:`run_record` writes, and the only two a run
+# record read back from disk may put on the interpreter's argv again:
+# ``physics=<preset>`` and ``agent.algorithm.learning_rate=<float literal>``.
+_RECORD_OVERRIDE_RES = (
+    re.compile(r"^physics=[a-z][a-z0-9_]{0,63}\Z"),
+    re.compile(r"^agent\.algorithm\.learning_rate=[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\Z"),
+)
+
 # ``isaaclab-<UTC stamp>-<12 hex>``; also the ``--run_name`` of the run, so the
 # run directory can be found from the job alone. Anchored so a job id read back
 # from an agent cannot name a path outside the jobs directory.
@@ -204,6 +213,27 @@ _STOPPED_FILE = "stopped"
 #: Written next to the checkpoints, so a run remembers how it was trained:
 #: which task, which physics preset, how many environments and which overrides.
 RUN_RECORD_FILE = "strands_run.json"
+
+#: Where ``--export_io_descriptors`` makes Isaac Lab write a run's IO
+#: descriptors - the joint order, action scale/offset and observation layout
+#: an exported actor's deploy contract is built from.
+IO_DESCRIPTORS_FILE = "io_descriptors/IO_descriptors.yaml"
+
+#: Wall-clock limit for the one-environment, zero-iteration launch that writes
+#: the IO descriptors of a run trained before they were always requested.
+IO_DESCRIPTORS_TIMEOUT_S = 900
+
+# Parses a YAML file in the Isaac Lab interpreter and prints it as JSON, with a
+# ``!!python/...``-tagged SEQUENCE read as a plain list (``!!python/tuple`` is how
+# ``dump_yaml`` writes an ObsTerm's ``clip``) and every other tagged node read
+# as null (see ``IsaacLabTrainer._read_yaml``). Same rule as the in-process loader.
+_YAML_TO_JSON = (
+    "import json, sys, yaml\n"
+    "class L(yaml.SafeLoader): pass\n"
+    "L.add_multi_constructor('tag:yaml.org,2002:python/', lambda l, s, n: "
+    "l.construct_sequence(n, deep=True) if isinstance(n, yaml.SequenceNode) else None)\n"
+    "print(json.dumps(yaml.load(open(sys.argv[1]), Loader=L), default=str))"
+)
 _TAIL_LINES = 12
 
 #: How the end of a failed run is classified, with the next step for each.
@@ -512,6 +542,9 @@ class IsaacLabTrainer(Trainer):
             # keep Isaac Lab's <time>_ prefix so runs still sort by start time.
             stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.strptime(job_id[9:24], "%Y%m%d-%H%M%S"))
             overrides.append(f"agent.params.config.full_experiment_name={stamp}_{job_id}")
+        # Always: one YAML at startup, and the only record of the joint order,
+        # action scale and offsets an exported actor needs to deploy.
+        flags.append("--export_io_descriptors")
         return cmd + flags + overrides
 
     def train(self, spec: TrainSpec) -> TrainResult:
@@ -622,6 +655,8 @@ class IsaacLabTrainer(Trainer):
         exit_code = _read_exit_code(job_dir / runtime.EXIT_CODE_FILE)
         if record.get("kind") == "play":
             return self._play_status(job_id, job_dir, record, text, exit_code, alive)
+        if record.get("kind") == "record":
+            return self._record_status(job_id, job_dir, record, text, exit_code, alive)
         run_dir = find_run_dir(text, job_id)
         library = (record.get("run") or {}).get("rl_library")
         if library == "skrl":
@@ -831,6 +866,232 @@ class IsaacLabTrainer(Trainer):
             message=f"playing {Path(model).name} of {job_id} ({record['task']}, {num_envs} envs, {video_length} frames)",
         )
 
+    def record(
+        self,
+        job_id: str,
+        dataset_dir: str,
+        *,
+        repo_id: str = "local/isaaclab_rollout",
+        episodes: int = 4,
+        frames: int = 300,
+        camera: bool = True,
+        camera_eye: Sequence[float] = (2.5, -2.5, 1.5),
+        camera_target: Sequence[float] = (0.0, 0.0, 0.3),
+        width: int = 320,
+        height: int = 240,
+        task_description: str | None = None,
+        timeout_s: float | None = None,
+        wait: bool = False,
+    ) -> TrainResult:
+        """Roll a finished run's policy out in Isaac Lab and record it as a LeRobotDataset.
+
+        Isaac Lab's own ``play`` writes one viewport mp4 and has no route to a
+        dataset, so every Isaac Lab dataset strands produced took an
+        out-of-tree harness running strands inside the Isaac Lab interpreter.
+        This launches :mod:`strands_robots.training._isaaclab_record_runner` - shipped with strands,
+        run by ``ISAACLAB_PYTHON``, importing no strands - which rolls the
+        newest checkpoint out in ``episodes`` parallel environments (env ``i``
+        is episode ``i``, from one reset to its first ``done`` or ``frames``)
+        in the physics preset and ``env.*`` overrides the run trained with, and
+        writes each episode's arrays. :meth:`status` of the returned job then
+        converts them here, with :class:`~strands_robots.dataset_recorder.DatasetRecorder`:
+
+        * ``observation.state`` - the robot's joint positions by name, then the
+          policy's own observation vector, the root position (from the env
+          origin) and the root quaternion as Isaac Lab reports it (x-y-z-w);
+        * ``action`` - the policy's action, named by the action terms' joints;
+        * ``observation.images.camera`` - a fixed camera per env at
+          ``camera_eye`` looking at ``camera_target`` (both from the env
+          origin), when ``camera``.
+
+        Returns:
+            ``running`` with the recording's own ``job_id``, or its verdict under
+            ``wait``; the verdict's ``metrics['dataset']`` is the dataset root.
+        """
+        ctx = self.provider_name
+        trained = self.status(job_id)
+        if trained.status == "running":
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: job {job_id} is still training")
+        if trained.metrics.get("kind") in ("play", "record"):
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: {job_id} is not a training job")
+        model = trained.metrics.get("latest_model")
+        if not trained.checkpoint_dir or not model:
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                message=f"{ctx}: job {job_id} has no checkpoint to record ({trained.message})",
+            )
+        for value, name in ((episodes, "episodes"), (frames, "frames"), (width, "width"), (height, "height")):
+            if (error := positive_count_error(value, name, ctx)) is not None:
+                return TrainResult(status="error", job_id=job_id, message=error)
+        if error := boolean_flag_error(camera, "camera", ctx):
+            return TrainResult(status="error", job_id=job_id, message=error)
+        points = {}
+        for point, name in ((camera_eye, "camera_eye"), (camera_target, "camera_target")):
+            if not (
+                isinstance(point, Sequence)
+                and len(point) == 3
+                and all(isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) for v in point)
+            ):
+                return TrainResult(status="error", job_id=job_id, message=f"{ctx}: {name} must be three finite numbers")
+            points[name] = ",".join(repr(float(v)) for v in point)
+        if not isinstance(dataset_dir, str) or not dataset_dir.strip():
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: dataset_dir must be a directory path")
+        if not isinstance(repo_id, str) or not re.match(r"^[\w.-]+/[\w.-]+\Z", repo_id):
+            return TrainResult(status="error", job_id=job_id, message=f"{ctx}: repo_id must be '<owner>/<name>'")
+        if timeout_s is not None and (error := positive_finite_number_error(timeout_s, "timeout_s", ctx)):
+            return TrainResult(status="error", job_id=job_id, message=error)
+        problems = runtime.runtime_problems(self._python, context=ctx)
+        if problems:
+            return TrainResult(status="error", job_id=job_id, message="; ".join(problems))
+        record = json.loads((self._jobs_dir / job_id / _JOB_FILE).read_text(encoding="utf-8"))
+        run = record.get("run") or {}
+        if run.get("rl_library", "rsl_rl") != "rsl_rl":
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                message=f"{ctx}: recording replays rsl_rl policies; this run used {run['rl_library']}",
+            )
+        rec_id = f"isaaclab-{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:12]}"
+        rec_dir = self._jobs_dir / rec_id
+        rec_dir.mkdir(parents=True, exist_ok=False)
+        runner_script = Path(__file__).with_name("_isaaclab_record_runner.py")
+        cmd = [
+            str(self._python),
+            str(runner_script),
+            "--task",
+            str(record["task"]),
+            "--checkpoint",
+            str(model),
+            "--agent",
+            str(run.get("agent") or "rsl_rl_cfg_entry_point"),
+            "--episodes",
+            str(int(episodes)),
+            "--frames",
+            str(int(frames)),
+            "--camera",
+            "fixed" if camera else "none",
+            "--eye",
+            points["camera_eye"],
+            "--target",
+            points["camera_target"],
+            "--width",
+            str(int(width)),
+            "--height",
+            str(int(height)),
+            "--out",
+            str(rec_dir / "rollout"),
+        ]
+        if run.get("seed") is not None:
+            cmd += ["--seed", str(run["seed"])]
+        # The environment the policy trained in, as play() replays it.
+        replay = [o for o in run.get("overrides") or [] if o.startswith(("physics=", "env."))]
+        if run.get("physics") and not any(o.startswith("physics=") for o in replay):
+            replay.insert(0, f"physics={run['physics']}")
+        for override in replay:
+            cmd += ["--override", override]
+        proc = runtime.launch(
+            cmd,
+            cwd=Path(record["cwd"]),
+            log_path=rec_dir / _LOG_FILE,
+            exit_file=rec_dir / runtime.EXIT_CODE_FILE,
+            timeout_s=float(timeout_s) if timeout_s is not None else None,
+            timed_out_file=rec_dir / _TIMED_OUT_FILE,
+        )
+        _CHILDREN[rec_id] = proc
+        started = time.time()
+        (rec_dir / _JOB_FILE).write_text(
+            json.dumps(
+                {
+                    "job_id": rec_id,
+                    "kind": "record",
+                    "of": job_id,
+                    "pid": proc.pid,
+                    "cmd": cmd,
+                    "cwd": record["cwd"],
+                    "started": started,
+                    "deadline": started + float(timeout_s) if timeout_s is not None else None,
+                    "task": record["task"],
+                    "run_dir": trained.checkpoint_dir,
+                    "checkpoint": model,
+                    "dataset_dir": str(Path(dataset_dir).expanduser().resolve()),
+                    "repo_id": repo_id,
+                    "task_description": task_description or f"{record['task']}: rollout of a trained rsl_rl policy",
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        logger.info("isaaclab: recording %s (pid %d): %s", model, proc.pid, " ".join(cmd))
+        if wait:
+            result = self.status(rec_id)
+            while result.status == "running":
+                time.sleep(self._poll_interval_s)
+                result = self.status(rec_id)
+            return result
+        return TrainResult(
+            status="running",
+            job_id=rec_id,
+            checkpoint_dir=trained.checkpoint_dir,
+            metrics={"pid": proc.pid, "kind": "record", "of": job_id, "checkpoint": model},
+            message=f"recording {episodes} episodes of {Path(model).name} ({record['task']})",
+        )
+
+    def _record_status(
+        self, job_id: str, job_dir: Path, record: dict[str, Any], text: str, exit_code: int | None, alive: bool
+    ) -> TrainResult:
+        """The verdict of a recording: the LeRobotDataset it wrote, converted here once the rollout ends."""
+        metrics: dict[str, Any] = {"kind": "record", "of": record.get("of"), "checkpoint": record.get("checkpoint")}
+        tail = "\n".join(text.strip().splitlines()[-_TAIL_LINES:])
+        if alive:
+            return TrainResult(status="running", job_id=job_id, metrics=metrics, message="recording the rollout")
+        done_file = job_dir / "dataset.json"
+        if done_file.is_file():
+            metrics.update(json.loads(done_file.read_text(encoding="utf-8")))
+            return TrainResult(
+                status="success",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=_recorded_line(metrics),
+            )
+        raw = job_dir / "rollout"
+        if exit_code != 0 or not (raw / "meta.json").is_file():
+            failure, error_line = classify_failure(text, {})
+            if (job_dir / _TIMED_OUT_FILE).exists():
+                failure = "timeout"
+            metrics["failure"] = failure or "exit_status"
+            metrics["error"] = error_line or f"the rollout exited {exit_code} without its episodes"
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=f"{self.provider_name}: recording failed: {metrics['error']}; log tail:\n{tail}",
+            )
+        try:
+            summary = rollout_to_dataset(
+                raw, record["dataset_dir"], repo_id=record["repo_id"], task=record["task_description"]
+            )
+        except (ImportError, OSError, ValueError, KeyError, RuntimeError) as exc:
+            metrics.update(failure="dataset", error=f"{type(exc).__name__}: {exc}")
+            return TrainResult(
+                status="error",
+                job_id=job_id,
+                checkpoint_dir=record.get("run_dir"),
+                metrics=metrics,
+                message=f"{self.provider_name}: the rollout finished but the dataset could not be written: {metrics['error']}",
+            )
+        done_file.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        metrics.update(summary)
+        return TrainResult(
+            status="success",
+            job_id=job_id,
+            checkpoint_dir=record.get("run_dir"),
+            metrics=metrics,
+            message=_recorded_line(metrics),
+        )
+
     def _play_status(
         self, job_id: str, job_dir: Path, record: dict[str, Any], text: str, exit_code: int | None, alive: bool
     ) -> TrainResult:
@@ -889,7 +1150,10 @@ class IsaacLabTrainer(Trainer):
         Writes ``<run>/strands_policy/policy.pt`` + ``policy_meta.json``
         (``provider="rsl_rl"``: rsl_rl's MLP with the run's own activation and
         observation normalizer, rebuilt without rsl_rl or Isaac Lab), with the
-        run record's task and physics preset in the metadata.
+        run record's task and physics preset in the metadata and, under
+        ``deploy_contract``, what the actor's outputs and inputs mean - read
+        from the run's IO descriptors, which are written first for a run that
+        has none (see :meth:`_deploy_contract`).
 
         Args:
             spec: The validated spec. Its ``extra['task']`` picks the run: when
@@ -937,7 +1201,137 @@ class IsaacLabTrainer(Trainer):
                 "extra['rl_library']='rsl_rl' trains one export can convert"
             )
         extra = {k: run[k] for k in ("task", "physics", "num_envs", "job_id", "overrides") if k in run}
+        contract, missing = self._deploy_contract(Path(checkpoint_dir), run)
+        if contract is not None:
+            extra["deploy_contract"] = contract
+        else:
+            extra["deploy_contract_missing"] = missing
+            logger.warning("isaaclab: %s exported without a deploy contract: %s", checkpoint_dir, missing)
         return rsl_rl.convert_checkpoint(model, str(Path(checkpoint_dir) / "strands_policy"), extra_meta=extra)
+
+    def _deploy_contract(self, run_dir: Path, run: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        """The run's deploy contract, from its IO descriptors; ``(None, reason)`` when there are none.
+
+        A run trained by this provider has them (``--export_io_descriptors`` is
+        always passed). For a run that does not - trained before, or by hand -
+        they are written now by launching the same task with the same physics
+        preset and overrides for zero iterations on one environment, which is
+        what Isaac Lab needs to resolve the joint order: it is the articulation
+        the preset builds, not the task config, that fixes it. Isaac Lab exports
+        descriptors for manager-based tasks only, so a direct-workflow task has
+        none and gets the reason instead.
+        """
+        from strands_robots.training.rl.deploy_contract import attach_env_cfg, contract_from_io_descriptors
+
+        path = run_dir / IO_DESCRIPTORS_FILE
+        if not path.is_file():
+            reason = self._write_io_descriptors(run_dir, run)
+            if reason is not None:
+                return None, reason
+        try:
+            contract = contract_from_io_descriptors(self._read_yaml(path), physics=run.get("physics"))
+        except (OSError, ValueError) as exc:  # DeployContractError is a ValueError
+            return None, f"{path} could not be read as IO descriptors: {exc}"
+        env_path = run_dir / "params" / "env.yaml"
+        try:
+            env_cfg = self._read_yaml(env_path) if env_path.is_file() else None
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            logger.warning("isaaclab: %s could not be read (%s); the contract has no actuator model", env_path, exc)
+            env_cfg = None
+        return attach_env_cfg(contract, env_cfg), None
+
+    def _write_io_descriptors(self, run_dir: Path, run: dict[str, Any]) -> str | None:
+        """Write *run_dir*'s IO descriptors with a zero-iteration launch; the reason on failure."""
+        import shutil
+        import tempfile
+
+        task = run.get("task")
+        if not task:
+            return f"{run_dir} has no {RUN_RECORD_FILE} naming its task, so its IO descriptors cannot be rebuilt"
+        if reason := run_record_argv_problem(run):
+            return f"{run_dir / RUN_RECORD_FILE} {reason}, so its IO descriptors are not rebuilt from it"
+        overrides = [str(o) for o in run.get("overrides") or []]
+        if problems := runtime.runtime_problems(self._python, context=self.provider_name):
+            return "; ".join(problems)
+        with tempfile.TemporaryDirectory(prefix="strands-io-") as tmp:
+            cmd = [str(self._python), "-m", "isaaclab", "train", "--rl_library", "rsl_rl", "--task", str(task),
+                   "--max_iterations", "0", "--num_envs", "1", "--visualizer", "none", "--run_name", "io",
+                   "--export_io_descriptors", *overrides]  # fmt: skip
+            try:
+                done = subprocess.run(  # noqa: S603 - argv, no shell; the interpreter is the operator's
+                    cmd, cwd=tmp, env=runtime.child_env(), capture_output=True, timeout=IO_DESCRIPTORS_TIMEOUT_S
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return f"the zero-iteration launch that writes IO descriptors failed: {exc}"
+            found = sorted(Path(tmp).glob("logs/*/*/*/" + IO_DESCRIPTORS_FILE))
+            if not found:
+                tail = done.stdout.decode(errors="replace")[-600:]
+                if "only supported for manager based" in tail:
+                    return f"{task} is a direct-workflow task, for which Isaac Lab exports no IO descriptors"
+                return f"the zero-iteration launch (exit {done.returncode}) wrote no IO descriptors: ...{tail}"
+            target = run_dir / IO_DESCRIPTORS_FILE
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(found[0], target)
+        return None
+
+    def _read_yaml(self, path: Path) -> dict[str, Any]:
+        """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's.
+
+        Every way the file fails to parse is a ``ValueError`` naming the path:
+        PyYAML's ``YAMLError`` (a truncated ``IO_descriptors.yaml`` from a run
+        killed during Isaac Lab's startup write, or a tag ``safe_load`` refuses)
+        and the interpreter fallback's ``CalledProcessError`` / ``TimeoutExpired``
+        are normalised here, so the callers' ``except (OSError, ValueError)``
+        degrade to a recorded reason instead of a traceback.
+
+        Raises:
+            ValueError: If the file is not YAML, the interpreter could not parse
+                it (or timed out), or the document is not a mapping.
+            OSError: If the file cannot be read.
+        """
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except ImportError:
+            try:
+                done = subprocess.run(  # noqa: S603 - argv, no shell
+                    [str(self._python), "-c", _YAML_TO_JSON, str(path)],
+                    env=runtime.child_env(),
+                    capture_output=True,
+                    timeout=120,
+                    check=True,
+                )
+                parsed = json.loads(done.stdout)
+            except subprocess.CalledProcessError as exc:
+                tail = (exc.stderr or b"").decode(errors="replace").strip().splitlines()[-1:] or [""]
+                raise ValueError(
+                    f"{path} could not be parsed as YAML by {self._python} (exit {exc.returncode}): {tail[0]}"
+                ) from exc
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError(
+                    f"{path} could not be parsed as YAML: {self._python} gave no answer in {exc.timeout} s"
+                ) from exc
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{path} could not be parsed as YAML: the interpreter printed no JSON ({exc})"
+                ) from exc
+        else:
+
+            class _Loader(yaml.SafeLoader):
+                pass
+
+            _Loader.add_multi_constructor(
+                "tag:yaml.org,2002:python/",
+                lambda loader, suffix, node: (
+                    loader.construct_sequence(node, deep=True) if isinstance(node, yaml.SequenceNode) else None
+                ),
+            )
+            try:
+                parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - SafeLoader subclass
+            except yaml.YAMLError as exc:
+                raise ValueError(f"{path} could not be parsed as YAML: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{path} is not a YAML mapping")
+        return parsed
 
     def stop(self, job_id: str) -> TrainResult:
         """Stop a running job and return its verdict, ``stopped``.
@@ -1126,6 +1520,84 @@ def _extra_problems(extra: dict[str, Any], ctx: str) -> list[str]:
             elif not extra.get("video"):
                 problems.append(f"{ctx}: extra['{key}'] is read only with extra['video']=True")
     return problems
+
+
+def rollout_to_dataset(raw_dir: str | Path, dataset_dir: str, *, repo_id: str, task: str) -> dict[str, Any]:
+    """Convert what :mod:`strands_robots.training._isaaclab_record_runner` wrote into a LeRobotDataset at *dataset_dir*.
+
+    One dataset episode per rollout episode, with ``observation.state`` = joint
+    positions by name + ``policy_obs`` + ``root_pos`` + ``root_quat`` (x-y-z-w),
+    ``action`` named by the runner's action names, and
+    ``observation.images.camera`` when the rollout had a camera. An episode
+    with no frames is skipped. Returns what the dataset holds.
+    """
+    import numpy as np
+
+    from strands_robots.dataset_recorder import DatasetRecorder
+
+    raw = Path(raw_dir)
+    meta = json.loads((raw / "meta.json").read_text(encoding="utf-8"))
+    joints, actions = list(meta["joint_names"]), list(meta["action_names"])
+    cam = meta.get("camera")
+    recorder = DatasetRecorder.create(
+        repo_id=repo_id,
+        fps=int(meta["fps"]),
+        robot_type=str(meta["task"]),
+        joint_names=joints,
+        action_names=actions,
+        camera_keys=["camera"] if cam else None,
+        camera_dims={"camera": (int(cam["height"]), int(cam["width"]))} if cam else None,
+        extra_state_specs=[
+            ("policy_obs", [str(k) for k in range(int(meta["policy_obs_dim"]))]),
+            ("root_pos", ["x", "y", "z"]),
+            ("root_quat", ["x", "y", "z", "w"]),
+        ],
+        task=task,
+        root=dataset_dir,
+        use_videos=bool(cam),
+        overwrite=True,
+    )
+    saved, frames = [], 0
+    for i in range(int(meta["episodes"])):
+        ep = np.load(raw / f"episode_{i:03d}.npz")
+        n = int(ep["joint_pos"].shape[0])
+        if n == 0:
+            continue
+        for t in range(n):
+            observation: dict[str, Any] = {name: float(ep["joint_pos"][t, k]) for k, name in enumerate(joints)}
+            observation.update(policy_obs=ep["policy_obs"][t], root_pos=ep["root_pos"][t], root_quat=ep["root_quat"][t])
+            if cam:
+                observation["camera"] = ep["image"][t]
+            recorder.add_frame(
+                observation,
+                {name: float(ep["action"][t, k]) for k, name in enumerate(actions)},
+                task=task,
+                camera_keys=["camera"] if cam else None,
+            )
+        recorder.save_episode()
+        saved.append(i)
+        frames += n
+    recorder.finalize()
+    return {
+        "dataset": str(Path(dataset_dir)),
+        "repo_id": repo_id,
+        "episodes": len(saved),
+        "frames": frames,
+        "fps": int(meta["fps"]),
+        "episode_len": meta["episode_len"],
+        "episode_return": meta["episode_return"],
+        "episode_end": meta["episode_end"],
+        "camera": bool(cam),
+    }
+
+
+def _recorded_line(metrics: dict[str, Any]) -> str:
+    returns = metrics.get("episode_return") or []
+    mean = f"; mean return {sum(returns) / len(returns):.3f}" if returns else ""
+    return (
+        f"recorded {metrics.get('episodes')} episodes, {metrics.get('frames')} frames at {metrics.get('fps')} fps "
+        f"into {metrics.get('dataset')} ({metrics.get('repo_id')}){mean}"
+    )
 
 
 def _rl_library(extra: dict[str, Any]) -> str:
@@ -1453,6 +1925,30 @@ def run_record(spec: TrainSpec, overrides: list[str] | None = None, checkpoint: 
         "checkpoint": checkpoint,
         "overrides": list(overrides),
     }
+
+
+def run_record_argv_problem(run: dict[str, Any]) -> str | None:
+    """Why a run record read back from disk may not be relaunched, or ``None``.
+
+    The train path validates ``task`` and ``physics`` before any argv exists
+    (:func:`_extra_problems`); the export path relaunches the operator's Isaac
+    Lab interpreter from :data:`RUN_RECORD_FILE`, which lives in a directory
+    the caller points at, so a downloaded or shared checkpoint could carry a
+    record with a flag or a Hydra override the operator never wrote. The record
+    is held to the same shapes: ``task`` matches :data:`_TASK_RE` (a letter
+    first, so it cannot read as a flag) and every override is one of the two
+    shapes :func:`run_record` writes (:data:`_RECORD_OVERRIDE_RES`).
+    """
+    task = run.get("task")
+    if not isinstance(task, str) or not _TASK_RE.match(task):
+        return f"names a task that is not an Isaac Lab task id: {refusal_repr(task)}"
+    overrides = run.get("overrides") or []
+    if not isinstance(overrides, list):
+        return f"carries overrides that are not a list: {refusal_repr(overrides)}"
+    for override in overrides:
+        if not isinstance(override, str) or not any(rx.match(override) for rx in _RECORD_OVERRIDE_RES):
+            return f"carries an override this provider never writes: {refusal_repr(override)}"
+    return None
 
 
 def _write_run_record(run_dir: str | None, record: dict[str, Any]) -> None:
