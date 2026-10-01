@@ -1195,27 +1195,30 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
         if root is None or not root.IsValid():
             return None
         prims = list(Usd.PrimRange(root))
-        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
-        if len(roots) != 1 or not roots[0].HasAPI(UsdPhysics.RigidBodyAPI):
-            return None
-        body_path = roots[0].GetPath()
-        for joint_prim in prims:
-            if not joint_prim.IsA(UsdPhysics.FixedJoint):
-                continue
-            joint = UsdPhysics.FixedJoint(joint_prim)
-            body1 = joint.GetBody1Rel().GetTargets()
-            body0 = joint.GetBody0Rel().GetTargets()
-            if body1 != [body_path]:
-                continue
-            anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
-            if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
-                continue  # welded to another body, not to the world
-            roots[0].RemoveAPI(UsdPhysics.ArticulationRootAPI)
-            UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
-            return str(joint_prim.GetPath())
+        # Every root, not only a lone one: a two-arm robot (aloha) converts to
+        # two articulations, each on its own welded base body.
+        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI) and p.HasAPI(UsdPhysics.RigidBodyAPI)]
+        moved: list[str] = []
+        for base in roots:
+            body_path = base.GetPath()
+            for joint_prim in prims:
+                if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                    continue
+                joint = UsdPhysics.FixedJoint(joint_prim)
+                body1 = joint.GetBody1Rel().GetTargets()
+                body0 = joint.GetBody0Rel().GetTargets()
+                if body1 != [body_path]:
+                    continue
+                anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
+                if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
+                    continue  # welded to another body, not to the world
+                base.RemoveAPI(UsdPhysics.ArticulationRootAPI)
+                UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
+                moved.append(str(joint_prim.GetPath()))
+                break
+        return moved[0] if moved else None
     except (ImportError, AttributeError, RuntimeError, IndexError):
         return None
-    return None
 
 
 #: What a caller of a camera in ``render_mode="headless"`` needs to hear.
@@ -1297,6 +1300,126 @@ def _deactivate_imported_ground_planes(prim_path: str) -> list[str]:
         return [str(p.GetPath()) for p in planes]
     except (ImportError, AttributeError, RuntimeError):
         return []
+
+
+def _articulation_root_paths(prim_path: str) -> list[str]:
+    """Paths of every ``ArticulationRootAPI`` prim under ``prim_path``, in stage order; ``[]`` without a stage."""
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return []
+        found = [str(p.GetPath()) for p in Usd.PrimRange(root) if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
+    except (ImportError, AttributeError, RuntimeError):
+        return []
+    # A base body whose root was moved onto its world weld can still report the
+    # API from the converted asset's own layer; the weld below it is the root
+    # PhysX builds from. Keep the innermost root of each nested pair, so one
+    # arm is one articulation, not two handles over the same DOFs.
+    return [path for path in found if not any(other.startswith(path + "/") for other in found)]
+
+
+class _MultiArticulation:
+    """Several articulations of one robot presented as one, DOFs concatenated in root order.
+
+    Covers the surface this backend drives an articulation through: DOF
+    names, joint state reads and writes, ``apply_action`` with or without
+    ``joint_indices``, DOF limits and properties, and the base pose of the
+    first part. A whole-robot base move is refused rather than applied to one
+    arm; there is no Jacobian view, so ``get_jacobian`` reports that.
+    """
+
+    def __init__(self, parts: list[Any]) -> None:
+        self._parts = list(parts)
+
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
+        for part in self._parts:
+            part.initialize(*args, **kwargs)
+
+    def _counts(self) -> list[int]:
+        return [len(list(p.dof_names or [])) for p in self._parts]
+
+    @property
+    def dof_names(self) -> list[str]:
+        return [n for p in self._parts for n in list(p.dof_names or [])]
+
+    @property
+    def num_dof(self) -> int:
+        return sum(self._counts())
+
+    def _gather(self, name: str) -> Any:
+        values = []
+        for part in self._parts:
+            raw = getattr(part, name)()
+            if raw is None:
+                return None
+            values.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1))
+        return np.concatenate(values) if values else np.zeros(0)
+
+    def get_joint_positions(self) -> Any:
+        return self._gather("get_joint_positions")
+
+    def get_joint_velocities(self) -> Any:
+        return self._gather("get_joint_velocities")
+
+    def _split(self, values: Any, joint_indices: Any) -> list[tuple[Any, Any, Any]]:
+        """``[(part, part_values, part_indices), ...]`` for a full or indexed DOF vector."""
+        vals = np.asarray(values, dtype=np.float32).reshape(-1)
+        idx = (
+            np.arange(self.num_dof) if joint_indices is None else np.asarray(joint_indices, dtype=np.int64).reshape(-1)
+        )
+        out = []
+        start = 0
+        for part, n in zip(self._parts, self._counts(), strict=True):
+            mask = (idx >= start) & (idx < start + n)
+            if mask.any():
+                out.append((part, vals[mask], (idx[mask] - start).astype(np.int32)))
+            start += n
+        return out
+
+    def set_joint_positions(self, positions: Any, joint_indices: Any = None) -> None:
+        for part, vals, idx in self._split(positions, joint_indices):
+            part.set_joint_positions(vals, joint_indices=idx)
+
+    def apply_action(self, action: Any) -> None:
+        fields = {k: getattr(action, k, None) for k in ("joint_positions", "joint_velocities", "joint_efforts")}
+        indices = getattr(action, "joint_indices", None)
+        per_part: dict[int, dict[str, Any]] = {}
+        for field_name, values in fields.items():
+            if values is None:
+                continue
+            for part, vals, idx in self._split(values, indices):
+                entry = per_part.setdefault(id(part), {"part": part, "joint_indices": idx})
+                entry[field_name] = vals
+        for entry in per_part.values():
+            part = entry.pop("part")
+            part.apply_action(type(action)(**entry))
+
+    def get_dof_limits(self) -> Any:
+        rows = []
+        for part in self._parts:
+            raw = part.get_dof_limits()
+            rows.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1, 2))
+        return np.concatenate(rows) if rows else np.zeros((0, 2))
+
+    @property
+    def dof_properties(self) -> Any:
+        props = [getattr(p, "dof_properties", None) for p in self._parts]
+        if any(p is None for p in props):
+            return None
+        return np.concatenate([p for p in props if p is not None])
+
+    def get_world_pose(self) -> Any:
+        return self._parts[0].get_world_pose()
+
+    def set_world_pose(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError(
+            "this robot is several articulations (one per arm); moving one base would tear it apart. "
+            "Place it with add_robot(position=...) instead."
+        )
 
 
 _HEADLESS_RENDER_REMEDY = (
@@ -9060,7 +9183,17 @@ class IsaacSimulation(
         # ``add_robot`` ``name`` (the leaf of ``prim_path`` is the
         # caller-visible robot name by construction).
         articulation_name = prim_path.rsplit("/", 1)[-1]
-        articulation = Articulation(prim_path=prim_path, name=articulation_name)
+        roots = _articulation_root_paths(prim_path)
+        if len(roots) > 1:
+            # One robot, several articulations (aloha: one per arm). A single
+            # ``Articulation`` over the container bound the FIRST root only, so
+            # aloha loaded 8 of its 16 joints and the right arm was
+            # uncommandable. Each root gets its own handle, presented as one.
+            articulation = _MultiArticulation(
+                [Articulation(prim_path=root, name=f"{articulation_name}_{i}") for i, root in enumerate(roots)]
+            )
+        else:
+            articulation = Articulation(prim_path=prim_path, name=articulation_name)
         articulation.initialize()
         # USD reference: the prim path is exactly what the caller asked
         # for (``add_reference_to_stage`` honours ``prim_path``); record
