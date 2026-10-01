@@ -292,3 +292,68 @@ class TestTheCacheKeyCoversTheAttachedModel:
         with open(target, "a") as fh:
             fh.write("\n")
         assert mjcf_assets._asset_digest(two_arms) != before, edit
+
+
+# An arm whose physics settings live ONLY on its root default (no named class),
+# attached with an EMPTY prefix. MjSpec.to_xml writes that root default as a
+# nested <default> with no class; renaming it to a class nothing references
+# orphans the settings and the flattened copy loads with armature and damping
+# reset to zero, under a successful load.
+_ARM_ROOT_DEFAULT = """<mujoco model="arm">
+  <compiler angle="radian" meshdir="assets/"/>
+  <default><joint armature="0.25" damping="3.0" range="-1.2 1.2"/></default>
+  <asset><mesh name="link" file="link.obj"/></asset>
+  <worldbody>
+    <body name="Base">
+      <body name="upper">
+        <joint name="shoulder"/>
+        <geom type="mesh" mesh="link"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def root_default_arm(tmp_path) -> str:
+    root = tmp_path / "rootdef"
+    (root / "arm" / "assets").mkdir(parents=True)
+    (root / "arm" / "assets" / "link.obj").write_text(_OBJ)
+    (root / "arm" / "arm.xml").write_text(_ARM_ROOT_DEFAULT)
+    (root / "base" / "meshes").mkdir(parents=True)
+    (root / "base" / "meshes" / "plate.obj").write_text(_OBJ)
+    (root / "base" / "base.xml").write_text(_BASE)  # attaches "arm" with prefix=""
+    return str(root / "base" / "base.xml")
+
+
+def test_an_attached_root_default_survives_the_flattening(root_default_arm, tmp_path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    flat = mjcf_assets._flatten_attached_models(root_default_arm, str(work))
+
+    a, b = mujoco.MjModel.from_xml_path(root_default_arm), mujoco.MjModel.from_xml_path(flat)
+    np.testing.assert_allclose(a.dof_armature, b.dof_armature)
+    np.testing.assert_allclose(a.dof_damping, b.dof_damping)
+    np.testing.assert_allclose(a.jnt_range, b.jnt_range)
+    assert b.dof_armature.max() == pytest.approx(0.25) and b.dof_damping.max() == pytest.approx(3.0)
+
+
+def test_a_flattened_copy_that_differs_from_the_original_is_refused(attaching, tmp_path, monkeypatch) -> None:
+    """The last check compares the copy with the original and refuses on divergence,
+    instead of returning a copy that merely loads."""
+    work = tmp_path / "work"
+    work.mkdir()
+    real = mjcf_assets._model_fingerprint
+    calls: list[int] = []
+
+    def _second_call_lies(model):
+        fp = real(model)
+        calls.append(1)
+        if len(calls) > 1:  # the first call fingerprints the original; every later one the copy
+            fp = {**fp, "dof_armature": [v + 1.0 for v in fp["dof_armature"]]}
+        return fp
+
+    monkeypatch.setattr(mjcf_assets, "_model_fingerprint", _second_call_lies)
+    with pytest.raises(mjcf_assets.MjcfAssetError, match="dof_armature"):
+        mjcf_assets._flatten_attached_models(attaching, str(work))

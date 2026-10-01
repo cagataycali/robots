@@ -57,6 +57,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any
 
+import numpy as np
+
 from strands_robots.utils import get_base_dir
 
 __all__ = [
@@ -868,18 +870,115 @@ def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
     spec.texturedir = ""
     spec.compile()  # fails here, naming the file, if a path is still wrong
     root = ET.fromstring(spec.to_xml())
-    # ``to_xml`` writes an attached model's root default class (``main`` under
-    # an empty prefix) as a nested ``<default>`` with no name, which MuJoCo's
-    # own parser then rejects ("empty class name"). Its children keep their
-    # names, so giving it one no element refers to reads back the same model.
+    # ``to_xml`` writes an attached model's ROOT default (``main`` under an
+    # empty prefix) as a nested ``<default>`` with no class name, which MuJoCo's
+    # own parser rejects ("empty class name"). Naming it is not enough: with an
+    # empty prefix the attached joints carry neither the baked values nor a
+    # ``class=`` reference, so a class nothing refers to silently resets their
+    # armature, damping and ranges to MuJoCo's defaults. The attached root body
+    # therefore gets ``childclass=`` pointing at the renamed default, and the
+    # copy is accepted only when it compiles to the SAME model as the original.
+    orphaned: list[str] = []
     for n, parent in enumerate(el for el in root.iter("default")):
         for nested in parent.findall("default"):
             if not nested.get("class"):
-                nested.set("class", f"strands_attached_root_{n}")
+                name = f"strands_attached_root_{n}_{len(orphaned)}"
+                nested.set("class", name)
+                orphaned.append(name)
+    attached_roots = [
+        body
+        for body in _attached_root_bodies(mjcf_path)
+        if (el := root.find(f".//body[@name='{body}']")) is not None and not el.get("childclass")
+    ]
     flat = os.path.join(work_dir, os.path.basename(mjcf_path))
-    ET.ElementTree(root).write(flat, encoding="unicode")
-    mujoco.MjModel.from_xml_path(flat)  # the copy must load as the original does
-    return flat
+    original = _model_fingerprint(mujoco.MjModel.from_xml_path(mjcf_path))
+    diverged: list[str] = []
+    for assignment in _childclass_assignments(orphaned, attached_roots):
+        for body, cls in assignment:
+            el = root.find(f".//body[@name='{body}']")
+            if el is not None:
+                el.set("childclass", cls)
+        ET.ElementTree(root).write(flat, encoding="unicode")
+        diverged = _fingerprint_divergence(original, _model_fingerprint(mujoco.MjModel.from_xml_path(flat)))
+        if not diverged:
+            return flat
+        for body, _cls in assignment:
+            el = root.find(f".//body[@name='{body}']")
+            if el is not None and "childclass" in el.attrib:
+                del el.attrib["childclass"]
+    raise MjcfAssetError(
+        f"the flattened copy of {mjcf_path} compiles to a different model than the original "
+        f"({', '.join(diverged)} differ); the attached model's root default could not be re-bound, "
+        "so the copy is refused rather than converted with the wrong physics"
+    )
+
+
+def _attached_root_bodies(mjcf_path: str) -> list[str]:
+    """The composed names (``prefix + body``) of every ``<attach>`` root body, in document order."""
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    out: list[str] = []
+
+    def _walk(path: str, seen: frozenset[str]) -> None:
+        try:
+            root = ET.parse(path).getroot()
+        except (ET.ParseError, OSError):
+            return
+        for el in root.iter():
+            if el.tag == "attach" and el.get("body"):
+                out.append(f"{el.get('prefix', '')}{el.get('body')}")
+            elif el.tag == "include" and el.get("file"):
+                inc = os.path.normpath(os.path.join(os.path.dirname(path), el.get("file", "")))
+                if inc not in seen and os.path.isfile(inc):
+                    _walk(inc, seen | {inc})
+
+    _walk(entry, frozenset({entry}))
+    return out
+
+
+def _childclass_assignments(classes: list[str], bodies: list[str]) -> list[list[tuple[str, str]]]:
+    """Every way to bind the orphaned root defaults to the attached root bodies; ``[[]]`` when none.
+
+    Document order is tried first (``to_xml`` writes the nested defaults in
+    attach order), then every other permutation; the caller keeps the first
+    one whose model matches the original. Attach counts are small, so the
+    permutations stay small.
+    """
+    from itertools import permutations
+
+    if not classes or not bodies:
+        return [[]]
+    k = min(len(classes), len(bodies))
+    seen: list[list[tuple[str, str]]] = []
+    for perm in permutations(classes, k):
+        assignment = list(zip(bodies[:k], perm, strict=True))
+        if assignment not in seen:
+            seen.append(assignment)
+    return seen
+
+
+_FINGERPRINT_FIELDS = (
+    "nbody", "njnt", "ngeom", "nmesh", "nu", "nsite",
+    "jnt_range", "jnt_stiffness", "dof_armature", "dof_damping", "dof_frictionloss",
+    "geom_size", "geom_type", "body_mass", "actuator_gear", "actuator_ctrlrange",
+)  # fmt: skip
+
+
+def _model_fingerprint(model: Any) -> dict[str, list[float]]:
+    """The physics a flattened copy must reproduce, field by field, as flat float lists."""
+    out: dict[str, list[float]] = {}
+    for field in _FINGERPRINT_FIELDS:
+        value = getattr(model, field)
+        out[field] = [float(v) for v in np.asarray(value, dtype=float).ravel()]
+    return out
+
+
+def _fingerprint_divergence(a: dict[str, list[float]], b: dict[str, list[float]]) -> list[str]:
+    """The fingerprint fields on which *a* and *b* disagree (lengths included)."""
+    return [
+        field
+        for field in _FINGERPRINT_FIELDS
+        if len(a[field]) != len(b[field]) or not np.allclose(a[field], b[field], rtol=1e-6, atol=1e-9)
+    ]
 
 
 def _post_import_fixups(usd_file: str, mjcf_path: str, *, import_scene: bool) -> None:
