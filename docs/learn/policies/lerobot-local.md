@@ -73,7 +73,7 @@ sim.run_policy(
 )
 ```
 
-`parent_body` mounts a camera on a link (a wrist view rides with the arm); `position` and `target` are then in that frame, both required. It works on `mujoco` and `newton`; `isaac` refuses it and names the world-frame alternative.
+`parent_body` mounts a camera on a link (a wrist view rides with the arm); `position` and `target` are then in that frame, both required. It works on every backend.
 
 ## Run it
 
