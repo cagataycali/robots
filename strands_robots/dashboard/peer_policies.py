@@ -27,6 +27,7 @@ from strands_robots.locomotion_envelope import max_angular_velocity_rps, max_lin
 EMBODIMENT_BOUND: dict[str, tuple[str, ...]] = {
     "wbc": ("unitree_g1",),
     "wbc_gait": ("unitree_g1",),
+    "holosoma": ("unitree_g1",),
     "kimodo": ("unitree_g1",),
     "protomotions": ("unitree_g1",),
     "microduck": ("microduck",),
@@ -43,6 +44,7 @@ HINTS: dict[str, str] = {
     "mock": "sinusoidal test motion; proves the plumbing, never a task. Only when the operator asks for it",
     "wbc": "GR00T whole-body controller for the Unitree G1: balance and walk; target_velocity [vx, vy, wz] steers it",
     "wbc_gait": "GR00T gait-clock variant for the Unitree G1; target_velocity steers it",
+    "holosoma": "Amazon FAR Holosoma locomotion for the Unitree G1 (fastsac or ppo); target_velocity steers it",
     "lerobot_local": "a LeRobot checkpoint (ACT, SmolVLA, pi0, ...) run in-process; needs pretrained_name_or_path",
     "remote": "a policy server elsewhere; needs server_address",
     "rl": "an RL actor exported by a trainer; needs model_path",
@@ -156,8 +158,17 @@ def policies_for_robot(robot: str | None, providers: Mapping[str, Mapping[str, A
                 "embodiments": list(bound) if bound else "any",
             }
         )
-    # embodiment-bound first: they are the answer to "make it walk"; mock last
-    rows.sort(key=lambda r: (r["embodiments"] == "any", r["provider"] == "mock", r["provider"]))
+    # embodiment-bound first, the shipped GR00T controllers ahead of the rest: they are the answer to
+    # "make it walk"; mock last
+    first = ("wbc", "wbc_gait")
+    rows.sort(
+        key=lambda r: (
+            r["embodiments"] == "any",
+            r["provider"] == "mock",
+            r["provider"] not in first,
+            r["provider"],
+        )
+    )
     return rows
 
 

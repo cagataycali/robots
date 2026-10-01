@@ -52,7 +52,7 @@ def test_a_g1_is_offered_the_whole_body_controllers_first_and_mock_last() -> Non
     row = peer_policies.peer_policies(*G1_CHILD)
     names = _providers(row)
     assert row["robot"] == "unitree_g1"
-    assert names[:2] == ["wbc", "wbc_gait"], names
+    assert names[:3] == ["wbc", "wbc_gait", "holosoma"], names
     assert names[-1] == "mock"
     wbc = row["can_run"][0]
     assert wbc["requires"] == ["model_path"], "wbc loads nothing without a checkpoint directory"
