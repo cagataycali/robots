@@ -873,10 +873,11 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
     ) -> dict[str, Any]:
         """Write an ``(N, nu)`` ctrl block (one row per world) and advance ``n_substeps`` steps.
 
-        ``n_substeps`` has the floor every backend applies (see ``send_action`` in
-        ``base.py``): a call that advanced nothing would leave a target the world never
-        integrates while a recorder keeps the row, so ``0``, a negative, a bool or a
-        fraction is refused here, before anything is written.
+        ``n_substeps`` has the floor every backend applies
+        (:meth:`~strands_robots.simulation.base.SimEngine.send_action`): a call that
+        advanced nothing would leave a target the world never integrates while a recorder
+        keeps the row, so ``0``, a negative, a bool or a fraction is refused here, before
+        anything is written.
         """
         err = positive_count_error(n_substeps, "n_substeps", "send_action_batch")
         if err:
