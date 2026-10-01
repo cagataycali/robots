@@ -40,7 +40,12 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 import numpy as np
 from strands.tools.tools import AgentTool
 
-from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.base import (
+    SimEngine,
+    outside_joint_range,
+    unknown_kwargs_error,
+    unknown_model_msg,
+)
 from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
@@ -10701,7 +10706,7 @@ class IsaacSimulation(
             if span is None:
                 continue
             lo, hi = span
-            if lo <= float(value) <= hi:
+            if not outside_joint_range(float(value), lo, hi):
                 continue
             unit = units[dof]
             detail = f"{name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]" + (f" {unit}" if unit else "")

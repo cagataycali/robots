@@ -41,6 +41,7 @@ from strands_robots.registry.discovery import discover_urdf_path, list_urdf_disc
 from strands_robots.simulation.base import (
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
+    outside_joint_range,
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
@@ -1461,7 +1462,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 if dof is None or lower is None or upper is None or dof >= len(lower):
                     continue
                 lo, hi = float(lower[dof]), float(upper[dof])
-                if lo < hi and not lo - 1e-9 <= float(value) <= hi + 1e-9:
+                if lo < hi and outside_joint_range(float(value), lo, hi):
                     out_of_range.append(f"{jname}={float(value):g} (range [{lo:g}, {hi:g}])")
             if out_of_range:
                 return {
