@@ -17,6 +17,7 @@ import pytest
 from strands_robots.mesh.iot.provision import (
     _OPERATOR_POLICY_DOC,
     _ROBOT_POLICY_DOC,
+    OPERATOR_OBSERVE_POLICY_NAME,
     OPERATOR_POLICY_NAME,
     ROBOT_NO_ESTOP_POLICY_NAME,
     ProvisionedThing,
@@ -231,10 +232,11 @@ class TestProvisionRobot:
 
         provision_robot("r", cert_dir=tmp_cert_dir)
 
-        # attach_policy was called with the default (obey-only) robot policy
+        # attach_policy was called with the default (obey-only) robot policy and
+        # the child key space policy every robot certificate carries next to it
         assert fake_iot_client.attach_policy.called
-        attach_kwargs = fake_iot_client.attach_policy.call_args.kwargs
-        assert attach_kwargs["policyName"] == ROBOT_NO_ESTOP_POLICY_NAME
+        attached = [c.kwargs["policyName"] for c in fake_iot_client.attach_policy.call_args_list]
+        assert attached == [ROBOT_NO_ESTOP_POLICY_NAME, "strands-robot-children"]
 
         # attach_thing_principal was called
         assert fake_iot_client.attach_thing_principal.called
@@ -316,8 +318,10 @@ class TestProvisionOperator:
         result = provision_operator("ops-1", cert_dir=tmp_cert_dir)
 
         assert result.policy_name == OPERATOR_POLICY_NAME
-        attach_kwargs = fake_iot_client.attach_policy.call_args.kwargs
-        assert attach_kwargs["policyName"] == OPERATOR_POLICY_NAME
+        attached = [call.kwargs["policyName"] for call in fake_iot_client.attach_policy.call_args_list]
+        # Two policies on one certificate: the operator's, and the fleet view's
+        # reads (one document is capped at 2048 characters and the first is at it).
+        assert attached == [OPERATOR_POLICY_NAME, OPERATOR_OBSERVE_POLICY_NAME]
 
 
 class TestRequireBoto3:

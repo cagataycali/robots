@@ -179,6 +179,23 @@ class Sample(Protocol):
     payload: _PayloadLike
 
 
+#: The two legs a sample can arrive on. ``lan`` is the Zenoh leg, ``iot`` the AWS IoT
+#: Core leg; a bridge peer heard on both inside one TTL window reads as ``both``.
+SAMPLE_LEGS = ("lan", "iot")
+
+
+def sample_leg(sample: Any) -> str:
+    """Which leg delivered *sample*: ``"iot"`` for an MQTT sample, ``"lan"`` otherwise.
+
+    The IoT sample wrapper (:class:`~strands_robots.mesh.transport.iot_transport._MqttSample`)
+    declares a ``leg`` class attribute; a ``zenoh.Sample`` declares none. The value is
+    checked against :data:`SAMPLE_LEGS` so a foreign object claiming an unknown leg
+    still reads as the LAN default rather than inventing a third origin.
+    """
+    leg = getattr(type(sample), "leg", None)
+    return leg if leg in SAMPLE_LEGS else "lan"
+
+
 @runtime_checkable
 class SubHandle(Protocol):
     """Opaque subscription handle - must support ``undeclare()`` for teardown.

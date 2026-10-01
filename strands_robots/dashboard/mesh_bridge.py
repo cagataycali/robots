@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -14,7 +15,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any, cast
@@ -22,7 +23,8 @@ from typing import Any, cast
 from strands_robots.dashboard import safety_state
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
-from strands_robots.utils import finite_number_error, refusal_repr
+from strands_robots.mesh.transport.base import SAMPLE_LEGS, sample_leg
+from strands_robots.utils import finite_number_error, refusal_repr, refusal_str
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +264,135 @@ def silent_arms(peers: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None
     }
 
 
+#: Every key expression the fleet view subscribes to, in one place so the IoT operator
+#: policy (:mod:`~strands_robots.mesh.iot.provision`) can be graded against it: a topic
+#: subscribed here but not granted there is a card that stays empty over IoT and says nothing.
+FLEET_SUBSCRIPTIONS: tuple[str, ...] = (
+    "strands/*/presence",
+    "strands/*/state",
+    "strands/*/stream",
+    "strands/*/camera/**",
+    "strands/*/pose",
+    "strands/*/health",
+    "strands/*/imu",
+    "strands/*/odom",
+    "strands/*/lidar/**",
+    "strands/safety/estop",
+    "strands/safety/resume",
+)
+
+#: Backends whose transport carries an AWS IoT Core leg, where the MQTT topic root is bound
+#: to the connecting Thing by the ``strands-operator`` policy.
+_IOT_BEARING_BACKENDS = frozenset({"iot", "bridge"})
+
+
+def safety_rail_peer_id(dashboard_peer_id: str) -> str:
+    """The peer id of the dashboard's robot-less safety Mesh.
+
+    On plain Zenoh it is ``<dashboard>-safety``. On a backend with an IoT leg it
+    is the Thing the dashboard connects as (``STRANDS_IOT_THING_NAME``): the
+    operator policy lets that Thing publish presence only under its own name and
+    subscribe to replies only under ``strands/<thing>/response/#``, so a rail
+    named anything else had its first presence publish drop the shared MQTT
+    session and could never hear a reply.
+    """
+    backend = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
+    thing = os.getenv("STRANDS_IOT_THING_NAME", "").strip()
+    if backend in _IOT_BEARING_BACKENDS and thing:
+        return thing
+    return f"{dashboard_peer_id}-safety"
+
+
+#: Budget for resolving one camera S3 reference: the presigned GET must answer
+#: within this many seconds or the reference is dropped and the next one tried.
+CAMERA_REF_TIMEOUT_S = 3.0
+#: A camera frame fetched through a reference may not exceed this many bytes;
+#: a 640x480 JPEG is 30 to 80 KB, so the cap only bites on something that is not a frame.
+CAMERA_REF_MAX_BYTES = 8 * 1024 * 1024
+#: The only host suffix a camera reference may point at: S3 presigned URLs
+#: (:mod:`~strands_robots.mesh.iot.camera_offload`) live on ``*.amazonaws.com``.
+CAMERA_REF_HOST_SUFFIX = ".amazonaws.com"
+
+
+class CameraRefError(RuntimeError):
+    """A camera reference could not be resolved into a frame (message is the reason)."""
+
+
+def camera_ref_url_error(url: Any) -> str | None:
+    """Why *url* may not be fetched as a camera reference, or ``None`` when it may.
+
+    The URL arrives in a JSON body any mesh publisher can type; the bridge
+    fetches it from inside the operator's network with the operator's egress.
+    Only ``https`` on an S3 host is a camera frame; anything else (plain http,
+    a file URL, a link-local metadata address, a look-alike host) is refused.
+    """
+    from urllib.parse import urlsplit
+
+    if not isinstance(url, str) or not url:
+        return "camera reference has no url"
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "camera reference url does not parse"
+    if parts.scheme != "https":
+        return f"camera reference scheme is {refusal_str(parts.scheme)}, not https"
+    host = (parts.hostname or "").lower()
+    if not host.endswith(CAMERA_REF_HOST_SUFFIX):
+        return f"camera reference host {refusal_str(host)} is not an S3 host"
+    return None
+
+
+def _urlopen(url: str, timeout: float) -> Any:
+    """GET *url* without following a redirect, behind a name a test can replace.
+
+    :func:`camera_ref_url_error` checks the scheme and host of the URL the
+    publisher typed; ``urllib`` would otherwise follow a 3xx from that origin
+    to any URL at all (plain http, a link-local metadata address, an internal
+    service), and nothing re-checks the hop. A presigned S3 GET is region
+    pinned and never redirects in normal operation, so the hop is refused.
+    """
+    from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+    class _RefuseRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+            from urllib.parse import urlsplit
+
+            target = refusal_str((urlsplit(newurl).hostname or "").lower())
+            raise CameraRefError(f"camera reference redirected ({code}) to host {target}; a redirect is refused")
+
+    opener = build_opener(_RefuseRedirects)
+    return opener.open(Request(url, method="GET"), timeout=timeout)  # noqa: S310 - scheme and host were checked by camera_ref_url_error, redirects refused
+
+
+def fetch_camera_ref(url: str, *, timeout: float, max_bytes: int) -> bytes:
+    """GET a presigned camera frame within *timeout* seconds and *max_bytes*.
+
+    Raises:
+        CameraRefError: The request failed, the origin redirected, or the body
+            exceeds *max_bytes*.
+    """
+    try:
+        with _urlopen(url, timeout) as response:
+            body = response.read(max_bytes + 1)
+    except CameraRefError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - urllib raises URLError, HTTPError, socket.timeout, ssl errors
+        raise CameraRefError(f"camera reference fetch failed: {type(exc).__name__}") from exc
+    if len(body) > max_bytes:
+        raise CameraRefError(f"camera reference body exceeds the {max_bytes} byte frame cap")
+    return cast(bytes, body)
+
+
+def _latency_ms(published_at: Any, now: float) -> int | None:
+    """Milliseconds between the publisher's clock and *now*, or ``None`` when *t* is not usable."""
+    if isinstance(published_at, bool) or not isinstance(published_at, (int, float)):
+        return None
+    delta = now - float(published_at)
+    if not math.isfinite(delta) or delta < 0 or delta > 86_400:
+        return None
+    return int(delta * 1000)
+
+
 #: ``strands/<peer>/<topic>...``: the ``<peer>`` segment of a wildcard-subscribed peer topic.
 #: The peer segment is the shape ``init_mesh`` accepts for a peer id, so a ``*`` from a
 #: subscription expression or a Mock repr never reads as a peer.
@@ -352,6 +483,26 @@ def peer_origins(
         return "external"
 
     return {pid: origin(pid) for pid in peer_ids}
+
+
+def peer_reach(legs: Mapping[str, Any] | None, now: float, ttl_s: float | None = None) -> str | None:
+    """``"lan"``, ``"iot"`` or ``"both"``: the legs that carried presence inside *ttl_s*.
+
+    ``None`` when no leg has spoken inside the window (a peer the table still
+    holds but whose transport origin is not known), so the card shows nothing
+    rather than a guess.
+    """
+    if not isinstance(legs, Mapping):
+        return None
+    ttl = PEER_TTL_S if ttl_s is None else ttl_s
+    fresh = []
+    for leg in SAMPLE_LEGS:
+        stamp = legs.get(leg)
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and (now - float(stamp)) <= ttl:
+            fresh.append(leg)
+    if not fresh:
+        return None
+    return "both" if len(fresh) == 2 else fresh[0]
 
 
 def absent_children(
@@ -610,6 +761,9 @@ class MeshBridge:
         # Latest camera frames: (peer_id, cam) -> {"t": float, "jpeg": bytes, "shape": [...]}
         self.frames: dict[tuple[str, str], dict[str, Any]] = {}
         self._frames_lock = threading.Lock()
+        # Camera S3 references being fetched right now, one slot per (peer_id, cam).
+        self._ref_inflight: set[tuple[str, str]] = set()
+        self._ref_pool: Any = ThreadPoolExecutor(max_workers=2, thread_name_prefix="camera-ref")
 
         # Async fan-out. Subscribers get JSON-able event dicts.
         self._queues: set[asyncio.Queue] = set()
@@ -717,23 +871,24 @@ class MeshBridge:
         self._running = True
 
         sub = session.declare_subscriber
-        self._subs = [
-            sub("strands/*/presence", self._on_presence),
-            sub("strands/*/state", self._on_state),
-            sub("strands/*/stream", self._on_stream),
-            sub("strands/*/camera/**", self._on_camera),
+        handlers: dict[str, Callable[[Any], None]] = {
+            "strands/*/presence": self._on_presence,
+            "strands/*/state": self._on_state,
+            "strands/*/stream": self._on_stream,
+            "strands/*/camera/**": self._on_camera,
             # SensorLoops publishes these and nothing here consumed them, so a
             # rover or a humanoid rendered as a name and a camera. Same
             # raw-zenoh shape as state: one subscriber per topic, the payload
             # forwarded as the SDK wrote it.
-            sub("strands/*/pose", self._on_pose),
-            sub("strands/*/health", self._on_health),
-            sub("strands/*/imu", self._on_imu),
-            sub("strands/*/odom", self._on_odom),
-            sub("strands/*/lidar/**", self._on_lidar),
-            sub("strands/safety/estop", self._on_safety),
-            sub("strands/safety/resume", self._on_safety),
-        ]
+            "strands/*/pose": self._on_pose,
+            "strands/*/health": self._on_health,
+            "strands/*/imu": self._on_imu,
+            "strands/*/odom": self._on_odom,
+            "strands/*/lidar/**": self._on_lidar,
+            "strands/safety/estop": self._on_safety,
+            "strands/safety/resume": self._on_safety,
+        }
+        self._subs = [sub(key_expr, handlers[key_expr]) for key_expr in FLEET_SUBSCRIPTIONS]
         self._endpoints = self._read_endpoints()
         logger.info("MeshBridge online as %s", self.peer_id)
         return True
@@ -831,6 +986,9 @@ class MeshBridge:
             with contextlib.suppress(Exception):
                 s.undeclare()
         self._subs.clear()
+        # A camera reference still being fetched finishes on its own; no new one is taken.
+        with contextlib.suppress(Exception):
+            self._ref_pool.shutdown(wait=False)
         if self._session is not None:
             from strands_robots.mesh.session import release_session
 
@@ -999,6 +1157,10 @@ class MeshBridge:
             entry["presence"] = record
             entry["presence_source"] = "wire"
             entry["sim_corroborated"] = self._sim_corroborated(peer_id)
+            # Which leg carried this heartbeat: the fleet view's ``reach`` chip (lan / iot /
+            # both) is derived from the legs that spoke inside the TTL, never from the body.
+            legs = entry.setdefault("legs", {})
+            legs[sample_leg(sample)] = time.time()
         self._emit({"type": "presence", "peer_id": peer_id, "data": record})
 
     def _on_state(self, sample: Any) -> None:
@@ -1035,31 +1197,87 @@ class MeshBridge:
         if peer_id is None:
             return
         cam = data.get("cam")
-        encoded = data.get("data")
-        if not (isinstance(cam, str) and isinstance(encoded, str)):
+        if not isinstance(cam, str):
             return
         if self._announced(peer_id, "camera") is None:
             return
-        import base64
+        encoded = data.get("data")
+        if isinstance(encoded, str):
+            import base64
 
-        try:
-            raw: bytes | None = base64.b64decode(encoded)
-        except Exception:
+            try:
+                raw: bytes | None = base64.b64decode(encoded)
+            except Exception:
+                return
+            self._file_frame(peer_id, cam, raw, data, via="inline")
             return
+        # The S3 reference form (camera_offload): the frame sits behind a presigned
+        # URL and is fetched here, off the transport thread, never by the browser.
+        if "presigned_url" not in data:
+            return
+        url = data.get("presigned_url")
+        if camera_ref_url_error(url) is not None:
+            return
+        slot = (peer_id, cam)
+        with self._frames_lock:
+            if slot in self._ref_inflight:
+                return
+            self._ref_inflight.add(slot)
+        try:
+            self._ref_pool.submit(self._resolve_camera_ref, peer_id, cam, url, dict(data))
+        except Exception:  # noqa: BLE001 - a pool shut down at exit; the slot must not stay taken
+            with self._frames_lock:
+                self._ref_inflight.discard(slot)
+
+    def _resolve_camera_ref(self, peer_id: str, cam: str, url: str, data: dict[str, Any]) -> None:
+        """Fetch one camera reference and file it like an inline frame (runs on the ref pool)."""
+        try:
+            try:
+                raw: bytes | None = fetch_camera_ref(url, timeout=CAMERA_REF_TIMEOUT_S, max_bytes=CAMERA_REF_MAX_BYTES)
+                error: str | None = None
+            except CameraRefError as exc:
+                raw, error = None, str(exc)
+            self._file_frame(peer_id, cam, raw, data, via="s3", error=error)
+        finally:
+            with self._frames_lock:
+                self._ref_inflight.discard((peer_id, cam))
+
+    def _file_frame(
+        self,
+        peer_id: str,
+        cam: str,
+        raw: bytes | None,
+        data: Mapping[str, Any],
+        *,
+        via: str,
+        error: str | None = None,
+    ) -> None:
+        """Store a decoded frame for *cam* on *peer_id* and tell the UI a frame arrived.
+
+        *data* is the publisher's body; only its ``t``, ``shape`` and ``encoding``
+        are copied out, so a presigned URL or an S3 URI in a reference body stays
+        in this process. A fetch that failed (``raw`` is ``None`` with *error*)
+        keeps the last good frame and records the reason on the camera meta.
+        """
+        now = time.time()
         meta: dict[str, Any] = {
             "t": data.get("t"),
             "shape": data.get("shape"),
             "encoding": data.get("encoding"),
+            "via": via,
+            "latency_ms": _latency_ms(data.get("t"), now),
         }
-        # A peer may publish raw pixel bytes instead of JPEG.
-        if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
-            raw, error = _raw_to_jpeg(cast(bytes, raw), meta.get("shape"))
-            meta["converted"] = error is None
-            if error:
-                meta["error"] = error
+        if raw is not None:
+            # A peer may publish raw pixel bytes instead of JPEG.
+            if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
+                raw, error = _raw_to_jpeg(raw, meta.get("shape"))
+                meta["converted"] = error is None
+        if error:
+            meta["error"] = error
         meta["displayable"] = raw is not None
-        with self._frames_lock:
-            self.frames[(peer_id, cam)] = {"jpeg": raw, **meta}
+        if raw is not None:
+            with self._frames_lock:
+                self.frames[(peer_id, cam)] = {"jpeg": raw, **meta}
         entry = self._touch_peer(peer_id)
         cams = entry.setdefault("cameras", {})
         cams[cam] = meta
@@ -1212,6 +1430,15 @@ class MeshBridge:
 
     # ------------------------------------------------------------------ Signed safety rail (A6).
 
+    @property
+    def rail_peer_id(self) -> str:
+        """The peer id the signed safety rail announces itself with (see :func:`safety_rail_peer_id`)."""
+        return safety_rail_peer_id(self.peer_id)
+
+    def is_own_rail(self, peer_id: str) -> bool:
+        """True for the dashboard's own safety rail under either of its names: never a host to stop."""
+        return peer_id == self.rail_peer_id or peer_id == f"{self.peer_id}-safety"
+
     def _safety_mesh(self) -> Any | None:
         """Lazily start the bridge's robot-less Mesh: signed safety envelopes and every command."""
         with self._safety_lock:
@@ -1239,7 +1466,7 @@ class MeshBridge:
                     )
                     return None
 
-                m = Mesh(None, peer_id=f"{self.peer_id}-safety", peer_type="gateway")
+                m = Mesh(None, peer_id=safety_rail_peer_id(self.peer_id), peer_type="gateway")
                 m.start()
                 if not m.alive:
                     return None
@@ -1343,7 +1570,7 @@ class MeshBridge:
         if not heard:
             return []
         hosts = sorted(
-            pid for pid in self.live_peers() if pid != self.peer_id and "__" not in pid and not pid.endswith("-safety")
+            pid for pid in self.live_peers() if pid != self.peer_id and "__" not in pid and not self.is_own_rail(pid)
         )
         answered: list[str] = []
         if hosts:
@@ -1494,7 +1721,7 @@ class MeshBridge:
         for pid, origin in peer_origins(peers, protected).items():
             peer = peers.get(pid)
             if isinstance(peer, dict):
-                peers[pid] = {**peer, "origin": origin}
+                peers[pid] = {**peer, "origin": origin, "reach": peer_reach(peer.get("legs"), now)}
         try:
             with self._peers_lock:
                 fleet_lockout = getattr(self, "_lockout", None) or safety_state.Lockout()

@@ -153,6 +153,7 @@ _MUST_VALIDATE = {
 # every name here, which is what test_the_membership_table_covers_every_already_
 # total_surface holds.
 _TOTAL_BY_MEMBERSHIP = {
+    "policies/holosoma/policy.py::HolosomaPolicy",
     "policies/kimodo/policy.py::KimodoPolicy",
     "policies/protomotions/policy.py::ProtoMotionsPolicy",
     "policies/wbc/policy.py::WBCPolicy",
@@ -479,6 +480,20 @@ def _wbc_keys() -> list[str]:
     return ["floating_base_joint", *WBC_G1_ALL_JOINTS]
 
 
+def _holosoma_policy() -> Any:
+    """A Holosoma policy with no checkpoint on disk."""
+    from strands_robots.policies.holosoma import HolosomaPolicy
+
+    return HolosomaPolicy(allow_missing_models=True)
+
+
+def _holosoma_keys() -> list[str]:
+    """A key list Holosoma accepts: the free base plus its 29 G1 joints."""
+    from strands_robots.policies.holosoma.policy import HOLOSOMA_G1_JOINTS
+
+    return ["floating_base_joint", *HOLOSOMA_G1_JOINTS]
+
+
 class _RampAgent:
     """A motion agent returning a per-joint ramp, so no sampler is needed.
 
@@ -665,6 +680,7 @@ def _wbc_latent_keys() -> list[str]:
 _Membership = tuple[str, Callable[[], Any], str, Callable[[], list[str]]]
 
 _MEMBERSHIP_SURFACES: list[_Membership] = [
+    ("policies/holosoma/policy.py::HolosomaPolicy", _holosoma_policy, "_robot_state_keys", _holosoma_keys),
     ("policies/kimodo/policy.py::KimodoPolicy", _kimodo_policy, "_robot_state_keys", _kimodo_keys),
     (
         "policies/protomotions/policy.py::ProtoMotionsPolicy",

@@ -34,6 +34,7 @@ const KNOWN: Record<string, Known> = {
 
   wbc: { label: 'GR00T whole-body control (SONIC)', group: 'Humanoid whole-body motion' },
   wbc_gait: { label: 'GR00T whole-body control — gait clock', group: 'Humanoid whole-body motion' },
+  holosoma: { label: 'Amazon FAR Holosoma — G1 locomotion', group: 'Humanoid whole-body motion' },
   motionbricks: { label: 'NVIDIA MotionBricks — G1 motion', group: 'Humanoid whole-body motion' },
   kimodo: { label: 'NVIDIA Kimodo — G1 text-to-motion', group: 'Humanoid whole-body motion' },
   protomotions: { label: 'ProtoMotions — G1 motion tracker', group: 'Humanoid whole-body motion' },
