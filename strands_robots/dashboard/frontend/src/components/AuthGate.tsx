@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt, noteCookieSession, cookieSessionExpiry,
-  urlBackendVerdict, carryTokenToBackend, backendLabel,
+  urlBackendVerdict, carryTokenToBackend, backendLabel, redeemUrlToken,
 } from '../lib/endpoints'
 import { sessionVerdict, sessionVerdictAt } from '../lib/sessionExpiry'
 import {
@@ -126,6 +126,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     let alive = true
     ;(async () => {
       try {
+        // A ?token= the page arrived with is redeemed FIRST, against this backend, and becomes
+        // the sign-in only if the backend vouches for it (finding f019). A refusal is said out
+        // loud on the door below, never a silent sign-out.
+        const redeemed = await redeemUrlToken()
+        if (!alive) return
+        if (redeemed === 'refused') setError('the sign-in carried in that link was not accepted here; sign in below')
         const [st, fleet] = await Promise.allSettled([fetchAuthStatus(), api('/api/fleet')])
         if (!alive) return
         if (fleet.status === 'fulfilled') { setMode('open'); return }

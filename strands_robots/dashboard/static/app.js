@@ -385,6 +385,8 @@ let cachedBase = null;
 let absorbedUrl = false;
 let urlBase = null;
 let urlVerdict = null;
+let offeredToken = null;
+let offeredDropped = false;
 function pageHost() {
   try {
     return (location.host || "").toLowerCase();
@@ -416,10 +418,8 @@ function absorbUrl() {
     const next = fromBackend === null ? null : normalize(fromBackend);
     if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim()) bindToken(stored);
     const moves = next !== null && next !== stored;
-    if (fromToken && !moves) {
-      localStorage.setItem(TOKEN_KEY, fromToken);
-      bindToken(stored);
-    }
+    offeredToken = fromToken && !moves ? fromToken.trim() || null : null;
+    offeredDropped = !!fromToken && moves;
     let scrubBackend = fromBackend !== null;
     if (next) {
       const token = storedToken();
@@ -448,6 +448,7 @@ function absorbUrl() {
     }
   } catch {
     urlBase = null;
+    offeredToken = null;
   }
 }
 function backendBase() {
@@ -489,6 +490,45 @@ function authToken() {
   const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim();
   if (issuer !== hostOfBase(backendBase())) return "";
   return token;
+}
+const URL_TOKEN_VIA = "handoff";
+async function redeemUrlToken() {
+  absorbUrl();
+  const offered = offeredToken;
+  offeredToken = null;
+  if (!offered) {
+    const dropped = offeredDropped;
+    offeredDropped = false;
+    return dropped ? "refused" : "none";
+  }
+  const nowS = Date.now() / 1e3;
+  const claims = tokenClaims(offered);
+  const exp = tokenExpiry(offered);
+  if (!claims || claims.via !== URL_TOKEN_VIA || exp === null || exp <= nowS) return "refused";
+  const held = sessionVerdict(authToken(), nowS);
+  if (held.state === "valid" || held.state === "expiring" || held.state === "opaque") return "refused";
+  try {
+    const bare = await fetch(apiUrl("/api/auth/status"), { credentials: "same-origin" });
+    if (await statusSaysAuthenticated(bare) !== false) return "refused";
+    const res = await fetch(apiUrl("/api/auth/status"), { headers: { Authorization: `Bearer ${offered}` } });
+    if (await statusSaysAuthenticated(res) === true) {
+      setAuthToken(offered);
+      return "adopted";
+    }
+  } catch {
+  }
+  return "refused";
+}
+async function statusSaysAuthenticated(res) {
+  if (!res.ok) return null;
+  let body;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {
+    return null;
+  }
+  const authenticated = body !== null && typeof body === "object" ? body.authenticated : void 0;
+  return authenticated === true ? true : authenticated === false ? false : null;
 }
 const authListeners = /* @__PURE__ */ new Set();
 function subscribeAuth(fn) {
@@ -10675,6 +10715,9 @@ function AuthGate({ children }) {
     (async () => {
       var _a;
       try {
+        const redeemed = await redeemUrlToken();
+        if (!alive) return;
+        if (redeemed === "refused") setError("the sign-in carried in that link was not accepted here; sign in below");
         const [st, fleet] = await Promise.allSettled([fetchAuthStatus(), api("/api/fleet")]);
         if (!alive) return;
         if (fleet.status === "fulfilled") {

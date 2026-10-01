@@ -33,9 +33,9 @@ EVIL = "https://evil.example"
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvcGVyYXRvciJ9.sig"
 
 
-def _jwt(sub: str = "operator", exp_in_s: int = 3600) -> str:
+def _jwt(sub: str = "operator", exp_in_s: int = 3600, via: str = "passkey") -> str:
     """A JWT-shaped token whose payload the browser decodes (the signature is opaque to it), minted at call time."""
-    payload = json.dumps({"sub": sub, "exp": int(time.time()) + exp_in_s, "via": "passkey"})
+    payload = json.dumps({"sub": sub, "exp": int(time.time()) + exp_in_s, "via": via})
     seg = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     return f"eyJhbGciOiJIUzI1NiJ9.{seg}.c2ln"
 
@@ -109,10 +109,40 @@ class TestAUrlBackendDoesNotTakeTheTokenWithIt:
         assert got["stored_token"] is None, f"the token beside a moving backend was kept: {got}"
 
     def test_a_token_handed_off_to_this_page_is_sent_to_this_page_s_backend(self) -> None:
-        """The LAN hand-off the AuthGate advertises names no backend; the page it opens is the robot."""
-        got = _authorization_sent_to("", page=f"http://robot.lan:8090/?token={TOKEN}")
+        """The LAN hand-off the AuthGate advertises names no backend; the page it opens is the robot.
+
+        Since f019 a ``?token=`` is parked until the backend this page is configured
+        for vouches for it (``redeemUrlToken``); once adopted it is bound to THAT
+        host and rides the next request there.
+        """
+        handoff = _jwt(exp_in_s=240, via="handoff")
+        got = run_frontend(
+            """
+const m = await import('./endpoints.ts')
+const yes = { status: 200, headers: {}, body: '{"authenticated": true, "auth_enabled": true}' }
+const no = { status: 200, headers: {}, body: '{"authenticated": false, "auth_enabled": true}' }
+const answering = globalThis.fetch
+globalThis.fetch = (url, init = {}) => {
+  globalThis.answer = (init.headers ?? {}).Authorization ? yes : no
+  return answering(url, init)
+}
+const outcome = await m.redeemUrlToken()
+sent.length = 0
+globalThis.answer = yes
+await m.api('/api/fleet').catch(() => null)
+out({
+  outcome,
+  stored_token: localStorage.getItem('strands.token'),
+  urls: sent.map(s => s.url),
+  authorization: sent.map(s => s.headers.Authorization ?? null),
+})
+""",
+            page=f"http://robot.lan:8090/?token={handoff}",
+        )
+        assert got["outcome"] == "adopted", got
+        assert got["stored_token"] == handoff
         assert got["urls"] == ["/api/fleet"]
-        assert got["authorization"] == [f"Bearer {TOKEN}"]
+        assert got["authorization"] == [f"Bearer {handoff}"]
 
     def test_the_stored_token_is_still_sent_to_the_host_it_was_given_for(self) -> None:
         """No URL parameter: the signed-in page keeps working against its own origin."""
