@@ -27,6 +27,7 @@ import pathlib
 import textwrap
 
 from strands_robots.simulation import base as sim_base
+from tests._package_ast import parse_file
 
 SCENE_VERBS = ("create_world", "add_robot", "add_object", "add_camera")
 
@@ -38,7 +39,7 @@ def _scan_scene_sinks(root: pathlib.Path) -> tuple[set[tuple[str, str]], list[st
     for backend in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("_")):
         for path in sorted(backend.rglob("*.py")):
             try:
-                tree = ast.parse(path.read_text(encoding="utf-8"))
+                tree = parse_file(path)
             except SyntaxError:  # pragma: no cover - not expected in-tree
                 continue
             for node in ast.walk(tree):

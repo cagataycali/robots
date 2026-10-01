@@ -17,6 +17,7 @@ import pathlib
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 TASK = pathlib.Path(inspect.getfile(strands_robots)).parent / "training" / "mjlab_tasks" / "so101_reach.py"
 
@@ -26,7 +27,7 @@ FRAMEWORK_HOOKS = frozenset({"_update_metrics", "_resample_command", "_update_co
 
 
 def _overrides(class_name: str) -> set[str]:
-    tree = ast.parse(TASK.read_text(encoding="utf-8"))
+    tree = parse_file(TASK)
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             return {
