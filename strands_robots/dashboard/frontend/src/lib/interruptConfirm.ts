@@ -5,9 +5,7 @@
  * refusing it; these rules turn that event into a question a human can
  * answer, and the answer into the frame the server expects back.
  *
- * Three gates raise these interrupts and their reason dicts differ:
- *  - the dashboard console's MotionGate (sim joints / reset):
- *      {tool, session_id, positions, detail}
+ * Two gates raise these interrupts and their reason dicts differ:
  *  - the fleet MotionInterruptHook (a task on a real robot):
  *      {tool, action, target, instruction, duration, why_physical}
  *  - the SDK's robot_mesh tool (tell/send/stop/broadcast/emergency_stop/rpc):
@@ -44,7 +42,7 @@ export function parseInterruptEvent(ev: any): MotionConfirm | null {
   if (!ev || ev.type !== 'interrupt' || typeof ev.id !== 'string' || !ev.id.trim()) return null
   const r = ev.reason && typeof ev.reason === 'object' ? ev.reason : {}
   const dur = typeof r.duration === 'number' && isFinite(r.duration) && r.duration > 0 ? r.duration : null
-  const rawTarget = str(r.target) || (str(r.session_id) ? `sim session ${str(r.session_id)}` : '')
+  const rawTarget = str(r.target)
   let command = ''
   if (r.command != null && r.command !== '') {
     try { command = typeof r.command === 'string' ? r.command : JSON.stringify(r.command) } catch { command = '' }

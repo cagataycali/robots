@@ -72,7 +72,7 @@ class TestTheFragmentAndTheViewAgree:
         assert "panelFromHash(location.hash)" in _function_body(source, "function initialPanel()"), (
             "the loaded fragment is not read"
         )
-        clicks = re.findall(r"on(?:Settings|Activity|Devices|Training|Record|Sim|Help)=\{[^}]*\}", source)
-        assert len(clicks) >= 7, f"the tab handlers were not found ({len(clicks)})"
+        clicks = re.findall(r"on(?:Settings|Activity|Devices|Help)=\{[^}]*\}", source)
+        assert len(clicks) >= 4, f"the tab handlers were not found ({len(clicks)})"
         for click in clicks:
             assert "route(" in click, f"a tab handler bypasses the router: {click}"
