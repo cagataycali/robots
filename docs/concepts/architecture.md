@@ -8,6 +8,8 @@ description: Which object Robot(...) returns in each mode, which module owns wha
 
 ## Two lanes behind one factory
 
+{{drawing:d01_what_is}}
+
 ```python title="sketch"
 from strands_robots import Robot
 
@@ -30,6 +32,8 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")  # a na
 The sim lane is the `MuJoCoSimEngine` class: `SimEngine` plus mixins for physics, rendering, recording, randomization, manipulation, motion primitives and teleop, exposed as one tool with an `action` vocabulary. The hardware lane is `hardware_robot.Robot` plus the driver layer; a task runs in a background thread with `TaskStatus` and a stop flag, and a policy dispatch passes the operator gate in `_command_gate.py`.
 
 ## Layers
+
+{{drawing:d02_layers}}
 
 Seven layers, top to bottom; a module imports only from layers below its own:
 
@@ -59,4 +63,4 @@ The package installs with no heavy dependency; each lane pulls its own extra: `[
 
 ## What changes in 1.0
 
-1.0 keeps this layer DAG and changes the layers' size and the number of contracts ([roadmap](roadmap.md)).
+1.0 keeps this layer DAG and changes the layers' size and the number of contracts ([roadmap](../reference/project/roadmap.md)).

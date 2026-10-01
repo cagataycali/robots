@@ -15,7 +15,11 @@ description: "Bitcraze Crazyflie 2 Nano-Quadcopter"
 from strands_robots import Robot
 
 robot = Robot("crazyflie")
+print(robot.robot_joint_names("crazyflie"))
+robot.cleanup()
 ```
+
+Commanded as a setpoint stream; [simulation](../learn/simulation/index.md) covers gravity, timestep and cameras.
 
 ```python title="sketch"
 robot = Robot("crazyflie", mode="real", port="radio://0/80/2M/E7E7E7E7E7")  # CrazyflieDriver

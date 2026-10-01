@@ -13,11 +13,15 @@ URDF from [icub-tech-iit/ergocub-software@v0.7.7](https://github.com/icub-tech-i
 
 <img class="sr-thumb" src="../assets/img/robots/ergocub.webp" alt="ergocub, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("ergocub")
+robot = Robot("ergocub")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("ergocub"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

@@ -15,7 +15,11 @@ description: "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)"
 from strands_robots import Robot
 
 robot = Robot("openarm")
+print(robot.robot_joint_names("openarm"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
 robot = Robot("openarm", mode="real", port="/dev/ttyACM0")  # lerobot openarm_follower

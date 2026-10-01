@@ -13,11 +13,15 @@ URDF from [ankurhanda/robot-assets@12f1a3c](https://github.com/ankurhanda/robot-
 
 <img class="sr-thumb" src="../assets/img/robots/yumi.webp" alt="yumi, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("yumi")
+robot = Robot("yumi")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("yumi"))
+robot.cleanup()
 ```
+
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
 
 ## Policies verified on this robot
 

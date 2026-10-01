@@ -13,11 +13,15 @@ URDF from [ros-aldebaran/romeo_robot@0.1.5](https://github.com/ros-aldebaran/rom
 
 <img class="sr-thumb" src="../assets/img/robots/romeo.webp" alt="romeo, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("romeo")
+robot = Robot("romeo")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("romeo"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

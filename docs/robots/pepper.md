@@ -13,11 +13,15 @@ URDF from [jrl-umi3218/pepper_description@cd9715b](https://github.com/jrl-umi321
 
 <img class="sr-thumb" src="../assets/img/robots/pepper.webp" alt="pepper, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("pepper")
+robot = Robot("pepper")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("pepper"))
+robot.cleanup()
 ```
+
+The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ## Policies verified on this robot
 

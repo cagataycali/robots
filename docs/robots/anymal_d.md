@@ -13,11 +13,15 @@ URDF from [ANYbotics/anymal_d_simple_description@6adc147](https://github.com/ANY
 
 <img class="sr-thumb" src="../assets/img/robots/anymal_d.webp" alt="anymal_d, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("anymal_d")
+robot = Robot("anymal_d")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("anymal_d"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

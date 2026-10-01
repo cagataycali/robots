@@ -1,5 +1,5 @@
 ---
-description: A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs.
+description: "A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs."
 ---
 
 # Universal Robots e-Series

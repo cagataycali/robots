@@ -12,6 +12,8 @@ pip install 'strands-robots[inference]'    # websockets only; composes with lero
 
 ## What it is
 
+{{drawing:d09_remote_inference}}
+
 `RemotePolicy` is a `Policy` whose `get_actions` forwards each observation to a `PolicyServer` over a WebSocket (WS-JSON) and returns the action chunk the server computed. The checkpoint stays on the machine with the GPU; the robot host installs `websockets`. `create_policy` resolves any `ws://` or `wss://` string to this provider, and the client mirrors the served policy's `requires_images`, `execution_horizon`, `actions_per_step` and `supports_rtc`, so the runtime sizes chunks and skips camera rendering as it would in process. The connection opens on first use.
 
 ```python

@@ -13,11 +13,15 @@ URDF from [facebookresearch/differentiable-robot-model@d7bd1b3](https://github.c
 
 <img class="sr-thumb" src="../assets/img/robots/iiwa7.webp" alt="iiwa7, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("iiwa7")
+robot = Robot("iiwa7")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("iiwa7"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ## Policies verified on this robot
 
