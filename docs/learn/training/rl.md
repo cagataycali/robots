@@ -1,10 +1,10 @@
 ---
-description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint format the rl provider reads.
+description: Reinforcement learning from a reward: SimEnv over any SimEngine, the PPO, FastSAC and FastTD3 trainers, every RLTrainSpec field, the checkpoint the rl provider reads.
 ---
 
 # RL training
 
-By the end of this page you have trained a PPO actor against a MuJoCo `SimEnv` on this machine, read its checkpoint back, evaluated it, and know every field the three trainers accept.
+By the end of this page you have trained a PPO actor on a MuJoCo `SimEnv`, read its checkpoint back, evaluated it, and know every field the three trainers accept.
 
 ```python
 import tempfile
@@ -49,7 +49,7 @@ success ['entropy', 'iteration', 'latest_loss', 'latest_step', 'mean_episode_ret
 DeployableActor ['1', '2', '3', '4', '5', '6']
 ```
 
-Real runs use `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it; see [rl](../policies/rl.md).
+Real runs need `total_timesteps` in the hundreds of thousands. `create_policy("rl", checkpoint_dir=result.checkpoint_dir)` drives a robot with it ([rl](../policies/rl.md)).
 
 ```bash
 pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
@@ -57,17 +57,17 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
 
 ## SimEnv
 
-`SimEnv(engine, actor_obs_keys, reward_terms, *, action_dim=None, robot_name=None, critic_obs_keys=None, max_episode_steps=200, action_scale=1.0, n_substeps=5, success_fn=None, reset_fn=None, device="cpu", skip_images=True)` wraps a live `SimEngine` as one environment emitting `(1, D)` tensors.
+`SimEnv(engine, actor_obs_keys, reward_terms, *, action_dim=None, robot_name=None, critic_obs_keys=None, max_episode_steps=200, action_scale=1.0, n_substeps=5, success_fn=None, reset_fn=None, device="cpu", skip_images=True)` wraps a live `SimEngine` as one environment of `(1, D)` tensors.
 
-- `actor_obs_keys`: ordered scalar keys from `get_observation` (joint names, `.vel` companions, floating-base keys). The order is part of the weights.
-- `reward_terms`: `(sim) -> float` callables, summed per step. Build them with `make_predicate` from the float-valued [predicates](../simulation/predicates-and-rollouts.md).
-- `critic_obs_keys`: privileged sim-only keys appended for an asymmetric critic.
-- `action_dim` defaults to `len(engine.robot_action_keys(robot))`, the actuator count, which is not always the joint count.
-- `action_scale` bounds what the actor can command; `0` disconnects it and is refused.
-- `n_substeps=5`: a position servo needs several physics steps to track one target.
-- `success_fn` ends an episode as a real terminal; `max_episode_steps` is a truncation, value-bootstrapped by the trainers. Without `success_fn`, `evaluate` reports `success_measured=False` and a `success_rate` of zero that measures nothing.
+- `actor_obs_keys`: ordered scalar keys from `get_observation` (joint names, `.vel` companions, floating-base keys); the order is part of the weights.
+- `reward_terms`: `(sim) -> float` callables summed per step. Build them with `make_predicate` from the [predicates](../simulation/predicates-and-rollouts.md).
+- `critic_obs_keys`: privileged sim-only keys for an asymmetric critic.
+- `action_dim` defaults to `len(engine.robot_action_keys(robot))`, the actuator count, not always the joint count.
+- `action_scale` bounds what the actor commands; `0` disconnects it and is refused.
+- `n_substeps=5`: a position servo needs several physics steps per target.
+- `success_fn` ends an episode as a real terminal; `max_episode_steps` is a truncation, value-bootstrapped by the trainers. Without `success_fn`, `evaluate` reports `success_measured=False` and a `success_rate` of zero measuring nothing.
 
-`VecSimEnv(env_factory, num_envs)` steps N independent `SimEnv` through one thread pool, stacks to `(N, D)`, and keeps the terminal observation in `infos[i]["terminal_obs"]` across autoreset. `GymSimEnv(sim_env)` wraps one as a `gymnasium.Env`.
+`VecSimEnv(env_factory, num_envs)` steps N independent `SimEnv` through one thread pool, stacks to `(N, D)`, keeping the terminal observation in `infos[i]["terminal_obs"]` across autoreset. `GymSimEnv(sim_env)` is the `gymnasium.Env` wrapper.
 
 ## Trainers
 
@@ -77,7 +77,7 @@ pip install 'strands-robots[rl]'    # torch + gymnasium + [sim-mujoco]
 | `fast_sac` | `FastSacTrainer` | off-policy, replay buffer, entropy temperature | `buffer_size`, `batch_size`, `learning_starts`, `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`, `target_entropy` |
 | `fast_td3` | `FastTd3Trainer` | off-policy, twin critics, delayed actor | the SAC buffer fields plus `policy_delay`, `exploration_noise_std`, `target_noise_std`, `target_noise_clip` |
 
-All three share `setup`, `save_checkpoint`, `load_checkpoint`, `latest_checkpoint` and `evaluate(spec=None, checkpoint_dir=None, num_episodes=10)`; `train` fails closed through `validate`. `evaluate` updates nothing: mean action, gradients off, normalizers frozen.
+All three share `setup`, `save_checkpoint`, `load_checkpoint`, `latest_checkpoint` and `evaluate(spec=None, checkpoint_dir=None, num_episodes=10)`; `train` fails closed via `validate`. `evaluate` updates nothing: mean action, no gradients, normalizers frozen.
 
 ## RLTrainSpec
 
@@ -109,10 +109,10 @@ Booleans are checked, not read by truthiness; counts are positive integers; the 
 
 ## The checkpoint
 
-`save_checkpoint` writes `policy.pt` (the `state_dict`, the frozen `EmpiricalNormalization` state, `provider`) and `policy_meta.json` with `provider`, `num_actor_obs`, `num_critic_obs`, `num_actions`, `actor_obs_keys`, `action_keys`, `hidden_dims`, `iteration`. `read_checkpoint_meta` refuses a file missing any of the first six by name. `load_deployable_actor(checkpoint_dir, device)` rebuilds the network the `provider` names (PPO raw means, FastTD3 a `tanh`, FastSAC a squashed mean/log-std pair), restores weights and normalizer, and returns a `DeployableActor` whose `act(obs)` is what `create_policy("rl")` calls.
+`save_checkpoint` writes `policy.pt` (the `state_dict`, the frozen `EmpiricalNormalization`, `provider`) and `policy_meta.json` with `provider`, `num_actor_obs`, `num_critic_obs`, `num_actions`, `actor_obs_keys`, `action_keys`, `hidden_dims`, `iteration`. `read_checkpoint_meta` refuses a file missing any of the first six, by name. `load_deployable_actor(checkpoint_dir, device)` rebuilds the network the `provider` names (PPO raw means, FastTD3 a `tanh`, FastSAC a squashed mean/log-std pair), restores weights and normalizer, and returns the `DeployableActor` whose `act(obs)` `create_policy("rl")` calls.
 
 ## Limits
 
-- CPU MuJoCo is the only in-process batched path (`VecSimEnv` threads N engines); for GPU-parallel RL use [isaaclab](isaaclab.md).
-- No image observations: `actor_obs_keys` are scalars and `skip_images=True` by default.
-- Three algorithms, one MLP shape each. No recurrent actor; curriculum is whatever `reset_fn` and the terrain `difficulty` knob give you.
+- CPU MuJoCo is the only in-process batched path (`VecSimEnv` threads N engines); GPU-parallel RL: [isaaclab](isaaclab.md).
+- No image observations: `actor_obs_keys` are scalars, `skip_images=True` by default.
+- Three algorithms, one MLP shape each, no recurrent actor; curriculum is whatever `reset_fn` and the terrain `difficulty` knob give.
