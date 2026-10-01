@@ -115,19 +115,15 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.hooks", "HookRegistry"): "1.0.0",
     ("strands.hooks", "BeforeToolCallEvent"): "1.13.0",
     # The dashboard's voice console (``strands_robots.dashboard.voice``) drives
-    # the experimental bidirectional-streaming agent, whose surface was renamed
-    # twice inside 1.x. Measured against the wheels: ``strands/experimental/bidi/``
-    # is absent through 1.18.0; ``BidiAgent`` and ``stop_conversation`` arrive in
-    # 1.19.0; the model classes move to ``models.bedrock.BedrockNovaSonicModel``
-    # and ``models.openai.OpenAIRealtimeModel`` in 1.55.0; and the input the
-    # console sends, ``types.media.AudioDelta``, together with the
-    # ``get_audio_config()`` it reads the stream rates from, arrive in 1.57.0,
-    # which is what sets the floor.
-    ("strands.experimental.bidi", "BidiAgent"): "1.19.0",
-    ("strands.experimental.bidi.tools", "stop_conversation"): "1.19.0",
-    ("strands.experimental.bidi.models.bedrock", "BedrockNovaSonicModel"): "1.55.0",
-    ("strands.experimental.bidi.models.openai", "OpenAIRealtimeModel"): "1.55.0",
-    ("strands.experimental.bidi.types.media", "AudioDelta"): "1.57.0",
+    # the bidirectional-streaming agent. Measured against the wheels: through
+    # 1.57.1 it lives only under ``strands.experimental.bidi``; 1.57.2 promotes
+    # it to ``strands.bidi``, leaves the experimental path as a runtime-only
+    # alias type checkers cannot follow, and drops the built-in
+    # ``stop_conversation`` tool. That promotion sets the floor.
+    ("strands.bidi", "BidiAgent"): "1.57.2",
+    ("strands.bidi.models.bedrock", "BedrockNovaSonicModel"): "1.57.2",
+    ("strands.bidi.models.openai", "OpenAIRealtimeModel"): "1.57.2",
+    ("strands.bidi.types.media", "AudioDelta"): "1.57.2",
 }
 
 
@@ -137,6 +133,8 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
 #: the comment above describes, so they are graded rather than trusted.
 _REQUIRED_MEMBERS: dict[tuple[str, str], tuple[str, ...]] = {
     ("strands.hooks", "BeforeToolCallEvent"): ("interrupt", "cancel_tool"),
+    # The voice console's own stop tool ends the session through ``cancel()``.
+    ("strands.bidi", "BidiAgent"): ("cancel",),
 }
 
 

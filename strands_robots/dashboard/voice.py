@@ -9,6 +9,9 @@ import logging
 import os
 from typing import Any
 
+from strands import tool
+from strands.types.tools import ToolContext
+
 logger = logging.getLogger(__name__)
 
 VOICE_PROMPT = """You are the Strands Robots fleet voice operator. You control real robots and
@@ -56,8 +59,6 @@ def make_fleet_tool(bridge: Any) -> Any:
     fails closed; the refusal is spoken once through the listeners above.
     """
     import json as _json
-
-    from strands import tool
 
     from strands_robots.dashboard.agent_motion import agent_motion_allowed
     from strands_robots.dashboard.mesh_bridge import route_task_target
@@ -161,7 +162,7 @@ BROWSER_INPUT_RATE = 16000
 
 
 def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
-    """One speech-to-speech model, built against the ``strands.experimental.bidi`` 1.57 surface.
+    """One speech-to-speech model, built against the ``strands.bidi`` surface (1.57.2).
 
     ``model_id`` is a required field there, so each backend carries a default the
     operator overrides with ``VOICE_MODEL``.
@@ -171,7 +172,7 @@ def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
     model_id = os.getenv("VOICE_MODEL") or _DEFAULT_MODEL_IDS.get(provider)
 
     if provider in ("nova_sonic", "novasonic", "nova"):
-        from strands.experimental.bidi.models.bedrock import BedrockNovaSonicModel
+        from strands.bidi.models.bedrock import BedrockNovaSonicModel
 
         kwargs: dict[str, Any] = {"model_id": model_id, "region": os.getenv("AWS_REGION", "us-east-1")}
         if v:
@@ -179,7 +180,7 @@ def _build_bidi_model(provider: str, voice: str | None = None) -> Any:
         return BedrockNovaSonicModel(**kwargs)
 
     if provider in ("openai", "openai_realtime"):
-        from strands.experimental.bidi.models.openai import OpenAIRealtimeModel
+        from strands.bidi.models.openai import OpenAIRealtimeModel
 
         kwargs = {"model_id": model_id, "transcription_model_id": None}
         if v:
@@ -206,6 +207,18 @@ def _resample_pcm16(data: bytes, src_rate: int, dst_rate: int) -> bytes:
     return bytes(np.clip(np.rint(out), -32768, 32767).astype("<i2").tobytes())
 
 
+@tool(context=True)
+def stop_conversation(tool_context: ToolContext) -> str:
+    """End the spoken conversation.
+
+    Use ONLY when the user says "stop conversation" exactly. Do NOT use for
+    "stop", "goodbye", "bye", "exit" or other farewells.
+    """
+    # strands 1.57.2 dropped its built-in stop tool; a BidiAgent ends the session on cancel().
+    tool_context.agent.cancel()
+    return "Ending conversation"
+
+
 def build_voice_agent(provider: str | None = None, voice: str | None = None, *, bridge: Any = None) -> Any:
     """BidiAgent with the fleet toolset. Caller supplies browser audio IO.
 
@@ -227,8 +240,7 @@ def build_voice_agent(provider: str | None = None, voice: str | None = None, *, 
     fleet tool here holds no strands_tools tool that prompts, so it needs no
     bypass to run.
     """
-    from strands.experimental.bidi import BidiAgent
-    from strands.experimental.bidi.tools import stop_conversation
+    from strands.bidi import BidiAgent
 
     provider = provider or os.getenv("VOICE_PROVIDER", "openai")
     voice = voice or os.getenv("VOICE_NAME") or None
@@ -254,7 +266,7 @@ async def run_voice_session(ws: Any, *, bridge: Any = None) -> None:
     # first spoken word. Input is the 1.57 ``AudioDelta`` (format + bytes only:
     # the rate is the model's, read from ``get_audio_config()``).
     from fastapi import WebSocketDisconnect
-    from strands.experimental.bidi.types.media import AudioDelta
+    from strands.bidi.types.media import AudioDelta
 
     def _event_type(event: Any) -> str:
         try:

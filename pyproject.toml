@@ -65,21 +65,17 @@ dependencies = [
     # ``strands.types._events.ToolInterruptEvent`` (both absent from the 1.12.0
     # wheel), so they sit on the floor rather than raise it.
     #
-    # The bound is 1.57.0 rather than 1.13.0 because the dashboard's voice
-    # console (``strands_robots.dashboard.voice``) drives the experimental
-    # bidirectional-streaming agent, whose surface was renamed twice inside 1.x:
-    # the input it sends, ``strands.experimental.bidi.types.media.AudioDelta``,
-    # first ships in 1.57.0 (with the ``get_audio_config()`` it reads the stream
-    # rates from), which is what sets this floor. The rest of that surface is
-    # older: ``strands.experimental.bidi.BidiAgent`` and
-    # ``strands.experimental.bidi.tools.stop_conversation`` from 1.19.0,
-    # ``strands.experimental.bidi.models.bedrock.BedrockNovaSonicModel`` and
-    # ``strands.experimental.bidi.models.openai.OpenAIRealtimeModel`` from
-    # 1.55.0. See
+    # The bound is 1.57.2 rather than 1.13.0 because the dashboard's voice
+    # console (``strands_robots.dashboard.voice``) drives the bidirectional-
+    # streaming agent, which 1.57.2 promotes out of ``strands.experimental``:
+    # ``strands.bidi.BidiAgent``, ``strands.bidi.models.bedrock.BedrockNovaSonicModel``,
+    # ``strands.bidi.models.openai.OpenAIRealtimeModel`` and
+    # ``strands.bidi.types.media.AudioDelta`` first ship there in 1.57.2, which
+    # is what sets this floor. See
     # tests/test_strands_agents_floor_ships_the_imported_api.py, which owns that
     # measurement, grades the members the gate calls, and fails the moment a
     # newer strands symbol is imported without raising this floor.
-    "strands-agents>=1.57.0,<2.0.0",
+    "strands-agents>=1.57.2,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
     # Pillow < 12.3.0 carries eleven HIGH advisories (heap OOB write in
@@ -711,7 +707,7 @@ ros2 = [
 # Delegate to strands-agents' own [ollama] extra (bounded pin, ollama>=0.4.8,<1.0.0)
 # so the client version stays in sync with the code that imports it.
 ollama = [
-    "strands-agents[ollama]>=1.57.0,<2.0.0",
+    "strands-agents[ollama]>=1.57.2,<2.0.0",
 ]
 # Live Foxglove view and MCAP recording (strands_robots/foxglove/). foxglove-sdk
 # is a Rust wheel (abi3, about 16 MB) that serves the Foxglove WebSocket
@@ -778,7 +774,7 @@ dashboard = [
     "huggingface_hub>=1.5,<2.0.0",
 ]
 # The dashboard's voice operator (``strands_robots.dashboard.voice``): the
-# experimental bidirectional-streaming agent and its two speech-to-speech
+# bidirectional-streaming agent (``strands.bidi``) and its two speech-to-speech
 # backends, Nova Sonic and OpenAI Realtime. Separate from [dashboard] because
 # ``[bidi]`` pulls the Bedrock runtime SDK, which an operator who never opens
 # the microphone should not have to install; the /ws/voice route refuses with
@@ -790,7 +786,7 @@ dashboard = [
 # its SDK, google-genai, caps websockets below 17 as well, so it cannot be
 # installed next to this package.
 voice = [
-    "strands-agents[bidi]>=1.57.0,<2.0.0",
+    "strands-agents[bidi]>=1.57.2,<2.0.0",
 ]
 all = [
     "strands-robots[moveit2]",
