@@ -222,12 +222,15 @@ IO_DESCRIPTORS_FILE = "io_descriptors/IO_descriptors.yaml"
 #: the IO descriptors of a run trained before they were always requested.
 IO_DESCRIPTORS_TIMEOUT_S = 900
 
-# Parses a YAML file in the Isaac Lab interpreter and prints it as JSON, with
-# ``!!python/...`` tags read as null (see ``IsaacLabTrainer._read_yaml``).
+# Parses a YAML file in the Isaac Lab interpreter and prints it as JSON, with a
+# ``!!python/...``-tagged SEQUENCE read as a plain list (``!!python/tuple`` is how
+# ``dump_yaml`` writes an ObsTerm's ``clip``) and every other tagged node read
+# as null (see ``IsaacLabTrainer._read_yaml``). Same rule as the in-process loader.
 _YAML_TO_JSON = (
     "import json, sys, yaml\n"
     "class L(yaml.SafeLoader): pass\n"
-    "L.add_multi_constructor('tag:yaml.org,2002:python/', lambda l, s, n: None)\n"
+    "L.add_multi_constructor('tag:yaml.org,2002:python/', lambda l, s, n: "
+    "l.construct_sequence(n, deep=True) if isinstance(n, yaml.SequenceNode) else None)\n"
     "print(json.dumps(yaml.load(open(sys.argv[1]), Loader=L), default=str))"
 )
 _TAIL_LINES = 12
@@ -1045,9 +1048,13 @@ class IsaacLabTrainer(Trainer):
     def _read_yaml(self, path: Path) -> dict[str, Any]:
         """Parse a YAML file with PyYAML when installed, else with the Isaac Lab interpreter's.
 
-        Isaac Lab's ``params/env.yaml`` carries ``!!python/...`` tags (tuples,
-        slices, callables); they are read as ``None`` - nothing here needs them
-        - rather than refused, and nothing is ever constructed from them.
+        Isaac Lab's ``params/env.yaml`` carries ``!!python/...`` tags. A tagged
+        SEQUENCE is read as a plain list: ``class_to_dict`` keeps an ObsTerm's
+        ``clip=(-1.0, 1.0)`` a tuple and the default Dumper writes it as
+        ``!!python/tuple``, and that clip is the only record of the range a
+        ``height_scan`` actor trained on, so nulling it would bake ``clip: null``
+        into every exported contract. Every other tagged node (objects, slices,
+        callables) is read as ``None``; nothing is ever constructed from a tag.
         """
         try:
             import yaml  # type: ignore[import-untyped]
@@ -1065,7 +1072,12 @@ class IsaacLabTrainer(Trainer):
             class _Loader(yaml.SafeLoader):
                 pass
 
-            _Loader.add_multi_constructor("tag:yaml.org,2002:python/", lambda loader, suffix, node: None)
+            _Loader.add_multi_constructor(
+                "tag:yaml.org,2002:python/",
+                lambda loader, suffix, node: (
+                    loader.construct_sequence(node, deep=True) if isinstance(node, yaml.SequenceNode) else None
+                ),
+            )
             parsed = yaml.load(path.read_text(encoding="utf-8"), Loader=_Loader)  # noqa: S506 - SafeLoader subclass
         if not isinstance(parsed, dict):
             raise ValueError(f"{path} is not a YAML mapping")

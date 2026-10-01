@@ -310,3 +310,67 @@ class TestContractJointsBindByName:
         }
         with pytest.raises(ValueError, match="never by position"):
             bind_contract_joints(["slider_to_cart"], ["cart_x"], {})
+
+
+# What Isaac Lab's dump_yaml really writes for an ObsTerm with clip=(-1.0, 1.0):
+# class_to_dict keeps the tuple and the default Dumper tags it. The loader must
+# read the SEQUENCE under the tag, not null the node: the clip is the only
+# source of height_scan's training range, and a nulled clip is baked into every
+# exported contract.
+_ENV_YAML_WITH_TAGGED_CLIP = """observations:
+  policy:
+    height_scan:
+      func: isaaclab.envs.mdp.observations:height_scan
+      clip: !!python/tuple
+      - -1.0
+      - 1.0
+      scale: 1.0
+      params:
+        offset: 0.5
+    base_lin_vel:
+      func: isaaclab.envs.mdp.observations:base_lin_vel
+      clip: null
+      scale: !!python/tuple [2.0, 2.0, 2.0]
+      params: {}
+    joint_pos:
+      func: isaaclab.envs.mdp.observations:joint_pos_rel
+      noise: !!python/object:isaaclab.utils.noise.noise_cfg.UniformNoiseCfg
+        n_min: -0.01
+        n_max: 0.01
+      params: {}
+"""
+
+
+class TestARealEnvYamlKeepsItsClip:
+    def test_a_tuple_tagged_clip_survives_the_read_into_the_contract(self, tmp_path: Path) -> None:
+        from strands_robots.training.rl.deploy_contract import env_cfg_terms
+
+        path = tmp_path / "env.yaml"
+        path.write_text(_ENV_YAML_WITH_TAGGED_CLIP)
+        env_cfg = _trainer()._read_yaml(path)
+
+        terms = {t["term"]: t for t in env_cfg_terms(env_cfg)}
+        assert terms["height_scan"]["clip"] == [-1.0, 1.0]
+        assert terms["base_lin_vel"]["scale"] == [2.0, 2.0, 2.0]  # a tagged flow sequence too
+        assert terms["base_lin_vel"]["clip"] is None  # a real null stays null
+
+    def test_a_tagged_object_is_still_never_constructed(self, tmp_path: Path) -> None:
+        """Only sequences are read through the tag; an object node reads as None, as before."""
+        path = tmp_path / "env.yaml"
+        path.write_text(_ENV_YAML_WITH_TAGGED_CLIP)
+        env_cfg = _trainer()._read_yaml(path)
+        assert env_cfg["observations"]["policy"]["joint_pos"]["noise"] is None
+
+    def test_the_interpreter_fallback_reads_the_same_shape(self, tmp_path: Path) -> None:
+        """Without PyYAML in this process the Isaac Lab interpreter parses; same rule."""
+        import subprocess
+        import sys
+
+        from strands_robots.training.isaaclab import _YAML_TO_JSON
+
+        path = tmp_path / "env.yaml"
+        path.write_text(_ENV_YAML_WITH_TAGGED_CLIP)
+        out = subprocess.run([sys.executable, "-c", _YAML_TO_JSON, str(path)], capture_output=True, check=True)
+        parsed = json.loads(out.stdout)
+        assert parsed["observations"]["policy"]["height_scan"]["clip"] == [-1.0, 1.0]
+        assert parsed["observations"]["policy"]["joint_pos"]["noise"] is None
