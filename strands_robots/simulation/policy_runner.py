@@ -883,6 +883,44 @@ def _extract_result_json(result: object) -> dict[str, Any] | None:
     return None
 
 
+def _diverged_error(result: object) -> str | None:
+    """The backend's divergence sentence when ``result`` reports one, else ``None``.
+
+    A backend whose physics diverged under a ``send_action``/``step`` answers
+    ``status="error"`` with ``{"json": {"diverged": True}}`` (the MuJoCo backend
+    after MuJoCo reset the world). Every later step of the rollout would drive a
+    robot that is no longer where the policy put it, so the loops stop on it.
+    """
+    if not isinstance(result, dict) or result.get("status") != "error":
+        return None
+    payload = _extract_result_json(result)
+    if payload is None or payload.get("diverged") is not True:
+        return None
+    return "; ".join(
+        str(block["text"]) for block in result.get("content", []) or [] if isinstance(block, dict) and "text" in block
+    )
+
+
+class _PhysicsDiverged(RuntimeError):
+    """An evaluation episode's physics diverged; the evaluation stops on it."""
+
+
+def _raise_if_diverged(result: object, episode: int, step: int) -> None:
+    """Stop an evaluation episode whose physics diverged (see :func:`_diverged_error`).
+
+    Args:
+        result: What ``send_action``/``step`` returned.
+        episode: The episode index, for the report.
+        step: The episode-local step, for the report.
+
+    Raises:
+        _PhysicsDiverged: When ``result`` reports a divergence, so a success
+            rate is never computed over a world the backend reset.
+    """
+    if (diverged := _diverged_error(result)) is not None:
+        raise _PhysicsDiverged(f"episode {episode}, step {step}: {diverged}")
+
+
 def _recorded_action_names(ds: object) -> list[str] | None:
     """The names a LeRobotDataset wrote for its ``action`` column, or ``None``.
 
@@ -1775,6 +1813,18 @@ class PolicyRunner:
             return f"save_episode: {result.get('message', result)}"
         return None
 
+    def _discard_recorder_episode(self) -> None:
+        """Drop the attached recorder's unsaved frames of a diverged episode.
+
+        Its last frames show the world MuJoCo reset, not the task, so the
+        episode is not a demonstration; the next one starts at frame 0.
+        """
+        world = getattr(self.sim, "_world", None)
+        recorder = world._backend_state.get("dataset_recorder") if world is not None else None
+        clear = getattr(recorder, "clear_episode_buffer", None)
+        if callable(clear):
+            clear()
+
     # run(): blocking policy execution
     @_close_started_lifecycle_on_escape
     def run(
@@ -2606,6 +2656,8 @@ class PolicyRunner:
                     _has_complete_breakdown = False
                     if _is_error:
                         _action_errors += 1
+                        if (_diverged := _diverged_error(_send_result)) is not None:
+                            raise RuntimeError(f"{_diverged} The rollout stopped at step {step_count}.")
                         _json = _extract_result_json(_send_result)
                         if _json is not None and isinstance(action_dict, dict):
                             _raw_applied = _json.get("applied")
@@ -3488,7 +3540,11 @@ class PolicyRunner:
                 # ``frames_with_action`` check after the loop.
                 if not actionless_frame_columns and isinstance(frame, dict):
                     actionless_frame_columns = sorted(str(k) for k in frame)
-                self.sim.step(n_steps=substeps.next())
+                if (diverged := _diverged_error(self.sim.step(n_steps=substeps.next()))) is not None:
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"{diverged} Replay stopped at frame {frame_idx}."}],
+                    }
                 frames_applied += 1
             else:
                 if hasattr(action_vals, "numpy"):
@@ -4172,6 +4228,7 @@ class PolicyRunner:
 
         stopped_early = False
         recording_save_error: str | None = None
+        physics_error: str | None = None
         try:
             for ep in range(n_episodes):
                 self.sim.reset()
@@ -4258,7 +4315,11 @@ class PolicyRunner:
                         for _observation, action_dict in chunks:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
+                            _raise_if_diverged(
+                                self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next()),
+                                ep,
+                                steps,
+                            )
                             _fire_on_frame(_observation, action_dict, steps)
                             steps += 1
                             if action_commands_robot(action_dict):
@@ -4284,7 +4345,7 @@ class PolicyRunner:
                             # step so episodes don't hang on degenerate policies,
                             # then check the post-step observation (same post-action
                             # semantics as the chunk branch below).
-                            self.sim.step(n_steps=1)
+                            _raise_if_diverged(self.sim.step(n_steps=1), ep, steps)
                             steps += 1
                             if resolved_check is not None and _criterion_verdict(
                                 resolved_check, _observation_fn(), label="success_fn", episode=ep, step=steps
@@ -4296,7 +4357,11 @@ class PolicyRunner:
                         for action_dict in chunk:
                             if steps >= max_steps:
                                 break
-                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
+                            _raise_if_diverged(
+                                self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next()),
+                                ep,
+                                steps,
+                            )
                             _fire_on_frame(observation, action_dict, steps)
                             steps += 1
                             if action_commands_robot(action_dict):
@@ -4352,6 +4417,14 @@ class PolicyRunner:
                     recording_save_error = f"episode {ep}: {recording_save_error}"
                     break
 
+        except _PhysicsDiverged as e:
+            # The diverged episode is not averaged over: it is dropped, its
+            # frames discarded, and the status says why the run is short.
+            physics_error = str(e)
+            self._discard_recorder_episode()
+            if current_vwriter is not None:
+                current_vwriter.close()
+                current_vwriter = None
         except CooperativeStop:
             # A user/backend on_frame hook requested a graceful stop (the
             # same signal run() honors). End the evaluation over the episodes
@@ -4399,7 +4472,9 @@ class PolicyRunner:
         )
 
         return {
-            "status": "error" if recording_save_error is not None or uncommanded_error is not None else "success",
+            "status": "error"
+            if recording_save_error is not None or uncommanded_error is not None or physics_error is not None
+            else "success",
             "content": [
                 {
                     "text": (
@@ -4409,6 +4484,7 @@ class PolicyRunner:
                             if recording_save_error is not None
                             else ""
                         )
+                        + (f"Stopped at {physics_error}\n" if physics_error is not None else "")
                         + f"Episodes: {n_completed}"
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
                         + (
@@ -4449,6 +4525,7 @@ class PolicyRunner:
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,
                         "recording_save_error": recording_save_error,
+                        "physics_error": physics_error,
                         "n_success": n_success,
                         # Derived from ``n_success`` and ``episodes_completed``, both
                         # reported here, rather than from a reward - so the reliability
@@ -4631,6 +4708,7 @@ class PolicyRunner:
 
         stopped_early = False
         recording_save_error: str | None = None
+        physics_error: str | None = None
         try:
             for ep in range(n_episodes):
                 self.sim.reset()
@@ -4806,13 +4884,17 @@ class PolicyRunner:
                     stop_episode = False
                     if not actions:
                         # Degenerate policy - advance physics so loop terminates.
-                        self.sim.step(n_steps=1)
+                        _raise_if_diverged(self.sim.step(n_steps=1), ep, steps)
                     else:
                         for action_in_chunk in actions:
                             if steps >= max_steps:
                                 break
                             action_applied = dict(action_in_chunk)
-                            self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=substeps.next())
+                            _raise_if_diverged(
+                                self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=substeps.next()),
+                                ep,
+                                steps,
+                            )
                             if action_commands_robot(action_applied):
                                 actions_applied += 1
                             # #191 - synchronous on_frame hook fires on the
@@ -4953,6 +5035,12 @@ class PolicyRunner:
                     recording_save_error = f"episode {ep}: {recording_save_error}"
                     break
 
+        except _PhysicsDiverged as e:
+            # The diverged episode is not averaged over: see ``evaluate``.
+            physics_error = str(e)
+            self._discard_recorder_episode()
+            if current_vwriter is not None:
+                current_vwriter.close()
         except CooperativeStop:
             # A user/backend on_frame hook requested a graceful stop (the
             # same signal run() honors). End the benchmark over the episodes
@@ -5002,7 +5090,9 @@ class PolicyRunner:
         avg_max_step_reward = round(sum(_peaks) / len(_peaks), 4) if _peaks else None
 
         return {
-            "status": "error" if recording_save_error is not None or uncommanded_error is not None else "success",
+            "status": "error"
+            if recording_save_error is not None or uncommanded_error is not None or physics_error is not None
+            else "success",
             "content": [
                 {
                     "text": (
@@ -5012,6 +5102,7 @@ class PolicyRunner:
                             if recording_save_error is not None
                             else ""
                         )
+                        + (f"Stopped at {physics_error}\n" if physics_error is not None else "")
                         + f"Episodes: {n_completed}"
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
                         + f" | Success: {n_success} | Failure: {n_failure} ({success_rate:.1%} success)\n"
@@ -5048,6 +5139,7 @@ class PolicyRunner:
                         "episodes_completed": n_completed,
                         "stopped_early": stopped_early,
                         "recording_save_error": recording_save_error,
+                        "physics_error": physics_error,
                         "n_success": n_success,
                         "n_failure": n_failure,
                         "avg_steps": round(avg_steps, 1),
