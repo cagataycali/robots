@@ -96,4 +96,3 @@ def test_a_robot_only_conversion_still_drops_its_floor(converted, monkeypatch) -
     stage = Usd.Stage.Open(usd)
     assert not stage.GetPrimAtPath("/probe/Geometry/floor").IsActive()
     assert stage.GetPrimAtPath("/probe/Geometry/base").IsActive()
-
