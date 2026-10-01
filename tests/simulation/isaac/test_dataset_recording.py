@@ -205,12 +205,14 @@ def test_get_observation_forces_images_while_recording() -> None:
     assert obs["front"].shape == (48, 64, 3)
 
 
-def test_get_observation_refreshes_render_products_for_multi_camera() -> None:
-    """>1 camera triggers the render-product refresh before frame read-back.
+def test_get_observation_refreshes_render_products_once_per_physics_step() -> None:
+    """Every camera count refreshes the render products once per physics step.
 
     Regression pin for the stale-render-product wrinkle: without the refresh a
     second camera's ``get_rgba`` returns a stale buffer and multi-cam
-    recordings duplicate frames. One camera must NOT pay the refresh cost.
+    recordings duplicate frames. The refresh is keyed on the physics step, so a
+    single camera pays it too - a read after an action must show the action -
+    while a repeated read between steps is free.
     """
     world = _StubWorld()
     engine = _make_engine(
@@ -226,7 +228,10 @@ def test_get_observation_refreshes_render_products_for_multi_camera() -> None:
     single_world = _StubWorld()
     single._world = single_world
     single.get_observation("so100")
-    assert single_world.render_steps == 0, "single-camera observation must skip the refresh"
+    assert single_world.render_steps >= 1, "single-camera observation refreshes too (once per step)"
+    refreshed = single_world.render_steps
+    single.get_observation("so100")
+    assert single_world.render_steps == refreshed, "a repeated read at the same physics step is free"
 
 
 def test_describe_advertises_recording_family() -> None:

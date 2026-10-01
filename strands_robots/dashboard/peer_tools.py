@@ -22,6 +22,8 @@ Everything above the wire is a PURE rule in this module, tested without a mesh.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import keyword
 import re
@@ -147,8 +149,8 @@ def sanitize_tool_name(peer_id: str, taken: frozenset[str] | set[str] = frozense
 
 # ── tool specs ───────────────────────────────────────────────────────────────
 
-#: What a sim peer accepts on the wire (``strands_robots.mesh.security.ALLOWED_ACTIONS``
-#: as ``mesh.core._dispatch`` serves them for a Simulation or its child SimRobot).
+#: The mesh verbs a sim peer answers directly (``mesh.security.ALLOWED_ACTIONS`` as
+#: ``mesh.core._dispatch`` serves them for a Simulation or its child SimRobot).
 SIM_ACTIONS: tuple[str, ...] = ("status", "state", "set_joints", "reset", "step", "stop", "execute", "start")
 
 #: The policy keys both proxy schemas offer on execute/start (forwarded as ``_POLICY_FIELDS``).
@@ -178,52 +180,108 @@ _POLICY_PROPERTIES: dict[str, Any] = {
         "type": "string",
         "description": (
             "execute/start with lerobot_local: the registry embodiment the checkpoint was trained for "
-            "(e.g. so101); it carries the unit frame and the camera renames, so a degrees trained "
-            "checkpoint is not applied in radians"
+            "(e.g. so101): its unit frame and camera renames"
         ),
     },
 }
 
-_SIM_INPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
+
+#: Fields the mesh verbs take, with the wire's own wording. A published simulation
+#: param of the same name (``robot_name``, ``duration``, ``instruction``,
+#: ``policy_provider``) keeps this entry: the verb reads it first.
+_SIM_VERB_FIELDS: dict[str, Any] = {
+    "target_joints": {
+        "type": "object",
+        "description": "set_joints: joint name (or 1-based index as a string) -> radians",
+        "additionalProperties": {"type": "number"},
+    },
+    "hold": {
+        "type": "boolean",
+        "description": "set_joints: re-seed the servos so the pose survives the next step (default true)",
+    },
+    "steps": {"type": "integer", "description": "step: how many physics steps (default 1)"},
+    "instruction": {"type": "string", "description": "execute/start: natural language task"},
+    "policy_provider": {
+        "type": "string",
+        "description": (
+            "execute/start: a provider from this peer's `policies.can_run`, e.g. wbc, lerobot_local. "
+            "mock is a sine test, not a task (default mock)"
+        ),
+    },
+    **_POLICY_PROPERTIES,
+    "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
+    "robot_name": {
+        "type": "string",
+        "description": "a Simulation holding several robots: which one, for set_joints/execute/start; state, reset, step and status take none",
+    },
+}
+
+
+#: How much of a published param's description the proxy repeats: its first
+#: sentence, at most this many characters. The full text is one ``describe``
+#: away on the peer; the proxy is one of several tools in every model call.
+_SIM_PARAM_DESCRIPTION_CHARS = 140
+
+
+def _first_sentence(text: str) -> str:
+    flat = " ".join(text.split())
+    match = re.match(r"(.+?\.)(\s|\Z)", flat)
+    return (match.group(1) if match else flat)[:_SIM_PARAM_DESCRIPTION_CHARS]
+
+
+def _sim_tool_properties() -> dict[str, Any]:
+    """The simulation tool's published params the wire carries, descriptions cut to a sentence."""
+    from strands_robots.mesh.security import _sim_tool_spec, sim_call_allowed_params
+
+    props: dict[str, Any] = _sim_tool_spec()["properties"]
+    out: dict[str, Any] = {}
+    for name in sorted(sim_call_allowed_params()):
+        if name not in props:
+            continue
+        prop = dict(props[name])
+        if isinstance(prop.get("description"), str):
+            prop["description"] = _first_sentence(prop["description"])
+        out[name] = prop
+    return out
+
+
+def sim_call_actions() -> tuple[str, ...]:
+    """The published actions the proxy offers over ``sim_call``, sorted; a mesh verb of the same name wins."""
+    from strands_robots.mesh.security import sim_call_allowed_actions
+
+    return tuple(sorted(sim_call_allowed_actions() - set(SIM_ACTIONS)))
+
+
+def _sim_input_schema() -> dict[str, Any]:
+    """The sim proxy's input: the mesh verbs first, then every published action the wire carries.
+
+    Built once from ``tool_spec.json`` through the security module's reading of it,
+    so the proxy cannot advertise an action or a param the wire refuses.
+    """
+    calls = sim_call_actions()
+    properties: dict[str, Any] = {
         "action": {
             "type": "string",
-            "description": "status | state | set_joints | reset | step | stop | execute | start",
-            "enum": list(SIM_ACTIONS),
+            "description": (" | ".join(SIM_ACTIONS) + " | or one of the simulation's own actions: " + ", ".join(calls)),
+            "enum": [*SIM_ACTIONS, *calls],
             "default": "state",
         },
-        "target_joints": {
-            "type": "object",
-            "description": "set_joints: joint name (or 1-based index as a string) -> radians",
-            "additionalProperties": {"type": "number"},
-        },
-        "hold": {
-            "type": "boolean",
-            "description": "set_joints: re-seed the servos so the pose survives the next step (default true)",
-        },
-        "steps": {"type": "integer", "description": "step: how many physics steps (default 1)"},
-        "instruction": {"type": "string", "description": "execute/start: natural language task"},
-        "policy_provider": {
-            "type": "string",
-            "description": (
-                "execute/start: which policy backend. Pick from this peer's `policies.can_run` in the fleet "
-                "listing, e.g. wbc, lerobot_local. A Unitree G1 walks with wbc; an arm runs lerobot_local "
-                "with a checkpoint; mock is a sine test, not a task (default mock)"
-            ),
-        },
-        **_POLICY_PROPERTIES,
-        "duration": {"type": "number", "description": "execute/start: seconds (positive, finite)"},
-        "robot_name": {
-            "type": "string",
-            "description": (
-                "set_joints/execute/start on a Simulation holding several robots: which one. "
-                "state, reset, step and status act on the whole peer and take none"
-            ),
-        },
-    },
-    "required": ["action"],
-}
+        **_SIM_VERB_FIELDS,
+    }
+    for name, prop in _sim_tool_properties().items():
+        properties.setdefault(name, prop)
+    return {"type": "object", "properties": properties, "required": ["action"]}
+
+
+_SIM_INPUT_SCHEMA_CACHE: dict[str, Any] | None = None
+
+
+def sim_input_schema() -> dict[str, Any]:
+    """:func:`_sim_input_schema`, built on first use and shared by every sim proxy."""
+    global _SIM_INPUT_SCHEMA_CACHE
+    if _SIM_INPUT_SCHEMA_CACHE is None:
+        _SIM_INPUT_SCHEMA_CACHE = _sim_input_schema()
+    return _SIM_INPUT_SCHEMA_CACHE
 
 
 def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | None:
@@ -233,13 +291,18 @@ def peer_tool_spec(peer_id: str, kind: str, tool_name: str) -> dict[str, Any] | 
             "name": tool_name,
             "description": (
                 f"Simulation peer '{peer_id}' as a native tool (routed over the mesh to the MuJoCo "
-                f"process that owns it). Actions: status, state (joint names and positions), "
+                f"process that owns it). Mesh verbs: status, state (joint names and positions), "
                 f"set_joints (write target_joints in radians, held by the servos), reset, step, stop, "
                 f"and execute/start (a policy rollout: instruction + policy_provider, e.g. mock or "
-                f"lerobot_local with pretrained_name_or_path). Never real hardware, so nothing here "
-                f"asks the operator first."
+                f"lerobot_local with pretrained_name_or_path). Every other action in the enum is the "
+                f"simulation's own tool action, called with its parameters as top-level fields, e.g. "
+                f"action=add_object name=red_cube shape=box size=[0.02,0.02,0.02] color=[1,0,0,1] "
+                f"position=[0.25,0,0.02]; then list_objects, move_object, add_camera, render "
+                f"(returns the image), get_robot_state, set_joint_positions, move_to, set_gripper. "
+                f"The peer answers as the simulation tool answers in process. Never real hardware, "
+                f"so nothing here asks the operator first."
             ),
-            "inputSchema": {"json": _SIM_INPUT_SCHEMA},
+            "inputSchema": {"json": sim_input_schema()},
         }
     if kind == KIND_REAL:
         return {
@@ -356,6 +419,44 @@ _SIM_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _map_sim_call(action: str, tool_input: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """A published simulation action -> the ``sim_call`` command, or why not.
+
+    Every top-level field the caller set becomes a param; a field the wire refuses
+    (a peer-host path, raw MJCF, an egress switch) is refused here with the wire's
+    reason instead of costing a round trip, and a denied action names its rail.
+    """
+    from strands_robots.mesh.security import (
+        SIM_CALL_DENIED_ACTIONS,
+        SIM_CALL_DENIED_PARAMS,
+        SIM_CALL_RAIL_FOR,
+        sim_call_allowed_actions,
+        sim_call_allowed_params,
+    )
+
+    if action in SIM_CALL_DENIED_ACTIONS:
+        rail = SIM_CALL_RAIL_FOR.get(action)
+        how = f"use action={rail!r} on this tool" if rail else "it is not carried over the mesh"
+        return None, f"{action!r} is not offered on a mesh sim: {how}"
+    if action not in sim_call_allowed_actions():
+        valid = ", ".join([*SIM_ACTIONS, *sim_call_actions()])
+        return None, f"unknown action {action!r} for this sim. Valid: {valid}"
+    params = {k: v for k, v in tool_input.items() if v is not None}
+    refused = sorted(k for k in params if k in SIM_CALL_DENIED_PARAMS)
+    if refused:
+        return None, (
+            f"{', '.join(refused)} cannot travel to a mesh sim (a peer-host path, raw MJCF or an egress "
+            "switch); leave it out and the peer's own default applies"
+        )
+    verb_only = sorted(k for k in params if k in _SIM_VERB_FIELDS and k not in sim_call_allowed_params())
+    if verb_only:
+        return None, (
+            f"{', '.join(verb_only)} belongs to the mesh verbs ({', '.join(SIM_ACTIONS)}), not to {action}; "
+            "pass the simulation action's own parameters"
+        )
+    return {"action": "sim_call", "sim_action": action, "params": params}, None
+
+
 def map_invocation(
     peer_id: str, kind: str, tool_input: Mapping[str, Any] | None
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -373,7 +474,7 @@ def map_invocation(
 
     if kind == KIND_SIM:
         if action not in SIM_ACTIONS:
-            return None, f"unknown action {action!r} for this sim. Valid: {', '.join(SIM_ACTIONS)}"
+            return _map_sim_call(action, tool_input)
         cmd: dict[str, Any] = {"action": action}
         for field in _SIM_FIELDS.get(action, ()):
             if tool_input.get(field) is not None:
@@ -400,6 +501,20 @@ def map_invocation(
 
 
 # ── the AgentTool proxy ──────────────────────────────────────────────────────
+
+
+def _image_block_from_wire(block: Any) -> Any:
+    """A ``sim_call`` image block back into the shape the model reads (raw bytes under ``source``)."""
+    if not isinstance(block, dict):
+        return block
+    image = block.get("image")
+    if not isinstance(image, dict) or not isinstance(image.get("base64"), str):
+        return block
+    try:
+        raw = base64.b64decode(image["base64"], validate=True)
+    except ValueError:  # binascii.Error is a ValueError
+        return {"text": "[image block from the peer could not be decoded]"}
+    return {"image": {"format": image.get("format", "png"), "source": {"bytes": raw}}}
 
 
 def _agent_tool_base() -> type:
@@ -549,7 +664,10 @@ def build_peer_tools(
                         )
                         return
             try:
-                res = send_cmd(self._peer_id, cmd, timeout=30.0, source="agent")
+                # Off the event loop: the send blocks until the peer answers (a
+                # render, a move_to) and the agent socket's keepalive must keep
+                # flowing meanwhile.
+                res = await asyncio.to_thread(send_cmd, self._peer_id, cmd, timeout=30.0, source="agent")
             except Exception as exc:  # noqa: BLE001 - the wire's failure IS the result
                 fail = f"mesh send to '{self._peer_id}' failed: {exc}"
                 if staleness_note:
@@ -563,10 +681,18 @@ def build_peer_tools(
                 )
                 return
             res = res if isinstance(res, dict) else {"result": res}
+            # The bridge hands back the wire envelope; the peer's answer is its
+            # ``result``. A dispatch answer with a status and content (the
+            # simulation tool's own envelope) is what the model should read.
+            inner = res.get("result")
+            if res.get("type") == "response" and isinstance(inner, dict) and not res.get("error"):
+                res = inner
             status = str(res.get("status") or ("error" if res.get("error") else "success"))
             content = res.get("content")
             if not isinstance(content, list):
                 content = [{"text": json.dumps(res, default=str)[:8000]}]
+            else:
+                content = [_image_block_from_wire(block) for block in content]
             if staleness_note:
                 content = list(content) + [{"text": staleness_note}]
             yield ToolResultEvent(

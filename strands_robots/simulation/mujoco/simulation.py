@@ -91,6 +91,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     unknown_model_msg,
+    unknown_parameter_error,
 )
 from strands_robots.simulation.ik import (
     GRIPPER_BODY_HINTS,
@@ -892,6 +893,9 @@ class MuJoCoSimEngine(
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
         render_dir: str | os.PathLike[str] | None = None,
+        foxglove: bool | str = False,
+        foxglove_mcap: str | os.PathLike[str] | None = None,
+        foxglove_services: bool = False,
         **kwargs,
     ):
         """Construct a MuJoCo Simulation AgentTool.
@@ -955,6 +959,24 @@ class MuJoCoSimEngine(
                 ``Robot(name, mode="sim", render_dir=...)`` through the factory's
                 ``**kwargs``. A value that cannot name a directory (a non-path
                 type, an empty string) is refused with a :class:`ValueError`.
+            foxglove: ``True`` serves this simulation live to Foxglove on
+                ``ws://127.0.0.1:8765`` (the next free port when that one is
+                busy); ``"host:port"`` picks the address, ``":0"`` an
+                ephemeral port. Every ``step`` then publishes ``/tf`` and the
+                robots' meshes for the 3D panel, per-robot joint states and
+                cameras as JPEG. ``STRANDS_ROBOTS_FOXGLOVE=1`` switches it on
+                for a caller that left this ``False``. Needs the
+                ``[foxglove]`` extra; refused with :class:`ImportError`
+                without it. Reaches here from ``Robot(name, foxglove=...)``.
+                Defaults to ``False`` - the sim opens no socket.
+            foxglove_mcap: Path of a new MCAP file the same channels are
+                recorded to (the static scene once). Requires ``foxglove``;
+                an existing file is refused rather than overwritten.
+            foxglove_services: When ``True``, the server advertises the
+                ``strands/set_joint_positions`` service, gated by
+                ``STRANDS_FOXGLOVE_COMMAND_ALLOW`` like every other command
+                surface. Default ``False``: the server advertises no
+                capability and nothing inbound exists.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -1023,8 +1045,15 @@ class MuJoCoSimEngine(
         # resolved handle is stored below, where its own contract comment lives.
         mesh_handle = _validated_mesh_handle(mesh)
         super().__init__()
-        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+        # Named before the bridges exist so the Foxglove server carries it.
         self.tool_name_str = tool_name
+        self._init_ros_bridge(
+            ros2_bridge=ros2_bridge,
+            ros2_domain=ros2_domain,
+            foxglove=foxglove,
+            foxglove_mcap=foxglove_mcap,
+            foxglove_services=foxglove_services,
+        )
         self.default_timestep = default_timestep
         self.default_width = default_width
         self.default_height = default_height
@@ -5911,6 +5940,8 @@ class MuJoCoSimEngine(
             )
         if self._world._backend_state.get("recording", False):
             lines.append(f"[recording] {len(self._world._backend_state['trajectory'])} steps")
+        if (foxglove_url := self.foxglove_url) is not None:
+            lines.append(f"Foxglove: {foxglove_url}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     def destroy(self) -> dict[str, Any]:
@@ -7962,18 +7993,8 @@ class MuJoCoSimEngine(
             # ...and the nearest of them is named, the way an unknown action or
             # an unknown robot already is: ``policy`` is answered with
             # ``policy_provider, policy_config`` instead of a 20-name list to
-            # scan.
-            hint = close_match_hint(reported_unknown, valid_sorted)
-            return None, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Unknown parameter '{reported_unknown}' for action '{action}'.{hint} Valid: {valid_sorted}"
-                        )
-                    }
-                ],
-            }
+            # scan. The sentence is the one the real arm tool uses too.
+            return None, unknown_parameter_error([reported_unknown], action, valid_sorted)
 
         # 2) Scalar string type validation. The schema publishes these as
         # strings, and every value at this boundary arrives as JSON, so a

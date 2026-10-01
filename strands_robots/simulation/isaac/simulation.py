@@ -27,6 +27,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -479,6 +480,86 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+def _diverged_robots_error(engine: Any, verb: str, robot_names: list[str] | None = None) -> dict[str, Any] | None:
+    """An error naming each robot whose joint state is no longer finite, or ``None``.
+
+    A diverged articulation (a joint driven through its limit, an
+    interpenetration PhysX could not resolve) reads back NaN, and every
+    call after it used to report success: ``step`` said "Stepped 1x",
+    ``get_observation`` returned NaN joints, ``render`` a near-white frame.
+    The state cannot recover by stepping, so the remedy is ``reset()``.
+    Read on the call's own thread, from the articulation it just stepped;
+    a read that fails is not evidence either way and is skipped. Module-level,
+    taking the engine, for the reason :func:`_physics_view_stale_error` is:
+    cross-backend suites drive ``step`` with a ``SimpleNamespace`` as ``self``.
+    """
+    # The callers release the engine lock after their last batch, and a worker
+    # thread's remove_object / add_object(is_static=False) may land before this
+    # runs; the stale flag is written under the lock, and reading through a
+    # stale view hangs or raises a bare Exception (#4076). So the stale check
+    # and every articulation read happen as one step under the same lock.
+    # ``getattr``: cross-backend suites drive this with a SimpleNamespace.
+    lock = getattr(engine, "_lock", None)
+    bad: list[str] = []
+    with lock if lock is not None else contextlib.nullcontext():
+        if _physics_view_stale_error(engine, verb) is not None:
+            return None
+        robots = getattr(engine, "_robots", None) or {}
+        names = robot_names if robot_names is not None else list(robots)
+        for name in names:
+            robot = registry_entry(robots, name)
+            articulation = getattr(robot, "articulation", None) if robot is not None else None
+            if articulation is None:
+                continue
+            try:
+                raw = articulation.get_joint_positions()
+                q = None if raw is None else np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=float)
+            except (RuntimeError, ValueError, AttributeError, TypeError):
+                q = None
+            if q is not None and q.size and not bool(np.all(np.isfinite(q))):
+                joints = list(getattr(robot, "joint_names", []) or [])
+                nan_joints = [
+                    joints[i] if i < len(joints) else str(i) for i in np.flatnonzero(~np.isfinite(q.reshape(-1)))
+                ]
+                bad.append(f"'{name}' ({', '.join(nan_joints[:6])}{', ...' if len(nan_joints) > 6 else ''})")
+    if not bad:
+        return None
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{verb}: the physics diverged - the joint state of {', '.join(bad)} is no longer "
+                    "finite (NaN/inf), so the robot is no longer being simulated and nothing it reports "
+                    "is meaningful. Call reset() to recover; then look for what drove it there (a "
+                    "joint target outside its range, overlapping bodies, a very large force)."
+                )
+            }
+        ],
+    }
+
+
+def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
+    """Per-DOF unit, ``"rad"`` (revolute) or ``"m"`` (prismatic), ``""`` when unknown.
+
+    From the articulation's ``dof_properties["type"]`` (1 = rotation, 2 =
+    translation, the ``DofType`` codes); a view without the field reports
+    ``""`` for every DOF.
+    """
+    props = getattr(articulation, "dof_properties", None)
+    try:
+        types_ = [int(t) for t in np.asarray(props["type"]).reshape(-1)] if props is not None else []
+    except (KeyError, ValueError, IndexError, TypeError):
+        types_ = []
+    return [{1: "rad", 2: "m"}.get(types_[i], "") if i < len(types_) else "" for i in range(n_dofs)]
+
+
+#: Render-only ticks a camera read waits after physics moved: the RTX render
+#: product delivers one tick behind, so one tick still returned the pre-action
+#: frame and two returned the current one (measured on one L40S, Isaac Sim 6.1).
+_RENDER_LAG_TICKS = 2
 
 
 def _split_joint_action(
@@ -1120,27 +1201,30 @@ def _anchor_fixed_base_articulation(prim_path: str) -> str | None:
         if root is None or not root.IsValid():
             return None
         prims = list(Usd.PrimRange(root))
-        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
-        if len(roots) != 1 or not roots[0].HasAPI(UsdPhysics.RigidBodyAPI):
-            return None
-        body_path = roots[0].GetPath()
-        for joint_prim in prims:
-            if not joint_prim.IsA(UsdPhysics.FixedJoint):
-                continue
-            joint = UsdPhysics.FixedJoint(joint_prim)
-            body1 = joint.GetBody1Rel().GetTargets()
-            body0 = joint.GetBody0Rel().GetTargets()
-            if body1 != [body_path]:
-                continue
-            anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
-            if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
-                continue  # welded to another body, not to the world
-            roots[0].RemoveAPI(UsdPhysics.ArticulationRootAPI)
-            UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
-            return str(joint_prim.GetPath())
+        # Every root, not only a lone one: a two-arm robot (aloha) converts to
+        # two articulations, each on its own welded base body.
+        roots = [p for p in prims if p.HasAPI(UsdPhysics.ArticulationRootAPI) and p.HasAPI(UsdPhysics.RigidBodyAPI)]
+        moved: list[str] = []
+        for base in roots:
+            body_path = base.GetPath()
+            for joint_prim in prims:
+                if not joint_prim.IsA(UsdPhysics.FixedJoint):
+                    continue
+                joint = UsdPhysics.FixedJoint(joint_prim)
+                body1 = joint.GetBody1Rel().GetTargets()
+                body0 = joint.GetBody0Rel().GetTargets()
+                if body1 != [body_path]:
+                    continue
+                anchor = stage.GetPrimAtPath(body0[0]) if body0 else None
+                if anchor is not None and anchor.IsValid() and anchor.HasAPI(UsdPhysics.RigidBodyAPI):
+                    continue  # welded to another body, not to the world
+                base.RemoveAPI(UsdPhysics.ArticulationRootAPI)
+                UsdPhysics.ArticulationRootAPI.Apply(joint_prim)
+                moved.append(str(joint_prim.GetPath()))
+                break
+        return moved[0] if moved else None
     except (ImportError, AttributeError, RuntimeError, IndexError):
         return None
-    return None
 
 
 #: What a caller of a camera in ``render_mode="headless"`` needs to hear.
@@ -1222,6 +1306,126 @@ def _deactivate_imported_ground_planes(prim_path: str) -> list[str]:
         return [str(p.GetPath()) for p in planes]
     except (ImportError, AttributeError, RuntimeError):
         return []
+
+
+def _articulation_root_paths(prim_path: str) -> list[str]:
+    """Paths of every ``ArticulationRootAPI`` prim under ``prim_path``, in stage order; ``[]`` without a stage."""
+    try:
+        import omni.usd  # type: ignore[import-not-found]
+        from pxr import Usd, UsdPhysics  # type: ignore[import-not-found]
+
+        stage = omni.usd.get_context().get_stage()
+        root = stage.GetPrimAtPath(prim_path) if stage is not None else None
+        if root is None or not root.IsValid():
+            return []
+        found = [str(p.GetPath()) for p in Usd.PrimRange(root) if p.HasAPI(UsdPhysics.ArticulationRootAPI)]
+    except (ImportError, AttributeError, RuntimeError):
+        return []
+    # A base body whose root was moved onto its world weld can still report the
+    # API from the converted asset's own layer; the weld below it is the root
+    # PhysX builds from. Keep the innermost root of each nested pair, so one
+    # arm is one articulation, not two handles over the same DOFs.
+    return [path for path in found if not any(other.startswith(path + "/") for other in found)]
+
+
+class _MultiArticulation:
+    """Several articulations of one robot presented as one, DOFs concatenated in root order.
+
+    Covers the surface this backend drives an articulation through: DOF
+    names, joint state reads and writes, ``apply_action`` with or without
+    ``joint_indices``, DOF limits and properties, and the base pose of the
+    first part. A whole-robot base move is refused rather than applied to one
+    arm; there is no Jacobian view, so ``get_jacobian`` reports that.
+    """
+
+    def __init__(self, parts: list[Any]) -> None:
+        self._parts = list(parts)
+
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
+        for part in self._parts:
+            part.initialize(*args, **kwargs)
+
+    def _counts(self) -> list[int]:
+        return [len(list(p.dof_names or [])) for p in self._parts]
+
+    @property
+    def dof_names(self) -> list[str]:
+        return [n for p in self._parts for n in list(p.dof_names or [])]
+
+    @property
+    def num_dof(self) -> int:
+        return sum(self._counts())
+
+    def _gather(self, name: str) -> Any:
+        values = []
+        for part in self._parts:
+            raw = getattr(part, name)()
+            if raw is None:
+                return None
+            values.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1))
+        return np.concatenate(values) if values else np.zeros(0)
+
+    def get_joint_positions(self) -> Any:
+        return self._gather("get_joint_positions")
+
+    def get_joint_velocities(self) -> Any:
+        return self._gather("get_joint_velocities")
+
+    def _split(self, values: Any, joint_indices: Any) -> list[tuple[Any, Any, Any]]:
+        """``[(part, part_values, part_indices), ...]`` for a full or indexed DOF vector."""
+        vals = np.asarray(values, dtype=np.float32).reshape(-1)
+        idx = (
+            np.arange(self.num_dof) if joint_indices is None else np.asarray(joint_indices, dtype=np.int64).reshape(-1)
+        )
+        out = []
+        start = 0
+        for part, n in zip(self._parts, self._counts(), strict=True):
+            mask = (idx >= start) & (idx < start + n)
+            if mask.any():
+                out.append((part, vals[mask], (idx[mask] - start).astype(np.int32)))
+            start += n
+        return out
+
+    def set_joint_positions(self, positions: Any, joint_indices: Any = None) -> None:
+        for part, vals, idx in self._split(positions, joint_indices):
+            part.set_joint_positions(vals, joint_indices=idx)
+
+    def apply_action(self, action: Any) -> None:
+        fields = {k: getattr(action, k, None) for k in ("joint_positions", "joint_velocities", "joint_efforts")}
+        indices = getattr(action, "joint_indices", None)
+        per_part: dict[int, dict[str, Any]] = {}
+        for field_name, values in fields.items():
+            if values is None:
+                continue
+            for part, vals, idx in self._split(values, indices):
+                entry = per_part.setdefault(id(part), {"part": part, "joint_indices": idx})
+                entry[field_name] = vals
+        for entry in per_part.values():
+            part = entry.pop("part")
+            part.apply_action(type(action)(**entry))
+
+    def get_dof_limits(self) -> Any:
+        rows = []
+        for part in self._parts:
+            raw = part.get_dof_limits()
+            rows.append(np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=np.float64).reshape(-1, 2))
+        return np.concatenate(rows) if rows else np.zeros((0, 2))
+
+    @property
+    def dof_properties(self) -> Any:
+        props = [getattr(p, "dof_properties", None) for p in self._parts]
+        if any(p is None for p in props):
+            return None
+        return np.concatenate([p for p in props if p is not None])
+
+    def get_world_pose(self) -> Any:
+        return self._parts[0].get_world_pose()
+
+    def set_world_pose(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError(
+            "this robot is several articulations (one per arm); moving one base would tear it apart. "
+            "Place it with add_robot(position=...) instead."
+        )
 
 
 _HEADLESS_RENDER_REMEDY = (
@@ -2857,6 +3061,8 @@ class IsaacSimulation(
             elapsed = time.perf_counter() - t0
             steps_per_sec = n_steps / elapsed if elapsed > 0 else float("inf")
 
+            if diverged := _diverged_robots_error(self, "step"):
+                return diverged
             return {
                 "status": "success",
                 "content": [
@@ -5445,10 +5651,13 @@ class IsaacSimulation(
                 # blank buffer. When more than one camera is configured, tick the
                 # renderer a few extra times (holding the pose static) so EVERY
                 # camera's RTX render product accumulates a fresh frame before we
-                # read them back. Single-camera setups skip this (the substep
-                # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1 and not getattr(self, "_rendered_this_tick", False):
-                    self._refresh_all_render_products()
+                # read them back. Every camera count gets the same refresh
+                # once per physics step, but only when the last tick did not
+                # render: a rendering tick (rendering_dt == physics_dt) already
+                # holds this state's frame, while a physics-only tick leaves
+                # the products one tick behind (``_refresh_if_physics_moved``).
+                if not getattr(self, "_rendered_this_tick", False):
+                    self._refresh_if_physics_moved()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
                         continue
@@ -6316,6 +6525,8 @@ class IsaacSimulation(
                     ],
                 }
 
+            if diverged := _diverged_robots_error(self, "send_action", [robot_name]):
+                return diverged
             return {
                 "status": "success",
                 "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
@@ -7123,6 +7334,7 @@ class IsaacSimulation(
 
             # Phase-2 RTX path: pull real frames from the Camera handle.
             try:
+                self._refresh_if_physics_moved()
                 rgba = cam.handle.get_rgba()
                 # ``get_rgba`` returns either ``(H, W, 4)`` or
                 # ``(H, W, 3)`` depending on the Isaac Sim build. A
@@ -8981,7 +9193,17 @@ class IsaacSimulation(
         # ``add_robot`` ``name`` (the leaf of ``prim_path`` is the
         # caller-visible robot name by construction).
         articulation_name = prim_path.rsplit("/", 1)[-1]
-        articulation = Articulation(prim_path=prim_path, name=articulation_name)
+        roots = _articulation_root_paths(prim_path)
+        if len(roots) > 1:
+            # One robot, several articulations (aloha: one per arm). A single
+            # ``Articulation`` over the container bound the FIRST root only, so
+            # aloha loaded 8 of its 16 joints and the right arm was
+            # uncommandable. Each root gets its own handle, presented as one.
+            articulation = _MultiArticulation(
+                [Articulation(prim_path=root, name=f"{articulation_name}_{i}") for i, root in enumerate(roots)]
+            )
+        else:
+            articulation = Articulation(prim_path=prim_path, name=articulation_name)
         articulation.initialize()
         # USD reference: the prim path is exactly what the caller asked
         # for (``add_reference_to_stage`` honours ``prim_path``); record
@@ -9672,6 +9894,14 @@ class IsaacSimulation(
             coerced, err = self._coerce_joint_state_map(requested, "positions", "set_joint_positions")
             if err:
                 return err
+            # The joint's range, on the MuJoCo backend's terms: a write outside it
+            # is refused and nothing is written. Measured on one L40S (so100):
+            # ``{Elbow: 50}`` was reported "Set joint positions" and 60 steps
+            # later every joint was NaN; ``{Rotation: 2.5}`` on a [-1.92, 1.92]
+            # joint read back 2.5, then snapped to 1.82 and kicked Wrist_Roll
+            # from 0.02 to 1.17 rad.
+            if range_err := self._joint_range_error(r, joint_names, coerced):
+                return range_err
             targets = {index_of[jn]: value for jn, value in coerced.items()}
 
             def _apply() -> None:
@@ -10451,6 +10681,83 @@ class IsaacSimulation(
                 update()
             else:
                 self._world.step(render=True)
+
+    def _joint_range_error(self, robot: Any, joint_names: list[str], values: dict[str, float]) -> dict[str, Any] | None:
+        """The refusal for joint values outside their articulation limits, or ``None``.
+
+        Same wording as the MuJoCo backend's ``set_joint_positions``, including
+        the degree hint when the value, read as degrees, lands inside a
+        revolute joint's range - a caller mirroring a real arm holds degrees,
+        and this write takes radians. A DOF with no usable limits (continuous,
+        or an articulation that reports none) is not checked.
+        """
+        limits = self._articulation_dof_limits(robot.articulation, len(joint_names))
+        units = _dof_units(robot.articulation, len(joint_names))
+        index_of = {jn: i for i, jn in enumerate(joint_names)}
+        out_of_range: list[str] = []
+        for name, value in values.items():
+            dof = index_of[name]
+            span = limits[dof] if dof < len(limits) else None
+            if span is None:
+                continue
+            lo, hi = span
+            if lo <= float(value) <= hi:
+                continue
+            unit = units[dof]
+            detail = f"{name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]" + (f" {unit}" if unit else "")
+            if unit != "m" and lo <= float(np.radians(float(value))) <= hi:
+                detail += f" (radians, not degrees: {float(value):.4g} deg = {float(np.radians(float(value))):.4g} rad)"
+            out_of_range.append(detail)
+        if not out_of_range:
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        "set_joint_positions: position outside the joint's range, nothing written: "
+                        + "; ".join(out_of_range)
+                        + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                    )
+                }
+            ],
+        }
+
+    def _refresh_if_physics_moved(self) -> None:
+        """Tick the renderer twice if physics has stepped since the last camera read.
+
+        A camera read after ``send_action`` or ``step`` returned the frame from
+        BEFORE the action. Measured on one L40S (Isaac Sim 6.1, go2, one RTX
+        camera): ``send_action(n_substeps=40)`` folded the robot flat (base
+        0.44 -> 0.11 m) and ``render`` - and a second ``render`` - still showed
+        it standing. The render product delivers a tick behind: one
+        render-only tick after the action still returned a stale frame (mean
+        pixel difference 10.9 against the next step's frame), two returned the
+        current one (3.2, the difference one physics step makes). So an agent
+        that acted and then looked saw the world before its action, and with
+        one camera ``get_observation`` skipped even the single refresh
+        multi-camera scenes got.
+
+        Two ``SimulationApp.update()`` ticks, render-only (no physics step), and
+        keyed on the physics step count so repeated reads between steps cost
+        nothing. The key is ``(_contact_epoch, _step_count)``, as
+        ``_contact_cache`` is keyed, because ``_step_count`` is not monotonic:
+        ``create_world``, ``reset`` and ``destroy`` rewind it through
+        ``_rewind_clock``, which bumps the epoch, so a marker written at step 0
+        in one world cannot spare the first read at step 0 in the next.
+        """
+        step = getattr(self, "_step_count", None)
+        if step is None:
+            return
+        key = (getattr(self, "_contact_epoch", 0), step)
+        if getattr(self, "_rendered_at_step", None) == key:
+            return
+        try:
+            self._refresh_all_render_products(n=_RENDER_LAG_TICKS)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.debug("render refresh unavailable: %s", exc)
+            return
+        self._rendered_at_step = key
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.

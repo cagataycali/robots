@@ -36,7 +36,6 @@ export const DOC_LINKS: readonly DocLink[] = [
 /** Pages that exist in this repo but are NOT on the deployed site yet. */
 export const REPO_DOC_PATHS: readonly string[] = [
   'docs/dashboard/quickstart.md — this screen, with an SO-101',
-  'docs/dashboard/collect-train-deploy.md — the full loop',
   'docs/dashboard/troubleshooting.md — when a camera or an arm stays dark',
   'docs/dashboard/remote-access.md — reaching this dashboard from outside',
 ]
@@ -65,12 +64,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     ],
   },
   {
-    title: 'Collect → train → deploy',
+    title: 'Your fleet, and the agent that drives it',
     lines: [
-      '1. ⚙ devices — see the USB arms and cameras this machine can find, name them, and spawn one as a peer.',
-      '2. ⏺ record — teleoperate a leader arm and capture episodes into a LeRobot dataset.',
-      '3. 🎓 train — point a trainer at that dataset (local folder or a Hugging Face repo) and watch the loss.',
-      '4. Deploy the checkpoint from the training screen: it prefills the run form on a robot card, and you press ▶.',
+      '1. ⚙ devices — see the USB arms and cameras this machine can find, name them, and spawn one as a peer. Every card on this page is a peer on the robot mesh.',
+      '2. The chat dock is an agent whose tools are those same peers: ask it to spawn a robot, read a state, or run a policy, and watch the card move.',
+      '3. A run on a real arm is put to you first; recording and training live in the Python library (strands_robots.record, create_trainer), not on this screen.',
     ],
   },
   {

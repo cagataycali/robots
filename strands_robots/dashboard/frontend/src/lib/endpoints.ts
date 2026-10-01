@@ -6,7 +6,7 @@
 
 import { routeKnown, staleRouteMessage, unroutedByDetail } from './serverAge'
 import { detailSentence } from './detailSentence'
-import { tokenClaims, tokenExpiry } from './sessionExpiry'
+import { sessionVerdict, tokenClaims, tokenExpiry } from './sessionExpiry'
 
 const BASE_KEY = 'strands.backend'
 const TOKEN_KEY = 'strands.token'
@@ -33,16 +33,30 @@ let cachedBase: string | null = null
 let absorbedUrl = false
 /** `?backend=` from the URL, once — null when the URL said nothing. */
 let urlBase: string | null = null
+/** `?token=` from the URL, parked here and NOWHERE else until the backend has vouched for it. */
+let offeredToken: string | null = null
+/** A `?token=` was present but dropped unseen (it arrived beside a `?backend=` that moves the page). */
+let offeredDropped = false
 
-/** Take the credentials off the URL. */
+/**
+ * Take the credentials off the URL. A `?token=` is only ever PARKED here: it becomes the sign-in
+ * when redeemUrlToken() has asked the backend this page is configured for and been told yes.
+ * It used to be written straight into storage on load, so any string in a link signed the
+ * operator out and a token the backend would verify signed them in as someone else, silently.
+ */
 function absorbUrl(): void {
   if (absorbedUrl) return
   absorbedUrl = true
   try {
     const params = new URLSearchParams(location.search)
     const fromToken = params.get('token')
-    if (fromToken) localStorage.setItem(TOKEN_KEY, fromToken)
     urlBase = params.get('backend')
+    const stored = normalize(localStorage.getItem(BASE_KEY) ?? '')
+    const moves = urlBase !== null && normalize(urlBase) !== stored
+    // One link may not choose both the server and the credential: a token beside a ?backend=
+    // that moves the page is dropped unseen. Otherwise it waits for the backend's answer.
+    offeredToken = fromToken && !moves ? fromToken.trim() || null : null
+    offeredDropped = !!fromToken && moves
     // Scrub what was absorbed: a ?token= URL outlives its token in history,
     // share sheets and screenshots, and must not be re-sent on reload.
     if (fromToken !== null || urlBase !== null) {
@@ -55,6 +69,7 @@ function absorbUrl(): void {
     }
   } catch {
     urlBase = null // no location (a test, a worker): the stored values are the whole truth
+    offeredToken = null
   }
 }
 
@@ -75,6 +90,67 @@ export function authToken(): string {
   absorbUrl()
   return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
 }
+
+/** The server puts exactly one kind of token in a link (auth.issue_handoff), and it is short-lived. */
+const URL_TOKEN_VIA = 'handoff'
+
+export type UrlTokenOutcome = 'none' | 'adopted' | 'refused'
+
+/**
+ * Redeem a `?token=` the page arrived with: ONE probe of the public status route on the backend
+ * this page is already configured for, carrying the offered token as its bearer. The token is
+ * adopted only when that backend answers `authenticated: true`. Refused without a probe when it
+ * is not a hand-off token, has lapsed, or this browser already holds a valid bearer; refused
+ * after one BARE probe when the backend already knows this browser (the HttpOnly passkey cookie
+ * rides that same-origin fetch and no script can read it). A working session is never silently
+ * replaced by a link, whichever kind it is. The AuthGate awaits this before it decides.
+ */
+export async function redeemUrlToken(): Promise<UrlTokenOutcome> {
+  absorbUrl()
+  const offered = offeredToken
+  offeredToken = null // one attempt, whatever happens
+  if (!offered) {
+    const dropped = offeredDropped
+    offeredDropped = false
+    return dropped ? 'refused' : 'none'
+  }
+  const nowS = Date.now() / 1000
+  const claims = tokenClaims(offered)
+  const exp = tokenExpiry(offered)
+  if (!claims || claims.via !== URL_TOKEN_VIA || exp === null || exp <= nowS) return 'refused'
+  const held = sessionVerdict(authToken(), nowS)
+  if (held.state === 'valid' || held.state === 'expiring' || held.state === 'opaque') return 'refused'
+  try {
+    // The primary sign-in is the passkey cookie, which this module cannot see: the server prefers
+    // a bearer over the cookie, so a link's hand-off would shadow that session for every api()
+    // call. Ask bare first; a yes means someone is already signed in here and the link loses.
+    // An answer that cannot be read is treated the same way: without a no there is no adoption.
+    const bare = await fetch(apiUrl('/api/auth/status'), { credentials: 'same-origin' })
+    if ((await statusSaysAuthenticated(bare)) !== false) return 'refused'
+    const res = await fetch(apiUrl('/api/auth/status'), { headers: { Authorization: `Bearer ${offered}` } })
+    if ((await statusSaysAuthenticated(res)) === true) {
+      setAuthToken(offered)
+      return 'adopted'
+    }
+  } catch {
+    // no network, no JSON: the link did not prove anything
+  }
+  return 'refused'
+}
+
+/** What `/api/auth/status` said: true, false, or null when the answer cannot be read (not ok, no JSON, wrong shape). */
+async function statusSaysAuthenticated(res: Response): Promise<boolean | null> {
+  if (!res.ok) return null
+  let body: unknown
+  try {
+    body = JSON.parse(await res.text())
+  } catch {
+    return null
+  }
+  const authenticated = body !== null && typeof body === 'object' ? (body as { authenticated?: unknown }).authenticated : undefined
+  return authenticated === true ? true : authenticated === false ? false : null
+}
+
 
 // Auth/backend changes must reach React: localStorage writes emit no event in the
 // writing tab, so components subscribe here (App keys ConfigProvider off backendKey()).

@@ -639,6 +639,8 @@ class MeshBridge:
 
         # Resolved endpoints of the live session, for /api/mesh/config.
         self._endpoints: dict[str, Any] = {}
+        #: Why the last ``start`` did not join, in one sentence; None once it did.
+        self.start_error: str | None = None
 
         # Set by the server to a callable returning peer ids that must never be
         # aged out (LIVE managed local processes). Optional by design: the
@@ -698,15 +700,27 @@ class MeshBridge:
         from strands_robots.mesh.core import mesh_disabled_by_env
 
         if mesh_disabled_by_env():
+            self.start_error = "STRANDS_MESH=false: this process was told not to join the mesh"
             logger.warning(
                 "STRANDS_MESH=false - not joining the mesh; the dashboard serves "
                 "settings, devices and cameras but shows no peers",
             )
             return False
-        session = get_session()
+        try:
+            session = get_session()
+        except Exception as exc:  # noqa: BLE001 - the reason is the product here; the page shows it
+            # A plain ``strands-robots dashboard`` on a laptop lands here: the
+            # default auth mode is mtls and no certificate is configured, so the
+            # session refuses to open. Recorded so the fleet bar can say why the
+            # fleet is empty instead of showing an empty fleet.
+            self.start_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("mesh session not started: %s", self.start_error)
+            return False
         if session is None:
+            self.start_error = "mesh session unavailable (is eclipse-zenoh installed?)"
             logger.warning("Mesh session unavailable (is eclipse-zenoh installed?) - dashboard runs offline")
             return False
+        self.start_error = None
         self._session = session
         self._running = True
 
@@ -758,6 +772,7 @@ class MeshBridge:
         info = {
             **self._endpoints,
             "online": self._running,
+            "error": None if self._running else self.start_error,
             "peer_id": self.peer_id,
             "peers": len(self.peers),
             "live_peers": len(self.live_peers()),
