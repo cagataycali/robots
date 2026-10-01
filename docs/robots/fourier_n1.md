@@ -15,9 +15,13 @@ description: "Fourier N1 / GR-1 Humanoid (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("fourier_n1")
+print(robot.robot_joint_names("fourier_n1"))
+robot.cleanup()
 ```
 
-Aliases: `fourier_gr1`, `fourier_gr1_arms_only`, `fourier_gr1_arms_waist`, `fourier_gr1_full_upper_body`, `gr1`.
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
+
+Aliases: `fourier_gr1`, `fourier_gr1_arms_only`, `fourier_gr1_arms_waist`, `fourier_gr1_full_upper_body`, `gr1`, `n1`.
 
 ## Policies verified on this robot
 

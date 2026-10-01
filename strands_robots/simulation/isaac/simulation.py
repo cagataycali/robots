@@ -34,13 +34,18 @@ import os
 import queue
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 from strands.tools.tools import AgentTool
 
-from strands_robots.simulation.base import SimEngine, unknown_kwargs_error, unknown_model_msg
+from strands_robots.simulation.base import (
+    SimEngine,
+    outside_joint_range,
+    unknown_kwargs_error,
+    unknown_model_msg,
+)
 from strands_robots.simulation.isaac.agent_tool import IsaacAgentToolMixin
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.introspection import IsaacIntrospectionMixin
@@ -56,6 +61,7 @@ from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimiti
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
@@ -131,32 +137,6 @@ def _vertical_fov_lens_mm(
     vertical_aperture_mm = horizontal_aperture_mm * float(height) / float(width)
     focal_length_mm = vertical_aperture_mm / (2.0 * math.tan(math.radians(fov_deg) / 2.0))
     return vertical_aperture_mm, focal_length_mm
-
-
-def _world_to_body_frame(quat_wxyz: Any, vec: Any) -> list[float]:
-    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
-
-    ``R(q)^T @ vec``. Used for ``base_ang_vel``, which this schema reports in the
-    BODY frame - the IMU-gyro convention a locomotion policy is trained against -
-    while Isaac's ``get_angular_velocity()`` returns the WORLD frame. ``base_pos``
-    and ``base_lin_vel`` stay world-frame on all three backends and are not routed
-    through here.
-
-    Equivalent to the Newton backend's ``_quat_rotate_inverse_wxyz``, where the
-    convention is documented; verified equal to 1.3e-15 over 400 random
-    (quaternion, vector) pairs. Kept as a separate implementation rather than an
-    import because importing the Newton backend would pull ``warp`` into Isaac's
-    import path.
-
-    A ~zero-norm quaternion returns ``vec`` unchanged, matching Newton: an
-    unreadable orientation is not grounds for scaling a real velocity by garbage,
-    and the caller already has ``base_quat`` to see it with.
-    """
-    q = np.asarray(quat_wxyz, dtype=np.float64)
-    if float(np.linalg.norm(q)) < 1e-8:
-        return [float(v) for v in np.asarray(vec, dtype=np.float64)]
-    rotated = _quat_wxyz_to_rotmat(q).T @ np.asarray(vec, dtype=np.float64)
-    return [float(v) for v in rotated]
 
 
 def _quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
@@ -480,6 +460,86 @@ def _prim_world_pose(stage: Any, path: str) -> tuple[list[float], list[float]]:
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+def _diverged_robots_error(engine: Any, verb: str, robot_names: list[str] | None = None) -> dict[str, Any] | None:
+    """An error naming each robot whose joint state is no longer finite, or ``None``.
+
+    A diverged articulation (a joint driven through its limit, an
+    interpenetration PhysX could not resolve) reads back NaN, and every
+    call after it used to report success: ``step`` said "Stepped 1x",
+    ``get_observation`` returned NaN joints, ``render`` a near-white frame.
+    The state cannot recover by stepping, so the remedy is ``reset()``.
+    Read on the call's own thread, from the articulation it just stepped;
+    a read that fails is not evidence either way and is skipped. Module-level,
+    taking the engine, for the reason :func:`_physics_view_stale_error` is:
+    cross-backend suites drive ``step`` with a ``SimpleNamespace`` as ``self``.
+    """
+    # The callers release the engine lock after their last batch, and a worker
+    # thread's remove_object / add_object(is_static=False) may land before this
+    # runs; the stale flag is written under the lock, and reading through a
+    # stale view hangs or raises a bare Exception (#4076). So the stale check
+    # and every articulation read happen as one step under the same lock.
+    # ``getattr``: cross-backend suites drive this with a SimpleNamespace.
+    lock = getattr(engine, "_lock", None)
+    bad: list[str] = []
+    with lock if lock is not None else contextlib.nullcontext():
+        if _physics_view_stale_error(engine, verb) is not None:
+            return None
+        robots = getattr(engine, "_robots", None) or {}
+        names = robot_names if robot_names is not None else list(robots)
+        for name in names:
+            robot = registry_entry(robots, name)
+            articulation = getattr(robot, "articulation", None) if robot is not None else None
+            if articulation is None:
+                continue
+            try:
+                raw = articulation.get_joint_positions()
+                q = None if raw is None else np.asarray(raw.cpu().numpy() if hasattr(raw, "cpu") else raw, dtype=float)
+            except (RuntimeError, ValueError, AttributeError, TypeError):
+                q = None
+            if q is not None and q.size and not bool(np.all(np.isfinite(q))):
+                joints = list(getattr(robot, "joint_names", []) or [])
+                nan_joints = [
+                    joints[i] if i < len(joints) else str(i) for i in np.flatnonzero(~np.isfinite(q.reshape(-1)))
+                ]
+                bad.append(f"'{name}' ({', '.join(nan_joints[:6])}{', ...' if len(nan_joints) > 6 else ''})")
+    if not bad:
+        return None
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{verb}: the physics diverged - the joint state of {', '.join(bad)} is no longer "
+                    "finite (NaN/inf), so the robot is no longer being simulated and nothing it reports "
+                    "is meaningful. Call reset() to recover; then look for what drove it there (a "
+                    "joint target outside its range, overlapping bodies, a very large force)."
+                )
+            }
+        ],
+    }
+
+
+def _dof_units(articulation: Any, n_dofs: int) -> list[str]:
+    """Per-DOF unit, ``"rad"`` (revolute) or ``"m"`` (prismatic), ``""`` when unknown.
+
+    From the articulation's ``dof_properties["type"]`` (1 = rotation, 2 =
+    translation, the ``DofType`` codes); a view without the field reports
+    ``""`` for every DOF.
+    """
+    props = getattr(articulation, "dof_properties", None)
+    try:
+        types_ = [int(t) for t in np.asarray(props["type"]).reshape(-1)] if props is not None else []
+    except (KeyError, ValueError, IndexError, TypeError):
+        types_ = []
+    return [{1: "rad", 2: "m"}.get(types_[i], "") if i < len(types_) else "" for i in range(n_dofs)]
+
+
+#: Render-only ticks a camera read waits after physics moved: the RTX render
+#: product delivers one tick behind, so one tick still returned the pre-action
+#: frame and two returned the current one (measured on one L40S, Isaac Sim 6.1).
+_RENDER_LAG_TICKS = 2
 
 
 def _split_joint_action(
@@ -1453,6 +1513,13 @@ class _RobotState:
         #: this backend did not import: what the importer was told is knowable,
         #: what an arbitrary USD asset declares is not always.
         self.fixed_base = fixed_base
+        # The joint position targets standing on every joint after the last
+        # command an installed action controller converted, by joint name - the
+        # command a recording stores as ``action`` (see _recorded_action).
+        self.commanded_targets: dict[str, float] | None = None
+        # Whether the targets were seeded from a successful measured read; until
+        # then the joints no command named have no target (and no zero).
+        self.commanded_targets_seeded = False
         # Joint positions (USD DOF name -> value) a keyframe spawn made this
         # robot's default state; None for the zero-configuration spawn.
         self.spawn_joint_positions: dict[str, float] | None = None
@@ -2796,6 +2863,11 @@ class IsaacSimulation(
                     # ``get_observation`` degrades to its documented
                     # silent-empty mode (#1895).
                     self._revive_articulations_after_reset()
+                    # A reset puts the drives back on the default state; the
+                    # next command re-seeds from the measured positions.
+                    for _robot in self._robots.values():
+                        _robot.commanded_targets = None
+                        _robot.commanded_targets_seeded = False
 
                 # ``world.reset()`` rebuilds the PhysX tensor view, which is what
                 # makes a body added or deleted since the last reset simulate at
@@ -3046,6 +3118,8 @@ class IsaacSimulation(
             elapsed = time.perf_counter() - t0
             steps_per_sec = n_steps / elapsed if elapsed > 0 else float("inf")
 
+            if diverged := _diverged_robots_error(self, "step"):
+                return diverged
             return {
                 "status": "success",
                 "content": [
@@ -5601,14 +5675,9 @@ class IsaacSimulation(
                         # and the error grows only as it turns - which is exactly
                         # when a locomotion policy is relying on it.
                         #
-                        # Expressed with this module's own quaternion primitive:
-                        # body-frame is R(q)^T @ v, and _world_to_body_frame wraps
-                        # that. Verified equal to the Newton backend's
-                        # _quat_rotate_inverse_wxyz to 1.3e-15 over 400 random
-                        # (quaternion, vector) pairs, so the two backends agree
-                        # numerically without Isaac importing Newton - which would
-                        # drag warp into this import path.
-                        obs["base_ang_vel"] = _world_to_body_frame(quat_wxyz, [float(v) for v in ang_vel])
+                        # Body-frame is R(q)^T @ v, through the one rotation
+                        # the Newton backend and the reward DSL also use.
+                        obs["base_ang_vel"] = _quat_rotate_inverse_wxyz(quat_wxyz, [float(v) for v in ang_vel])
 
             # Camera frames keyed by camera name (RGB HxWx3 uint8), so callers
             # (e.g. the SO-101 collector / Gradio render) get images the same way
@@ -5634,10 +5703,13 @@ class IsaacSimulation(
                 # blank buffer. When more than one camera is configured, tick the
                 # renderer a few extra times (holding the pose static) so EVERY
                 # camera's RTX render product accumulates a fresh frame before we
-                # read them back. Single-camera setups skip this (the substep
-                # render already warmed the one product) to stay fast.
-                if len(self._cameras) > 1 and not getattr(self, "_rendered_this_tick", False):
-                    self._refresh_all_render_products()
+                # read them back. Every camera count gets the same refresh
+                # once per physics step, but only when the last tick did not
+                # render: a rendering tick (rendering_dt == physics_dt) already
+                # holds this state's frame, while a physics-only tick leaves
+                # the products one tick behind (``_refresh_if_physics_moved``).
+                if not getattr(self, "_rendered_this_tick", False):
+                    self._refresh_if_physics_moved()
                 for cam_name, cam in self._cameras.items():
                     if cam.handle is None:
                         continue
@@ -6441,6 +6513,8 @@ class IsaacSimulation(
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                             )
+                            if controller is not None:
+                                self._note_commanded_targets(robot, joint_indices, action_array)
                         if effort_array.size > 0:
                             robot.articulation.apply_action(
                                 ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -6505,6 +6579,8 @@ class IsaacSimulation(
                     ],
                 }
 
+            if diverged := _diverged_robots_error(self, "send_action", [robot_name]):
+                return diverged
             return {
                 "status": "success",
                 "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
@@ -6617,6 +6693,8 @@ class IsaacSimulation(
                 robot.articulation.apply_action(
                     ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
                 )
+                if controller is not None:
+                    self._note_commanded_targets(robot, joint_indices, action_array)
             if effort_array.size > 0:
                 robot.articulation.apply_action(
                     ArticulationAction(joint_efforts=effort_array, joint_indices=effort_indices)
@@ -7046,7 +7124,8 @@ class IsaacSimulation(
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
                         images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
-                        frame.write(recorder, per_robot_obs, per_robot_action, images, instr_map[next(iter(policies))])
+                        recorded = {r: self._recorded_action(r, a) for r, a in per_robot_action.items()}
+                        frame.write(recorder, per_robot_obs, recorded, images, instr_map[next(iter(policies))])
 
                     step_count += 1
                     for rname in policies:
@@ -7312,6 +7391,7 @@ class IsaacSimulation(
 
             # Phase-2 RTX path: pull real frames from the Camera handle.
             try:
+                self._refresh_if_physics_moved()
                 rgba = cam.handle.get_rgba()
                 # ``get_rgba`` returns either ``(H, W, 4)`` or
                 # ``(H, W, 3)`` depending on the Isaac Sim build. A
@@ -9057,6 +9137,69 @@ class IsaacSimulation(
 
     # --- Private Implementation ----------------------------------------------
 
+    def _note_commanded_targets(self, robot: _RobotState, joint_indices: np.ndarray, values: np.ndarray) -> None:
+        """Fold one converted command into the standing target of every joint.
+
+        A task-space controller names only the joints a step moves (an all-zero
+        delta names no arm joint, an absent gripper names no finger), yet each
+        recorded frame owes a value for every joint: the PD target standing on
+        it. Seeded from the measured positions - what the drives hold before any
+        command - and updated with each command, on the thread that applied it.
+        """
+        if robot.commanded_targets is None or not robot.commanded_targets_seeded:
+            # Seed from the measured positions. When that read fails, the joints
+            # this command does not name get NO target rather than a zero: a
+            # zero here is a home pose nothing commanded, and it would flow into
+            # every recorded frame's action column with nothing to tell it apart
+            # (Key Conventions #6). Left absent, the recorder refuses the frame
+            # for the columns without a value, and the seed is retried on the
+            # next command.
+            q = None
+            why = "the physics view is stale"
+            if not self._physics_view_stale:  # both callers gate first; this read keeps its own
+                try:
+                    q = robot.articulation.get_joint_positions()  # type: ignore[union-attr]
+                    why = "get_joint_positions() returned None"
+                except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+                    why = f"get_joint_positions() raised {type(exc).__name__}: {exc}"
+            if robot.commanded_targets is None:
+                robot.commanded_targets = {}
+            if q is None:
+                logger.warning(
+                    "isaac: %s's measured positions could not be read (%s); the standing target of "
+                    "every joint this command does not name stays absent until a read succeeds, so a "
+                    "recorded frame refuses those columns instead of carrying zeros nobody commanded",
+                    robot.name,
+                    why,
+                )
+            else:
+                measured = np.asarray(q, dtype=float).reshape(-1)
+                for i, name in enumerate(robot.joint_names):
+                    if i < measured.size:
+                        robot.commanded_targets.setdefault(name, float(measured[i]))
+                robot.commanded_targets_seeded = True
+        for idx, value in zip(joint_indices.tolist(), values.tolist(), strict=False):
+            if 0 <= idx < len(robot.joint_names):
+                robot.commanded_targets[robot.joint_names[idx]] = float(value)
+
+    def _recorded_action(self, robot_name: str, action: Mapping[str, Any]) -> Mapping[str, Any]:
+        """The action a recorded frame stores for *robot_name*.
+
+        With an action controller installed the policy's action is task-space
+        (``{x, y, z, roll, pitch, yaw, gripper}``) while the dataset's action
+        columns are the robot's joints, so the policy's dict has no value for
+        any of them and the recorder refused every frame. What was commanded is
+        the joint targets the controller produced; that is what is recorded.
+        Without a controller the policy's action is the command and is recorded
+        as is.
+        """
+        robot = registry_entry(self._robots, robot_name)
+        if robot is None or registry_entry(self._action_controllers, robot_name) is None:
+            return action
+        if robot.commanded_targets is None:
+            return action
+        return dict(robot.commanded_targets)
+
     def _apply_spawn_pose(self, robot: _RobotState, pose: dict[str, float]) -> None:
         """Make *pose* (MJCF joint name -> position) the robot's default joint state and its drive targets.
 
@@ -9871,6 +10014,14 @@ class IsaacSimulation(
             coerced, err = self._coerce_joint_state_map(requested, "positions", "set_joint_positions")
             if err:
                 return err
+            # The joint's range, on the MuJoCo backend's terms: a write outside it
+            # is refused and nothing is written. Measured on one L40S (so100):
+            # ``{Elbow: 50}`` was reported "Set joint positions" and 60 steps
+            # later every joint was NaN; ``{Rotation: 2.5}`` on a [-1.92, 1.92]
+            # joint read back 2.5, then snapped to 1.82 and kicked Wrist_Roll
+            # from 0.02 to 1.17 rad.
+            if range_err := self._joint_range_error(r, joint_names, coerced):
+                return range_err
             targets = {index_of[jn]: value for jn, value in coerced.items()}
 
             def _apply() -> None:
@@ -10650,6 +10801,83 @@ class IsaacSimulation(
                 update()
             else:
                 self._world.step(render=True)
+
+    def _joint_range_error(self, robot: Any, joint_names: list[str], values: dict[str, float]) -> dict[str, Any] | None:
+        """The refusal for joint values outside their articulation limits, or ``None``.
+
+        Same wording as the MuJoCo backend's ``set_joint_positions``, including
+        the degree hint when the value, read as degrees, lands inside a
+        revolute joint's range - a caller mirroring a real arm holds degrees,
+        and this write takes radians. A DOF with no usable limits (continuous,
+        or an articulation that reports none) is not checked.
+        """
+        limits = self._articulation_dof_limits(robot.articulation, len(joint_names))
+        units = _dof_units(robot.articulation, len(joint_names))
+        index_of = {jn: i for i, jn in enumerate(joint_names)}
+        out_of_range: list[str] = []
+        for name, value in values.items():
+            dof = index_of[name]
+            span = limits[dof] if dof < len(limits) else None
+            if span is None:
+                continue
+            lo, hi = span
+            if not outside_joint_range(float(value), lo, hi):
+                continue
+            unit = units[dof]
+            detail = f"{name}={float(value):.4g} outside [{lo:.4g}, {hi:.4g}]" + (f" {unit}" if unit else "")
+            if unit != "m" and lo <= float(np.radians(float(value))) <= hi:
+                detail += f" (radians, not degrees: {float(value):.4g} deg = {float(np.radians(float(value))):.4g} rad)"
+            out_of_range.append(detail)
+        if not out_of_range:
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        "set_joint_positions: position outside the joint's range, nothing written: "
+                        + "; ".join(out_of_range)
+                        + ". Pass a value inside the range (see get_robot_state for the current pose)."
+                    )
+                }
+            ],
+        }
+
+    def _refresh_if_physics_moved(self) -> None:
+        """Tick the renderer twice if physics has stepped since the last camera read.
+
+        A camera read after ``send_action`` or ``step`` returned the frame from
+        BEFORE the action. Measured on one L40S (Isaac Sim 6.1, go2, one RTX
+        camera): ``send_action(n_substeps=40)`` folded the robot flat (base
+        0.44 -> 0.11 m) and ``render`` - and a second ``render`` - still showed
+        it standing. The render product delivers a tick behind: one
+        render-only tick after the action still returned a stale frame (mean
+        pixel difference 10.9 against the next step's frame), two returned the
+        current one (3.2, the difference one physics step makes). So an agent
+        that acted and then looked saw the world before its action, and with
+        one camera ``get_observation`` skipped even the single refresh
+        multi-camera scenes got.
+
+        Two ``SimulationApp.update()`` ticks, render-only (no physics step), and
+        keyed on the physics step count so repeated reads between steps cost
+        nothing. The key is ``(_contact_epoch, _step_count)``, as
+        ``_contact_cache`` is keyed, because ``_step_count`` is not monotonic:
+        ``create_world``, ``reset`` and ``destroy`` rewind it through
+        ``_rewind_clock``, which bumps the epoch, so a marker written at step 0
+        in one world cannot spare the first read at step 0 in the next.
+        """
+        step = getattr(self, "_step_count", None)
+        if step is None:
+            return
+        key = (getattr(self, "_contact_epoch", 0), step)
+        if getattr(self, "_rendered_at_step", None) == key:
+            return
+        try:
+            self._refresh_all_render_products(n=_RENDER_LAG_TICKS)
+        except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            logger.debug("render refresh unavailable: %s", exc)
+            return
+        self._rendered_at_step = key
 
     def _converge_render(self, n: int = 8) -> None:
         """Render ``n`` ticks WITHOUT advancing physics, holding each robot's pose.

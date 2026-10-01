@@ -66,7 +66,7 @@ Every merged frame is held to `STRANDS_TELEOP_SLEW_ABS` units per second per joi
 
 ## Recording while teleoperating
 
-The agent-facing `lerobot_teleoperate` tool wraps lerobot's own teleop and record scripts as managed sessions (`action="start"` with `dataset_repo_id=` records episodes; `status`, `stop`, `list`). For the in-process recorder that works on the sim too, see [record](../data/record.md).
+The agent-facing `lerobot_teleoperate` tool wraps lerobot's own teleop and record scripts as managed sessions (`action="start"` with `dataset_repo_id=` records episodes; `status`, `stop`, `list`). In simulation each tick steps the world one control period, so `start_recording`, `teleoperate`, `stop_recording` saves one frame per tick ([record](../data/record.md)).
 
 ## Refusals you will meet
 

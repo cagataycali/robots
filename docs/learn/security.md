@@ -54,4 +54,4 @@ When the file cannot be written, `log_safety_event` logs `[audit] failed to writ
 
 ## Reporting
 
-Refusal codes are the stable contract; prose is not: [reference/refusal-codes](../reference/refusal-codes.md). Vulnerabilities go to `SECURITY.md`, linked from [project/security-policy](../project/security-policy.md).
+Refusal codes are the stable contract; prose is not: [reference/refusal-codes](../reference/refusal-codes.md). Vulnerabilities go to `SECURITY.md`, linked from [project/security-policy](../reference/project/security-policy.md).

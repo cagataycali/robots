@@ -15,7 +15,11 @@ description: "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)"
 from strands_robots import Robot
 
 robot = Robot("reachy_mini")
+print(robot.robot_joint_names("reachy_mini"))
+robot.cleanup()
 ```
+
+Its output is posture and attention; [agents](../learn/agents.md) shows a model driving it as a tool.
 
 ```python title="sketch"
 robot = Robot("reachy_mini", mode="real", port="reachy-mini.local:8000")  # ReachyDriver

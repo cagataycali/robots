@@ -13,11 +13,15 @@ URDF from [bbokser/spryped@f360a6b](https://github.com/bbokser/spryped/tree/f360
 
 <img class="sr-thumb" src="../assets/img/robots/spryped.webp" alt="spryped, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("spryped")
+robot = Robot("spryped")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("spryped"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ## Policies verified on this robot
 

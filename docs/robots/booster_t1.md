@@ -15,7 +15,11 @@ description: "Booster T1 Humanoid (24-DOF)"
 from strands_robots import Robot
 
 robot = Robot("booster_t1")
+print(robot.robot_joint_names("booster_t1"))
+robot.cleanup()
 ```
+
+Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("booster_t1", mode="real", port="192.168.10.102")  # BoosterDriver

@@ -30,7 +30,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.training.base import TrainResult, TrainSpec
-from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
+from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec, TrainingHistory
 from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -498,17 +498,20 @@ class FastSacTrainer(BaseRLAlgo):
 
             job_id = f"{self.provider_name}-{id(self):x}"
             last_metrics: dict[str, Any] = {}
+            history = self._history = TrainingHistory(self.provider_name, spec.output_dir, num_iters, spec.log_interval)
             ckpt_dir: str | None = None
             for it in range(num_iters):
                 rollout_metrics = self.collect_rollout()
                 loss_metrics = self.update() if self.buffer.size >= spec.learning_starts else {}
                 last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
+                history.record(last_metrics)
                 if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
                     ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
             if ckpt_dir is None:
                 ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
 
             last_metrics.setdefault("latest_step", self._collected_steps)
+            last_metrics.update(history.summary())
             return TrainResult(
                 status="success",
                 job_id=job_id,

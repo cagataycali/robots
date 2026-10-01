@@ -13,11 +13,15 @@ URDF from [RethinkRobotics/baxter_common@6c4b0f3](https://github.com/RethinkRobo
 
 <img class="sr-thumb" src="../assets/img/robots/baxter.webp" alt="baxter, a local MuJoCo render" loading="lazy" width="640" height="480">
 
-```python
+```python title="sketch"
 from strands_robots import Robot
 
-robot = Robot("baxter")
+robot = Robot("baxter")  # clones the description and compiles the URDF on first use
+print(robot.robot_joint_names("baxter"))
+robot.cleanup()
 ```
+
+One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.
 
 ## Policies verified on this robot
 

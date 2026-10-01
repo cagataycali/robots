@@ -15,7 +15,11 @@ description: "Unitree Go2 Quadruped"
 from strands_robots import Robot
 
 robot = Robot("unitree_go2")
+print(robot.robot_joint_names("unitree_go2"))
+robot.cleanup()
 ```
+
+Command it as a velocity setpoint stream, or train a gait in batch ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
 robot = Robot("unitree_go2", mode="real", port="192.168.123.161", network_interface="eth0")  # Go2Driver

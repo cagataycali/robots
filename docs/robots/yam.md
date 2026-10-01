@@ -15,7 +15,11 @@ description: "i2rt YAM Arm (8-DOF)"
 from strands_robots import Robot
 
 robot = Robot("yam")
+print(robot.robot_joint_names("yam"))
+robot.cleanup()
 ```
+
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 Aliases: `i2rt_yam`.
 
