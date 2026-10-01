@@ -135,14 +135,16 @@ def test_sim_proxy_advertises_only_what_the_wire_carries() -> None:
     spec = peer_tools.peer_tool_spec("lane-so101__so101", peer_tools.KIND_SIM, "lane_so101__so101")
     assert spec is not None
     actions = spec["inputSchema"]["json"]["properties"]["action"]["enum"]
-    assert set(actions) <= security.ALLOWED_ACTIONS
+    verbs = [a for a in actions if a in peer_tools.SIM_ACTIONS]
+    assert set(verbs) <= security.ALLOWED_ACTIONS
     assert "set_joints" in actions and "sim_call" not in actions
-    for a in actions:
+    assert set(actions) - set(verbs) == security.sim_call_allowed_actions() - set(verbs)
+    for a in verbs:
         cmd, err = peer_tools.map_invocation(
             "p", peer_tools.KIND_SIM, {"action": a, "instruction": "go", "target_joints": {"a": 1.0}}
         )
         assert err is None and cmd is not None, (a, err)
-        security.validate_command(cmd)  # the wire accepts every advertised action
+        security.validate_command(cmd)  # the wire accepts every advertised verb
 
 
 @pytest.mark.parametrize(
@@ -184,7 +186,7 @@ def test_sim_invocation_maps_onto_a_wire_command(tool_input: dict[str, Any], exp
     [
         ({"action": "set_joints"}, "needs target_joints"),
         ({"action": "execute"}, "needs an instruction"),
-        ({"action": "add_object"}, "unknown action"),
+        ({"action": "teleport"}, "unknown action"),
         ({}, "needs an 'action'"),
     ],
 )

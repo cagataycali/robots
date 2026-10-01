@@ -11120,6 +11120,18 @@ function Dashboard() {
       " ",
       link.detail
     ] }),
+    loaded && mesh.online === false && mesh.error && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toast warn", role: "status", "data-testid": "mesh-not-started", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: "Mesh not started." }),
+      " ",
+      mesh.error,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "hint", children: [
+        " ",
+        "No robot can reach this dashboard until it joins. On a laptop or a trusted LAN start it with",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "STRANDS_MESH_LOCAL_DEV=1" }),
+        "; for a shared network set the certificate variables (Settings, mesh)."
+      ] })
+    ] }),
     dark.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "toast warn", role: "status", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: "Older server." }),
       " ",

@@ -156,6 +156,8 @@ export interface ActivityEntry {
 
 export interface MeshInfo {
   online?: boolean
+  /** why the dashboard's own mesh session is not open (set only while online is false) */
+  error?: string | null
   peer_id?: string
   peers?: number
   live_peers?: number
