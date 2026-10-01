@@ -193,7 +193,7 @@ class TestTheSpecIsGraded:
             ({"task": "Isaac-Cartpole", "num_envs": 0}, "extra['num_envs'] must be a positive integer"),
             ({"task": "Isaac-Cartpole", "num_envs": True}, "extra['num_envs'] must be a positive integer"),
             ({"task": "Isaac-Cartpole", "physics": "physx --x"}, "extra['physics'] must be a physics preset"),
-            ({"task": "Isaac-Cartpole", "rl_library": "skrl"}, "extra['rl_library'] 'skrl' is not supported"),
+            ({"task": "Isaac-Cartpole", "rl_library": "sb3"}, "extra['rl_library'] 'sb3' is not supported"),
             ({"task": "Isaac-Cartpole", "wait": "yes"}, "extra['wait'] must be a boolean"),
             ({"task": "Isaac-Cartpole", "timeout_s": 0}, "extra['timeout_s'] must be"),
             ({"task": "Isaac-Cartpole", "python": "/bin/sh"}, "extra key(s) ['python'] are not read"),
@@ -206,10 +206,12 @@ class TestTheSpecIsGraded:
         problems = _trainer().validate(spec)
         assert any(needle in p for p in problems), problems
 
-    def test_resume_is_refused_rather_than_silently_starting_over(self, fake_python: Path, tmp_path: Path) -> None:
+    def test_resume_with_no_run_to_resume_is_refused_rather_than_silently_starting_over(
+        self, fake_python: Path, tmp_path: Path
+    ) -> None:
         spec = _spec(tmp_path)
         spec.resume = True
-        assert any("resuming a run is not supported" in p for p in _trainer().validate(spec))
+        assert any("no Isaac-Cartpole run" in p for p in _trainer().validate(spec))
 
     def test_a_valid_spec_has_no_problems(self, fake_python: Path, tmp_path: Path) -> None:
         assert _trainer().validate(_spec(tmp_path, num_envs=64, physics="newton_mjwarp")) == []
@@ -542,7 +544,11 @@ class TestARunRemembersHowItWasTrained:
         record = json.loads((Path(result.checkpoint_dir) / RUN_RECORD_FILE).read_text())
         assert record["task"] == "Isaac-Cartpole" and record["physics"] == "isaacsim_physx"
         assert record["num_envs"] == 64 and record["seed"] == 7 and record["iterations"] == 3
-        assert record["overrides"] == ["physics=isaacsim_physx", "agent.algorithm.learning_rate=0.001"]
+        assert record["overrides"] == [
+            "physics=isaacsim_physx",
+            "agent.algorithm.learning_rate=0.001",
+            "agent.algorithm.schedule=fixed",
+        ]
         assert record["job_id"] == result.job_id
 
 
