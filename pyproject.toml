@@ -258,6 +258,17 @@ protomotions = [
     # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
     "huggingface_hub>=1.5,<2.0.0",
 ]
+holosoma = [
+    # Amazon FAR Holosoma locomotion for the Unitree G1 - ONNX actors whose PD
+    # gains, joint names and command ranges ride in the ONNX metadata, so the
+    # provider self-configures from the file. onnxruntime runs the graph;
+    # huggingface_hub fetches a bare file name from the Hub mirror of the
+    # Apache-2.0 upstream tree (github.com/amazon-far/holosoma). Weights are NOT
+    # bundled. Same resolver window as [microduck] / [wbc]. See
+    # strands_robots/policies/holosoma/ and docs/learn/policies/holosoma.md.
+    "onnxruntime>=1.17.0,<2.0.0",
+    "huggingface_hub>=1.5,<2.0.0",
+]
 microduck = [
     # Pollen Microduck locomotion policies - ONNX actors with the input
     # normaliser fused into the exported graph. onnxruntime runs the graph;
@@ -774,6 +785,7 @@ all = [
     "strands-robots[mesh-iot]",
     "strands-robots[device-connect]",
     "strands-robots[wbc]",
+    "strands-robots[holosoma]",
     "strands-robots[kimodo]",
     "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
@@ -930,6 +942,11 @@ constraint-dependencies = [
     # GHSA-hxp9-w8x3-p566 (MEDIUM): permessage-deflate bypasses
     # maxMessagePayloadSize, < 26.7.1 (under roslibpy).
     "autobahn>=26.7.1",
+    # GHSA-8988-9cw3-xx77 (HIGH): HTTPS proxy TLS configuration ignored or
+    # overridden; GHSA-vxq7-64xx-v4gw (HIGH): read_chunked() buffers an unbounded
+    # chunk-size line; GHSA-gh4c-6fx4-qh6g (MEDIUM): chunked Deflate streaming
+    # infinite loop. All < 2.8.0 (under botocore / requests).
+    "urllib3>=2.8.0",
 ]
 override-dependencies = [
         # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA

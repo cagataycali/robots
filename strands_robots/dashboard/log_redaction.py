@@ -10,6 +10,8 @@ import logging
 import re
 from collections.abc import Mapping
 
+from strands_robots.utils import CREDENTIAL_KEY_WORDS
+
 #: query parameters whose VALUE is a credential
 _SECRET_QUERY_KEYS = ("token", "access_code", "api_key", "apikey", "password", "secret")
 # : `code` is an oauth credential AND the commonest word in an HTTP log.
@@ -28,19 +30,7 @@ _BEARER_RE = re.compile(r"(?i)(?P<key>bearer\s+)(?P<val>[A-Za-z0-9._\-~+/]{8,}=*
 #: a JWT sitting loose in a message, with no key to hang the redaction on
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 
-_KEYED_WORDS = (
-    "token",
-    "secret",
-    "password",
-    "passwd",
-    "passphrase",
-    "api_key",
-    "apikey",
-    "access_code",
-    "auth",
-    "authorization",
-    "credential",
-)
+_KEYED_WORDS = CREDENTIAL_KEY_WORDS
 _KEYED_RE = re.compile(
     r"(?i)(?P<key>[\w.\-]*(?:" + "|".join(_KEYED_WORDS) + r")[\w.\-]*\"?'?\s*[:=]\s*\"?'?)"
     r"(?P<val>[A-Za-z0-9._\-~+/]{8,}=*)"

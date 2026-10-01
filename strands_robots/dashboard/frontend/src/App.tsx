@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMesh } from './lib/useMesh'
 import { usePwa } from './lib/usePwa'
 import { linkHealth, estopPosture } from './lib/linkHealth'
@@ -13,6 +13,9 @@ import { serverNotice, staleServerNotice, fleetFieldGaps, type RefusedHandshakes
 import FleetBar from './components/FleetBar'
 import RobotCard from './components/RobotCard'
 import { armHosts } from './lib/armHosts'
+import RegistryCard from './components/RegistryCard'
+import { useRegistry, registryCards } from './lib/useRegistry'
+import type { PingResult } from './types'
 import RobotDetail from './components/RobotDetail'
 import AgentDock from './components/AgentDock'
 import SettingsDrawer from './components/SettingsDrawer'
@@ -20,7 +23,7 @@ import ActivityLog from './components/ActivityLog'
 import DevicePanel from './components/DevicePanel'
 import { noArmsVerdict, type RememberedBoard } from './lib/noArms'
 import { startSnippet, type DetectedBoard } from './lib/startSnippet'
-import { api as httpGet } from './lib/endpoints'
+import { api as httpGet, post as httpPost } from './lib/endpoints'
 import EstopSheet from './components/EstopSheet'
 import HelpSheet from './components/HelpSheet'
 import EstopButton from './components/EstopButton'
@@ -145,6 +148,24 @@ function Dashboard() {
   // A host process is not a robot: its `<host>__<robot>` children carry the joints, the cameras
   // and a Run button that routes back to it, so a card of its own is a second, broken robot.
   const cards = useMemo(() => list.filter(p => !fleetHosts[p.peer_id]), [list, fleetHosts])
+
+  // Provisioned IoT Things that are not speaking: grey cards after the live ones.
+  const registry = useRegistry(10_000, loaded)
+  const thingCards = useMemo(
+    () => registryCards(registry, list.map(p => p.peer_id)),
+    [registry, list])
+  // The last ping verdict per Thing. One status read, point to point; the server maps the
+  // broker's answer to a word (lib/pingVerdict) and the card shows it beside the button.
+  const [pings, setPings] = useState<Record<string, PingResult>>({})
+  const pingThing = useCallback(async (name: string) => {
+    setPings(s => ({ ...s, [name]: { thing: name, verdict: 'pending', pending: true } }))
+    try {
+      const r = await httpPost<PingResult>(`/api/robots/${encodeURIComponent(name)}/ping`)
+      setPings(s => ({ ...s, [name]: { ...r, at: Date.now() / 1000 } }))
+    } catch (e) {
+      setPings(s => ({ ...s, [name]: { thing: name, verdict: 'error', reason: String((e as Error)?.message ?? e), at: Date.now() / 1000 } }))
+    }
+  }, [])
 
   const pairInputs = useMemo(() => list.map(q => ({
     peer_id: q.peer_id, joints: Object.keys(q.state?.joints ?? {}).length,
@@ -389,6 +410,24 @@ function Dashboard() {
             />
             </ErrorBoundary>
           ))}
+          {thingCards.map(t => (
+            <ErrorBoundary key={`thing:${t.thing_name}`} label={`the registry card for ${t.thing_name}`}>
+              <RegistryCard thing={t} ping={pings[t.thing_name]}
+                            onPing={registry?.ping_available ? pingThing : undefined} />
+            </ErrorBoundary>
+          ))}
+          {registry && registry.status !== 'ok' && (
+            <div className="registry-bar" role="status">
+              <span className="reachchip registry">registry</span>
+              <span>IoT registry: {registry.detail || registry.status}</span>
+            </div>
+          )}
+          {registry && registry.status === 'ok' && (
+            <div className="registry-bar" role="status">
+              <span className="reachchip registry">registry</span>
+              <span>{registry.count ?? registry.things.length} things in {registry.region ?? 'the account'}{registry.indexed ? '' : ' · no connectivity index'}</span>
+            </div>
+          )}
         </main>
       )}
 

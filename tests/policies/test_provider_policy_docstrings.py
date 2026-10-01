@@ -50,6 +50,7 @@ _PROVIDER_POLICIES = {
     "protomotions/policy.py": "ProtoMotionsPolicy",
     "microduck/policy.py": "MicroduckPolicy",
     "flux3_action/policy.py": "Flux3ActionPolicy",
+    "holosoma/policy.py": "HolosomaPolicy",
     "rl.py": "RLCheckpointPolicy",
 }
 

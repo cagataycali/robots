@@ -443,6 +443,7 @@ class TestReprovisionThing:
 
     def test_new_certificate_attached_and_activated_before_the_old_one_is_removed(self, rotating, tmp_path):
         iot = rotating()
+        iot.existing_policy = {"Version": "2012-10-17", "Statement": []}  # the account's copy predates a grant
         result = prov.reprovision_thing("so101-r", cert_dir=tmp_path)
         names = iot.names()
         assert "create_certificate_from_csr" in names
@@ -450,11 +451,27 @@ class TestReprovisionThing:
         assert names.index("attach_policy") < names.index("update_certificate")
         # The old certificate is gone, the new one carries the same policy.
         assert iot.principals == ["arn:aws:iot:us-west-2:1:cert/abc"]
-        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["strands-robot"]
+        # A robot certificate from before the child key space grant also gets
+        # ``strands-robot-children`` (the stand-in account has no such policy
+        # yet, so it is created; a real account already holds it).
+        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["strands-robot", "strands-robot-children"]
         assert result.policy_name == "strands-robot" and result.subject_cn == "so101-r"
         assert result.stale_certificates == ()
-        # Nothing about the Thing itself is touched.
-        assert "create_thing" not in names and "update_thing" not in names and "create_policy" not in names
+        # Nothing about the Thing itself is touched; the module-owned policy the
+        # Thing carries is republished as a new default version, before the new
+        # certificate is issued, so the rotated identity connects under it.
+        assert "create_thing" not in names and "update_thing" not in names
+        assert names.index("create_policy_version") < names.index("create_certificate_from_csr")
+        (_, kw), *_ = [c for c in iot.calls if c[0] == "create_policy_version"]
+        assert kw["setAsDefault"] is True and kw["policyName"] == "strands-robot"
+
+    def test_a_policy_this_module_does_not_own_is_carried_over_untouched(self, rotating, tmp_path):
+        iot = rotating()
+        iot.attached[iot.OLD] = ["customer-policy"]
+        prov.reprovision_thing("so101-r", cert_dir=tmp_path)
+        names = iot.names()
+        assert "get_policy" not in names and "create_policy_version" not in names and "create_policy" not in names
+        assert iot.attached["arn:aws:iot:us-west-2:1:cert/abc"] == ["customer-policy"]
 
     def test_a_missing_thing_is_refused_before_anything_is_issued(self, rotating, tmp_path):
         iot = rotating()

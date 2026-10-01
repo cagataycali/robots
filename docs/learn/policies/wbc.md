@@ -68,6 +68,8 @@ print(result["status"])
 
 `Robot("g1")` on hardware takes the same `policy_provider` and `policy_config`.
 
+[holosoma](holosoma.md) is the second whole-body family for the same robot: Amazon FAR's Apache-2.0 controllers, the same 29-joint table and the same torque shim, a 100-wide observation with a gait clock in place of the height command.
+
 ## Limits
 
 - Unitree G1 only. The joint map resolves the G1's 29 names by name inside the caller's state keys; a different humanoid fails that membership check.

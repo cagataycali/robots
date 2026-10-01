@@ -38,17 +38,56 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS, WBCPolicy
+from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
 from strands_robots.utils import positive_whole_number_error
 
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
+
+
+class _PDTorqueConfig(Protocol):
+    # Read-only on purpose: both families carry frozen dataclass configs.
+    @property
+    def num_actions(self) -> int: ...
+
+    @property
+    def n_obs_joints(self) -> int: ...
+
+    @property
+    def height_cmd(self) -> float: ...
+
+
+@runtime_checkable
+class PDTorquePolicy(Protocol):
+    """What the torque shim reads from a policy: the GR00T-WBC and Holosoma shape.
+
+    Both families emit absolute joint-position targets for a prefix of
+    :data:`WBC_G1_ALL_JOINTS` and carry their own per-joint PD law. The shim
+    needs nothing else, so it is typed on these five members rather than on
+    :class:`WBCPolicy`; a policy class opts in to the auto-install by setting
+    ``pd_torque_shim = True`` (see ``MuJoCoSimEngine._maybe_install_action_controller``).
+    """
+
+    @property
+    def config(self) -> _PDTorqueConfig:
+        """Resolved configuration: joint counts and the pelvis height the shim installs."""
+        ...
+
+    @property
+    def default_angles(self) -> np.ndarray:
+        """Nominal stance for the driven joints, the hold target before the first action."""
+        ...
+
+    def compute_torques(self, target_pos: np.ndarray, current_pos: np.ndarray, current_vel: np.ndarray) -> np.ndarray:
+        """Per-joint PD law of the family: ``kp * (target - q) - kd * dq``."""
+        ...
+
 
 # Upstream g1_gear_wbc.yaml: 0.005 s physics step, one inference per 4 steps
 # (50 Hz control). The PD->torque law runs every physics substep.
@@ -82,7 +121,7 @@ class WBCTorqueController:
 
     def __init__(
         self,
-        policy: WBCPolicy,
+        policy: PDTorquePolicy,
         *,
         leg_waist_actuator_ids: list[int],
         arm_actuator_ids: list[int],
@@ -190,7 +229,7 @@ class WBCTorqueController:
     def from_sim(
         cls,
         sim: SimEngine,
-        policy: WBCPolicy,
+        policy: PDTorquePolicy,
         robot_name: str,
     ) -> WBCTorqueController:
         """Build a controller for ``robot_name`` and flip its actuators to torque.
@@ -440,7 +479,7 @@ class WBCTorqueController:
             mj.mj_step(model, data)
 
 
-def wbc_uses_position_servo(sim: SimEngine, policy: WBCPolicy, robot_name: str) -> bool:
+def wbc_uses_position_servo(sim: SimEngine, policy: PDTorquePolicy, robot_name: str) -> bool:
     """Return True if the WBC-driven actuators on ``robot_name`` are position-servo.
 
     :class:`WBCPolicy` emits joint-**position** targets. On a position-servo
@@ -481,7 +520,7 @@ def wbc_uses_position_servo(sim: SimEngine, policy: WBCPolicy, robot_name: str) 
     return False
 
 
-def install_wbc_torque_control(sim: SimEngine, policy: WBCPolicy, robot_name: str) -> WBCTorqueController:
+def install_wbc_torque_control(sim: SimEngine, policy: PDTorquePolicy, robot_name: str) -> WBCTorqueController:
     """Install a :class:`WBCTorqueController` on ``sim`` for ``robot_name``.
 
     Registers the controller in ``world._backend_state["action_controller"]``,
@@ -510,4 +549,4 @@ def install_wbc_torque_control(sim: SimEngine, policy: WBCPolicy, robot_name: st
     return controller
 
 
-__all__ = ["WBCTorqueController", "install_wbc_torque_control", "wbc_uses_position_servo"]
+__all__ = ["PDTorquePolicy", "WBCTorqueController", "install_wbc_torque_control", "wbc_uses_position_servo"]

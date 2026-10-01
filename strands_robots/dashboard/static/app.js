@@ -244,6 +244,57 @@ function detailSentence(detail) {
   if (lists.length) text += ` (${lists.join("; ")})`;
   return text;
 }
+const LOCAL$1 = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
+function hostOf(base, pageHost2 = "") {
+  const v = (base ?? "").trim();
+  if (!v) return (pageHost2 || "").toLowerCase();
+  try {
+    return new URL(/^[a-z]+:\/\//i.test(v) ? v : `http://${v}`).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function isLocal(host) {
+  return LOCAL$1.has(host.replace(/:\d+$/, ""));
+}
+function connectionChange(c) {
+  const nextRaw = (c.nextBase ?? "").trim();
+  const nextToken = (c.nextToken ?? "").trim();
+  const currentToken = (c.currentToken ?? "").trim();
+  if (nextRaw && hostOf(nextRaw, c.pageHost) === "") {
+    return {
+      kind: "unparseable",
+      detail: `"${nextRaw}" is not an address this browser can dial. Use host:port or a full URL (https://robot.lan:8090); leave it empty to talk to the origin that served this page`
+    };
+  }
+  const from = hostOf(c.currentBase, c.pageHost);
+  const to = hostOf(nextRaw, c.pageHost);
+  const carryingOldToken = nextToken !== "" && nextToken === currentToken;
+  if (carryingOldToken && from !== to) {
+    return {
+      kind: "token_follows_host",
+      fromHost: from || "(this origin)",
+      toHost: to || "(this origin)",
+      detail: `The token in this browser was given for ${from || "this origin"}, and connecting to ${to || "this origin"} will send it there — a credential for one machine handed to another. If that address is a typo or not the robot you think it is, the secret is gone.`,
+      alternative: "connect without a token"
+    };
+  }
+  if (nextToken !== "" && to && !isLocal(to)) {
+    const scheme = /^https:\/\//i.test(nextRaw) ? "https" : /^[a-z]+:\/\//i.test(nextRaw) ? "http" : "http";
+    if (scheme === "http") {
+      return {
+        kind: "cleartext_token",
+        toHost: to,
+        detail: `http://${to} is not encrypted, so this token crosses the network in clear text — anyone on the path can read it and use it to move motors. https:// keeps it private.`,
+        alternative: "connect without a token"
+      };
+    }
+  }
+  return { kind: "ok" };
+}
+function needsConfirm(v) {
+  return v.kind === "token_follows_host" || v.kind === "cleartext_token";
+}
 const EXPIRING_SOON_S = 300;
 function decodeSegment(seg) {
   try {
@@ -315,6 +366,7 @@ function sessionVerdictAt(exp, nowS, renewedAtS = 0) {
 }
 const BASE_KEY = "strands.backend";
 const TOKEN_KEY = "strands.token";
+const TOKEN_HOST_KEY = "strands.token.host";
 function normalize(raw) {
   const value = (raw ?? "").trim();
   if (!value) return "";
@@ -332,23 +384,63 @@ function normalize(raw) {
 let cachedBase = null;
 let absorbedUrl = false;
 let urlBase = null;
+let urlVerdict = null;
 let offeredToken = null;
 let offeredDropped = false;
+function pageHost() {
+  try {
+    return (location.host || "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function hostOfBase(base) {
+  return hostOf(base, pageHost());
+}
+function storedToken() {
+  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+}
+function bindToken(base) {
+  if (!storedToken()) {
+    localStorage.removeItem(TOKEN_HOST_KEY);
+    return;
+  }
+  localStorage.setItem(TOKEN_HOST_KEY, hostOfBase(base));
+}
 function absorbUrl() {
   if (absorbedUrl) return;
   absorbedUrl = true;
   try {
     const params = new URLSearchParams(location.search);
     const fromToken = params.get("token");
-    urlBase = params.get("backend");
+    const fromBackend = params.get("backend");
     const stored = normalize(localStorage.getItem(BASE_KEY) ?? "");
-    const moves = urlBase !== null && normalize(urlBase) !== stored;
+    const next = fromBackend === null ? null : normalize(fromBackend);
+    if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim()) bindToken(stored);
+    const moves = next !== null && next !== stored;
     offeredToken = fromToken && !moves ? fromToken.trim() || null : null;
     offeredDropped = !!fromToken && moves;
-    if (fromToken !== null || urlBase !== null) {
+    let scrubBackend = fromBackend !== null;
+    if (next) {
+      const token = storedToken();
+      const verdict2 = connectionChange({
+        currentBase: stored,
+        currentToken: token,
+        nextBase: next,
+        nextToken: token,
+        pageHost: pageHost()
+      });
+      const moving = needsConfirm(verdict2);
+      urlBase = next;
+      if (moving) {
+        urlVerdict = verdict2;
+        scrubBackend = false;
+      }
+    }
+    if (fromToken !== null || scrubBackend) {
       try {
         params.delete("token");
-        params.delete("backend");
+        if (scrubBackend) params.delete("backend");
         const rest = params.toString();
         history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
       } catch {
@@ -363,16 +455,43 @@ function backendBase() {
   absorbUrl();
   if (cachedBase !== null) return cachedBase;
   if (urlBase !== null) {
-    cachedBase = normalize(urlBase);
-    localStorage.setItem(BASE_KEY, cachedBase);
+    cachedBase = urlBase;
+    if (urlVerdict === null) localStorage.setItem(BASE_KEY, cachedBase);
     return cachedBase;
   }
   cachedBase = normalize(localStorage.getItem(BASE_KEY) ?? "");
   return cachedBase;
 }
+function urlBackendVerdict() {
+  absorbUrl();
+  return urlVerdict;
+}
+function carryTokenToBackend() {
+  const base = backendBase();
+  urlVerdict = null;
+  localStorage.setItem(BASE_KEY, base);
+  bindToken(base);
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.has("backend")) {
+      params.delete("backend");
+      const rest = params.toString();
+      history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
+    }
+  } catch {
+  }
+  forgetLiveRoutes();
+  notifyAuth();
+}
 function authToken() {
   absorbUrl();
-  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+  const token = storedToken();
+  if (!token) return "";
+  const base = backendBase();
+  if (urlVerdict !== null) return "";
+  const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim();
+  if (issuer !== hostOfBase(base)) return "";
+  return token;
 }
 const URL_TOKEN_VIA = "handoff";
 async function redeemUrlToken() {
@@ -437,6 +556,7 @@ function setAuthToken(token) {
   const value = token.trim();
   if (value) localStorage.setItem(TOKEN_KEY, value);
   else localStorage.removeItem(TOKEN_KEY);
+  bindToken(backendBase());
   notifyAuth();
 }
 function backendLabel() {
@@ -447,7 +567,9 @@ function backendKey() {
   return `${backendBase()}|${authToken() ? "auth" : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : "open"}`;
 }
 function setBackendBase(raw) {
+  absorbUrl();
   cachedBase = normalize(raw);
+  urlVerdict = null;
   if (cachedBase) localStorage.setItem(BASE_KEY, cachedBase);
   else localStorage.removeItem(BASE_KEY);
   forgetLiveRoutes();
@@ -583,7 +705,9 @@ async function api(path, init = {}) {
     throw new HttpError(res.status, message, body);
   }
   noteAuthAccepted(path);
-  absorbRenewedSession(res, path);
+  if (token) {
+    absorbRenewedSession(res, path);
+  }
   return body;
 }
 const post = (path, body) => api(path, { method: "POST", body: body === void 0 ? "{}" : JSON.stringify(body) });
@@ -609,7 +733,9 @@ async function apiBlob(path) {
     throw new HttpError(res.status, detailSentence(detail) || text || res.statusText);
   }
   noteAuthAccepted(path);
-  absorbRenewedSession(res, path);
+  if (token) {
+    absorbRenewedSession(res, path);
+  }
   return URL.createObjectURL(await res.blob());
 }
 const ACTIVITY_CAP = 200;
@@ -2381,6 +2507,15 @@ function nextRequestedFps(own, paced) {
   const caps = [own, paced].filter((v) => typeof v === "number" && v > 0);
   return caps.length ? Math.min(...caps) : null;
 }
+const LATENCY_SHOWN_MS = 50;
+function cameraPathLabel(meta) {
+  return (meta == null ? void 0 : meta.via) === "s3" ? "S3" : "";
+}
+function cameraLatencyLabel(meta) {
+  const ms = meta == null ? void 0 : meta.latency_ms;
+  if (typeof ms !== "number" || !isFinite(ms) || ms < LATENCY_SHOWN_MS) return "";
+  return ms >= 1e4 ? `${(ms / 1e3).toFixed(0)} s` : `${Math.round(ms)} ms`;
+}
 const DEGRADED_FPS = 1;
 function CameraTile({ peerId, cam, big = false, meta, onConfigure }) {
   var _a;
@@ -2518,6 +2653,14 @@ function CameraTile({ peerId, cam, big = false, meta, onConfigure }) {
       shape && /* @__PURE__ */ jsxRuntimeExports.jsxs("em", { children: [
         " ",
         shape
+      ] }),
+      cameraPathLabel(meta) && /* @__PURE__ */ jsxRuntimeExports.jsxs("em", { title: "the robot published an S3 reference; the dashboard fetched the frame", children: [
+        " ",
+        cameraPathLabel(meta)
+      ] }),
+      cameraLatencyLabel(meta) && /* @__PURE__ */ jsxRuntimeExports.jsxs("em", { title: "publisher clock to dashboard receive", children: [
+        " ",
+        cameraLatencyLabel(meta)
       ] })
     ] }),
     onConfigure && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -4426,6 +4569,14 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
         return bus ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `badge ${bus.tone}`, title: bus.title, children: bus.label }) : null;
       })(),
       (p == null ? void 0 : p.hostname) && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "host", children: p.hostname }),
+      (peer.reach === "lan" || peer.reach === "iot" || peer.reach === "both") && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "span",
+        {
+          className: `reachchip ${peer.reach}`,
+          title: peer.reach === "lan" ? "presence arrived on the Zenoh (LAN) leg" : peer.reach === "iot" ? "presence arrived over AWS IoT Core" : "presence arrived on both the LAN and the AWS IoT Core leg (bridge)",
+          children: peer.reach
+        }
+      ),
       (p == null ? void 0 : p.connected) === false && type === "robot" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge warn", title: "peer is online but its hardware is not connected", children: "hw off" }),
       type === "robot" && !peer.peer_id.includes("__") && !peer.peer_id.endsWith("-twin") && /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
@@ -4570,6 +4721,94 @@ function armHosts(peers) {
     };
   }
   return out;
+}
+function pingLabel(ping) {
+  if (!ping) return "";
+  if (ping.pending) return "pinging…";
+  const ms = typeof ping.latency_ms === "number" && isFinite(ping.latency_ms) ? ` in ${Math.round(ping.latency_ms)} ms` : "";
+  switch (ping.verdict) {
+    case "answered":
+      return `answered${ms}`;
+    case "offline":
+      return `offline (broker 404${ms})`;
+    case "forbidden":
+      return "forbidden for this operator";
+    case "silent":
+      return "delivered, no answer";
+    case "unavailable":
+      return "no direct send on this backend";
+    case "refused":
+      return "refused";
+    default:
+      return ping.reason ? `error: ${ping.reason}` : "error";
+  }
+}
+function lastSeenLabel(t, now = Date.now() / 1e3) {
+  if (typeof t !== "number" || !isFinite(t) || t <= 0) return "never heard";
+  const s = Math.max(0, Math.round(now - t));
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 172800) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+function RegistryCard({ thing, onPing, ping }) {
+  const attrs = Object.entries(thing.attributes ?? {});
+  const verdict2 = thing.connectivity === "connected" ? "broker says connected" : thing.connectivity === "disconnected" ? "broker says disconnected" : "no connectivity index";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card registry stale-known", role: "group", "aria-label": `provisioned thing ${thing.thing_name}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card-head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "typebadge thing", title: "an AWS IoT Thing in the registry; nothing heard from it on the mesh", children: "thing" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "peername", title: thing.thing_name, children: thing.thing_name }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "reachchip registry", title: "known from the AWS IoT registry only", children: "registry" }),
+      thing.thing_type && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "host", children: thing.thing_type }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dot off", role: "img", "aria-label": "not heard on the mesh", title: "not heard on the mesh" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "regnote", children: [
+      "last seen ",
+      lastSeenLabel(thing.last_seen),
+      " · ",
+      verdict2
+    ] }),
+    attrs.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "regattrs", children: attrs.map(([k, v]) => `${k}=${v}`).join(" ") }),
+    onPing && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "controls", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "btn ghost small",
+          onClick: () => onPing(thing.thing_name),
+          disabled: !!(ping == null ? void 0 : ping.pending),
+          title: "one direct message round trip over AWS IoT Core; an offline Thing answers 404 in under a second",
+          children: "ping"
+        }
+      ),
+      ping && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `pingnote ${ping.verdict}`, role: "status", title: ping.reason || void 0, children: pingLabel(ping) })
+    ] })
+  ] });
+}
+function useRegistry(pollMs = 1e4, enabled = true) {
+  const [view, setView] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const v = await api("/api/mesh/iot/registry");
+        if (alive) setView(v);
+      } catch {
+      }
+    };
+    void tick();
+    const id = setInterval(tick, pollMs);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [pollMs, enabled]);
+  return view;
+}
+function registryCards(view, peerIds) {
+  if (!view || view.status !== "ok") return [];
+  const known = new Set(peerIds);
+  return view.things.filter((t) => !t.self && !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name));
 }
 function cameraEvidence(peerId, announced, arrived, requested) {
   const frames = (arrived ?? []).filter(Boolean);
@@ -6242,9 +6481,9 @@ function AgentDock({ onSettings, startOpen = false, exampleRobot }) {
     ) : null
   ] });
 }
-const LOCAL$1 = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", ""]);
+const LOCAL = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", ""]);
 function isLocalHost(host) {
-  return LOCAL$1.has((host || "").trim().toLowerCase());
+  return LOCAL.has((host || "").trim().toLowerCase());
 }
 function authRemovalWarning(facts) {
   const host = (facts.host || "").trim();
@@ -6272,57 +6511,6 @@ function authRemovalWarning(facts) {
     lines,
     confirmLabel: remote ? "yes — leave it open to the network" : "yes — remove the token"
   };
-}
-const LOCAL = /* @__PURE__ */ new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
-function hostOf(base, pageHost = "") {
-  const v = (base ?? "").trim();
-  if (!v) return (pageHost || "").toLowerCase();
-  try {
-    return new URL(/^[a-z]+:\/\//i.test(v) ? v : `http://${v}`).host.toLowerCase();
-  } catch {
-    return "";
-  }
-}
-function isLocal(host) {
-  return LOCAL.has(host.replace(/:\d+$/, ""));
-}
-function connectionChange(c) {
-  const nextRaw = (c.nextBase ?? "").trim();
-  const nextToken = (c.nextToken ?? "").trim();
-  const currentToken = (c.currentToken ?? "").trim();
-  if (nextRaw && hostOf(nextRaw, c.pageHost) === "") {
-    return {
-      kind: "unparseable",
-      detail: `"${nextRaw}" is not an address this browser can dial. Use host:port or a full URL (https://robot.lan:8090); leave it empty to talk to the origin that served this page`
-    };
-  }
-  const from = hostOf(c.currentBase, c.pageHost);
-  const to = hostOf(nextRaw, c.pageHost);
-  const carryingOldToken = nextToken !== "" && nextToken === currentToken;
-  if (carryingOldToken && from !== to) {
-    return {
-      kind: "token_follows_host",
-      fromHost: from || "(this origin)",
-      toHost: to || "(this origin)",
-      detail: `The token in this browser was given for ${from || "this origin"}, and connecting to ${to || "this origin"} will send it there — a credential for one machine handed to another. If that address is a typo or not the robot you think it is, the secret is gone.`,
-      alternative: "connect without a token"
-    };
-  }
-  if (nextToken !== "" && to && !isLocal(to)) {
-    const scheme = /^https:\/\//i.test(nextRaw) ? "https" : /^[a-z]+:\/\//i.test(nextRaw) ? "http" : "http";
-    if (scheme === "http") {
-      return {
-        kind: "cleartext_token",
-        toHost: to,
-        detail: `http://${to} is not encrypted, so this token crosses the network in clear text — anyone on the path can read it and use it to move motors. https:// keeps it private.`,
-        alternative: "connect without a token"
-      };
-    }
-  }
-  return { kind: "ok" };
-}
-function needsConfirm(v) {
-  return v.kind === "token_follows_host" || v.kind === "cleartext_token";
 }
 function syncDrafts(current, lastServer, nextServer) {
   const next = { ...current };
@@ -10539,6 +10727,7 @@ function AuthGate({ children }) {
   const [showToken, setShowToken] = reactExports.useState(false);
   const [expiring, setExpiring] = reactExports.useState("");
   const [tokenValue, setTokenValue] = reactExports.useState("");
+  const [pending, setPending] = reactExports.useState(() => urlBackendVerdict());
   const prepared = reactExports.useRef(null);
   const verifying = reactExports.useRef(false);
   reactExports.useEffect(() => {
@@ -10715,6 +10904,24 @@ function AuthGate({ children }) {
     mode === "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", children: [
       "The dashboard API did not answer. ",
       error && /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: error })
+    ] }),
+    pending && (pending.kind === "token_follows_host" || pending.kind === "cleartext_token") && /* A ?backend= in the address bar asked this page to dial another host, or the same host
+    over clear text. The sign-in this browser holds was NOT sent (finding f003): it goes
+    only if the operator says so, the same question the Settings drawer asks for a typed
+    address. */
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: pending.kind === "cleartext_token" ? `Send this token to ${pending.toHost} in clear text?` : `Send this token to ${pending.toHost}?` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: pending.detail }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", type: "button", onClick: () => {
+          carryTokenToBackend();
+          location.reload();
+        }, children: [
+          "send it to ",
+          backendLabel()
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "button", onClick: () => setPending(null), children: pending.alternative })
+      ] })
     ] }),
     noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authwarn", children: [
       "Passkeys need a secure context. Open this page over ",
@@ -10893,6 +11100,21 @@ function Dashboard() {
     };
   })), [list]);
   const cards = reactExports.useMemo(() => list.filter((p) => !fleetHosts[p.peer_id]), [list, fleetHosts]);
+  const registry = useRegistry(1e4, loaded);
+  const thingCards = reactExports.useMemo(
+    () => registryCards(registry, list.map((p) => p.peer_id)),
+    [registry, list]
+  );
+  const [pings, setPings] = reactExports.useState({});
+  const pingThing = reactExports.useCallback(async (name) => {
+    setPings((s) => ({ ...s, [name]: { thing: name, verdict: "pending", pending: true } }));
+    try {
+      const r = await post(`/api/robots/${encodeURIComponent(name)}/ping`);
+      setPings((s) => ({ ...s, [name]: { ...r, at: Date.now() / 1e3 } }));
+    } catch (e) {
+      setPings((s) => ({ ...s, [name]: { thing: name, verdict: "error", reason: String((e == null ? void 0 : e.message) ?? e), at: Date.now() / 1e3 } }));
+    }
+  }, []);
   const pairInputs = reactExports.useMemo(() => list.map((q) => {
     var _a2, _b2;
     return {
@@ -11135,7 +11357,31 @@ function Dashboard() {
           onBusyChange: (id, running) => setBusyPeers((s) => s[id] === running ? s : { ...s, [id]: running })
         },
         p.peer_id
-      ) }, p.peer_id))
+      ) }, p.peer_id)),
+      thingCards.map((t) => /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: `the registry card for ${t.thing_name}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        RegistryCard,
+        {
+          thing: t,
+          ping: pings[t.thing_name],
+          onPing: (registry == null ? void 0 : registry.ping_available) ? pingThing : void 0
+        }
+      ) }, `thing:${t.thing_name}`)),
+      registry && registry.status !== "ok" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "registry-bar", role: "status", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "reachchip registry", children: "registry" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          "IoT registry: ",
+          registry.detail || registry.status
+        ] })
+      ] }),
+      registry && registry.status === "ok" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "registry-bar", role: "status", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "reachchip registry", children: "registry" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          registry.count ?? registry.things.length,
+          " things in ",
+          registry.region ?? "the account",
+          registry.indexed ? "" : " · no connectivity index"
+        ] })
+      ] })
     ] }),
     detailPeer && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { label: "the robot detail view", onDismiss: () => setDetail(null), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       RobotDetail,

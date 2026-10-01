@@ -55,6 +55,7 @@ import ssl
 import threading
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,13 @@ logger = logging.getLogger(__name__)
 #: ``true`` / ``yes`` on, ``0`` / ``false`` / ``no`` off, unset means on. Anything
 #: else is reported with a WARNING and treated as on: a typo must not change
 #: how commands reach a robot, and the correct value is the one that works.
+#: How long after a publish a broker DISCONNECT is attributed to that publish
+#: (:meth:`IotMqttTransport._warn_if_publish_ended_the_session`). AWS IoT ends
+#: the session within a few milliseconds of an ungranted publish; a second is
+#: wide enough for a loaded event loop and narrow enough that a network drop
+#: minutes after the last tick is not blamed on it.
+DISCONNECT_AFTER_PUBLISH_WINDOW_S = 1.0
+
 DIRECT_ENV_VAR = "STRANDS_MESH_IOT_DIRECT"
 _DIRECT_ON = ("1", "true", "yes")
 _DIRECT_OFF = ("0", "false", "no")
@@ -472,6 +480,10 @@ class _MqttSample:
 
     __slots__ = ("correlation_data", "key_expr", "payload", "response_topic", "retain")
 
+    #: Read by :func:`~strands_robots.mesh.transport.base.sample_leg`: this sample came
+    #: over AWS IoT Core, not the LAN.
+    leg = "iot"
+
     def __init__(
         self,
         topic: str,
@@ -710,6 +722,30 @@ def _is_camera_ref(topic: str) -> bool:
     return len(parts) >= 5 and parts[0] == "strands" and parts[2] == "camera" and parts[-1] == "ref"
 
 
+#: Robot-side opt-in: publish camera frames that fit under :data:`DIRECT_PAYLOAD_CAP`
+#: over MQTT instead of dropping them. Off by default; the designed path for a
+#: fleet with a bucket is :mod:`~strands_robots.mesh.iot.camera_offload`.
+INLINE_CAMERA_ENV = "STRANDS_MESH_IOT_CAMERA_INLINE"
+
+
+def inline_camera_opted_in() -> bool:
+    """True when the robot process set :data:`INLINE_CAMERA_ENV` to a truthy word.
+
+    Raises:
+        ValueError: The variable holds a word that is not a boolean; a privacy
+            and cost switch fails loud rather than silently staying off.
+    """
+    from strands_robots.mesh._zenoh_config import _bool_env  # type: ignore[import-untyped]
+
+    return bool(_bool_env(INLINE_CAMERA_ENV, default=False))
+
+
+def _is_camera_frame(topic: str) -> bool:
+    """True for ``strands/<peer>/camera/<cam>``: a frame, not a ``/ref`` pointer."""
+    parts = topic.split("/")
+    return len(parts) >= 4 and parts[0] == "strands" and parts[2] == "camera" and not _is_camera_ref(topic)
+
+
 def _should_drop(topic: str) -> bool:
     """True if the topic's payload should never traverse MQTT (camera/input/hand).
 
@@ -795,6 +831,8 @@ class IotMqttTransport:
         self._client: Any | None = None
         self._connected = threading.Event()
         self._lock = threading.Lock()
+        # Camera topics whose inline frame already exceeded the payload cap once (warned).
+        self._oversize_camera_topics: set[str] = set()
         # topic_filter -> list of handlers (multiple subs to same topic OK)
         self._handlers: dict[str, list[Callable[[Any], None]]] = {}
         # Direct Messaging state. The HTTPS client is built lazily on the first
@@ -818,6 +856,18 @@ class IotMqttTransport:
         self._unmatched_inbound = 0
         self.direct_stats: dict[str, int] = {"sent": 0, "delivered": 0, "failed": 0}
         self._sdk_too_old_reported = False
+        # The topics handed to the client lately and when: a DISCONNECT that
+        # follows a publish within ``DISCONNECT_AFTER_PUBLISH_WINDOW_S`` is how
+        # AWS IoT answers a publish the policy does not grant, and the topics
+        # are the only clue. The broker's DISCONNECT lands 50 to 100 ms after
+        # the offending publish, by which time a 10 Hz state loop has published
+        # again on a granted topic, so every topic inside the window is named,
+        # newest first. Warned once per such set (``_publish_disconnect_warned``).
+        self._recent_publishes: deque[tuple[float, str]] = deque(maxlen=16)
+        self._publish_disconnect_warned: set[tuple[str, ...]] = set()
+        # Set by close() before the client is stopped: the disconnect that
+        # follows is this process's own doing, not the broker's verdict.
+        self._closing = threading.Event()
 
     # Lifecycle
 
@@ -880,6 +930,7 @@ class IotMqttTransport:
                     return False
 
             self._connected.clear()
+            self._closing.clear()  # a re-connect after close() judges its disconnects afresh
             # mtls_from_path (corrupt PEM -> AwsCrtError) and start() can raise
             # synchronously. Contain them here and return False: the mesh must
             # stay OFF rather than crash the host (and, in bridge mode, leave
@@ -959,6 +1010,12 @@ class IotMqttTransport:
         with self._lock:
             if self._client is None:
                 return
+            # Raised before stop(): awscrt reports the stop through the same
+            # lifecycle callback as a broker DISCONNECT, sometimes while stop()
+            # is still running, and every 10 Hz publisher has a publish inside
+            # the blame window at shutdown. Without this, each normal exit told
+            # the owner to reprovision a healthy Thing.
+            self._closing.set()
             try:
                 self._client.stop()
             except Exception as exc:
@@ -1234,11 +1291,14 @@ class IotMqttTransport:
         if self._client is None or not self._connected.is_set():
             return
 
-        if _should_drop(key):
+        inline_frame = _is_camera_frame(key) and inline_camera_opted_in()
+        if _should_drop(key) and not inline_frame:
             return
 
         qos, retain = _qos_and_retain_for(key)
-        if qos < 0:
+        if inline_frame:
+            qos, retain = 0, False
+        elif qos < 0:
             return  # explicit DROP
 
         # Encoded BEFORE the publish attempt, and outside its handler: a payload
@@ -1253,10 +1313,29 @@ class IotMqttTransport:
             _report_unencodable_payload("MQTT", key, exc)
             return
 
+        if inline_frame and len(encoded) > DIRECT_PAYLOAD_CAP:
+            # The broker refuses anything over the cap and closes the session;
+            # dropping here keeps the connection up. Once per topic: a camera
+            # loop at 5 Hz would otherwise write the same line 300 times a minute.
+            with self._lock:
+                first = key not in self._oversize_camera_topics
+                self._oversize_camera_topics.add(key)
+            if first:
+                logger.warning(
+                    "%s: inline camera frame is %d bytes, over the %d byte AWS IoT payload cap; dropped. "
+                    "Lower the resolution or STRANDS_MESH_CAMERA_HZ, or set STRANDS_MESH_CAMERA_S3_BUCKET "
+                    "for the S3 reference path",
+                    key,
+                    len(encoded),
+                    DIRECT_PAYLOAD_CAP,
+                )
+            return
+
         try:
             from awscrt import mqtt5
 
             qos_enum = mqtt5.QoS.AT_MOST_ONCE if qos == 0 else mqtt5.QoS.AT_LEAST_ONCE
+            self._recent_publishes.append((time.monotonic(), key))
             self._client.publish(
                 mqtt5.PublishPacket(
                     topic=key,
@@ -1425,6 +1504,60 @@ class IotMqttTransport:
     def _on_disconnection(self, data: Any) -> None:
         logger.info("IoT MQTT disconnected (thing=%s)", self._thing_name)
         self._connected.clear()
+        if self._closing.is_set():
+            return
+        self._warn_if_publish_ended_the_session(data)
+
+    def _warn_if_publish_ended_the_session(self, data: Any) -> None:
+        """WARN once per set of topics when the broker ends the session right after a publish.
+
+        AWS IoT does not refuse a publish the connected Thing's policy does
+        not grant: it drops the MQTT session (DISCONNECT reason code 135, not
+        authorized) and the client reconnects, so a robot that keeps
+        publishing one ungranted topic lives in a connect/disconnect cycle
+        with nothing above DEBUG to say why. The topics named here are those
+        handed to the client within :data:`DISCONNECT_AFTER_PUBLISH_WINDOW_S`
+        of the disconnect, newest first (measured: the DISCONNECT arrives 47
+        to 74 ms after the publish, so the newest is not always the culprit);
+        the usual cause is a child peer (``<thing>__<robot>``) on a certificate
+        from before the child key space grant, which
+        ``strands-robots iot reprovision <thing>`` attaches.
+        """
+        now = time.monotonic()
+        # ``list(deque)`` copies at C level with no bytecode in between, so a
+        # publisher thread appending in ``put()`` at the same instant (this runs
+        # on the awscrt event-loop thread) cannot raise "deque mutated during
+        # iteration" out of the lifecycle callback.
+        snapshot = list(self._recent_publishes)
+        recent = [(at, topic) for at, topic in snapshot if now - at <= DISCONNECT_AFTER_PUBLISH_WINDOW_S]
+        if not recent:
+            return
+        recent.sort(key=lambda item: item[0], reverse=True)
+        topics: list[str] = []
+        for _at, topic in recent:
+            if topic not in topics:
+                topics.append(topic)
+        key = tuple(topics)
+        if key in self._publish_disconnect_warned:
+            return
+        self._publish_disconnect_warned.add(key)
+        elapsed_ms = (now - recent[0][0]) * 1000.0
+        packet = getattr(data, "disconnect_packet", None)
+        reason = getattr(packet, "reason_code", None)
+        reason_text = f", broker reason code {int(reason)}" if isinstance(reason, int) else ""
+        logger.warning(
+            "IoT MQTT session ended %.0f ms after publishing %s (thing=%s%s): AWS IoT drops the session on a "
+            "publish the Thing's policy does not grant. A child peer (%s__<robot>) needs the strands/%s__*/* grant "
+            "(policy strands-robot-children); run `strands-robots iot reprovision %s` to attach it, then restart "
+            "this robot.",
+            elapsed_ms,
+            ", ".join(topics),
+            self._thing_name,
+            reason_text,
+            self._thing_name,
+            self._thing_name,
+            self._thing_name,
+        )
 
     def _on_publish_received(self, data: Any) -> None:
         """Route inbound messages to subscriber handlers via topic-filter match."""
