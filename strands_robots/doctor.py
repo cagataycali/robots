@@ -1239,6 +1239,76 @@ def check_iot_direct() -> str:
 
 
 #: The doctor's table: one ``(label, probe)`` row per check, in print order.
+def check_iot_child_peers() -> str:
+    """Whether the Thing's IoT policy grants its child peers' key space, from the control plane alone.
+
+    Only meaningful with ``STRANDS_MESH_BACKEND=iot`` or ``bridge``; any other
+    backend is a SKIP. A ``Robot`` whose simulation joins the mesh attaches
+    each robot in it as a child peer ``<thing>__<robot>`` that publishes over
+    the Thing's own MQTT session, and AWS IoT answers a publish the policy does
+    not grant by ending that session: the robot then reconnects on every
+    child heartbeat and its presence reaches the fleet once in thirty seconds.
+    The row reads the default version of every policy attached to the Thing's
+    certificates with ``boto3`` (``ListThingPrincipals``, ``ListAttachedPolicies``,
+    ``GetPolicy``; never an MQTT connect, which would take the running robot's
+    session over) and passes when one grants
+    ``strands/${iot:Connection.Thing.ThingName}__*/*``. Missing grant is the
+    FAIL the runtime hits at its first child publish, and the fix is the
+    command that republishes the current policy. An identity with no robot
+    policy attached (an operator, ``strands-operator`` alone) is a SKIP: it
+    attaches no child peer, and reprovision would not add the grant to it. No
+    credentials or no ``boto3`` is a WARN: the verdict could not be read here,
+    and the transport still names the topic when the broker drops it.
+    """
+    from strands_robots.mesh._backend_select import select_backend
+
+    backend = select_backend()
+    if backend not in ("iot", "bridge"):
+        return _skip(f"iot child peers: STRANDS_MESH_BACKEND={backend} (no AWS IoT leg)")
+    thing = os.environ.get("STRANDS_IOT_THING_NAME", "").strip()
+    if not thing:
+        return _fail(
+            "iot child peers: STRANDS_IOT_THING_NAME is required",
+            fix="run provision_robot(<thing>) and export the lines it prints",
+        )
+    try:
+        import boto3
+    except ImportError:
+        return _warn(
+            "iot child peers: boto3 not installed, the policy could not be read",
+            note='uv pip install "strands-robots[mesh-iot]"',
+        )
+
+    from strands_robots.mesh.iot.provision import CHILD_PEER_SEPARATOR, child_key_space_verdict
+    from strands_robots.mesh.transport.iot_transport import _region_from_endpoint
+
+    fix = f"strands-robots iot reprovision {thing} (republishes the policy; restart the robot after)"
+    try:
+        region = _region_from_endpoint(os.environ.get("STRANDS_IOT_ENDPOINT", ""))
+        iot = boto3.client("iot", region_name=region) if region else boto3.client("iot")
+        granted, detail, robot_identity = child_key_space_verdict(iot, thing)
+    except Exception as e:  # noqa: BLE001 - boto3 raises its own hierarchy plus socket errors; every one is "not readable here"
+        return _warn(
+            f"iot child peers: the policy could not be read ({type(e).__name__}: {e})",
+            note="needs AWS credentials for iot:GetPolicy; the transport warns when the broker drops a publish",
+        )
+    if granted is None:
+        return _fail(f"iot child peers: {detail}", fix=fix)
+    if not granted and not robot_identity:
+        # provision_operator() exports this same posture; an operator attaches
+        # no child peer, and reprovision adds the grant next to a robot policy
+        # only, so a FAIL here would be permanent and its Fix a no-op.
+        return _skip(
+            f"iot child peers: {detail}; no robot policy on {thing}, an operator identity attaches no child peer"
+        )
+    if not granted:
+        return _fail(
+            f"iot child peers: {detail}; a child peer {thing}{CHILD_PEER_SEPARATOR}<robot> would reconnect the robot on every heartbeat",
+            fix=fix,
+        )
+    return _pass(f"iot child peers: {detail}")
+
+
 #: Probes are looked up by name at run time so a test (or an operator's
 #: ``python -c``) can replace one without rebuilding the table.
 CHECKS: tuple[tuple[str, str], ...] = (
@@ -1257,6 +1327,7 @@ CHECKS: tuple[tuple[str, str], ...] = (
     ("Device Connect", "check_device_connect"),
     ("Mesh", "check_mesh"),
     ("IoT Direct", "check_iot_direct"),
+    ("IoT Child Peers", "check_iot_child_peers"),
     ("Sim Test", "check_sim_smoke"),
 )
 
