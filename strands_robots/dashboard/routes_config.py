@@ -19,15 +19,15 @@ from strands_robots.dashboard import access, agent_console, config_api
 router = APIRouter(prefix="/api", tags=["config"])
 
 
-def _agent_status() -> dict[str, Any]:
-    return {"model": agent_console.model_id(), "asks_first": sorted(agent_console.MOTION_TOOLS)}
+def _agent_status(bridge: Any) -> dict[str, Any]:
+    return {"model": agent_console.model_id(), "asks_first": agent_console.asks_first(bridge)}
 
 
 @router.get("/config")
 async def get_config(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """The composite document: settings, agent, voice, mesh, policies, env."""
     bridge = getattr(request.app.state, "bridge", None)
-    return await asyncio.to_thread(lambda: config_api.snapshot(bridge=bridge, agent_status=_agent_status()))
+    return await asyncio.to_thread(lambda: config_api.snapshot(bridge=bridge, agent_status=_agent_status(bridge)))
 
 
 @router.post("/config")

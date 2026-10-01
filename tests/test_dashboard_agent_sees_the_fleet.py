@@ -241,16 +241,7 @@ def _tools_by_name(tools: list[Any]) -> dict[str, Any]:
 
 
 def test_expected_tool_names_are_honest_before_the_first_turn() -> None:
-    assert agent_console.expected_tool_names(None) == [
-        "robots",
-        "sim_sessions",
-        "sim_start",
-        "sim_state",
-        "sim_set_joints",
-        "sim_reset",
-        "sim_stop",
-        "emergency_stop",
-    ]
+    assert agent_console.expected_tool_names(None) == ["emergency_stop"]
     bridge = FakeBridge(
         {
             "lane-so101": {"presence": {"robot_type": "sim"}},
@@ -259,8 +250,8 @@ def test_expected_tool_names_are_honest_before_the_first_turn() -> None:
         }
     )
     names = agent_console.expected_tool_names(bridge)
-    assert names[8:11] == list(agent_console.FLEET_TOOL_NAMES)
-    assert set(names[11:]) == {"lane_so101", "lane_so101__so101"}  # the coordinator mints no tool
+    assert names[1:4] == list(agent_console.FLEET_TOOL_NAMES)
+    assert set(names[4:]) == {"lane_so101", "lane_so101__so101"}  # the coordinator mints no tool
 
 
 def test_fleet_lists_every_tool_worthy_peer_with_its_tool_and_state() -> None:
@@ -330,11 +321,12 @@ def _console(bridge: FakeBridge | None, devices: Any = None) -> agent_console.Co
     return agent_console.Console(safety, model=MagicMock(), bridge=bridge, devices=devices)
 
 
-def test_console_holds_sim_fleet_and_proxy_tools_and_gates_real_motion() -> None:
+def test_console_holds_fleet_and_proxy_tools_only_and_gates_real_motion() -> None:
     bridge = FakeBridge({"lane-so101__so101": SIM_PEER, "arm-1": REAL_PEER})
     console = _console(bridge, FakeDevices(bridge))
     names = set(console.tool_names())
-    assert {"sim_start", "fleet", "spawn_robot", "despawn_robot", "lane_so101__so101", "arm_1"} <= names
+    assert names == {"emergency_stop", "fleet", "spawn_robot", "despawn_robot", "lane_so101__so101", "arm_1"}
+    assert agent_console.asks_first(bridge) == ["arm_1"]
     # The HITL rows are DERIVED from the built proxies and the peers they stand for: the real
     # arm's execute/start, nothing for a sim the gate reads as one (a plain record, not a wire claim).
     from strands_robots.dashboard.peer_tools import build_peer_tools, motion_actions_for
@@ -343,7 +335,7 @@ def test_console_holds_sim_fleet_and_proxy_tools_and_gates_real_motion() -> None
     assert motion_actions_for(proxies, bridge.peers) == {"arm_1": frozenset({"execute", "start"})}
 
 
-def test_console_without_a_bridge_is_the_sim_only_agent() -> None:
+def test_console_without_a_bridge_holds_only_the_estop() -> None:
     console = _console(None)
     assert set(console.tool_names()) == set(agent_console.expected_tool_names(None))
     assert console.refresh() is False

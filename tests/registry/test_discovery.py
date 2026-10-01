@@ -186,6 +186,28 @@ def test_curated_entry_wins_over_discovery(monkeypatch, tmp_path) -> None:
     assert resolved.name == "curated.xml"
 
 
+def test_a_description_short_name_resolves_to_the_curated_robot_that_ships_it() -> None:
+    """The short name of a description a curated entry ships is that entry, not a discovered twin.
+
+    ``list_discoverable`` lists ``so_arm101`` for ``so_arm101_mj_description``;
+    if ``so101`` ships that module but does not claim the short name,
+    ``Robot("so_arm101")`` falls through to discovery and loads the same MJCF
+    without the curated joint labels, so a labelled ``send_action`` is dropped.
+    """
+    from strands_robots.registry.loader import _load
+    from strands_robots.registry.robots import resolve_name
+
+    robots = _load("robots")["robots"]
+    shipped = {
+        info["asset"]["robot_descriptions_module"].removesuffix("_mj_description"): name
+        for name, info in robots.items()
+        if info.get("asset", {}).get("robot_descriptions_module", "").endswith("_mj_description")
+    }
+    assert len(shipped) >= 5
+    unclaimed = {short: owner for short, owner in shipped.items() if resolve_name(short) != owner}
+    assert unclaimed == {}
+
+
 def test_resolve_model_path_uses_discovery_for_uncurated_robot(monkeypatch, tmp_path) -> None:
     """When a name is unknown to the curated registry, the discovered asset resolves."""
     assets_dir = tmp_path / "assets"

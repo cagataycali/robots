@@ -29,6 +29,7 @@ complete.
 from __future__ import annotations
 
 import ast
+import functools
 import gc
 import importlib.util
 import inspect
@@ -572,6 +573,7 @@ def _teardown_stdlib_imports(source: str, label: str = "<source>") -> list[str]:
     return offenders
 
 
+@functools.cache
 def _package_sources() -> dict[str, str]:
     """Every module of the installed package, keyed by its path relative to it."""
     root = pathlib.Path(inspect.getfile(SimEngine)).parents[1]
@@ -603,9 +605,12 @@ class TestNoFinalizerReachableTeardownNeedsTheImportSystem:
             "MuJoCoSimEngine.destroy",
         } <= found, sorted(found)
 
-    @pytest.mark.parametrize("relative_path", sorted(_package_sources()))
-    def test_no_teardown_method_imports_a_stdlib_module(self, relative_path: str) -> None:
-        offenders = _teardown_stdlib_imports(_package_sources()[relative_path], relative_path)
+    def test_no_teardown_method_imports_a_stdlib_module(self) -> None:
+        offenders = [
+            offender
+            for relative_path, source in _package_sources().items()
+            for offender in _teardown_stdlib_imports(source, relative_path)
+        ]
         assert offenders == [], (
             f"{offenders} - move the import to module scope. A finalizer runs "
             f"these methods during interpreter shutdown, where the import fails "

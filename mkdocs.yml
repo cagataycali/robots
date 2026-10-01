@@ -58,6 +58,8 @@ extra_javascript:
   - path: assets/viewer/robot-viewer.js
     type: module
   - assets/motion.js
+  - https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js
+  - assets/mermaid.js
 
 extra:
   generator: false
@@ -77,6 +79,7 @@ extra:
 
 hooks:
   - docs/hooks/facts.py
+  - docs/hooks/visuals.py
   - docs/hooks/extras.py
   - docs/hooks/manifest.py
   - docs/hooks/coverage.py
@@ -325,7 +328,11 @@ markdown_extensions:
       anchor_linenums: true
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: sr-diagram
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
@@ -349,88 +356,168 @@ nav:
       - Arms:
           - robots/arm/index.md
           - robots/arx_l5.md
+          - robots/double_pendulum.md
           - robots/dynamixel_2r.md
+          - robots/edo.md
+          - robots/fanuc_m710ic.md
+          - robots/fer.md
+          - robots/finger_edu.md
           - robots/fr3.md
           - robots/fr3_v2.md
+          - robots/fr3_v2_1.md
+          - robots/gen2.md
+          - robots/gen3_lite.md
           - robots/hope_jr.md
+          - robots/iiwa7.md
+          - robots/j2n4s300.md
+          - robots/j2n6s200.md
+          - robots/j2n6s300.md
+          - robots/j2n7s300.md
+          - robots/j2s6s200.md
+          - robots/j2s6s300.md
+          - robots/j2s7s300.md
           - robots/kinova_gen3.md
           - robots/koch.md
           - robots/kuka_iiwa.md
           - robots/omx.md
-          - robots/rebot_b601.md
+          - robots/omx_f.md
+          - robots/omx_l.md
+          - robots/omy_3m.md
+          - robots/omy_f3m.md
+          - robots/omy_l100.md
+          - robots/open_manipulator_x.md
           - robots/openarm.md
           - robots/panda.md
           - robots/piper.md
+          - robots/poppy_ergo_jr.md
+          - robots/rebot_b601.md
           - robots/sawyer.md
           - robots/so100.md
           - robots/so101.md
+          - robots/trifinger_edu.md
+          - robots/ur10.md
+          - robots/ur10_official.md
           - robots/ur10e.md
+          - robots/ur12e.md
+          - robots/ur15.md
+          - robots/ur16e.md
+          - robots/ur18.md
+          - robots/ur20.md
+          - robots/ur3.md
+          - robots/ur30.md
+          - robots/ur3_official.md
+          - robots/ur3e.md
+          - robots/ur5.md
+          - robots/ur5_official.md
           - robots/ur5e.md
+          - robots/ur7e.md
+          - robots/ur8long.md
           - robots/vx300s.md
           - robots/wx250s.md
+          - robots/xarm6.md
           - robots/xarm7.md
           - robots/yam.md
           - robots/z1.md
       - Bimanual:
           - robots/bimanual/index.md
           - robots/aloha.md
+          - robots/baxter.md
           - robots/bi_openarm.md
           - robots/bi_rebot_b601.md
           - robots/bi_so_follower.md
+          - robots/nextage.md
+          - robots/poppy_torso.md
           - robots/trossen_wxai.md
+          - robots/yumi.md
       - Hands and grippers:
           - robots/hand/index.md
           - robots/ability_hand.md
           - robots/aero_hand.md
           - robots/allegro_hand.md
+          - robots/barrett_hand.md
+          - robots/hope_jr_hand.md
           - robots/leap_hand.md
+          - robots/leap_hand_v1.md
           - robots/robotiq_2f85.md
           - robots/robotiq_2f85_v4.md
           - robots/shadow_dexee.md
           - robots/shadow_hand.md
-          - robots/hope_jr_hand.md
       - Humanoids:
           - robots/humanoid/index.md
           - robots/adam_lite.md
           - robots/apollo.md
           - robots/asimov_v0.md
+          - robots/atlas_drc.md
+          - robots/atlas_v4.md
+          - robots/berkeley_humanoid.md
+          - robots/bolt.md
           - robots/booster_t1.md
           - robots/cassie.md
+          - robots/draco3.md
           - robots/elf2.md
+          - robots/ergocub.md
           - robots/fourier_n1.md
+          - robots/icub.md
+          - robots/jaxon.md
           - robots/jvrc.md
           - robots/microduck.md
           - robots/mujoco_humanoid.md
           - robots/op3.md
           - robots/open_duck_mini.md
+          - robots/r2.md
           - robots/rby1.md
           - robots/reachy2.md
+          - robots/rhea.md
+          - robots/romeo.md
+          - robots/sigmaban.md
+          - robots/simple_humanoid.md
+          - robots/spryped.md
           - robots/talos.md
+          - robots/toddlerbot.md
           - robots/toddlerbot_2xc.md
           - robots/toddlerbot_2xm.md
           - robots/unitree_g1.md
           - robots/unitree_h1.md
           - robots/unitree_h1_2.md
+          - robots/upkie.md
+          - robots/valkyrie.md
       - Mobile bases:
           - robots/mobile/index.md
           - robots/aliengo.md
           - robots/anymal_b.md
           - robots/anymal_c.md
+          - robots/anymal_d.md
+          - robots/b1.md
+          - robots/b2.md
           - robots/earthrover.md
           - robots/go1.md
+          - robots/hyq.md
+          - robots/laikago.md
           - robots/lekiwi.md
+          - robots/mini_cheetah.md
+          - robots/minitaur.md
           - robots/robot_soccer_kit.md
+          - robots/solo.md
           - robots/spot.md
           - robots/unitree_a1.md
           - robots/unitree_go2.md
+          - robots/wl_p311d.md
+          - robots/wl_p311e.md
       - Mobile manipulators:
           - robots/mobile_manip/index.md
-          - robots/yahboom_m3pro.md
-          - robots/stretch.md
-          - robots/stretch3.md
-          - robots/tiago_dual.md
+          - robots/bambot.md
+          - robots/eve_r3.md
+          - robots/fetch.md
+          - robots/ginger.md
           - robots/google_robot.md
           - robots/lekiwi_client.md
+          - robots/pepper.md
+          - robots/pr2.md
+          - robots/stretch.md
+          - robots/stretch3.md
+          - robots/stretch_se3.md
+          - robots/tiago_dual.md
+          - robots/yahboom_m3pro.md
       - Aerial:
           - robots/aerial/index.md
           - robots/crazyflie.md
@@ -460,6 +547,7 @@ nav:
           - MuJoCo: learn/simulation/mujoco.md
           - Isaac Sim: learn/simulation/isaac.md
           - Newton: learn/simulation/newton.md
+          - URDF robots: learn/simulation/urdf.md
           - Worlds and objects: learn/simulation/worlds-and-objects.md
           - Predicates and rollouts: learn/simulation/predicates-and-rollouts.md
           - Randomization: learn/simulation/randomization.md
