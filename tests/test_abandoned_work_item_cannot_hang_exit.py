@@ -37,6 +37,7 @@ import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from tests._daemon_executor import DaemonThreadExecutor
+from tests._package_ast import parse_file
 
 _TESTS_DIR = pathlib.Path(inspect.getfile(DaemonThreadExecutor)).resolve().parent
 _ROOT = _TESTS_DIR.parent
@@ -285,7 +286,7 @@ def _executor_constructors(tree: ast.AST) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "hardware_robot_on":
-            helper = _executor_constructors(ast.parse(_HELPER.read_text()))
+            helper = _executor_constructors(parse_file(_HELPER))
             found.extend((node.lineno, name) for _, name in helper)
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
@@ -312,7 +313,7 @@ def _unsafe_modules(files: list[pathlib.Path]) -> dict[str, list[int]]:
     """Modules that abandon a work item on a non-daemon fixture executor."""
     offenders: dict[str, list[int]] = {}
     for path in files:
-        tree = ast.parse(path.read_text())
+        tree = parse_file(path)
         constructors = _executor_constructors(tree)
         if not constructors or not _abandons_a_work_item(tree):
             continue
@@ -347,7 +348,7 @@ class TestEveryAbandoningFixtureUsesTheDaemonExecutor:
         abandoning = {
             path.name
             for path in sorted(_TESTS_DIR.rglob("test_*.py"))
-            if _executor_constructors(tree := ast.parse(path.read_text())) and _abandons_a_work_item(tree)
+            if _executor_constructors(tree := parse_file(path)) and _abandons_a_work_item(tree)
         }
         assert abandoning == {
             "test_hardware_after_shutdown.py",

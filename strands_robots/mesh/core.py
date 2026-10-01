@@ -1045,6 +1045,25 @@ class Mesh(SensorLoopsMixin):
         if not is_permissive:
             return False
 
+        # The ACL this gate inspects is the Zenoh ACL. The pure ``iot``
+        # backend opens no Zenoh session: every topic the peer may publish
+        # or receive is bounded by the AWS IoT policy attached to its
+        # certificate (:mod:`strands_robots.mesh.iot.provision`), so there
+        # is nothing here for a permissive Zenoh shape to expose. Refusing
+        # anyway sent operators to STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1, the
+        # opt-in the security docs tell them never to set in production
+        # (iot-deep lane, D1). ``bridge`` keeps the gate: it has a Zenoh leg.
+        from strands_robots.mesh._backend_select import select_backend
+
+        if select_backend() == "iot":
+            logger.info(
+                "[mesh] %s: permissive Zenoh ACL shape ignored on the iot backend -- "
+                "no Zenoh session opens there; the IoT policy on the thing's "
+                "certificate is the access-control list",
+                self.peer_id,
+            )
+            return False
+
         if _acl_config.permissive_acl_acknowledged():
             logger.info(
                 "[mesh] %s: permissive default ACL active under mtls "
@@ -3031,7 +3050,14 @@ class Mesh(SensorLoopsMixin):
             # :func:`~strands_robots.mesh.security.validate_command`.
             extra = {
                 k: cmd[k]
-                for k in ("model_path", "server_address", "policy_type", "pretrained_name_or_path", "embodiment")
+                for k in (
+                    "model_path",
+                    "server_address",
+                    "policy_type",
+                    "pretrained_name_or_path",
+                    "walk",
+                    "embodiment",
+                )
                 if k in cmd
             }
             # Sim peer? Route to Simulation.start_policy / run_policy.

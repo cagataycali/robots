@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots as package
+from tests._package_ast import parse_file
 
 _PACKAGE_ROOT = Path(package.__file__).resolve().parent
 _FLAG = "strict_keys"
@@ -55,7 +56,7 @@ def _classes_carrying_the_flag() -> list[tuple[Path, ast.ClassDef]]:
     found: list[tuple[Path, ast.ClassDef]] = []
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a parse failure is its own bug
             continue
         for node in ast.walk(tree):

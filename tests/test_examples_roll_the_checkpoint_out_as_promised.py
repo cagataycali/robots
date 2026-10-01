@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -172,7 +173,7 @@ def test_no_other_example_promises_a_rollout_unwatched() -> None:
     promising = sorted(
         path.relative_to(_REPO_ROOT).as_posix()
         for path in _EXAMPLES_DIR.rglob("*.py")
-        if _PROMISE in (ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))) or "")
+        if _PROMISE in (ast.get_docstring(parse_file(path)) or "")
     )
 
     assert promising == sorted(_PROMISE_MAKERS), promising

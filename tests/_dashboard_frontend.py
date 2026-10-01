@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run the dashboard SPA's ``src/lib`` modules under Node, as a browser would.
 
-The frontend ships no test runner of its own and CI has no Node, so the cells
+The frontend ships no test runner of its own, so the cells
 about ``endpoints.ts`` (which host a request is built for, whether the bearer
 rides along) are pytest cells that hand a script to Node when one is on the
-machine and skip when none is. Node strips TypeScript types itself since 23.6,
+machine and skip when none is, or when the one on PATH is older than the first
+release that strips TypeScript types itself (22.18 on the LTS line, 23.6 after),
 so nothing is compiled: the ``lib`` directory is copied, the extensionless
 relative imports the bundler resolves are given their ``.ts`` back, and the
 script imports the module it is about.
@@ -33,7 +34,48 @@ LIB = FRONTEND_SRC / "lib"
 
 _RELATIVE_IMPORT = re.compile(r"""(from\s+['"])(\.{1,2}/[^'"]+?)(['"])""")
 
-requires_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not on this machine")
+#: The first Node release of each line that strips TypeScript types without a flag:
+#: 23.6 on the current line, backported to 22.18 on the LTS line. An older Node
+#: (20 LTS, early 22) refuses ``.ts`` with ``ERR_UNKNOWN_FILE_EXTENSION``, so a
+#: cell on such a machine must skip, not fail.
+STRIPS_TYPES_FROM = ((22, 18), (23, 6))
+
+
+def node_version() -> tuple[int, int] | None:
+    """``(major, minor)`` of the ``node`` on PATH, or None when there is none or it does not answer."""
+    node = shutil.which("node")
+    if node is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, encoding="utf-8", timeout=20, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.match(r"v(\d+)\.(\d+)", proc.stdout.strip())
+    if proc.returncode != 0 or match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def node_strips_types(version: tuple[int, int] | None) -> bool:
+    """Whether that Node runs a ``.ts`` module natively (22.18+ on the 22 line, 23.6+ after)."""
+    if version is None:
+        return False
+    major, minor = version
+    if major == 22:
+        return (major, minor) >= STRIPS_TYPES_FROM[0]
+    return (major, minor) >= STRIPS_TYPES_FROM[1]
+
+
+def _node_skip_reason() -> str:
+    version = node_version()
+    if version is None:
+        return "node is not on this machine"
+    return f"node {version[0]}.{version[1]} cannot strip TypeScript types; 22.18 or 23.6 and later run the cells"
+
+
+requires_node = pytest.mark.skipif(not node_strips_types(node_version()), reason=_node_skip_reason())
 
 #: The browser a lib module runs in, as far as any lib module reads it.
 BROWSER = """
@@ -91,7 +133,9 @@ def run_frontend(script: str, *, page: str = "http://robot.lan:8090/") -> dict:
     decides what state exists before the module's first read.
     """
     node = shutil.which("node")
-    assert node is not None, "run_frontend needs node; guard the cell with requires_node"
+    assert node is not None and node_strips_types(node_version()), (
+        "run_frontend needs a node that strips TypeScript types; guard the cell with requires_node"
+    )
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         _lib_copy(root)

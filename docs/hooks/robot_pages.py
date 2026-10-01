@@ -270,8 +270,8 @@ def _load_coverage():  # noqa: ANN202 - a sibling hook module
 
 @lru_cache(maxsize=1)
 def registry() -> dict[str, dict]:
-    """The robot registry, read once from ``robots.json``."""
-    return json.loads(_REGISTRY.read_text(encoding="utf-8"))["robots"]
+    """The robot registry, read once: ``robots.json`` plus the URDF tail (``registry_view.py``)."""
+    return dict(_registry_view().merged())
 
 
 @lru_cache(maxsize=1)
@@ -392,6 +392,24 @@ BIMANUAL_ARM_CONFIG: dict[str, tuple[str, str]] = {
 }
 
 
+# lerobot types that connect over the network rather than a serial device: the keyword the
+# config declares, an example value for the fence, and the prose the hardware section prints.
+LEROBOT_NETWORK_WIRING: dict[str, tuple[str, str, str]] = {
+    "unitree_g1": ("robot_ip", '"192.168.123.164"', "`robot_ip=` is the robot's address (DDS over Ethernet)"),
+    "lekiwi_client": ("remote_ip", '"192.168.1.50"', "`remote_ip=` is the address of the Pi that runs `lekiwi`"),
+    "reachy2": ("ip_address", '"192.168.1.42"', "`ip_address=` is the robot's address (gRPC, `port=` 50065)"),
+    "earthrover_mini_plus": ("sdk_url", '"http://localhost:8000"', "`sdk_url=` is where the EarthRover SDK listens"),
+}
+
+
+def _lerobot_wiring(lerobot_type: str) -> tuple[str, str]:
+    """(fence keyword and value, prose clause) for how a lerobot robot is addressed."""
+    if lerobot_type in LEROBOT_NETWORK_WIRING:
+        keyword, example, prose = LEROBOT_NETWORK_WIRING[lerobot_type]
+        return f"{keyword}={example}", prose
+    return 'port="/dev/ttyACM0"', "`port=` is the serial device"
+
+
 def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
     """The ``mode="real"`` lines, one per driver that builds this robot."""
     lines: list[str] = []
@@ -408,7 +426,8 @@ def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
         ]
     elif cov.lerobot_type:
         pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
-        lines.append(f'robot = Robot("{name}", mode="real"{pin}, port="/dev/ttyACM0")  # lerobot {cov.lerobot_type}')
+        wiring, _ = _lerobot_wiring(cov.lerobot_type)
+        lines.append(f'robot = Robot("{name}", mode="real"{pin}, {wiring})  # lerobot {cov.lerobot_type}')
     if cov.native_driver:
         facts = DRIVERS[cov.native_driver]
         pin = "" if cov.default_driver == "strands" else ', driver="strands"'
@@ -435,7 +454,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
                 f"with its own `port` and `cameras`."
             )
         else:
-            wiring = "`port=` is the serial device, `cameras=` the lerobot camera dict."
+            wiring = f"{_lerobot_wiring(cov.lerobot_type)[1]}, `cameras=` the lerobot camera dict."
         out.append(
             f'**lerobot.** `Robot("{name}", mode="real")` builds lerobot\'s `{cov.lerobot_type}` '
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
@@ -487,6 +506,17 @@ def driver_facts() -> str:
     return "\n".join(out)
 
 
+def _urdf_provenance(name: str, spec: dict) -> str:
+    """One line on where a URDF robot's model comes from and what the loader adds."""
+    repo, commit = spec.get("repository"), spec.get("commit")
+    module = (spec.get("asset") or {}).get("robot_descriptions_module") or f"{name}_description"
+    src = f"[{repo}@{commit[:7]}](https://github.com/{repo}/tree/{commit})" if repo and commit else f"`{module}`"
+    base = "floating base" if spec.get("floating") else "fixed base"
+    joints = spec.get("joints")
+    drive = f"{joints} position actuators" if joints else "position actuators"
+    return f"URDF from {src}, [compiled for MuJoCo](../learn/simulation/urdf.md) on first use: {drive}, {base}."
+
+
 def robot_page(name: str) -> str:
     """Markdown for one robot."""
     spec = registry()[name]
@@ -509,15 +539,33 @@ def robot_page(name: str) -> str:
     ]
     if sim:
         intro = ""
+    elif spec.get("source") == "urdf":
+        intro = (
+            f"The loader could not compile this description at this commit: {spec.get('refusal', '')}. "
+            f'`Robot("{name}")` refuses with that sentence.'
+        )
     elif cov.real:
         intro = f'The registry ships no simulation asset for it, so `Robot("{name}")` in the default sim mode refuses by name.'
     else:
         intro = f"`{name}` is registered by name and alias, with no simulation asset and no driver at this commit."
     if intro:
         lines += [intro, ""]
+    if spec.get("source") == "urdf":
+        lines += [_urdf_provenance(name, spec), ""]
     if sim:
         if entry.get("viewer"):
             lines += [f'<robot-viewer name="{name}"></robot-viewer>', ""]
+        elif spec.get("source") == "urdf":
+            thumb = entry.get("thumbnail")
+            lines += (
+                [
+                    f'<img class="sr-thumb" src="../{thumb}" alt="{html.escape(name)}, a local MuJoCo render" '
+                    'loading="lazy" width="640" height="480">',
+                    "",
+                ]
+                if thumb
+                else []
+            )
         else:
             lines += [
                 "The model has no public source to stream, so this page has no 3D view; the thumbnail is a local render.",
@@ -709,6 +757,19 @@ def on_page_markdown(markdown: str, page, config, files) -> str:  # noqa: ANN001
     src = page.file.src_path.replace("\\", "/")
     link_prefix = "../" if re.fullmatch(r"robots/[a-z_]+/index\.md", src) else ""
     return substitute(markdown, _site_prefix(page, config), link_prefix)
+
+
+def _registry_view():  # noqa: ANN202 - a sibling hook module, loaded by path like the others
+    """``docs/hooks/registry_view.py``: robots.json merged with the URDF long tail."""
+    name = "docs_hooks_registry_view"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "registry_view.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 if __name__ == "__main__":

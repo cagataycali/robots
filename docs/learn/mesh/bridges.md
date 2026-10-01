@@ -1,6 +1,10 @@
+---
+description: Presence, commands and safety events reach AWS IoT Core over MQTT5; joint state stays on the LAN.
+---
+
 # Bridges
 
-At the end of this page your fleet's presence, commands and safety events reach AWS IoT Core over MQTT5 with per-robot X.509 identities while joint state and camera frames stay on the LAN, and you know how to write the ACL that separates operators from robots on the Zenoh side.
+At the end of this page your fleet's presence, commands and safety events reach AWS IoT Core over MQTT5 with per-robot X.509 identities while joint state and camera frames stay on the LAN, and you can write the ACL that separates operators from robots on Zenoh.
 
 ```bash
 pip install 'strands-robots[mesh-iot]'          # awsiotsdk, awscrt, boto3 on top of [mesh]
@@ -28,7 +32,7 @@ The bridge degrades rather than fails: Zenoh down means pure IoT, IoT down pure 
 
 ## What the bridge forwards
 
-The MQTT side is filtered by topic suffix. Default to both wires: `presence`, `health`, `cmd`, `response`, `broadcast`, `safety/event`, `safety/estop`, `safety/resume`. LAN-only: `state`, `pose`, `imu`, `odom`, `camera`, `input`, `hand`, `stream`. `STRANDS_MESH_BRIDGE_TOPICS` is a comma-separated suffix list that replaces the default. Inbound duplicates (a presence that arrived on both wires) are dropped at the `Mesh` layer by `sender_id` and `turn_id`; `STRANDS_MESH_BRIDGE_DEDUP_STRICT` tightens that.
+The MQTT side is filtered by topic suffix. Default to both wires: `presence`, `health`, `cmd`, `response`, `broadcast`, `safety/event`, `safety/estop`, `safety/resume`. LAN-only: `state`, `pose`, `imu`, `odom`, `camera`, `input`, `hand`, `stream`. `STRANDS_MESH_BRIDGE_TOPICS`, a comma-separated suffix list, replaces the default. Inbound duplicates (a presence that arrived on both wires) are dropped by `sender_id` and `turn_id`; `STRANDS_MESH_BRIDGE_DEDUP_STRICT` tightens that.
 
 Keys are unchanged on MQTT (`strands/<peer>/cmd` is a valid MQTT topic); wildcards map `*` to `+` and `**` to `#`.
 

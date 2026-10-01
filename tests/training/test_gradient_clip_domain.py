@@ -139,12 +139,12 @@ UNREADABLE_REAL: list[Any] = [
 # makes the two refusal-reason tests below mean anything.
 OVERFLOWING_REAL: list[Any] = [_RealWithNoFloat(OverflowError("this real is past the float range"))]
 
-# Reals no float64 stands for. Positive and finite, so ``must be > 0`` would be a
+# Reals no float64 stands for. Positive and finite, so ``must be a positive finite number`` would be a
 # false statement about them - the shared domain answers them with a reason of its
 # own, and the carve-out has to reach it rather than raising on the conversion.
 BEYOND_FLOAT_RANGE: list[Any] = [10**400, -(10**400), Fraction(10**400, 3), *OVERFLOWING_REAL]
 
-# Every unusable value whose refusal is the shared domain's ``must be > 0``.
+# Every unusable value whose refusal is the shared domain's ``must be a positive finite number``.
 PLAIN_REFUSAL: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, *NOT_A_CLIP, *UNREADABLE_REAL]
 
 UNUSABLE: list[Any] = [*PLAIN_REFUSAL, *BEYOND_FLOAT_RANGE]
@@ -192,17 +192,17 @@ class TestTheOnPolicyBackendRefusesAnUnusableGradientClip:
         spec.max_grad_norm = value
         (problem,) = _clip_problems(ON_POLICY, spec)
         assert "max_grad_norm" in problem
-        assert "must be > 0" in problem
+        assert "must be a positive finite number" in problem
         assert repr(value) in problem, problem
 
     @pytest.mark.parametrize("value", BEYOND_FLOAT_RANGE)
     def test_a_value_past_the_float64_range_is_refused_with_its_own_reason(self, spec: RLTrainSpec, value: Any) -> None:
-        """It is positive and finite, so ``must be > 0`` would be false of it."""
+        """It is positive and finite, so ``must be a positive finite number`` would be false of it."""
         spec.max_grad_norm = value
         (problem,) = _clip_problems(ON_POLICY, spec)
         assert "max_grad_norm" in problem
         assert "must be within the range of a 64-bit float" in problem
-        assert "must be > 0" not in problem
+        assert "must be a positive finite number" not in problem
         assert repr(value) in problem
 
     @pytest.mark.parametrize("value", UNUSABLE)

@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import access, auth, settings  # noqa: E402
 from strands_robots.dashboard.server import create_app  # noqa: E402
+from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  # noqa: E402
 from tests._dashboard_passkeys import issue_enrolled  # noqa: E402
 
 
@@ -39,6 +40,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("DASHBOARD_AUTH_TOKEN", raising=False)
     monkeypatch.setattr(settings, "SETTINGS_FILE", tmp_path / "settings.json")
+    configure_bootstrap(monkeypatch)
     settings.clear_overrides()
     settings.load(refresh=True)
     yield tmp_path
@@ -48,8 +50,8 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def client(isolated):
-    """A loopback caller on a fresh install: admitted, but not as a passkey."""
-    return TestClient(create_app())
+    """A loopback caller holding the bootstrap proof on a fresh install: admitted, but not as a passkey."""
+    return TestClient(create_app(), headers=bootstrap_headers())
 
 
 @pytest.fixture()
@@ -120,8 +122,8 @@ class TestAFinishedCeremonyHandsTheBrowserASessionCookie:
 
 
 class TestOnlyAPasskeySessionManagesTheEnrolledKeys:
-    """A loopback caller on a fresh install is admitted - ``via='loopback'`` - and
-    so is a static token. Neither is the owner's authenticator, so neither may
+    """A loopback caller with the bootstrap proof on a fresh install is admitted -
+    ``via='loopback'`` - and so is a static token. Neither is the owner's authenticator, so neither may
     remove a key or mint a session for another device.
     """
 

@@ -32,6 +32,7 @@ import pytest
 import strands_robots.rosbridge as transport_mod
 import strands_robots.tools.use_rosbridge as ur
 from strands_robots.utils import tcp_port_error
+from tests._package_ast import parse_file
 
 # The sentence that constitutes the promise. Any helper whose docstring carries
 # it has told its callers the message names their parameter.
@@ -75,7 +76,7 @@ def _promising_helpers() -> list[tuple[str, str, bool]]:
     found: list[tuple[str, str, bool]] = []
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a syntax error is another test's problem
             continue
         for node in ast.walk(tree):

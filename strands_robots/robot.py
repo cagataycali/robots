@@ -63,6 +63,7 @@ from strands_robots.registry import (
     has_hardware,
     has_sim,
     is_discoverable,
+    is_urdf_only,
     list_robots,
     resolve_name,
 )
@@ -184,6 +185,7 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         get_robot(canonical) is None
         and not (has_sim(canonical) or has_hardware(canonical))
         and not is_discoverable(canonical)
+        and not is_urdf_only(canonical)
     ):
         # A leader arm is an input device, not a robot: it carries the same
         # servo bus and USB-serial shape as its follower, so "so101_leader"
@@ -211,8 +213,8 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         raise ValueError(
             f"Unknown robot {original!r}{resolved}.{hint} "
             "Pass a registered name (see ``strands_robots.list_robots()``), one of the "
-            "``robot_descriptions`` robots (see ``strands_robots.list_discoverable()``), "
-            "or supply ``urdf_path=``."
+            "``robot_descriptions`` robots (see ``strands_robots.list_discoverable()`` and "
+            "``strands_robots.list_urdf_only()``), or supply ``urdf_path=``."
         )
 
 
