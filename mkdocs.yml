@@ -58,6 +58,8 @@ extra_javascript:
   - path: assets/viewer/robot-viewer.js
     type: module
   - assets/motion.js
+  - https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js
+  - assets/mermaid.js
 
 extra:
   generator: false
@@ -77,6 +79,7 @@ extra:
 
 hooks:
   - docs/hooks/facts.py
+  - docs/hooks/visuals.py
   - docs/hooks/extras.py
   - docs/hooks/manifest.py
   - docs/hooks/coverage.py
@@ -325,7 +328,11 @@ markdown_extensions:
       anchor_linenums: true
       pygments_lang_class: true
   - pymdownx.inlinehilite
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: sr-diagram
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
