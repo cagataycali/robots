@@ -153,3 +153,14 @@ def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
         page = _DOCS / page_path
         assert page.is_file(), f"{frame}: page {page_path} does not exist"
         assert frame in placed, f"{frame}: no page places {{{{sim:{frame}}}}} (the manifest names {page_path})"
+
+
+def test_a_sketch_fence_renders_untitled_and_other_titles_survive() -> None:
+    """``title="sketch"`` is a grader marker, not a reader label: the hook drops it and nothing else."""
+    hook = docs_hook("visuals")
+    cases = {
+        '```python title="sketch"\nx\n```': "```python\nx\n```",
+        '```python title="sketch: groot extra"\nx\n```': "```python\nx\n```",
+        '```python title="strands_robots/policies/base.py"\nx\n```': '```python title="strands_robots/policies/base.py"\nx\n```',
+    }
+    assert {src: hook.unmark_sketches(src) for src in cases} == cases
