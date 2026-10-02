@@ -8,5 +8,8 @@ lerobot only for a robot this package has no driver for (`omx`, `openarm`,
 (`earthrover` declares `"lerobot"` because its documented teleop reads live on
 the lerobot wrapper) and `driver="lerobot"` still pins that path. An SO-101 on a
 fresh install therefore connects without the `[lerobot]` extra or a lerobot
-calibration file. `strands_robots.registry.NATIVE_DRIVER` names the new
+calibration file, and an arm lerobot already calibrated keeps that file: the
+native driver loads `<lerobot calibration dir>/robots/<type>/<tool name>.json`
+when `calibration=` is not given, the same file the lerobot path read with no
+`id=`. `strands_robots.registry.NATIVE_DRIVER` names the new
 default; `DEFAULT_DRIVER` keeps naming the fallback.

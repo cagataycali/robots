@@ -13,6 +13,8 @@ Three things are graded here, each one a sentence a dashboard needs:
   servo - the fake bus records every write, and the only traffic is the open;
 * status and presence carry ``calibration``: ``none (raw servo counts ...)``
   until a file is given, the file's path after;
+* an arm lerobot already calibrated under its tool name keeps that file with
+  no keyword - the default flip must not move it in a different frame;
 * the dashboard spawner reads the native ``connect_eagerly`` contract
   (``str | None`` plus ``camera_failures``) instead of unpacking a 3-tuple -
   measured before the fix with a native-shaped fake returning ``None``::
@@ -75,6 +77,22 @@ def _recording_bus(monkeypatch: pytest.MonkeyPatch) -> None:
     _RecordingBus.writes = []
 
 
+@pytest.fixture(autouse=True)
+def _calibration_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An empty lerobot calibration store, so this machine's own files never leak in."""
+    constants = pytest.importorskip("lerobot.utils.constants")
+    store = tmp_path / "calibration"
+    monkeypatch.setattr(constants, "HF_LEROBOT_CALIBRATION", store)
+    return store
+
+
+def _records(range_min: int, range_max: int) -> dict[str, dict[str, int]]:
+    return {
+        name: {"id": spec.motor_id, "drive_mode": 0, "homing_offset": 0, "range_min": range_min, "range_max": range_max}
+        for name, spec in FeetechDriver.MOTORS.items()
+    }
+
+
 def _arm(**kwargs: Any) -> FeetechDriver:
     robot: Any = Robot("so101", mode="real", port="/dev/cu.usbmodemFAKE", **kwargs)
     assert isinstance(robot, FeetechDriver), f"premise: the bare so101 call builds the native driver, got {type(robot)}"
@@ -104,21 +122,29 @@ class TestAnUncalibratedArmComesUp:
         assert payload["calibration"].startswith("none (raw servo counts")
 
     def test_a_calibration_file_replaces_the_fact(self, tmp_path: Path) -> None:
-        records = {
-            name: {
-                "id": spec.motor_id,
-                "drive_mode": 0,
-                "homing_offset": 0,
-                "range_min": 100,
-                "range_max": 4000,
-            }
-            for name, spec in FeetechDriver.MOTORS.items()
-        }
         path = tmp_path / "bench.json"
-        path.write_text(json.dumps(records), encoding="utf-8")
+        path.write_text(json.dumps(_records(range_min=100, range_max=4000)), encoding="utf-8")
         arm = _arm(calibration=str(path))
         payload = asyncio.run(arm.get_status())["content"][0]["json"]
         assert payload["calibration"] == str(path)
+
+    @pytest.mark.parametrize("tool_name", [None, "bench"])
+    def test_the_arms_lerobot_calibration_is_loaded_without_being_named(
+        self, _calibration_store: Path, tool_name: str | None
+    ) -> None:
+        """The upgrade path: an arm lerobot calibrated under its tool name keeps that frame.
+
+        The lerobot driver reads ``<store>/robots/so101_follower/<tool name>.json``
+        with no ``id=``; the native default reads the same file, so the first
+        ``send_action`` after the default flip lands where it did before.
+        """
+        path = _calibration_store / "robots" / "so101_follower" / f"{tool_name or 'so101'}.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(_records(range_min=100, range_max=4000)), encoding="utf-8")
+        arm = _arm(**({"tool_name": tool_name} if tool_name else {}))
+        payload = asyncio.run(arm.get_status())["content"][0]["json"]
+        assert payload["calibration"] == str(path)
+        assert arm.bus.calibration != full_travel_calibration(arm.bus.motors)
 
     def test_presence_carries_the_fact(self) -> None:
         from strands_robots.mesh.core import Mesh

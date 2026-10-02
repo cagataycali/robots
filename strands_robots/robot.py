@@ -341,6 +341,34 @@ def _build_twin_engine(canonical: str, keyframe: str | None) -> Simulation:
     return sim
 
 
+def _lerobot_calibration_file(canonical: str, robot_id: str) -> str | None:
+    """Return the lerobot calibration file for this arm if one exists.
+
+    The lookup ``lerobot_calibration_path(<lerobot type>, <tool name>)`` is the
+    same one the lerobot driver performs with its default ``id``, so an arm
+    calibrated through lerobot is found under the name it was calibrated as.
+
+    Args:
+        canonical: Canonical robot name, mapped to its lerobot type.
+        robot_id: The calibration id - the tool name, as on the lerobot path.
+
+    Returns:
+        The file's path, or ``None`` when the robot has no lerobot type,
+        lerobot is not installed, the id is not a bare path segment, or no
+        file exists.
+    """
+    robot_type = get_hardware_type(canonical)
+    if robot_type is None:
+        return None
+    from strands_robots.drivers.feetech.bus import lerobot_calibration_path
+
+    try:
+        path = lerobot_calibration_path(robot_type, robot_id)
+    except (ImportError, ValueError):
+        return None
+    return str(path) if path.is_file() else None
+
+
 def _build_native_driver(
     canonical: str,
     cameras: dict[str, dict[str, Any]] | None,
@@ -428,6 +456,19 @@ def _build_native_driver(
             f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
+
+    # The arm's existing lerobot calibration is loaded, not dropped. On the
+    # lerobot driver ``Robot("so101", mode="real", port=...)`` namespaces the
+    # calibration file by the tool name and refuses an arm without one; the
+    # native driver given no ``calibration=`` reads raw servo counts over the
+    # full travel. Without this lookup, flipping the default to the native
+    # driver would quietly move a calibrated arm in a different frame on its
+    # first ``send_action`` after an upgrade. A missing file keeps the
+    # uncalibrated bring-up (the driver's status says so).
+    if "calibration" in accepted and kwargs.get("calibration") is None and kwargs.get("transport") != "twin":
+        if found := _lerobot_calibration_file(canonical, tool_name or canonical):
+            logger.info("%s: loading the lerobot calibration at %s", tool_name or canonical, found)
+            kwargs = {**kwargs, "calibration": found}
 
     # A serial driver with no port has nothing to open, and the lerobot path
     # refuses that at construction with this host's serial devices named; the
