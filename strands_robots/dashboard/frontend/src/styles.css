@@ -2093,6 +2093,27 @@ img, video, canvas { max-width: 100%; }
   .jname { width: 64px; }
 }
 
+/* ── contrast (axe serious, both schemes) ─────────── */
+/* Text is never dimmed by opacity: --dim is already the 4.70:1 muted ink, and an opacity on top
+   of it measured 2.94:1 (.jlegend) and 2.48:1 (.backend) on paper, 4.32 and 3.45 on dark. */
+.jlegend { opacity: 1; }
+.brand .backend { opacity: 1; }
+/* the registry card fades its MEDIA, not its words (measured 1.93:1 on the type badge) */
+.card.registry { opacity: 1; color: var(--dim); }
+.card.registry .peername, .card.registry .typebadge.thing { color: var(--dim); }
+.card.registry .typebadge.thing { background: transparent; border: 1px solid var(--border-hi); }
+.card.registry .camtile, .card.registry .jbar, .card.registry .spark { opacity: .55; }
+/* the paper e-stop read 3.89:1 on its 30% hover tint; 10% at rest, 16% hovered, both clear 4.5:1 */
+.estop { background: color-mix(in srgb, var(--danger) 10%, var(--bg)); }
+.estop:hover { background: color-mix(in srgb, var(--danger) 16%, var(--bg)); }
+/* muted ink on a TINTED surface (chip grey #f4f4f4, the amber/red activity rows): #767373 is 4.27:1
+   there, 4.10 on the red row; #666464 clears both. Dark keeps --dim (7.16:1 on the page, 5+ on chips). */
+:root { --dim-chip: #666464; }
+[data-scheme="dark"] { --dim-chip: var(--dim); }
+@media (prefers-color-scheme: dark) { :root:not([data-scheme="paper"]) { --dim-chip: var(--dim); } }
+.dock-hint, .dock-hint .hint, .campill-absent, .camcard .meta, .camcard-head .meta, .camname-hint, .camname-hint b,
+.activity li .when, .activity li summary, .activity li .muted, .devlist .meta, .ckpt-meta, .field-meta { color: var(--dim-chip); }
+
 /* ── density and type ─────────────────────────────── */
 /* the wordmark link is a tap target like any other (measured 120x17) */
 .logo { min-height: 44px; }

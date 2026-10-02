@@ -93,7 +93,9 @@ export default function ActivityLog({ live, open, onClose }: {
           <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
             {activityAnnouncement(newest, openedAt.current)}
           </div>
-          <ul className="activity" role="log" aria-label="activity — every command that left this dashboard" aria-live="off">
+          {/* role=log on the WRAPPER, not the <ul>: a role on the list element retires its list semantics and every <li> becomes an orphan (axe listitem, serious). */}
+          <div role="log" aria-label="activity — every command that left this dashboard" aria-live="off">
+          <ul className="activity">
             {entries.map((e, i) => (
               <li key={`${e.t}-${i}`} className={activityLine(e).tone}>
                 <span className="when" title={new Date(e.t * 1000).toLocaleString()}>
@@ -123,6 +125,7 @@ export default function ActivityLog({ live, open, onClose }: {
               </li>
             ))}
           </ul>
+          </div>
         </div>
       </aside>
     </div>

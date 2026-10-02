@@ -8120,7 +8120,7 @@ function ActivityLog({ live, open, onClose }) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "drawer-body", children: [
       entries.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Nothing yet. Every task, stop, e-stop, spawn, recording session and training job — from this UI, the agent, or voice — lands here with what the robot answered." }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true", children: activityAnnouncement(newest, openedAt.current) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "activity", role: "log", "aria-label": "activity — every command that left this dashboard", "aria-live": "off", children: entries.map((e, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: activityLine(e).tone, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "log", "aria-label": "activity — every command that left this dashboard", "aria-live": "off", children: /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "activity", children: entries.map((e, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: activityLine(e).tone, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "when", title: new Date(e.t * 1e3).toLocaleString(), children: ago(e.t, now) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: SOURCE_ICON[e.source] ?? "•" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "what", children: [
@@ -8146,7 +8146,7 @@ function ActivityLog({ live, open, onClose }) {
             e.result || null
           ].filter(Boolean).join("\n") })
         ] })
-      ] }, `${e.t}-${i}`)) })
+      ] }, `${e.t}-${i}`)) }) })
     ] })
   ] }) });
 }
@@ -9951,7 +9951,7 @@ function DevicePanel({ open, onClose }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("ul", { className: "boardlist", children: [
           freePorts.length === 0 && (() => {
             const line = boardListEmptyLine({ scanned: doc !== null, error });
-            return /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: "muted", role: "status", children: line.message });
+            return /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: "muted", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { role: "status", children: line.message }) });
           })(),
           freePorts.map((p) => {
             const v = roles[p.device];
