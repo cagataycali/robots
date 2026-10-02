@@ -2111,8 +2111,15 @@ img, video, canvas { max-width: 100%; }
 :root { --dim-chip: #666464; }
 [data-scheme="dark"] { --dim-chip: var(--dim); }
 @media (prefers-color-scheme: dark) { :root:not([data-scheme="paper"]) { --dim-chip: var(--dim); } }
-.dock-hint, .dock-hint .hint, .campill-absent, .camcard .meta, .camcard-head .meta, .camname-hint, .camname-hint b,
+.dock-hint, .dock-hint .hint, .campill-absent, .camcard .meta, .camcard .hint, .camcard-head .meta, .camname-hint, .camname-hint b,
 .activity li .when, .activity li summary, .activity li .muted, .devlist .meta, .ckpt-meta, .field-meta { color: var(--dim-chip); }
+/* amber ink on an amber tint (the degraded LIVE pill; a camera that is not responding): #946e00 read
+   4.03:1 on the pill and 2.92 on the camera pill's 30% fill, #f6bc00 4.2 on the dark one. 12% + #806000 clear 5:1. */
+:root { --warn-chip: #806000; }
+[data-scheme="dark"] { --warn-chip: var(--warn); }
+@media (prefers-color-scheme: dark) { :root:not([data-scheme="paper"]) { --warn-chip: var(--warn); } }
+.conn.warn { color: var(--warn-chip); }
+.campill-unreadable, .campill-unknown { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn-chip); }
 
 /* ── density and type ─────────────────────────────── */
 /* the wordmark link is a tap target like any other (measured 120x17) */
@@ -2188,7 +2195,8 @@ img, video, canvas { max-width: 100%; }
     padding: 10px 12px; font-size: 13px; letter-spacing: .02em; white-space: nowrap;
     background: var(--danger-fill); color: #fff; border-color: var(--danger-fill);
   }
-  .estop.unreachable { background: color-mix(in srgb, var(--danger-fill) 70%, var(--bg)); border-style: dashed; border-color: #fff; }
+  /* link down: the pill stays solid red (white on a 70% mix read 3.77:1); the dashed white edge says it */
+  .estop.unreachable { background: var(--danger-fill); border-style: dashed; border-color: #fff; }
   .estop:hover { background: var(--danger-fill); }
 
   /* the command bar leaves the pill its room; the hide button moves into the sheet head */
