@@ -145,7 +145,11 @@
   /* type: mono for headings, labels, pills and numbers; grotesk for sentences */
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --fs-micro: 10.5px; --fs-tiny: 11.5px; --fs-small: 12px; --fs-body: 13.5px; --fs-lg: 16px;
+  /* Four steps, in rem so the phone root (16px, below) scales them together:
+     label 11.25 / small 12.5 / body 14 / lg 16 at the 15px desktop root. The older five names
+     stay as aliases so no rule has to move. */
+  --fs-label: .75rem; --fs-small: .8333rem; --fs-body: .9333rem; --fs-lg: 1.0667rem;
+  --fs-micro: var(--fs-label); --fs-tiny: var(--fs-label);
 
   /* elevation + motion: the docs draw edges, not shadows */
   --shadow1: none;
@@ -179,6 +183,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
 }
@@ -682,7 +687,7 @@ a:hover { color: var(--accent-bright); }
 .controls { display: flex; gap: var(--s2); }
 .controls select {
   background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-  border-radius: var(--r2); padding: 8px 6px; font-size: var(--fs-small); max-width: 110px;
+  border-radius: var(--r2); padding: 8px 6px; font-size: var(--fs-small); max-width: min(110px, 42%);
 }
 .controls input {
   flex: 1; min-width: 0;
@@ -2088,8 +2093,31 @@ img, video, canvas { max-width: 100%; }
   .jname { width: 64px; }
 }
 
+/* ── density and type ─────────────────────────────── */
+/* the wordmark link is a tap target like any other (measured 120x17) */
+.logo { min-height: 44px; }
+@media (pointer: coarse) {
+  /* disclosure rows measured 13-18px tall in the activity and devices drawers */
+  summary { min-height: 44px; padding-block: 11px; box-sizing: border-box; }
+  .logo { min-width: 44px; }
+}
+
 /* ── phone ─────────────────────────────────────────── */
 @media (max-width: 639px) {
+  /* type: 16px root -> label 12 / small 13.3 / body 15 / lg 17; nothing under 11px */
+  :root { font-size: 16px; }
+  .jname, .jval, .jlegend, .jstale, .joints.empty .hint, .campaced, .field-meta, .apply-chip,
+  .ckpt-meta, .ckpt-fit, .train-job-metrics, .toolchip, .loss-spark-label, .status-ribbon .status-word,
+  .campill, .settings-search .search-results .tabname, .settings-search .search-results em,
+  .field > span code.ident, .jointtable, .joints.empty, .host, .devlist .meta, .calibgroup .meta,
+  .sheet.help-sheet kbd, .train-job-meta, .dock-notice, .metric, .motionchip, .typebadge, .camlabel,
+  .brand .sub, .peers { font-size: 11.5px; }
+  .jval { width: 52px; }
+  .jlegend, .jstale { line-height: 1.4; }
+  .dock-hint, .bubble { font-size: var(--fs-body); }
+  .sheet p, .help-topic p { font-size: var(--fs-body); line-height: 1.55; }
+  .drawer-body, .detail-body { font-size: var(--fs-body); }
+  h2 { line-height: 1.3; }
   /* header: wordmark + LIVE + menu, one row, nothing reserved for a top-right STOP (it is not there) */
   .fleetbar {
     padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
