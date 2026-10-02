@@ -216,6 +216,12 @@ class TestEndpointEnvVars:
         endpoints = json.loads(cfg.get_json("connect/endpoints"))
         assert endpoints == ["tls/router.fleet.local:7447"]
 
+    def test_a_connect_only_peer_listens_on_tls_under_mtls(self, tmp_path, monkeypatch):
+        """Zenoh's default listener is ``tcp/[::]:0``, which mTLS refuses: the session never opened."""
+        monkeypatch.setenv("ZENOH_CONNECT", "tls/router.fleet.local:7447")
+        cfg = _build_mtls(tmp_path, monkeypatch)
+        assert json.loads(cfg.get_json("listen/endpoints")) == ["tls/[::]:0"]
+
     def test_zenoh_listen_propagates(self, monkeypatch):
         monkeypatch.setenv("ZENOH_LISTEN", "tcp/0.0.0.0:7447")
         cfg = _build()

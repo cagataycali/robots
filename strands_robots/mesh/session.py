@@ -852,6 +852,12 @@ def _build_config() -> Any:
     if listen:
         endpoints = [e.strip() for e in listen.split(",")]
         config.insert_json5("listen/endpoints", json.dumps(endpoints))
+    elif connect:
+        # A peer that only dials still opens a listener, and Zenoh's default
+        # one is ``tcp/[::]:0`` - refused once mTLS restricts the transport to
+        # TLS, so the session never opened. Same default, the posture's scheme.
+        scheme = "tls" if auth_mode == "mtls" else "tcp"
+        config.insert_json5("listen/endpoints", json.dumps([f"{scheme}/[::]:0"]))
 
     # Fleet hardening, applied unconditionally.
     namespace = _zenoh_config.resolve_namespace()
