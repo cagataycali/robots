@@ -82,7 +82,7 @@ class _ArmWhoseCalibrationReadNeedsTheLock:
             self.calibration_reads_without_lock += 1
             return True
         try:
-            if lock._is_owned() and not _held_by_current_thread_before(lock):
+            if lock._is_owned() and not _held_by_current_thread_before(lock):  # type: ignore[attr-defined]
                 self.calibration_reads_without_lock += 1
         finally:
             lock.release()
