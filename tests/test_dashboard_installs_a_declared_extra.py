@@ -24,6 +24,7 @@ from __future__ import annotations
 import sys
 import textwrap
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ from tests._dashboard_bootstrap import bootstrap_headers, configure_bootstrap  #
 
 
 @pytest.fixture()
-def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.setenv("STRANDS_DASH_AUTH_STORE", str(tmp_path / "auth.json"))
     monkeypatch.delenv("STRANDS_DASH_AUTH_ENABLED", raising=False)
     monkeypatch.delenv("DASHBOARD_AUTH_TOKEN", raising=False)

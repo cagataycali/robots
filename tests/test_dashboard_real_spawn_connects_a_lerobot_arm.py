@@ -97,7 +97,9 @@ _LEROBOT_REFUSES = """
 """
 
 _NATIVE_SHAPED = """
-    # Shaped like the native drivers (g1, ur, robotiq, reachy).
+    # The (ok, degraded, err) tuple an OUT-OF-TREE driver may answer; the spawner
+    # tolerates it. Every shipped native driver answers str | None instead, which
+    # tests/drivers/test_feetech_uncalibrated_arm_comes_up_and_says_so.py drives.
     class Robot:
         def __init__(self, *a, **kw):
             pass

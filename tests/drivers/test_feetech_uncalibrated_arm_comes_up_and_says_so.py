@@ -51,7 +51,7 @@ class _RecordingBus(FeetechBus):
             return
         self._conn = _OpenPort()
 
-    def set_torque(self, enabled: bool, motor_ids: Any = None) -> list[int]:
+    def set_torque(self, enabled: bool) -> list[str]:
         self.writes.append(("set_torque", enabled))
         return []
 

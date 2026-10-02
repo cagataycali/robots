@@ -166,10 +166,10 @@ class TestTheMeshReadsTheNativeShape:
         """A lerobot wrapper keeps cameras on the inner device; the native driver on itself."""
 
         class _Inner:
-            cameras = {"wrist": object()}
+            cameras: dict[str, object] = {"wrist": object()}
 
             class config:
-                cameras = {"wrist": {}}
+                cameras: dict[str, dict[str, object]] = {"wrist": {}}
 
         class _Wrapper:
             robot = _Inner()
@@ -268,12 +268,12 @@ class TestTheMeshPublishesTheNativeDriversCameras:
         frame = np.zeros((4, 4, 3), dtype=np.uint8)
 
         class _Config:
-            cameras = {"wrist": {}}
+            cameras: dict[str, dict[str, object]] = {"wrist": {}}
 
         class _Inner:
             is_connected = True
             config = _Config()
-            cameras = {"wrist": object()}
+            cameras: dict[str, object] = {"wrist": object()}
 
             def get_observation(self) -> dict[str, Any]:
                 return {"wrist": frame, "shoulder_pan.pos": 1.0}
