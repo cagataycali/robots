@@ -560,13 +560,38 @@ if cfg["mode"] == "real":
         cameras=cfg.get("cameras") or None,
         mesh=True, peer_id=cfg["peer_id"], **kwargs,
     )
-    # Connect eagerly so the mesh publishes joints + camera frames right away
-    # (HardwareRobot otherwise connects lazily on the first task). Goes through
-    # connect_eagerly so a camera this machine will not open costs the camera
-    # and not the whole arm -- lerobot's own connect() gates is_connected on
-    # every camera, so one refusal reported a healthy arm as dead.
+    # Connect eagerly so the mesh publishes joints + camera frames right away:
+    # Mesh._publish_cameras_once reads hardware frames only while the inner
+    # lerobot robot ``is_connected``, and HardwareRobot otherwise connects
+    # lazily on the first task -- so a spawned arm sat on the fleet with
+    # ``connected: false`` and no frame until someone ran a task on it.
+    #
+    # Two connect contracts exist. The native drivers (g1, ur, robotiq,
+    # reachy) expose ``connect_eagerly() -> (ok, degraded, err)``, where a
+    # camera this machine will not open costs the camera and not the arm.
+    # The lerobot-backed HardwareRobot has no such method; its public way up
+    # is ``_connect_robot()`` -- the same coroutine the teleop and task paths
+    # use, with the calibration gate (an uncalibrated arm is refused and the
+    # port is closed so ``lerobot-calibrate`` can take it). The old script
+    # called ``connect_eagerly`` unconditionally, so on every lerobot arm the
+    # except-branch printed "eager connect failed ... 'Robot' object has no
+    # attribute 'connect_eagerly'" and nothing ever connected.
+    def _bring_up():
+        eager = getattr(robot, "connect_eagerly", None)
+        if callable(eager):
+            return eager()
+        connect = getattr(robot, "_connect_robot", None)
+        if connect is None:
+            return False, {}, "this robot has neither connect_eagerly() nor _connect_robot()"
+        import asyncio, inspect
+        result = connect()
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+        ok, err = result
+        return bool(ok), {}, err or ""
+
     try:
-        ok, degraded, err = robot.connect_eagerly()
+        ok, degraded, err = _bring_up()
         if ok and degraded:
             for cam_name, reason in degraded.items():
                 print(f"camera {cam_name!r} unavailable, dropped: {reason}", flush=True)
