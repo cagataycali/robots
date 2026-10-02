@@ -63,10 +63,56 @@ def lan_urls(private_addrs: Sequence[str], port: int) -> list[str]:
     return out
 
 
-def hint(client_ip: str | None, own_addrs: Sequence[str], port: int) -> dict:
-    """The payload the UI renders. `same_network=None` must render NOTHING."""
+def bound_to_loopback(bind_host: str | None) -> bool:
+    """Whether the server listens on loopback only, so no LAN address reaches it.
+
+    ``None`` (an app mounted without the CLI, e.g. under a test client or a
+    custom uvicorn invocation) is read as "unknown", not as loopback: the hint
+    then behaves as before. ``localhost`` is loopback by the same rule the CLI
+    applies in ``bind_verdict``.
+    """
+    if not bind_host:
+        return False
+    host = bind_host.strip().lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.split("%")[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _is_wildcard(bind_host: str) -> bool:
+    """``0.0.0.0`` / ``::`` listen on every interface; anything else names one."""
+    try:
+        return ipaddress.ip_address(bind_host.strip().split("%")[0]).is_unspecified
+    except ValueError:
+        return True  # a hostname: cannot narrow, so keep every candidate
+
+
+def hint(client_ip: str | None, own_addrs: Sequence[str], port: int, bind_host: str | None = None) -> dict:
+    """The payload the UI renders. `same_network=None` must render NOTHING.
+
+    ``bind_host`` is the address uvicorn was told to listen on. The CLI's
+    default bind is ``127.0.0.1`` (a LAN bind is refused until the API is
+    guarded), and the hint used to name ``http://<lan-ip>:<port>`` regardless:
+    an address nothing listens on, so the link the banner offered failed to
+    load. A loopback bind therefore offers no URL and says why, and a bind to
+    one LAN interface offers only that interface's URL.
+    """
     local = same_network(client_ip, own_addrs)
+    if local and bound_to_loopback(bind_host):
+        return {
+            "same_network": True,
+            "client_ip": client_ip,
+            "lan_urls": [],
+            "why": f"this dashboard listens on {bind_host} only, so no LAN address reaches it; restart it "
+            "with --host 0.0.0.0 (a passkey or DASHBOARD_AUTH_TOKEN must guard the API first) to offer one",
+        }
     urls = lan_urls(own_addrs, port) if local else []
+    if urls and bind_host and not _is_wildcard(bind_host):
+        # Bound to one interface: only that interface's URL is reachable.
+        urls = [u for u in urls if u == f"http://{bind_host.strip()}:{port}"]
     if local and not urls:
         # Local, but we cannot name a usable address - say so instead of implying one.
         return {

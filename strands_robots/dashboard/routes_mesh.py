@@ -257,7 +257,8 @@ async def network_hint(request: Request, _: dict = Depends(access.require_sessio
     except Exception:  # noqa: BLE001 - psutil is optional and platform-specific; the hint degrades
         pass
     port = int(getattr(request.app.state, "port", None) or 8090)
-    return cast("dict[str, Any]", lan_hint.hint(client_ip, own, port))
+    bind_host = getattr(request.app.state, "host", None)
+    return cast("dict[str, Any]", lan_hint.hint(client_ip, own, port, bind_host=bind_host))
 
 
 @router.get("/robots/registry")
