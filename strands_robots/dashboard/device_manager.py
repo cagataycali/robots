@@ -554,32 +554,52 @@ from strands_robots import Robot
 if cfg["mode"] == "real":
     kwargs = {}
     if cfg.get("robot_id"):
-        kwargs["id"] = cfg["robot_id"]  # lerobot calibration identity
+        # The lerobot calibration identity. The lerobot wrapper takes it as
+        # ``id=``; a native driver has no such keyword (the factory refuses one
+        # it does not declare) and reads the same file through ``calibration=``.
+        from strands_robots.drivers import resolve_driver
+        if resolve_driver(cfg["robot_name"]) == "strands":
+            from strands_robots.drivers.feetech.bus import lerobot_calibration_path
+            from strands_robots.registry import get_hardware_type
+            lerobot_type = get_hardware_type(cfg["robot_name"]) or cfg["robot_name"]
+            kwargs["calibration"] = str(lerobot_calibration_path(lerobot_type, cfg["robot_id"]))
+        else:
+            kwargs["id"] = cfg["robot_id"]
     robot = Robot(
         cfg["robot_name"], mode="real", port=cfg["port"],
         cameras=cfg.get("cameras") or None,
         mesh=True, peer_id=cfg["peer_id"], **kwargs,
     )
     # Connect eagerly so the mesh publishes joints + camera frames right away:
-    # Mesh._publish_cameras_once reads hardware frames only while the inner
-    # lerobot robot ``is_connected``, and HardwareRobot otherwise connects
-    # lazily on the first task -- so a spawned arm sat on the fleet with
-    # ``connected: false`` and no frame until someone ran a task on it.
+    # the mesh reads hardware frames only while the device ``is_connected``,
+    # and HardwareRobot otherwise connects lazily on the first task -- so a
+    # spawned arm sat on the fleet with ``connected: false`` and no frame until
+    # someone ran a task on it.
     #
-    # Two connect contracts exist. The native drivers (g1, ur, robotiq,
-    # reachy) expose ``connect_eagerly() -> (ok, degraded, err)``, where a
-    # camera this machine will not open costs the camera and not the arm.
-    # The lerobot-backed HardwareRobot has no such method; its public way up
-    # is ``_connect_robot()`` -- the same coroutine the teleop and task paths
-    # use, with the calibration gate (an uncalibrated arm is refused and the
-    # port is closed so ``lerobot-calibrate`` can take it). The old script
-    # called ``connect_eagerly`` unconditionally, so on every lerobot arm the
+    # Two connect contracts exist. Every native driver (feetech, g1, ur,
+    # robotiq, reachy, ...) exposes ``connect_eagerly() -> str | None``: the
+    # bus's refusal, or None once it is open; a camera this machine will not
+    # open costs the camera and not the arm, and is reported under
+    # ``camera_failures``. (A driver answering ``(ok, degraded, err)`` is read
+    # too, so an out-of-tree driver on that shape is not told it failed.) The
+    # lerobot-backed HardwareRobot has no such method; its public way up is
+    # ``_connect_robot()`` -- the same coroutine the teleop and task paths use,
+    # with the calibration gate (an uncalibrated arm is refused and the port is
+    # closed so ``lerobot-calibrate`` can take it). The old script called
+    # ``connect_eagerly`` unconditionally, so on every lerobot arm the
     # except-branch printed "eager connect failed ... 'Robot' object has no
-    # attribute 'connect_eagerly'" and nothing ever connected.
+    # attribute 'connect_eagerly'" and nothing ever connected; and it unpacked
+    # the native answer as a 3-tuple, so every native arm printed "cannot
+    # unpack non-iterable NoneType object" on a SUCCESSFUL connect.
     def _bring_up():
         eager = getattr(robot, "connect_eagerly", None)
         if callable(eager):
-            return eager()
+            result = eager()
+            if isinstance(result, tuple) and len(result) == 3:
+                ok, degraded, err = result
+                return bool(ok), dict(degraded or {}), err or ""
+            degraded = dict(getattr(robot, "camera_failures", None) or {})
+            return result is None, degraded, result or ""
         connect = getattr(robot, "_connect_robot", None)
         if connect is None:
             return False, {}, "this robot has neither connect_eagerly() nor _connect_robot()"
@@ -592,14 +612,17 @@ if cfg["mode"] == "real":
 
     try:
         ok, degraded, err = _bring_up()
+        for cam_name, reason in degraded.items():
+            print(f"camera {cam_name!r} unavailable, dropped: {reason}", flush=True)
         if ok and degraded:
-            for cam_name, reason in degraded.items():
-                print(f"camera {cam_name!r} unavailable, dropped: {reason}", flush=True)
             print(f"hardware connected WITHOUT camera(s): {', '.join(degraded)}", flush=True)
         elif ok:
             print("hardware connected", flush=True)
         else:
             print(f"eager connect failed (will retry on first task): {err}", flush=True)
+        calibration = getattr(robot, "calibration_fact", None)
+        if calibration:
+            print(f"calibration: {calibration}", flush=True)
     except Exception as e:
         print(f"eager connect failed (will retry on first task): {e}", flush=True)
     print(f"{cfg['peer_id']} (real @ {cfg['port']}) online", flush=True)

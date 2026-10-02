@@ -853,6 +853,21 @@ class FeetechDriver(TeleopMixin):
             camera.close()
 
     @property
+    def calibration_fact(self) -> str:
+        """One sentence on which travel this arm's degrees are measured against.
+
+        An arm with no calibration file is brought up anyway - nothing in the
+        connect path refuses for it and nothing writes to a servo - but its
+        degrees are the servo's full rotation mapped from raw counts, not the
+        arm's measured travel. Status and presence carry this sentence so a
+        dashboard can say "uncalibrated: raw servo counts" next to the joints
+        instead of showing numbers that look calibrated.
+        """
+        if self._calibration_source is None:
+            return "none (raw servo counts over the full travel; run the calibration to measure this arm)"
+        return f"{self._calibration_source}"
+
+    @property
     def camera_specs(self) -> dict[str, CameraSpec]:
         """Every camera the caller configured, open or not, in their order."""
         return dict(self._camera_specs)
@@ -897,6 +912,7 @@ class FeetechDriver(TeleopMixin):
                         # caller who calibrated the arm reads that as the
                         # keyword they forgot rather than as a wrong number.
                         "calibration_source": self._calibration_source,
+                        "calibration": self.calibration_fact,
                         "cameras": {name: camera.describe() for name, camera in self._cameras.items()},
                         "camera_failures": dict(self._camera_failures),
                         "motor_ids": list(self._motor_ids),

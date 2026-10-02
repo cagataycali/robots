@@ -1526,6 +1526,9 @@ class Mesh(SensorLoopsMixin):
             failures = getattr(r, "camera_failures", None)
             if isinstance(failures, dict) and failures:
                 payload["camera_failures"] = dict(failures)
+            calibration = getattr(r, "calibration_fact", None)
+            if isinstance(calibration, str) and calibration:
+                payload["calibration"] = calibration
             if inner is not None:
                 input_pubs = getattr(r, "_input_publishers", None)
                 if isinstance(input_pubs, dict) and input_pubs:
