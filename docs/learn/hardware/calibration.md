@@ -23,7 +23,7 @@ You move each joint to both stops; lerobot records the encoder counts and writes
 | path | how it finds the calibration |
 |---|---|
 | `Robot("so101", mode="real", driver="lerobot", port=..., id="my_arm")` | by `id`; `calibration_dir=` overrides the directory. `id` defaults to the tool name |
-| `Robot("so101", mode="real", driver="strands", calibration=...)` (native) | `calibration=` is the path or the loaded records; `lerobot_calibration_path("so101_follower", "my_arm")` builds the path from lerobot's own constants |
+| `Robot("so101", mode="real", port=..., calibration=...)` (native) | `calibration=` is the path or the loaded records; `lerobot_calibration_path("so101_follower", "my_arm")` builds the path from lerobot's own constants |
 | `pose_tool(..., calibration="/path.json")` | reads the file, records nothing |
 | `Teleoperator("so101_leader", port=..., id="my_leader")` | by `id`, through lerobot |
 

@@ -21,7 +21,7 @@ import json
 import re
 from pathlib import Path
 
-from strands_robots.drivers import list_driver_coverage, list_native_drivers
+from strands_robots.drivers import list_driver_coverage, list_native_drivers, resolve_driver
 from tests._docs_hooks import docs_hook
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -109,6 +109,12 @@ def test_the_published_join_is_the_live_join() -> None:
 def test_every_native_cell_names_the_class_registered_for_that_robot() -> None:
     published = {robot: cells["native"] for robot, cells in _published().items() if cells["native"]}
     assert published == {name: cls for name, cls in list_native_drivers().items() if name in _registry()}
+
+
+def test_every_default_driver_is_the_one_robot_builds_without_driver() -> None:
+    """The robot pages say which driver ``Robot(name, mode="real")`` builds; it must be the factory's."""
+    published = {row.name: row.default_driver for row in _hook().rows()}
+    assert published == {name: resolve_driver(name) for name in published}
 
 
 def test_every_lerobot_cell_is_the_type_the_registry_declares() -> None:

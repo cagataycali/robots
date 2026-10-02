@@ -22,14 +22,14 @@ robot.cleanup()
 Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
-robot = Robot("fr3_v2", mode="real", driver="strands", port="172.16.0.2")  # FrankaDriver
+robot = Robot("fr3_v2", mode="real", port="172.16.0.2")  # FrankaDriver
 ```
 
 Aliases: `franka_fr3_v2`.
 
 ## Hardware
 
-**`FrankaDriver`** (selected with `driver="strands"`) speaks Franka Control Interface (FCI) through `panda-py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#frankadriver).
+**`FrankaDriver`** (the default for this robot) speaks Franka Control Interface (FCI) through `panda-py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#frankadriver).
 
 ## Policies verified on this robot
 

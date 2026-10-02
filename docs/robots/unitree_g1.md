@@ -30,7 +30,7 @@ Aliases: `g1`, `g1_wbc`, `real_g1_relative_eef_relative_joints`, `unitree_g1_ful
 
 ## Hardware
 
-**lerobot.** `Robot("unitree_g1", mode="real")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `robot_ip=` is the robot's address (DDS over Ethernet), `cameras=` the lerobot camera dict.
+**lerobot.** `Robot("unitree_g1", mode="real", driver="lerobot")` builds lerobot's `unitree_g1` with `pip install 'strands-robots[lerobot]'`; `robot_ip=` is the robot's address (DDS over Ethernet), `cameras=` the lerobot camera dict.
 
 **`G1Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#g1driver).
 

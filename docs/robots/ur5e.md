@@ -22,12 +22,12 @@ robot.cleanup()
 Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
-robot = Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")  # URDriver
+robot = Robot("ur5e", mode="real", port="192.168.1.10")  # URDriver
 ```
 
 ## Hardware
 
-**`URDriver`** (selected with `driver="strands"`) speaks RTDE through `ur_rtde`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#urdriver).
+**`URDriver`** (the default for this robot) speaks RTDE through `ur_rtde`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#urdriver).
 
 ## Policies verified on this robot
 

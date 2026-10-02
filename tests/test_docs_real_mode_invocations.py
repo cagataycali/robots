@@ -306,6 +306,30 @@ def _rejected_keywords(name: str, keywords: tuple[str, ...], driver: str | None 
     return sorted(set(keywords) - (_keywords_the_factory_owns() | declared))
 
 
+def _missing_required_keywords(name: str, keywords: tuple[str, ...], driver: str | None = None) -> list[str]:
+    """Return the keywords ``Robot(name, mode="real", ...)`` needs but does not spell.
+
+    The factory refuses a native serial driver built with no ``port=`` before
+    construction (``_build_native_driver``), so a documented call that omits it
+    raises as written even though every keyword it does pass is accepted. The
+    twin transport steps an engine instead of a bus and is exempt, as there.
+
+    Args:
+        name: Robot name or alias.
+        keywords: Keyword names the call passes, excluding ``mode``.
+        driver: The ``driver=`` literal the call spells, or ``None``.
+
+    Returns:
+        ``["port"]`` when the call builds a serial native driver without one,
+        else empty.
+    """
+    driver_cls = _native_driver_the_call_builds(name, driver)
+    if driver_cls is None or "transport" in keywords or "port" in keywords:
+        return []
+    serial = "serial" in tuple(getattr(driver_cls, "TRANSPORTS", ()) or ())
+    return ["port"] if serial and "port" in constructor_keywords(driver_cls) else []
+
+
 class TestTheCorpusIsReached:
     """Premises: without these, a clean sweep below would mean nothing."""
 
@@ -378,6 +402,15 @@ class TestEveryDocumentedRealModeKeywordIsAccepted:
                 )
         assert not offenders, "documented mode='real' calls that raise as written:\n  " + "\n  ".join(offenders)
 
+    def test_every_native_serial_call_names_its_port(self) -> None:
+        missing = [
+            f"{call.location}: Robot({call.name!r}, mode='real') builds a serial native driver with no "
+            f"{needed}, which the factory refuses before construction"
+            for call in _documented_real_mode_calls()
+            if (needed := _missing_required_keywords(call.name, call.keywords, call.driver))
+        ]
+        assert not missing, "documented mode='real' calls that raise as written:\n  " + "\n  ".join(missing)
+
 
 class TestTheGraderReportsAPlantedMistake:
     """Non-vacuity: the rule must grade values, not the spelling of a fence."""
@@ -391,6 +424,13 @@ class TestTheGraderReportsAPlantedMistake:
         """A teleoperator spelling must not pass the name rule either."""
         assert _names_no_registered_robot("so101_leader")
         assert not _names_no_registered_robot("so101")
+
+    def test_a_native_serial_call_without_a_port_is_reported(self) -> None:
+        """The call the factory refuses, the same call with a port, and the lerobot path."""
+        assert _missing_required_keywords("lekiwi", ()) == ["port"]
+        assert _missing_required_keywords("lekiwi", ("port",)) == []
+        assert _missing_required_keywords("lekiwi", ("transport",)) == []
+        assert _missing_required_keywords("lekiwi", (), "lerobot") == []
 
     def test_the_name_rule_reaches_both_verdicts(self) -> None:
         outcomes = {_names_no_registered_robot(n) for n in ("bi_so", "so101_leader", "so101", "koch")}
