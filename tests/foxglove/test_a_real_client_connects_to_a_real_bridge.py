@@ -69,11 +69,13 @@ class TestTheWire:
         assert info["capabilities"] == ["services"]
 
     def test_a_stopped_bridge_refuses_the_next_connection(self) -> None:
-        bridge = FoxgloveBridge(FoxgloveOptions(port=0), name="live-probe")
-        url = bridge.url
-        bridge.shutdown()
-        with pytest.raises((OSError, TimeoutError)):
-            connect(url, subprotocols=[SUBPROTOCOL], open_timeout=2).close()
+        """Every time, not most times: the SDK's stop() returns before its listener closes."""
+        for _ in range(50):
+            bridge = FoxgloveBridge(FoxgloveOptions(port=0), name="live-probe")
+            url = bridge.url
+            bridge.shutdown()
+            with pytest.raises((OSError, TimeoutError)):
+                connect(url, subprotocols=[SUBPROTOCOL], open_timeout=2).close()
 
 
 @pytest.mark.slow
