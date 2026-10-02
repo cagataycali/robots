@@ -48,6 +48,7 @@ from .discovery import (
 from .loader import (
     DEFAULT_DRIVER,
     DRIVER_CHOICES,
+    NATIVE_DRIVER,
     invalidate_cache,
     normalize_robot_name,
     reload,
@@ -92,6 +93,7 @@ __all__ = [
     "LIST_ROBOTS_MODES",
     "DEFAULT_DRIVER",
     "DRIVER_CHOICES",
+    "NATIVE_DRIVER",
     "list_robots_by_category",
     "list_aliases",
     "format_robot_table",

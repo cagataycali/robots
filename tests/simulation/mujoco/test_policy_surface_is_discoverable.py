@@ -166,7 +166,9 @@ class TestTheSchemaNamesTheProviders:
         pytest.importorskip("lerobot")
         from strands_robots import Robot
 
-        arm = Robot("so101", mode="real", port="/dev/cu.usbmodem-policy-surface-test")
+        # driver="lerobot": the policy actions live on the lerobot-backed hardware
+        # tool; the native Feetech driver (the default) publishes teleop only.
+        arm = Robot("so101", mode="real", port="/dev/cu.usbmodem-policy-surface-test", driver="lerobot")
         try:
             desc = arm.tool_spec["inputSchema"]["json"]["properties"]["policy_provider"]["description"]
         finally:

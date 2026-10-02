@@ -3,8 +3,9 @@
 Three questions, kept apart because they have different answers:
 
 * *Which driver?* :func:`resolve_driver` - a name, from the caller's ``driver=``
-  or the robot's registry entry, defaulting to
-  :data:`~strands_robots.registry.DEFAULT_DRIVER`.
+  or the robot's registry entry; otherwise the native driver when one is
+  registered for the robot, and
+  :data:`~strands_robots.registry.DEFAULT_DRIVER` (lerobot) when none is.
 * *Which class?* :func:`get_native_driver_class` - the class a native driver
   package registered for this robot, or ``None``.
 * *Which drivers could?* :func:`list_driver_coverage` - for every registered
@@ -13,12 +14,13 @@ Three questions, kept apart because they have different answers:
   join is the only surface that reports the robots for which there is nothing to
   pick.
 
-The native table starts empty: every robot in the package registry is driven
-through lerobot, so nothing is registered until a driver package calls
-:func:`register_native_driver`. That is the seam - the point where an
-implementation that is not lerobot-shaped can be reached by
-:func:`~strands_robots.robot.Robot` without the factory knowing anything about
-it.
+The native table starts empty and is filled by :func:`register_native_driver`
+- by the drivers this package ships on import, and by any driver package. That
+is the seam - the point where an implementation that is not lerobot-shaped can
+be reached by :func:`~strands_robots.robot.Robot` without the factory knowing
+anything about it. Registering a driver is also what makes it the robot's
+default: a robot that declares no ``hardware.driver`` is built by its native
+driver once one exists, and by lerobot until then.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from strands_robots.drivers.base import missing_driver_members
 from strands_robots.registry import (
     DEFAULT_DRIVER,
     DRIVER_CHOICES,
+    NATIVE_DRIVER,
     get_driver,
     get_hardware_type,
     list_robots,
@@ -63,9 +66,17 @@ def resolve_driver(canonical: str, explicit: str | None = None) -> str:
     """Decide which driver name builds ``canonical``.
 
     Precedence, highest first: the caller's explicit choice, the robot's
-    registry ``hardware.driver``, then
-    :data:`~strands_robots.registry.DEFAULT_DRIVER`. ``"auto"`` and ``None``
-    both mean "no explicit choice", so they defer to the registry.
+    registry ``hardware.driver``, then :data:`~strands_robots.registry.NATIVE_DRIVER`
+    when a native driver is registered for the robot, then
+    :data:`~strands_robots.registry.DEFAULT_DRIVER` (lerobot) for a robot this
+    package cannot drive itself. ``"auto"`` and ``None`` both mean "no explicit
+    choice", so they defer to the registry and the native table.
+
+    The native driver wins over lerobot for an undeclared robot because it is the
+    one that works out of the box: it needs no lerobot extra (torch), no lerobot
+    calibration file, and speaks the servo bus this package maintains. A robot
+    whose documented surface is lerobot's (the EarthRover's teleop reads) keeps
+    lerobot by declaring ``hardware.driver: "lerobot"`` on its registry entry.
 
     Args:
         canonical: Canonical robot name (or any alias -
@@ -91,6 +102,8 @@ def resolve_driver(canonical: str, explicit: str | None = None) -> str:
     # both land here, on the same answer.
     declared = get_driver(canonical)
     if declared is None or declared == "auto":
+        if get_native_driver_class(canonical) is not None:
+            return NATIVE_DRIVER
         return DEFAULT_DRIVER
     return declared
 
@@ -210,10 +223,7 @@ def list_driver_coverage() -> dict[str, tuple[str, ...]]:
         if get_hardware_type(name) is not None:
             drivers.append(DEFAULT_DRIVER)
         if get_native_driver_class(name) is not None:
-            # The literal rather than a constant, matching the one call site
-            # that already reads it (``strands_robots.robot`` builds a native
-            # driver when the resolved name is this).
-            drivers.append("strands")
+            drivers.append(NATIVE_DRIVER)
         coverage[name] = tuple(drivers)
     return coverage
 
@@ -225,12 +235,11 @@ def _native_driver_refusal(robot_type: str) -> str | None:
     are two answers to "what builds this robot", and a robot may be in the
     second and not the first: the Reachy Mini and the Trossen arms have no
     lerobot robot type at all, which is the gap their native drivers exist to
-    close. When ``driver="lerobot"`` is chosen for such a robot -- and it is
-    chosen by default, because :func:`resolve_driver` falls back to
-    :data:`~strands_robots.registry.DEFAULT_DRIVER` for a robot that
-    declares nothing -- lerobot cannot build it, and answering with the names of
-    the robots lerobot *does* know answers the wrong question. The driver that
-    builds this robot ships in this package, one keyword away.
+    close. When ``driver="lerobot"`` is chosen for such a robot -- explicitly,
+    since :func:`resolve_driver` routes an undeclared robot to its native driver
+    -- lerobot cannot build it, and answering with the names of the robots
+    lerobot *does* know answers the wrong question. The driver that builds this
+    robot ships in this package, one keyword away.
 
     The sibling of :func:`strands_robots.teleoperator._other_lerobot_kind_refusal`,
     which does the same for the other kind of wrong entry point: that one names a
@@ -256,6 +265,6 @@ def _native_driver_refusal(robot_type: str) -> str | None:
     return (
         f"Unsupported robot type: {robot_type!r}. lerobot has no robot type for it, but this "
         f"package ships a native driver for it ({driver_cls.__name__}): build it with "
-        f"Robot({robot_type!r}, mode='real', driver='strands', ...). To make that the default "
-        f"for this robot, declare hardware.driver='strands' on its registry entry."
+        f"Robot({robot_type!r}, mode='real', driver='strands', ...), or leave driver= unset: "
+        f"the native driver is the default for a robot that declares no hardware.driver."
     )

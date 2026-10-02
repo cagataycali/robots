@@ -26,6 +26,12 @@ second cell is what holds it to that: ``driver="strands"`` never reaches
 purpose line reading "required for real-mode robots" would be false for each of
 them, which is why it names the driver instead.
 
+Since the native default (2026-10-01) the bare ``Robot("so101", mode="real")``
+IS one of those native builds, so the quickstart cells spell
+``driver="lerobot"`` to reach the import they grade, and the ``auto`` spelling
+is graded on a robot with no native driver (``omx``), where it still resolves
+to lerobot.
+
 The ``name`` assertions are the machine-readable half:
 ``tests/test_absent_dependency_reports_name_the_module.py`` explains why a
 reader must not have to parse the prose to learn which module was absent.
@@ -50,15 +56,18 @@ _QUICKSTART_CALLS: list[tuple[str, dict[str, Any]]] = [
 ]
 
 #: The driver values that route through lerobot: the explicit one and the
-#: default, which resolves to it for a robot whose registry names no other.
-_LEROBOT_DRIVERS = ["auto", "lerobot"]
+#: default, which resolves to it for a robot with no native driver. Paired with
+#: the robot each is graded on: ``auto`` on ``omx`` (lerobot type, no native
+#: driver, so the fallback decides), ``lerobot`` on ``so101`` (spelled, because
+#: the bare so101 call builds its native driver since 2026-10-01).
+_LEROBOT_DRIVERS = [("auto", "omx"), ("lerobot", "so101")]
 
 
 @pytest.mark.parametrize(("shape", "kwargs"), _QUICKSTART_CALLS, ids=[c[0] for c in _QUICKSTART_CALLS])
 def test_real_mode_without_lerobot_names_the_lerobot_extra(shape: str, kwargs: dict[str, Any]) -> None:
     """The refusal names ``lerobot``, the ``[lerobot]`` extra and the ``pip`` line."""
     with blocked("lerobot"), pytest.raises(ImportError) as info:
-        Robot("so101", mode="real", **kwargs)
+        Robot("so101", mode="real", driver="lerobot", **kwargs)
 
     exc = info.value
     text = str(exc)
@@ -71,11 +80,11 @@ def test_real_mode_without_lerobot_names_the_lerobot_extra(shape: str, kwargs: d
     assert "lerobot driver" in text, text
 
 
-@pytest.mark.parametrize("driver", _LEROBOT_DRIVERS)
-def test_the_default_driver_and_the_lerobot_driver_both_refuse(driver: str) -> None:
+@pytest.mark.parametrize(("driver", "name"), _LEROBOT_DRIVERS, ids=[d for d, _ in _LEROBOT_DRIVERS])
+def test_the_default_driver_and_the_lerobot_driver_both_refuse(driver: str, name: str) -> None:
     """Both routes into ``_initialize_robot`` refuse alike, so neither is a silent one."""
     with blocked("lerobot"), pytest.raises(ImportError) as info:
-        Robot("so101", mode="real", driver=driver, port="/dev/null")
+        Robot(name, mode="real", driver=driver, port="/dev/null")
 
     assert info.value.name == "lerobot", str(info.value)
 
@@ -84,6 +93,11 @@ def test_the_default_driver_and_the_lerobot_driver_both_refuse(driver: str) -> N
 def test_a_native_driver_real_robot_is_built_without_lerobot(name: str) -> None:
     """``driver="strands"`` needs no lerobot, which is what scopes the refusal above.
 
+    Also the bare call: since the native default, ``Robot(name, mode="real")``
+    for these three resolves to the native driver and builds with lerobot absent,
+    which is the owner's whole reason for the flip (a fresh install drives an
+    SO-101 without torch).
+
     The guard sits in ``_initialize_robot``, on the lerobot branch of the
     factory only. Were it moved up into ``Robot()`` -- or were the purpose line
     widened to real mode at large -- these robots would be told to install a
@@ -91,5 +105,7 @@ def test_a_native_driver_real_robot_is_built_without_lerobot(name: str) -> None:
     """
     with blocked("lerobot"):
         built = Robot(name, mode="real", driver="strands", port="/dev/null")
+        bare = Robot(name, mode="real", port="/dev/null")
 
     assert isinstance(built, HardwareDriver)
+    assert type(bare) is type(built), "the bare call is the native build since the native default"

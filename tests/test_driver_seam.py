@@ -48,7 +48,7 @@ from strands_robots.drivers import (
     resolve_driver,
     shipped_robot_names,
 )
-from strands_robots.registry import DEFAULT_DRIVER, DRIVER_CHOICES, get_driver, get_robot
+from strands_robots.registry import DEFAULT_DRIVER, DRIVER_CHOICES, NATIVE_DRIVER, get_driver, get_robot
 from strands_robots.registry.loader import _validate
 from tests._package_ast import parse_file
 
@@ -60,6 +60,11 @@ _ROBOT = "so101"
 # apart on purpose. Must stay absent from robots.json for that cell to mean
 # anything, which the cell asserts before it relies on it.
 _UNREGISTERED_ROBOT = "not_a_registered_robot"
+
+# The native table as the package ships it, read before the autouse fixture
+# below empties it for every test; the one cell that grades the real default
+# for real robots reads this copy.
+_SHIPPED_TABLE: dict[str, type] = dict(drivers_registry_mod._NATIVE_DRIVERS)
 
 
 @pytest.fixture(autouse=True)
@@ -214,6 +219,12 @@ class TestDriverResolutionPrecedence:
         )
 
     def test_no_declaration_and_no_choice_is_the_default(self) -> None:
+        """With the native table empty (the autouse fixture) lerobot is the fallback.
+
+        Since the native default landed (2026-10-01) this is the fallback case
+        only: the shipped so101 driver makes the real-world answer ``"strands"``,
+        which :class:`TestANativeDriverIsTheDefaultWhenRegistered` grades.
+        """
         assert get_driver(_ROBOT) is None, f"{_ROBOT} declares no driver, so the default decides"
         assert resolve_driver(_ROBOT) == DEFAULT_DRIVER
 
@@ -232,9 +243,15 @@ class TestDriverResolutionPrecedence:
         assert resolve_driver(_ROBOT, "auto") == resolve_driver(_ROBOT) == "strands"
 
     def test_a_declared_auto_states_no_preference(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A registry saying ``"auto"`` is the same as a registry saying nothing."""
+        """A registry saying ``"auto"`` is the same as a registry saying nothing.
+
+        Graded on the empty native table, where "nothing" means lerobot; with a
+        driver registered both spellings resolve to it instead.
+        """
         self._with_declared_driver(monkeypatch, "auto")
         assert resolve_driver(_ROBOT) == DEFAULT_DRIVER
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver(_ROBOT) == NATIVE_DRIVER
 
     def test_resolution_never_reports_auto(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Whatever is declared, the answer is a driver a caller can build."""
@@ -246,6 +263,52 @@ class TestDriverResolutionPrecedence:
     def test_an_unknown_driver_name_is_refused_by_name(self, bad: str) -> None:
         with pytest.raises(ValueError, match="must be one of"):
             resolve_driver(_ROBOT, bad)
+
+
+class TestANativeDriverIsTheDefaultWhenRegistered:
+    """The owner's rule (2026-10-01): a robot this package can drive, it drives.
+
+    Registration is what flips the default - no registry declaration needed -
+    so a driver package that registers for a robot takes over its bare call,
+    and a robot nobody registered for keeps lerobot.
+    """
+
+    def test_a_registered_driver_wins_over_the_fallback(self) -> None:
+        assert resolve_driver(_ROBOT) == DEFAULT_DRIVER, "premise: the table is empty"
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver(_ROBOT) == NATIVE_DRIVER
+
+    def test_auto_follows_the_registration_too(self) -> None:
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver(_ROBOT, "auto") == NATIVE_DRIVER
+
+    def test_an_explicit_lerobot_still_wins(self) -> None:
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver(_ROBOT, DEFAULT_DRIVER) == DEFAULT_DRIVER
+
+    def test_a_declared_lerobot_beats_the_registration(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The EarthRover's shape: a native driver exists, the registry says lerobot."""
+        hardware = {"lerobot_type": "so101_follower", "driver": DEFAULT_DRIVER}
+        monkeypatch.setattr(
+            registry_robots_mod,
+            "_load",
+            lambda name: {"robots": {_ROBOT: {"description": "test", "hardware": hardware}}},
+        )
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver(_ROBOT) == DEFAULT_DRIVER
+
+    def test_a_robot_without_a_driver_keeps_the_fallback(self) -> None:
+        register_native_driver(_ROBOT, _CompleteDriver)
+        assert resolve_driver("koch") == DEFAULT_DRIVER
+
+    def test_the_shipped_table_makes_the_bench_arms_native(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Against the real shipped table: the arms the dashboard spawns resolve natively."""
+        monkeypatch.setattr(drivers_registry_mod, "_NATIVE_DRIVERS", dict(_SHIPPED_TABLE))
+        for name in ("so101", "so100", "lekiwi", "koch", "g1", "ur5e", "reachy_mini"):
+            assert resolve_driver(name) == NATIVE_DRIVER, name
+        for name in ("reachy2", "omx", "openarm"):
+            assert resolve_driver(name) == DEFAULT_DRIVER, f"{name} has no native driver"
+        assert resolve_driver("earthrover") == DEFAULT_DRIVER, "declared lerobot (teleop docs)"
 
 
 class TestTheDriverValueIsCheckedInEveryMode:

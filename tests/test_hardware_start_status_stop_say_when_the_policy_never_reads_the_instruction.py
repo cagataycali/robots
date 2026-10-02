@@ -24,10 +24,14 @@ from strands_robots.policies.base import Policy, instruction_not_read_notice, pr
 from strands_robots.policies.mock import MockPolicy
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 
 @pytest.fixture
 def arm() -> Iterator[HwRobot]:
-    robot = Robot("so101", mode="real", port=os.devnull)
+    robot = Robot("so101", mode="real", driver="lerobot", port=os.devnull)
     yield robot
     robot.cleanup()
 

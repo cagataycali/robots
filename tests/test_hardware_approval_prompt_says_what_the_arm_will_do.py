@@ -23,11 +23,15 @@ from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies.base import instruction_not_read_notice
 from strands_robots.policies.mock import MockPolicy
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 
 @pytest.fixture
 def arm():
     """A real-mode Robot; nothing here connects to the bus."""
-    robot = Robot("so101", mode="real", port=os.devnull)
+    robot = Robot("so101", mode="real", driver="lerobot", port=os.devnull)
     yield robot
     robot.cleanup()
 

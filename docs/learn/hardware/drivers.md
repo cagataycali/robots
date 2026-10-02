@@ -19,11 +19,11 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 | `driver=` | builds | for |
 |---|---|---|
+| `"strands"` (`NATIVE_DRIVER`, what `auto` picks when one is registered) | the native driver class registered for the robot | the robots in the table below |
 | `"lerobot"` (`DEFAULT_DRIVER`, what `auto` falls back to) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
-| `"strands"` | the native driver class registered for the robot | the robots in the table below |
-| `"auto"` (the default) | the registry's `hardware.driver` if set, else lerobot | everything |
+| `"auto"` (the default) | the registry's `hardware.driver` if set, else a registered native driver, else lerobot | everything |
 
-Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"` in the registry, so `Robot("unitree_go2", mode="real", port="192.168.123.161")` builds the native driver. `panda` and `ur5e` have native drivers but no `hardware` block, so they resolve to lerobot until you ask: `Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`. Asking for `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
+Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; every other robot in the table below needs no declaration: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver`, with no lerobot extra or calibration file. `omx`, `openarm` and `reachy2` have no native driver and fall back to lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for its documented teleop reads. `driver="strands"` on a robot with no native driver is refused by name, never served the lerobot path quietly.
 
 `port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
 
@@ -66,7 +66,7 @@ print(arm.send_action({"shoulder_pan": 10.0}))
 arm.cleanup()
 ```
 
-That is the real `FeetechDriver` with the arm's MuJoCo model at the far end of the bus (`transport="twin"`), the way to exercise a native driver's verbs, units and refusals without a serial port.
+That is the real `FeetechDriver` with the arm's MuJoCo model at the far end of the bus (`transport="twin"`): a native driver's verbs, units and refusals without a serial port.
 
 ## Register your own
 
@@ -77,10 +77,10 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`. It does not make a new name known: for an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first, then register the driver under that name. A package outside this repo registers at import time; the shipped table tolerates a caller registering first.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`, and registering makes the driver the robot's default. For an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first. A package outside this repo registers at import time.
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Those are facts about the hardware; the operator approval above all of them is [the operator gate](../agents.md#the-operator-gate).
+A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).

@@ -131,6 +131,7 @@ class _RealModeRecipe:
     robot: str
     keywords: frozenset[str]
     names_native_driver: bool
+    names_lerobot_driver: bool = False
 
     @property
     def driver_class(self) -> type | None:
@@ -139,8 +140,12 @@ class _RealModeRecipe:
         A recipe is graded only when a native driver is what the factory reaches
         for it: the lerobot driver's keyword roster is its config dataclass,
         which needs lerobot installed, and this repository's test environment is
-        not where that dependency is decided.
+        not where that dependency is decided. Resolved the way the factory
+        resolves: a spelled ``driver=`` wins, otherwise the native driver when
+        one is registered (the default since 2026-10-01).
         """
+        if self.names_lerobot_driver:
+            return None
         if not (self.names_native_driver or resolve_driver(self.robot) == "strands"):
             return None
         return get_native_driver_class(self.robot)
@@ -181,6 +186,7 @@ def real_mode_recipes_in(source: str, name: str) -> list[_RealModeRecipe]:
                 robot=match.group("robot"),
                 keywords=keywords,
                 names_native_driver="'strands'" in tail or '"strands"' in tail,
+                names_lerobot_driver="'lerobot'" in tail or '"lerobot"' in tail,
             )
         )
     return found
@@ -356,11 +362,19 @@ class TestTheGradersAreLoadBearing:
         assert [recipe.unaccepted() for recipe in planted] == [["robot_ip"], []]
 
     def test_a_lerobot_recipe_is_not_graded_here(self) -> None:
-        """lerobot owns its own keyword roster, and it need not be installed."""
+        """lerobot owns its own keyword roster, and it need not be installed.
+
+        Spelled ``driver='lerobot'`` since the native default (2026-10-01): a
+        bare so100 call now builds ``FeetechDriver`` and IS graded here.
+        """
         planted = real_mode_recipes_in(
-            "print(\"arm = Robot('so100', mode='real', port='/dev/ttyACM0')\")\n", "planted.py"
+            "print(\"arm = Robot('so100', mode='real', driver='lerobot', port='/dev/ttyACM0')\")\n", "planted.py"
         )
         assert [recipe.driver_class for recipe in planted] == [None]
+        native = real_mode_recipes_in(
+            "print(\"arm = Robot('so100', mode='real', port='/dev/ttyACM0')\")\n", "planted.py"
+        )
+        assert [recipe.driver_class.__name__ for recipe in native if recipe.driver_class] == ["FeetechDriver"]
 
     def test_a_sim_recipe_is_not_a_hardware_recipe(self) -> None:
         """Only a ``mode="real"`` call names a driver keyword at all."""

@@ -643,8 +643,9 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         driver: Which implementation drives the robot in ``mode="real"``, one of
             :data:`~strands_robots.registry.DRIVER_CHOICES`. ``"auto"``
             (default) states no preference: it honours the robot's registry
-            ``hardware.driver`` and otherwise builds the lerobot driver, so a
-            call that does not mention ``driver`` behaves exactly as before.
+            ``hardware.driver``, otherwise builds the native driver registered
+            for this robot, and falls back to the lerobot driver only for a
+            robot this package has no driver for.
             ``"lerobot"`` pins that path explicitly. ``"strands"`` builds the
             native driver registered for this robot via
             :func:`~strands_robots.drivers.register_native_driver`, and is

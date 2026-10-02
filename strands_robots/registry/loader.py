@@ -29,13 +29,19 @@ from pathlib import Path
 
 from ._overlay import parse_user_robots, user_registry_path, user_registry_source
 
-#: The driver a robot gets when nothing says otherwise. Every robot in the
-#: package registry is a lerobot robot today, so the default keeps them working
-#: without a per-robot declaration.
+#: The name of the driver this package ships: a robot with a registered native
+#: driver resolves to it when nothing says otherwise (see
+#: :func:`strands_robots.drivers.resolve_driver`).
+NATIVE_DRIVER = "strands"
+
+#: The fallback for a robot with no native driver and no declaration: lerobot
+#: builds every robot that declares a ``hardware.lerobot_type``, so a robot this
+#: package cannot drive itself still works without a per-robot declaration.
 DEFAULT_DRIVER = "lerobot"
 
 #: Accepted ``hardware.driver`` and ``driver=`` values. ``"auto"`` expresses no
-#: preference: it reads the registry and falls back to :data:`DEFAULT_DRIVER`.
+#: preference: it reads the registry, then the native-driver table, and falls
+#: back to :data:`DEFAULT_DRIVER`.
 #: Mirrors the :data:`~strands_robots.registry.LIST_ROBOTS_MODES` pattern - a
 #: value outside this tuple is refused by name rather than silently treated as
 #: the default, because a typo that resolves to a working driver is a caller who
@@ -45,7 +51,7 @@ DEFAULT_DRIVER = "lerobot"
 #: rather than in the driver seam that implements the names: the seam reads the
 #: registry, so a vocabulary stored up there is one the layer that validates it
 #: has to reach up for.
-DRIVER_CHOICES = ("auto", DEFAULT_DRIVER, "strands")
+DRIVER_CHOICES = ("auto", DEFAULT_DRIVER, NATIVE_DRIVER)
 
 logger = logging.getLogger(__name__)
 

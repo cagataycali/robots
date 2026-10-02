@@ -9,11 +9,17 @@ Mini has no lerobot robot type, so before this driver ``mode="real"`` raised
 
 The Reachy Mini also declares ``hardware.driver="strands"`` on its registry
 entry, so :func:`~strands_robots.drivers.resolve_driver` sends it to its driver
-and it never meets that refusal. The Franka and UR arms declare nothing, so the
-default routes them to lerobot - which has no robot type for any of them. They reached the generic listing of lerobot's sixteen robot types, and
-that listing never mentioned that this package ships the driver that builds
-them: an answer to the wrong question, and a dead end for a caller who has no
-reason to guess at ``driver="strands"``.
+and it never meets that refusal. The Franka and UR arms declare nothing; when
+an undeclared robot still fell back to lerobot they reached the generic listing
+of lerobot's sixteen robot types, and that listing never mentioned that this
+package ships the driver that builds them: an answer to the wrong question, and
+a dead end for a caller who had no reason to guess at ``driver="strands"``.
+
+Since 2026-10-01 an undeclared robot with a native driver resolves to that
+driver, so the bare call builds these arms and the refusal is met only by a
+caller who asks for lerobot by name (``driver="lerobot"``). The refusal still
+has to name the native driver for that caller, so every cell below pins the
+explicit spelling and :class:`TestThePremise` records the new default.
 
 The site already had this shape for the other wrong entry point. A leader arm is
 a lerobot *teleoperator*, and
@@ -28,12 +34,10 @@ overlap: the G1 is a lerobot teleoperator type as well as a natively driven
 robot, and for a name in that overlap the driver is what a ``Robot()`` caller
 asked for.
 
-What is deliberately unchanged: which driver *wins*. Resolution precedence is
-untouched, no registry entry gains a declaration, and a robot lerobot can build
-still goes to lerobot. Whether a robot with both a working lerobot type and a
-native driver should prefer the native one is a preference, and ``unitree_g1``
-shows the registry is where such a preference is declared. This changes only what a caller is told when the driver they were
-routed to cannot build the robot at all.
+What is deliberately unchanged: an explicit ``driver="lerobot"`` still goes to
+lerobot, and a robot lerobot can build (``koch``) fails on its config fields
+there, not with a driver pointer. This module changes only what a caller is told
+when the driver they chose cannot build the robot at all.
 """
 
 from __future__ import annotations
@@ -48,10 +52,10 @@ import strands_robots.drivers.registry as drivers_registry_mod
 from strands_robots import Robot
 from strands_robots.drivers import get_native_driver_class, resolve_driver
 from strands_robots.drivers.registry import _native_driver_refusal
-from strands_robots.registry import get_robot, list_robots
+from strands_robots.registry import get_driver, get_robot, list_robots
 
-#: The robots that reach lerobot with a native driver already registered for
-#: them. Literal rather than derived: a rule narrowed by mistake would
+#: The robots that reach lerobot (when asked for it by name) with a native driver
+#: already registered for them. Literal rather than derived: a rule narrowed by mistake would
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
 #: rule itself, so another robot arriving in this position is caught there -
@@ -114,9 +118,14 @@ def _type_handed_to_lerobot(name: str) -> str:
 
 
 def _refusal_for(name: str) -> str:
-    """Build ``name`` in real mode with no ``driver=`` and return the refusal."""
+    """Build ``name`` in real mode through lerobot by name and return the refusal.
+
+    Explicit rather than bare: the bare call resolves an undeclared robot with a
+    native driver to that driver and builds it, so the lerobot site this module
+    grades is reached only when a caller asks for lerobot.
+    """
     with pytest.raises(ValueError) as excinfo:
-        Robot(name, mode="real")
+        Robot(name, mode="real", driver="lerobot")
     return str(excinfo.value)
 
 
@@ -134,9 +143,17 @@ class TestThePremise:
         assert get_native_driver_class(name) is not None
 
     @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_default_still_routes_it_to_lerobot(self, name: str) -> None:
-        """Why they meet this refusal at all: they declare no driver preference."""
-        assert resolve_driver(name, None) == "lerobot"
+    def test_the_default_now_routes_it_to_its_native_driver(self, name: str) -> None:
+        """The bare call builds the arm; only ``driver="lerobot"`` meets the refusal.
+
+        Flipped on 2026-10-01 with the native-default change: this cell used to
+        assert ``"lerobot"`` because an undeclared robot fell back to it. Now
+        :func:`~strands_robots.drivers.resolve_driver` prefers a registered
+        native driver, which is why the refusal cells build with an explicit
+        ``driver="lerobot"``.
+        """
+        assert resolve_driver(name, None) == "strands"
+        assert resolve_driver(name, "lerobot") == "lerobot"
 
     @pytest.mark.parametrize("name", NO_DRIVER_OF_EITHER_KIND)
     def test_the_control_robots_have_no_native_driver(self, name: str) -> None:
@@ -179,11 +196,19 @@ class TestTheDerivedPopulationIsExactlyThese:
 
     @staticmethod
     def _routed_to_lerobot_with_a_native_driver() -> set[str]:
+        """Undeclared robots lerobot cannot build that have a native driver.
+
+        Before the native default these were exactly the robots whose bare call
+        resolved to lerobot; the declaration read keeps the population the same
+        now that an undeclared robot resolves to its driver (a robot that
+        declares ``"strands"``, the Reachy Mini, never belonged here).
+        """
         known = _lerobot_robot_types()
         return {
             entry["name"]
             for entry in list_robots("all")
-            if resolve_driver(entry["name"], None) == "lerobot"
+            if get_driver(entry["name"]) is None
+            and resolve_driver(entry["name"], None) == "strands"
             and _type_handed_to_lerobot(entry["name"]) not in known
             and get_native_driver_class(entry["name"]) is not None
         }
@@ -342,7 +367,7 @@ class TestTheOrderIsStated:
 
 
 class TestNothingElseChanged:
-    """Over-reach: which driver wins, and every other refusal, are untouched."""
+    """Over-reach: an explicit choice, and every other refusal, are untouched."""
 
     @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
     def test_an_explicit_strands_choice_still_builds_the_driver(self, name: str) -> None:
