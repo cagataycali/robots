@@ -36,6 +36,7 @@ and is re-sent to each new subscriber, never on a timer; steady state is about
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 import time
 from typing import Any
@@ -342,6 +343,7 @@ class FoxgloveBridge:
             server, self._server = self._server, None
         if server is not None:
             server.stop()
+            _wait_for_port_release(self.host, self.port)
         self._close_writer()
 
     # -- internals ----------------------------------------------------------------
@@ -454,3 +456,25 @@ class _Listener:
 
     def on_connection_graph_unsubscribe(self) -> None:
         return None
+
+
+def _wait_for_port_release(host: str, port: int, timeout: float = 2.0) -> None:
+    """Block until nothing listens on ``host:port`` any more, or ``timeout`` passes.
+
+    The SDK's ``stop()`` returns before its listener thread closes the socket,
+    so for a few milliseconds a stopped bridge still accepts a connection and
+    then drops it. Binding the port is the probe: it fails while that listener
+    is alive and succeeds the moment it is gone.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    logger.warning("Foxglove: %s:%d still bound %.1fs after stop", host, port, timeout)
+                    return
+        time.sleep(0.005)
