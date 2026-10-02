@@ -29,6 +29,7 @@ from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
+from strands_robots.drivers.cameras import camera_names, camera_read_source, device_camera_names
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._kill_switch import mesh_disabled_by_env
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -1260,9 +1261,9 @@ class Mesh(SensorLoopsMixin):
                 # cameras, otherwise "no camera tiles" is undiagnosable.
                 _has_cams = False
                 try:
-                    inner = getattr(self.robot, "robot", None)
-                    cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
-                    _has_cams = bool(cam_cfg) or getattr(self.robot, "_world", None) is not None
+                    # Both hardware shapes - the lerobot wrapper's inner device
+                    # and a native driver carrying its own cameras - plus sim.
+                    _has_cams = bool(camera_names(self.robot)) or getattr(self.robot, "_world", None) is not None
                 except Exception:  # noqa: BLE001
                     # Whether to emit one advisory log line is the only thing
                     # this probe decides, so an unreadable robot config leaves
@@ -1512,14 +1513,23 @@ class Mesh(SensorLoopsMixin):
 
         try:
             inner = getattr(r, "robot", None)
+            # The device that owns the hardware: a lerobot wrapper's inner robot,
+            # or a native driver itself (it has no inner device and answers
+            # ``is_connected`` on its own).
+            device = inner if inner is not None else r
+            if hasattr(device, "is_connected"):
+                payload["connected"] = bool(device.is_connected)
+            if inner is not None and hasattr(inner, "name"):
+                payload["hw"] = inner.name
+            if names := camera_names(r):
+                payload["cameras"] = names
+            failures = getattr(r, "camera_failures", None)
+            if isinstance(failures, dict) and failures:
+                payload["camera_failures"] = dict(failures)
+            calibration = getattr(r, "calibration_fact", None)
+            if isinstance(calibration, str) and calibration:
+                payload["calibration"] = calibration
             if inner is not None:
-                if hasattr(inner, "is_connected"):
-                    payload["connected"] = bool(inner.is_connected)
-                if hasattr(inner, "name"):
-                    payload["hw"] = inner.name
-                cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
-                if isinstance(cam_cfg, dict) and cam_cfg:
-                    payload["cameras"] = list(cam_cfg.keys())
                 input_pubs = getattr(r, "_input_publishers", None)
                 if isinstance(input_pubs, dict) and input_pubs:
                     payload["inputs"] = [
@@ -2122,25 +2132,35 @@ class Mesh(SensorLoopsMixin):
         if _zc_bool_env("STRANDS_MESH_CAMERA_DISABLED", default=False):
             return
         r = self.robot
-        inner = getattr(r, "robot", None)
-        if inner is not None and getattr(inner, "is_connected", False):
-            self._publish_hardware_cameras(inner)
+        device = camera_read_source(r)
+        if device is not None and getattr(device, "is_connected", False):
+            self._publish_hardware_cameras(device)
+        elif device is not None and getattr(device, "cameras", None):
+            # A native driver whose bus is not open can still have open cameras
+            # (connect opens them after the bus, whatever the bus said).
+            self._publish_hardware_cameras(device)
         else:
             self._publish_sim_cameras()
 
     def _publish_hardware_cameras(self, inner: Any) -> None:
-        """Publish camera frames from a hardware robot (lerobot Robot)."""
-        cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
-        if not isinstance(cam_cfg, dict) or not cam_cfg:
+        """Publish camera frames from a hardware robot.
+
+        ``inner`` is what :func:`~strands_robots.drivers.cameras.camera_read_source`
+        resolved: a lerobot robot (``config.cameras`` + ``get_observation``) or a
+        native driver carrying its own ``cameras`` dict of readers.
+        """
+        names = device_camera_names(inner)
+        if not names:
             return
 
         obs = None
-        try:
-            # lerobot reads the MOTORS before it grabs any frame, so this is a
-            # bus reader too and must take the same lock as the probes.
-            obs = read_observation(inner)
-        except Exception:
-            logger.debug("camera publish: read_observation failed, falling back to per-camera reads", exc_info=True)
+        if hasattr(inner, "get_observation"):
+            try:
+                # lerobot reads the MOTORS before it grabs any frame, so this is a
+                # bus reader too and must take the same lock as the probes.
+                obs = read_observation(inner)
+            except Exception:
+                logger.debug("camera publish: read_observation failed, falling back to per-camera reads", exc_info=True)
 
         if obs is None:
             cameras_dict = getattr(inner, "cameras", None)
@@ -2158,7 +2178,7 @@ class Mesh(SensorLoopsMixin):
             if not obs:
                 return
 
-        self._encode_and_publish_frames(obs, list(cam_cfg.keys()))
+        self._encode_and_publish_frames(obs, names)
 
     def _publish_sim_cameras(self) -> None:
         """Publish camera frames from a sim robot (SimRobot with _world ref).

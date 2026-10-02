@@ -341,6 +341,42 @@ def _build_twin_engine(canonical: str, keyframe: str | None) -> Simulation:
     return sim
 
 
+def lerobot_calibration_file(name: str, robot_id: str) -> str | None:
+    """Return the lerobot calibration file the native driver for ``name`` should load.
+
+    The lookup ``lerobot_calibration_path(<lerobot type>, <robot_id>)`` is the
+    same one the lerobot driver performs with ``id=robot_id``, so an arm
+    calibrated through lerobot is found under the name it was calibrated as.
+    Both :func:`Robot` (with the tool name as the id) and the dashboard spawner
+    (with a remembered ``robot_id``) call this one function, so the guards live
+    once.
+
+    Args:
+        name: Robot name or alias, resolved to its canonical name.
+        robot_id: The calibration id - the tool name, or lerobot's ``--robot.id``.
+
+    Returns:
+        The file's path, or ``None`` when the robot's native driver takes no
+        ``calibration=`` keyword, the robot has no lerobot type, lerobot is not
+        installed, the id is not a bare path segment, or no file exists. A
+        ``None`` keeps the driver's own uncalibrated bring-up.
+    """
+    canonical = resolve_name(name)
+    driver_cls = get_native_driver_class(canonical)
+    if driver_cls is None or "calibration" not in constructor_keywords(driver_cls):
+        return None
+    robot_type = get_hardware_type(canonical)
+    if robot_type is None:
+        return None
+    from strands_robots.drivers.feetech.bus import lerobot_calibration_path
+
+    try:
+        path = lerobot_calibration_path(robot_type, robot_id)
+    except (ImportError, ValueError):
+        return None
+    return str(path) if path.is_file() else None
+
+
 def _build_native_driver(
     canonical: str,
     cameras: dict[str, dict[str, Any]] | None,
@@ -428,6 +464,19 @@ def _build_native_driver(
             f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
+
+    # The arm's existing lerobot calibration is loaded, not dropped. On the
+    # lerobot driver ``Robot("so101", mode="real", port=...)`` namespaces the
+    # calibration file by the tool name and refuses an arm without one; the
+    # native driver given no ``calibration=`` reads raw servo counts over the
+    # full travel. Without this lookup, flipping the default to the native
+    # driver would quietly move a calibrated arm in a different frame on its
+    # first ``send_action`` after an upgrade. A missing file keeps the
+    # uncalibrated bring-up (the driver's status says so).
+    if kwargs.get("calibration") is None and kwargs.get("transport") != "twin":
+        if found := lerobot_calibration_file(canonical, tool_name or canonical):
+            logger.info("%s: loading the lerobot calibration at %s", tool_name or canonical, found)
+            kwargs = {**kwargs, "calibration": found}
 
     # A serial driver with no port has nothing to open, and the lerobot path
     # refuses that at construction with this host's serial devices named; the
@@ -643,8 +692,9 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         driver: Which implementation drives the robot in ``mode="real"``, one of
             :data:`~strands_robots.registry.DRIVER_CHOICES`. ``"auto"``
             (default) states no preference: it honours the robot's registry
-            ``hardware.driver`` and otherwise builds the lerobot driver, so a
-            call that does not mention ``driver`` behaves exactly as before.
+            ``hardware.driver``, otherwise builds the native driver registered
+            for this robot, and falls back to the lerobot driver only for a
+            robot this package has no driver for.
             ``"lerobot"`` pins that path explicitly. ``"strands"`` builds the
             native driver registered for this robot via
             :func:`~strands_robots.drivers.register_native_driver`, and is

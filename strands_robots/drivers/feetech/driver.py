@@ -19,6 +19,12 @@ What works and what does not:
   not part of :data:`~strands_robots.drivers.base.DRIVER_SURFACE` and no
   shipped driver has one.
 * ``stop`` - releases torque on every motor, reporting any that stayed driven.
+* ``cameras=`` - the driver declares ``reads_cameras`` and owns the dict the
+  factory hands it (:mod:`~strands_robots.drivers.cameras`): graded at
+  construction, opened in ``connect_eagerly`` after the bus so a camera that
+  does not open costs the camera and not the arm, read by the mesh through
+  :attr:`FeetechDriver.cameras` / :meth:`FeetechDriver.camera_frames`, closed
+  in ``cleanup``.
 * ``run_policy`` / ``start_task`` - roll a policy out on a background thread at
   ``control_frequency`` (30 Hz by default, the SO-arm teleop rate). Each step
   reads the whole arm in one sync-read, hands the policy a lerobot-shaped
@@ -61,6 +67,7 @@ if TYPE_CHECKING:
 
 from strands_robots.bus_access import bus_lock, read_joints
 from strands_robots.drivers.base import halt_failure_detail, policy_step, refuse, undeclared_verb_error
+from strands_robots.drivers.cameras import CameraSpec, OpenCVCamera, camera_frames, camera_specs, open_cameras
 from strands_robots.drivers.feetech.bus import (
     DEFAULT_TIMEOUT_S,
     SO_ARM_MOTORS,
@@ -131,6 +138,10 @@ class FeetechDriver(TeleopMixin):
 
     * ``port`` - a serial device path (``/dev/tty.usbserial-*``) for the SCS
       bus. Optional at construction; the bus opens it on connect.
+    * ``cameras`` - ``{name: {"index_or_path", "fps", "width", "height"}}``,
+      the shape the dashboard sends and lerobot's OpenCV config declares. An
+      option outside that set, or a ``type`` other than ``"opencv"``, is
+      refused by name at construction.
     * ``baud_rate`` - a positive integer, defaults to ``1_000_000``. The Feetech
       default for STS3215 arms; SCS-series can also run at 500_000 or below and
       a caller who knows better passes it here. Held to
@@ -171,6 +182,10 @@ class FeetechDriver(TeleopMixin):
 
     tool_type = _TOOL_TYPE
 
+    #: The opt-in :mod:`strands_robots.drivers.base` names: the factory forwards
+    #: a non-empty ``cameras=`` only to a driver that declares it opens them.
+    reads_cameras = True
+
     #: What a subclass on another servo family overrides - the robots it
     #: serves, the seams it offers, its motor map, its bus and the wire it names
     #: in the tool spec. Every verb, unit and refusal below is shared.
@@ -197,13 +212,17 @@ class FeetechDriver(TeleopMixin):
         realtime: bool = False,
     ) -> None:
         self._tool_name = tool_name
-        # Discarded, not stored: this driver never opens a caller-supplied
-        # camera, and the factory refuses a non-empty ``cameras=`` for a driver
-        # that does not declare ``reads_cameras``. An attribute nothing reads
-        # only suggests otherwise.
-        del cameras
         self._data_config = data_config
         context = f"{type(self).__name__}({tool_name!r})"
+        # Graded now, opened on connect: a bad entry is refused while the caller
+        # holds the traceback that names their keyword, and no device is touched
+        # before the bus is (see ``connect_eagerly``).
+        try:
+            self._camera_specs: dict[str, CameraSpec] = camera_specs(cameras)
+        except ValueError as e:
+            raise ValueError(f"{context}: {e}") from None
+        self._cameras: dict[str, OpenCVCamera] = {}
+        self._camera_failures: dict[str, str] = {}
         # A Feetech arm today is one U-shape bus. Aloha-style bimanual rigs
         # are Dynamixel not Feetech, so we accept a single ``port`` and refuse
         # ``ports`` outright rather than pretend to multi-bus a family that
@@ -698,6 +717,7 @@ class FeetechDriver(TeleopMixin):
         """
         if detail := halt_failure_detail(self.stop_task()):
             logger.error("%s: cleanup released the bus under a live rollout: %s", self._tool_name, detail)
+        self._close_cameras()
         if getattr(self, "_teleops", None) and not _stop_reported_stopped(self.stop_teleoperate()):
             logger.error(
                 "%s: port left open because the teleop loop did not join; "
@@ -797,16 +817,74 @@ class FeetechDriver(TeleopMixin):
             named string rather than a raise, because a caller cannot tell a
             raise here from a real hardware fault mid-session.
         """
+        reason: str | None = None
         try:
-            # Under the lock like every other bus path: opening the port writes
-            # to it (a torque-enable sweep on first contact), and this is the
-            # one `_connect_if_needed` caller outside an already-locked block.
-            # A lock only guarantees anything where EVERY caller takes it.
+            # Under the lock like every other bus path: opening the port is the
+            # one `_connect_if_needed` caller outside an already-locked block,
+            # and a lock only guarantees anything where EVERY caller takes it.
+            # Opening writes nothing to the servos - torque is left as found.
             with bus_lock(self):
                 self._connect_if_needed()
         except (ValueError, OSError) as e:
-            return str(e)
-        return None
+            reason = str(e)
+        # Cameras after the bus, and whatever the bus said: a camera that does
+        # not open is recorded under ``camera_failures`` and costs that camera
+        # only, so the arm's verdict above is never hidden behind a camera's.
+        self._open_cameras()
+        return reason
+
+    def _open_cameras(self) -> None:
+        """Open the cameras the caller configured that are not open yet."""
+        # Names come from the graded specs (str keys), never from a caller.
+        already_open = self._cameras.keys()
+        pending = {name: spec for name, spec in self._camera_specs.items() if name not in already_open}
+        if not pending:
+            return
+        opened, failed = open_cameras(pending)
+        self._cameras.update(opened)
+        for name in opened:
+            self._camera_failures.pop(name, None)
+        self._camera_failures.update(failed)
+
+    def _close_cameras(self) -> None:
+        """Release every open camera; safe when none is."""
+        cameras, self._cameras = self._cameras, {}
+        for camera in cameras.values():
+            camera.close()
+
+    @property
+    def calibration_fact(self) -> str:
+        """One sentence on which travel this arm's degrees are measured against.
+
+        An arm with no calibration file is brought up anyway - nothing in the
+        connect path refuses for it and nothing writes to a servo - but its
+        degrees are the servo's full rotation mapped from raw counts, not the
+        arm's measured travel. Status and presence carry this sentence so a
+        dashboard can say "uncalibrated: raw servo counts" next to the joints
+        instead of showing numbers that look calibrated.
+        """
+        if self._calibration_source is None:
+            return "none (raw servo counts over the full travel; run the calibration to measure this arm)"
+        return f"{self._calibration_source}"
+
+    @property
+    def camera_specs(self) -> dict[str, CameraSpec]:
+        """Every camera the caller configured, open or not, in their order."""
+        return dict(self._camera_specs)
+
+    @property
+    def cameras(self) -> dict[str, OpenCVCamera]:
+        """The open cameras by name, for :func:`strands_robots.drivers.cameras.camera_read_source`."""
+        return dict(self._cameras)
+
+    @property
+    def camera_failures(self) -> dict[str, str]:
+        """Why each configured camera that is not open did not open."""
+        return dict(self._camera_failures)
+
+    def camera_frames(self) -> dict[str, Any]:
+        """One RGB frame per open camera; a camera whose read fails is omitted."""
+        return camera_frames(self._cameras)
 
     async def get_status(self) -> dict[str, Any]:
         """Report the driver's construction and configuration.
@@ -834,6 +912,9 @@ class FeetechDriver(TeleopMixin):
                         # caller who calibrated the arm reads that as the
                         # keyword they forgot rather than as a wrong number.
                         "calibration_source": self._calibration_source,
+                        "calibration": self.calibration_fact,
+                        "cameras": {name: camera.describe() for name, camera in self._cameras.items()},
+                        "camera_failures": dict(self._camera_failures),
                         "motor_ids": list(self._motor_ids),
                         "supported_robots": list(self.SUPPORTED_ROBOTS),
                     }

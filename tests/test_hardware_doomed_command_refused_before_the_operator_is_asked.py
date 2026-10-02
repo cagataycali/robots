@@ -27,6 +27,10 @@ from strands_robots import Robot
 from strands_robots.hardware_robot import COMMAND_ALLOW_ENV
 from strands_robots.hardware_robot import Robot as HwRobot
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 
 class _Silent(Model):
     def update_config(self, **kwargs: Any) -> None:
@@ -72,7 +76,7 @@ def real(monkeypatch: pytest.MonkeyPatch) -> Iterator[HwRobot]:
     """
     for name in ("BYPASS_TOOL_CONSENT", COMMAND_ALLOW_ENV):
         monkeypatch.delenv(name, raising=False)
-    robot = Robot("so101", mode="real", port="/dev/cu.does-not-exist")
+    robot = Robot("so101", mode="real", driver="lerobot", port="/dev/cu.does-not-exist")
     yield robot
     robot.cleanup()
 

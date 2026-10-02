@@ -26,7 +26,7 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
-from strands_robots.dashboard import access, consent
+from strands_robots.dashboard import access, consent, env_install
 from strands_robots.dashboard.cameras import CameraUnavailable
 from strands_robots.dashboard.churn_guard import ChurnGuard
 from strands_robots.dashboard.device_manager import (
@@ -210,6 +210,19 @@ async def _spawn(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     if isinstance(checked, dict):
         _audit(bridge, "spawn", target=str(robot_name), detail=f"refused: {checked['error']}", ok=False)
         raise HTTPException(422, checked)
+    if checked[1] == "real":
+        # The child would die on its first import: refuse now, naming the extra
+        # that supplies it, instead of starting a process that prints the same
+        # ImportError seconds later with no button next to it.
+        gap = await asyncio.to_thread(env_install.spawn_preflight, checked[0], body.get("cameras"))
+        if gap is not None:
+            refusal = {
+                "error": f"this environment cannot run {checked[0]} on the {gap['driver']} driver: "
+                f"missing {', '.join(gap['missing'])}; {gap['remedy']}",
+                **gap,
+            }
+            _audit(bridge, "spawn", target=str(robot_name), detail=f"refused: {refusal['error']}", ok=False)
+            raise HTTPException(412, refusal)
     result = await asyncio.to_thread(
         dm.spawn,
         robot_name,
@@ -228,6 +241,11 @@ async def _spawn(request: Request, body: dict[str, Any]) -> dict[str, Any]:
             # Surface it in the field every caller already reads, so a dead spawn cannot be
             # mistaken for a live one by any client.
             result["error"] = outcome.get("reason") or "the peer did not start"
+            # A child that died on an import names the extra; the Devices sheet
+            # turns that into an install button.
+            extra = env_install.missing_extra_in("\n".join([result["error"], *(outcome.get("log_tail") or [])]))
+            if extra is not None:
+                result["missing_extra"] = extra
             consent.attach_consent(result, result["error"], "\n".join(outcome.get("log_tail") or []))
 
     # Lifecycle lands in the audit trail: the auto-spawn watcher and the UI use this same route.

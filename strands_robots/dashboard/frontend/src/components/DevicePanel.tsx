@@ -6,6 +6,8 @@ import { numField } from '../lib/numField'
 import { type CameraRow, camerasField } from '../lib/cameraRows'
 import { findConsent, type ConsentNeed } from '../lib/consent'
 import { spawnNotice, type SpawnNotice } from '../lib/spawnNotice'
+import { missingExtra, type MissingExtra } from '../lib/missingExtra'
+import InstallExtra from './InstallExtra'
 import ConsentSheet from './ConsentSheet'
 import { api, post, HttpError } from '../lib/endpoints'
 import { deviceActionFailure, type DeviceAction } from '../lib/deviceOutcome'
@@ -82,6 +84,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   useDialogFocus(sheetRef, open)
   const [robots, setRobots] = useState<RegistryRobot[]>([])
   const [error, setError] = useState<string | null>(null)
+  // The extra a refused or dead spawn said this environment lacks; an install button follows it.
+  const [gap, setGap] = useState<MissingExtra | null>(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [snip, setSnip] = useState<{ device: string; code: string; filename: string } | null>(null)
@@ -208,7 +212,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
 
   /** Every mutating device action. */
   const act = async (fn: () => Promise<any>, label: string, kind: DeviceAction = 'spawn') => {
-    setBusy(true); setStatus(null); setConsent(null); setNotice(null)
+    setBusy(true); setStatus(null); setConsent(null); setNotice(null); setGap(null)
     retry.current = { fn, label, kind }
     try {
       const r = await fn()
@@ -219,6 +223,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       // A spawn can SUCCEED and still be about to fail on the wire: the calibration gap arrives in
       // the same 200 body as the pid.
       setNotice(spawnNotice(r))
+      // A child that died on an import names the extra it needed.
+      setGap(missingExtra(r))
       await load()
     } catch (e: any) {
       const v = deviceActionFailure({
@@ -229,6 +235,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
       setStatus(v.text)
       setConsent(findConsent(e?.body))
       setNotice(spawnNotice(e?.body))
+      // 412: the preflight refused the spawn for a module the child would fail to import.
+      setGap(missingExtra(e?.body))
       if (v.ambiguous) await load()
     } finally {
       setBusy(false)
@@ -388,6 +396,16 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             <div className={scan.tone === 'bad' ? 'result bad' : scan.tone === 'warn' ? 'result warn' : 'result ok'}>
               {scan.text}
             </div>
+          )}
+          {/* This environment lacks what the spawn needs: install it here, then spawn again. */}
+          {gap && (
+            <InstallExtra
+              extra={gap.extra}
+              reason={gap.remedy
+                ? `this environment cannot run that spawn${gap.driver ? ` on the ${gap.driver} driver` : ''}: ${gap.remedy}`
+                : null}
+              onDone={() => { setGap(null); setStatus(`installed [${gap.extra}] — spawn again`) }}
+            />
           )}
           {/* The child started; this says why the arm may still show no joints. */}
           {notice && (

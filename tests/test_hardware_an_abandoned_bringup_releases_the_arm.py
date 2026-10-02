@@ -22,6 +22,10 @@ import pytest
 from strands_robots import Robot
 from strands_robots.hardware_robot import TaskStatus
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 _RELEASED = "The robot was disconnected again (torque released) since nothing will drive it."
 
 
@@ -50,7 +54,7 @@ class _Spy:
 @pytest.fixture
 def arm(monkeypatch):
     monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
-    robot = Robot("so101", mode="real", port=os.devnull)
+    robot = Robot("so101", mode="real", driver="lerobot", port=os.devnull)
     spy = _Spy(robot.robot, monkeypatch)
     yield robot, spy
     robot.cleanup()

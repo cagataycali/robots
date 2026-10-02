@@ -2038,6 +2038,18 @@ pre.startsnip {
 .card.registry .pingnote.answered { color: var(--accent); }
 .card.registry .pingnote.offline, .card.registry .pingnote.forbidden, .card.registry .pingnote.error { color: var(--amber); }
 
+/* Install a declared extra into the dashboard's own interpreter (components/InstallExtra.tsx). */
+.install-extra { margin: var(--s2) 0; padding: var(--s2); border: 1px solid var(--line); border-radius: var(--r3); }
+.install-extra .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.install-log {
+  margin: var(--s1) 0 0; padding: 8px 10px; overflow: auto; max-height: 24vh;
+  font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  background: var(--panel2); border-radius: var(--r3);
+}
+.extras-list { display: grid; gap: 6px; margin: var(--s2) 0; }
+.extras-list .extra-row { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: var(--fs-small); }
+.extras-list .extra-row code { min-width: 9em; }
+.extras-list .extra-row .hint { flex: 1 1 12em; }
 
 /* ══════════════════════════════════════════════════════════════════════════════
  * Responsive layout system (phone pass, 2026-10-01).

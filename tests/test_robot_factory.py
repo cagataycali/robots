@@ -20,6 +20,10 @@ from strands_robots.robot import (
     _run_device_connect_foreground,
 )
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 
 class TestResolveNames:
     def test_canonical(self):
@@ -597,7 +601,7 @@ class TestRobotRealMode:
             with patch("strands_robots.hardware_robot.Robot") as mock_hw:
                 mock_hw.return_value = MagicMock()
                 try:
-                    Robot("so100", mode="real")
+                    Robot("so100", mode="real", driver="lerobot")
                     mock_hw.assert_called_once()
                 except ImportError:
                     # lerobot not installed - acceptable in unit CI
@@ -1221,6 +1225,7 @@ class TestRealModeConfigDiscovery:
             r = Robot(
                 "so101",
                 mode="real",
+                driver="lerobot",
                 port="/dev/null",
                 use_degrees=True,
                 id="left_arm",
@@ -2055,7 +2060,7 @@ class TestRobotFactoryErrorBranches:
             patch("strands_robots.robot.get_hardware_type", return_value="so100_follower"),
             patch("strands_robots.hardware_robot.Robot", return_value=sentinel) as mock_hw,
         ):
-            result = Robot("so100", mode="real", backend="isaac")
+            result = Robot("so100", mode="real", driver="lerobot", backend="isaac")
         mock_hw.assert_called_once()
         assert result is sentinel
 
@@ -2071,7 +2076,7 @@ class TestRobotFactoryErrorBranches:
             patch("strands_robots.mesh.init_mesh", side_effect=RuntimeError("zenoh router down")),
         ):
             # Must not raise despite the mesh failure.
-            result = Robot("so100", mode="real")
+            result = Robot("so100", mode="real", driver="lerobot")
         assert result is sentinel
 
     def test_device_connect_init_failure_keeps_process_alive(self, monkeypatch, capsys):
@@ -2146,7 +2151,7 @@ class TestRobotFactoryErrorBranches:
             patch("strands_robots.hardware_robot.Robot", return_value=sentinel),
             patch("strands_robots.mesh.init_mesh", return_value=fake_mesh),
         ):
-            result = Robot("so100", mode="real")
+            result = Robot("so100", mode="real", driver="lerobot")
         assert result.mesh is fake_mesh
         assert result.peer_id == "hw-peer-7"
 
@@ -2185,7 +2190,7 @@ class TestHardwareSendActionTeleopContract:
             "lerobot.robots.utils.make_robot_from_config",
             return_value=inner,
         ):
-            r = Robot("so101", mode="real", port="/dev/null")
+            r = Robot("so101", mode="real", driver="lerobot", port="/dev/null")
         assert isinstance(r, HwRobot)
         return r, inner
 
@@ -2309,7 +2314,7 @@ class TestRealModeAccountsForEverySpawnParameter:
                 patch("strands_robots.hardware_robot.Robot", return_value=MagicMock()) as mock_hw,
                 patch("strands_robots.mesh.init_mesh", return_value=None),
             ):
-                Robot(kwargs.pop("name", "so100"), mode="real", **kwargs)
+                Robot(kwargs.pop("name", "so100"), mode="real", driver="lerobot", **kwargs)
         return mock_hw.call_args.kwargs, [r.getMessage() for r in caplog.records]
 
     def test_every_parameter_the_sim_path_forwards_is_carried_or_reported(self, caplog):

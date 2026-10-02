@@ -35,12 +35,17 @@ None of that makes the native driver worse - it adds the lamp, the second
 camera, ``speak`` and an agent tool surface lerobot has no seam for. It makes
 the *default* a question that is answered by ``driver="strands"`` at the call
 site until the native driver carries the surface the documented lines read.
-That keyword is the documented way to reach a driver for a robot whose registry
-entry declares nothing, so the driver is fully reachable with the registry left
-alone.
 
-A future change that declares ``hardware.driver="strands"`` on this entry should
-fail here, and the failure should say what else has to land with it.
+Since the native drivers became the default for every undeclared robot with one
+(:func:`~strands_robots.drivers.resolve_driver` prefers the native table over
+lerobot), leaving the registry alone would flip this robot too. The EarthRover
+therefore declares ``hardware.driver: "lerobot"`` explicitly - a registry
+declaration outranks the native default - and this module grades that
+declaration instead of the old absence.
+
+A future change that declares ``hardware.driver="strands"`` on this entry, or
+removes the declaration, should fail here, and the failure should say what else
+has to land with it.
 """
 
 from __future__ import annotations
@@ -63,23 +68,32 @@ _DOCUMENTED_TELEOP_READS = ("attach_teleop", "teleoperate")
 class TestTheBareCallStaysLerobotBacked:
     """The registry declares no driver, so the documented reads keep resolving."""
 
-    def test_the_registry_entry_declares_no_driver(self) -> None:
-        """An absent ``hardware.driver`` is what defers to the default."""
+    def test_the_registry_entry_declares_lerobot(self) -> None:
+        """An explicit ``hardware.driver: "lerobot"`` is what keeps lerobot here.
+
+        Until the native drivers became the default (2026-10-01) this cell
+        asserted the ABSENCE of a declaration, because an undeclared robot fell
+        back to lerobot. Now an undeclared robot with a native driver gets that
+        driver, so the only way to keep the documented lerobot surface is to
+        declare it, and the cell grades the declaration.
+        """
         entry = get_robot(resolve_name("earthrover"))
-        # Asserted rather than coalesced to ``{}``: the check below is an absence,
-        # so a missing entry would satisfy it vacuously and report a default this
-        # module never read.
         assert entry is not None, "premise: 'earthrover' no longer resolves to a registry entry"
         hardware = entry["hardware"]
-        assert "driver" not in hardware, (
-            "earthrover must not declare hardware.driver: the native driver does not carry "
+        assert hardware.get("driver") == "lerobot", (
+            "earthrover must declare hardware.driver='lerobot': the native driver does not carry "
             f"{list(_DOCUMENTED_TELEOP_READS)} (documented in README.md and "
             "docs/reference/hardware/teleoperation.md) and refuses lerobot's action vocabulary "
-            f"{list(_LEROBOT_ACTION_KEYS)} - see this module's docstring"
+            f"{list(_LEROBOT_ACTION_KEYS)}, and an undeclared robot with a native driver now "
+            "resolves to it - see this module's docstring"
         )
 
     def test_the_default_resolution_is_lerobot(self) -> None:
-        """The surface the documented teleop lines are written against."""
+        """The surface the documented teleop lines are written against.
+
+        Holds by declaration, not by fallback: the same call on an undeclared
+        robot with a native driver (so101) resolves to ``"strands"``.
+        """
         assert resolve_driver(resolve_name("earthrover")) == "lerobot"
 
     def test_the_hardware_wrapper_carries_the_documented_teleop_reads(self) -> None:

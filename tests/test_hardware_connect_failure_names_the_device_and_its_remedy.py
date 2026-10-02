@@ -26,12 +26,17 @@ import pytest
 
 from strands_robots import Robot
 
+# These cells grade the lerobot wrapper, so they spell driver="lerobot": since
+# the native default (2026-10-01) a bare so101/so100 real-mode call builds
+# FeetechDriver instead.
+
 
 @pytest.fixture
 def arm():
     robot = Robot(
         "so101",
         mode="real",
+        driver="lerobot",
         port=os.devnull,
         cameras={"wrist": {"type": "opencv", "index_or_path": 99, "fps": 30, "width": 640, "height": 480}},
     )

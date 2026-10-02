@@ -456,7 +456,11 @@ class TestANativeDriverCallIsGradedAgainstWhatTheDriverReads:
         spelled = _native_driver_the_call_builds("so101", "strands")
         assert spelled is not None and spelled.__name__ == "FeetechDriver"
         assert _native_driver_the_call_builds("so101", "lerobot") is None
-        assert _native_driver_the_call_builds("so101", None) is None, "so101's registry default is lerobot"
+        # Flipped 2026-10-01: an undeclared robot with a native driver resolves
+        # to it, so the unspelled so101 call is the native one and only a
+        # spelled driver="lerobot" reaches lerobot's roster.
+        unspelled = _native_driver_the_call_builds("so101", None)
+        assert unspelled is not None and unspelled.__name__ == "FeetechDriver", "so101's default is its native driver"
         declared = _native_driver_the_call_builds("booster_t1", None)
         assert declared is not None, "booster_t1 declares hardware.driver=strands, so an unspelled driver is native"
         assert _native_driver_the_call_builds("bi_so", "strands") is None, "an unregistered name is the name rule's"
@@ -480,8 +484,10 @@ class TestANativeDriverCallIsGradedAgainstWhatTheDriverReads:
         assert _rejected_keywords("so101", ("port", "calibration", "baud_rate"), "strands") == []
 
     def test_the_same_keyword_is_refused_on_the_lerobot_path(self) -> None:
+        """Spelled ``driver="lerobot"`` since the native default made the bare call native."""
         pytest.importorskip("lerobot.robots.config")
-        assert _rejected_keywords("so101", ("calibration",)) == ["calibration"]
+        assert _rejected_keywords("so101", ("calibration",), "lerobot") == ["calibration"]
+        assert _rejected_keywords("so101", ("calibration",)) == [], "the bare call is the native path now"
 
     def test_a_lerobot_field_the_driver_drops_is_reported_on_the_native_path(self) -> None:
         """The silent direction: the driver keeps it as an extra and acts on nothing.
@@ -492,8 +498,11 @@ class TestANativeDriverCallIsGradedAgainstWhatTheDriverReads:
         """
         pytest.importorskip("lerobot.robots.config")
         assert "use_degrees" in hardware_robot._FORWARDABLE_KWARGS, "the plant moved; pick another allowlisted field"
-        assert _rejected_keywords("so101", ("use_degrees",)) == []
+        # The lerobot path is spelled since the native default (2026-10-01); the
+        # bare call now grades like driver="strands".
+        assert _rejected_keywords("so101", ("use_degrees",), "lerobot") == []
         assert _rejected_keywords("so101", ("use_degrees",), "strands") == ["use_degrees"]
+        assert _rejected_keywords("so101", ("use_degrees",)) == ["use_degrees"]
 
     def test_the_factory_keeps_its_own_keywords_on_both_paths(self) -> None:
         """``cameras`` and ``mesh`` are the factory's to bind whatever builds the robot."""

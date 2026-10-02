@@ -39,14 +39,14 @@ Reads are never gated, nor is `use_rtps`'s `advertise` (it creates a publisher a
 ## A real arm on the graph
 
 ```python title="sketch"
-arm = Robot("so101", mode="real", port="/dev/ttyACM0",
+arm = Robot("so101", mode="real", port="/dev/ttyACM0", driver="lerobot",
             ros2_bridge=True, ros2_transport="rtps", ros2_domain=0, ros2_commands=True,
             dds_security_config={"identity_ca": "file:ca.pem", "certificate": "file:arm.pem",
                                  "private_key": "file:arm.key", "governance": "file:gov.p7s",
                                  "permissions": "file:perm.p7s"})
 ```
 
-`ros2_bridge=True` on the hardware `Robot` publishes `/<robot>/joint_states` (`sensor_msgs/msg/JointState`) and `/<robot>/<camera>/image_raw` (`sensor_msgs/msg/Image`, `rgb8`) from the control loop, and subscribes `/<robot>/joint_command` (`JointState`), forwarding each message into `send_action` so MoveIt, a teleop node or a trajectory replayer can drive the arm. `ros2_transport` is `"rclpy"` (`HardwareRosBridge`) or `"rtps"` (`HardwareRtpsBridge`); `ros2_commands=False` is publish-only; `joint_limits=` clamps inbound targets per joint.
+`ros2_bridge=True` on the lerobot-backed `Robot` publishes `/<robot>/joint_states` (`sensor_msgs/msg/JointState`) and `/<robot>/<camera>/image_raw` (`sensor_msgs/msg/Image`, `rgb8`) from the control loop, and subscribes `/<robot>/joint_command` (`JointState`), forwarding each message into `send_action` so MoveIt or a teleop node can drive the arm. `ros2_transport` is `"rclpy"` (`HardwareRosBridge`) or `"rtps"` (`HardwareRtpsBridge`); `ros2_commands=False` is publish-only; `joint_limits=` clamps inbound targets per joint.
 
 On the `rtps` transport an enabled command surface lets any DDS participant on the domain move the arm, so it requires `dds_security_config` (identity CA, certificate, private key, governance, permissions, each a path or `file:`/`data:` URI) or the explicit opt-out `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`. A missing `rclpy` on the `rclpy` transport is a named refusal suggesting `ros2_transport='rtps'`.
 

@@ -347,13 +347,16 @@ class TestThePolymorphismThisGrades:
     def test_an_explicit_driver_keyword_moves_the_surface(self) -> None:
         """The same robot and mode, graded differently because of ``driver=``.
 
-        ``ur5e`` declares no ``hardware.driver``, so the registry alone would
-        send both spellings to the lerobot wrapper - and the documented way to
-        reach its native driver is the keyword.
+        ``ur5e`` declares no ``hardware.driver``; since the native default
+        (2026-10-01) the bare call and ``driver="strands"`` both build its
+        native driver, and ``driver="lerobot"`` is the keyword that moves the
+        surface to the lerobot wrapper. Before the flip the bare call was the
+        wrapper and ``"strands"`` the keyword that moved it.
         """
         assert not _declares_a_native_driver("ur5e"), "premise: ur5e declares no driver in the registry"
-        assert "HardwareRobot" in _hardware_surfaces("ur5e", "real")
+        assert "HardwareRobot" not in _hardware_surfaces("ur5e", "real")
         assert "HardwareRobot" not in _hardware_surfaces("ur5e", "real", "strands")
+        assert "HardwareRobot" in _hardware_surfaces("ur5e", "real", "lerobot")
 
     def test_an_explicit_lerobot_keyword_keeps_the_wrapper(self) -> None:
         """A caller overriding a registry declaration is honoured too."""
@@ -372,7 +375,9 @@ class TestThePolymorphismThisGrades:
         bound = _factory_bound_names()
         assert "run" in bound
         assert not hasattr(hardware_robot.Robot, "run")
-        assert "run" in _hardware_surfaces("so100", "real")["HardwareRobot"]
+        # driver="lerobot" is spelled: the bare so100 call builds the native
+        # driver since 2026-10-01, and ``run`` is bound onto the wrapper.
+        assert "run" in _hardware_surfaces("so100", "real", "lerobot")["HardwareRobot"]
 
 
 class TestTheRuleIsGradedOnConstructedExemplars:
@@ -383,8 +388,10 @@ class TestTheRuleIsGradedOnConstructedExemplars:
     _WRONG_SURFACE = 'r = Robot("unitree_g1", mode="real")\nr.attach_teleop("so101_leader")\n'
     _FACTORY_BOUND = 'r = Robot("so100", mode="real")\nr.run()\n'
     # control_frequency is assigned as self.X and is on no class, so this
-    # exemplar is answered only by the MRO-assignment source.
-    _INSTANCE_STATE = 'r = Robot("so100", mode="real")\nr.control_frequency\n'
+    # exemplar is answered only by the MRO-assignment source. It is a lerobot
+    # wrapper attribute, and the bare so100 call builds the native driver since
+    # the native default (2026-10-01), so the wrapper is asked for by name.
+    _INSTANCE_STATE = 'r = Robot("so100", mode="real", driver="lerobot")\nr.control_frequency\n'
     # The driver= keyword decides the surface for a robot whose registry entry
     # declares nothing. Both spellings name a real method of the object the
     # factory returns; each raises AttributeError on the other's object.
