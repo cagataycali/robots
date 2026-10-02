@@ -11,5 +11,7 @@ fresh install therefore connects without the `[lerobot]` extra or a lerobot
 calibration file, and an arm lerobot already calibrated keeps that file: the
 native driver loads `<lerobot calibration dir>/robots/<type>/<tool name>.json`
 when `calibration=` is not given, the same file the lerobot path read with no
-`id=`. `strands_robots.registry.NATIVE_DRIVER` names the new
+`id=`; a dashboard spawn with a remembered `robot_id` goes through the same
+lookup, so a missing file or a missing lerobot keeps the uncalibrated bring-up.
+`strands_robots.registry.NATIVE_DRIVER` names the new
 default; `DEFAULT_DRIVER` keeps naming the fallback.

@@ -556,13 +556,15 @@ if cfg["mode"] == "real":
     if cfg.get("robot_id"):
         # The lerobot calibration identity. The lerobot wrapper takes it as
         # ``id=``; a native driver has no such keyword (the factory refuses one
-        # it does not declare) and reads the same file through ``calibration=``.
+        # it does not declare) and reads the same file through ``calibration=``
+        # when the driver takes one and the file exists - the factory's own
+        # lookup, so a fresh install, a missing file or a driver with no
+        # calibration keyword falls back to the factory's bring-up.
         from strands_robots.drivers import resolve_driver
         if resolve_driver(cfg["robot_name"]) == "strands":
-            from strands_robots.drivers.feetech.bus import lerobot_calibration_path
-            from strands_robots.registry import get_hardware_type
-            lerobot_type = get_hardware_type(cfg["robot_name"]) or cfg["robot_name"]
-            kwargs["calibration"] = str(lerobot_calibration_path(lerobot_type, cfg["robot_id"]))
+            from strands_robots.robot import lerobot_calibration_file
+            if found := lerobot_calibration_file(cfg["robot_name"], cfg["robot_id"]):
+                kwargs["calibration"] = found
         else:
             kwargs["id"] = cfg["robot_id"]
     robot = Robot(

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -236,3 +237,73 @@ class TestTheSpawnerReadsTheNativeContract:
         assert "eager connect failed (will retry on first task): FeetechBus: could not open" in out, out
         assert "hardware connected" not in out
         assert "online" in out
+
+
+_RECORD_KWARGS = """
+import json, sys, time
+import strands_robots
+import strands_robots.drivers.feetech.bus as bus
+
+class _Stop(Exception):
+    pass
+
+class _Recorder:
+    def __init__(self, *a, **kw):
+        print("ROBOT_KWARGS " + json.dumps(sorted(k for k in kw if k in ("calibration", "id"))), flush=True)
+        print("CALIBRATION " + str(kw.get("calibration")), flush=True)
+        raise _Stop()
+
+strands_robots.Robot = _Recorder
+if {no_lerobot}:
+    def _absent(*a, **kw):
+        raise ImportError("No module named 'lerobot'")
+    bus.lerobot_calibration_path = _absent
+sys.argv = ["spawner", {cfg}]
+try:
+    exec(compile({script}, "<spawner>", "exec"), {{"__name__": "__main__"}})
+except _Stop:
+    pass
+"""
+
+
+@pytest.mark.parametrize(
+    ("robot_name", "file_on_disk", "no_lerobot", "loads"),
+    [
+        ("so101", True, False, True),  # a remembered robot_id finds its file
+        ("so101", False, False, False),  # no file: the uncalibrated bring-up, not FileNotFoundError
+        ("so101", True, True, False),  # fresh install without lerobot: no ImportError in the child
+        ("go2", True, False, False),  # a native driver with no calibration= keyword is not handed one
+    ],
+)
+def test_the_spawner_hands_a_remembered_robot_id_to_the_native_driver_only_when_it_can_load_it(
+    tmp_path: Path, robot_name: str, file_on_disk: bool, no_lerobot: bool, loads: bool
+) -> None:
+    """A dashboard spawn with a remembered ``robot_id`` reaches ``Robot`` without crashing the child.
+
+    The spawner and :func:`Robot` share one lookup
+    (:func:`~strands_robots.robot.lerobot_calibration_file`), so lerobot being
+    absent, a missing file and a driver with no ``calibration=`` keyword all
+    fall back to the driver's own bring-up.
+    """
+    store = tmp_path / "calibration"
+    path = store / "robots" / "so101_follower" / "left_follower.json"
+    if file_on_disk:
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(_records(range_min=100, range_max=4000)), encoding="utf-8")
+    cfg = {**_CFG, "robot_name": robot_name, "robot_id": "left_follower"}
+    harness = tmp_path / "run.py"
+    harness.write_text(
+        _RECORD_KWARGS.format(no_lerobot=no_lerobot, cfg=repr(json.dumps(cfg)), script=repr(device_manager._SPAWNER)),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(harness)],
+        env={**os.environ, "HF_LEROBOT_CALIBRATION": str(store)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert ("CALIBRATION " + (str(path) if loads else "None")) in proc.stdout, proc.stdout
+    assert '"id"' not in proc.stdout, proc.stdout  # the native factory refuses id=

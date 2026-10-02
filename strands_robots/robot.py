@@ -341,22 +341,30 @@ def _build_twin_engine(canonical: str, keyframe: str | None) -> Simulation:
     return sim
 
 
-def _lerobot_calibration_file(canonical: str, robot_id: str) -> str | None:
-    """Return the lerobot calibration file for this arm if one exists.
+def lerobot_calibration_file(name: str, robot_id: str) -> str | None:
+    """Return the lerobot calibration file the native driver for ``name`` should load.
 
-    The lookup ``lerobot_calibration_path(<lerobot type>, <tool name>)`` is the
-    same one the lerobot driver performs with its default ``id``, so an arm
+    The lookup ``lerobot_calibration_path(<lerobot type>, <robot_id>)`` is the
+    same one the lerobot driver performs with ``id=robot_id``, so an arm
     calibrated through lerobot is found under the name it was calibrated as.
+    Both :func:`Robot` (with the tool name as the id) and the dashboard spawner
+    (with a remembered ``robot_id``) call this one function, so the guards live
+    once.
 
     Args:
-        canonical: Canonical robot name, mapped to its lerobot type.
-        robot_id: The calibration id - the tool name, as on the lerobot path.
+        name: Robot name or alias, resolved to its canonical name.
+        robot_id: The calibration id - the tool name, or lerobot's ``--robot.id``.
 
     Returns:
-        The file's path, or ``None`` when the robot has no lerobot type,
-        lerobot is not installed, the id is not a bare path segment, or no
-        file exists.
+        The file's path, or ``None`` when the robot's native driver takes no
+        ``calibration=`` keyword, the robot has no lerobot type, lerobot is not
+        installed, the id is not a bare path segment, or no file exists. A
+        ``None`` keeps the driver's own uncalibrated bring-up.
     """
+    canonical = resolve_name(name)
+    driver_cls = get_native_driver_class(canonical)
+    if driver_cls is None or "calibration" not in constructor_keywords(driver_cls):
+        return None
     robot_type = get_hardware_type(canonical)
     if robot_type is None:
         return None
@@ -465,8 +473,8 @@ def _build_native_driver(
     # driver would quietly move a calibrated arm in a different frame on its
     # first ``send_action`` after an upgrade. A missing file keeps the
     # uncalibrated bring-up (the driver's status says so).
-    if "calibration" in accepted and kwargs.get("calibration") is None and kwargs.get("transport") != "twin":
-        if found := _lerobot_calibration_file(canonical, tool_name or canonical):
+    if kwargs.get("calibration") is None and kwargs.get("transport") != "twin":
+        if found := lerobot_calibration_file(canonical, tool_name or canonical):
             logger.info("%s: loading the lerobot calibration at %s", tool_name or canonical, found)
             kwargs = {**kwargs, "calibration": found}
 
