@@ -22,17 +22,17 @@ robot.cleanup()
 Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
 ```python title="sketch"
-robot = Robot("koch", mode="real", port="/dev/ttyACM0")  # lerobot koch_follower
-robot = Robot("koch", mode="real", driver="strands", port="/dev/ttyUSB0")  # DynamixelDriver
+robot = Robot("koch", mode="real", driver="lerobot", port="/dev/ttyACM0")  # lerobot koch_follower
+robot = Robot("koch", mode="real", port="/dev/ttyUSB0")  # DynamixelDriver
 ```
 
 Aliases: `koch_follower`, `koch_v1.1`, `low_cost_robot_arm`.
 
 ## Hardware
 
-**lerobot.** `Robot("koch", mode="real")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
+**lerobot.** `Robot("koch", mode="real", driver="lerobot")` builds lerobot's `koch_follower` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
 
-**`DynamixelDriver`** (selected with `driver="strands"`) speaks Dynamixel Protocol 2.0 serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#dynamixeldriver).
+**`DynamixelDriver`** (the default for this robot) speaks Dynamixel Protocol 2.0 serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#dynamixeldriver).
 
 ## Policies verified on this robot
 

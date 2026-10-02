@@ -172,13 +172,17 @@ def rows() -> tuple[Row, ...]:
     out = []
     for name, spec in registry().items():
         hardware = spec.get("hardware") or {}
+        # The precedence of strands_robots.drivers.resolve_driver with no driver=:
+        # a declared driver, else the native one when registered, else lerobot.
+        declared = hardware.get("driver")
+        default = declared if declared not in (None, "auto") else ("strands" if name in native else "lerobot")
         out.append(
             Row(
                 name=name,
                 category=str(spec.get("category", "")),
                 lerobot_type=hardware.get("lerobot_type"),
                 native_driver=native.get(name),
-                default_driver=hardware.get("driver") or "lerobot",
+                default_driver=default,
                 asset_dir=(spec.get("asset") or {}).get("dir"),
                 policies=bound.get(name, ()),
             )

@@ -68,6 +68,14 @@ _PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 #: has to fail if the extractor stops reaching the documentation.
 _MINIMUM_GRADED_CALLS = 20
 
+#: An inline code span in prose that spells a ``Robot(...)`` call. A sentence
+#: that hands the reader a call is copied as verbatim as a fence is.
+_INLINE_CALL = re.compile(r"`([^`\n]*\bRobot\([^`\n]*\))`")
+
+#: Design pages spell the calls a proposal would add, not calls that run today.
+#: An inline span on a line naming an exception is a refusal, as in a fence.
+_DESIGN_PAGES = _REPO_ROOT / "docs" / "reference" / "project"
+
 
 @dataclasses.dataclass(frozen=True)
 class _Invocation:
@@ -121,15 +129,21 @@ def _documented_real_mode_calls() -> list[_Invocation]:
     sources = sorted((_REPO_ROOT / "docs").rglob("*.md")) + [_REPO_ROOT / "README.md"]
     for path in sources:
         text = path.read_text(encoding="utf-8")
-        for fence in _PYTHON_FENCE.finditer(text):
-            block = fence.group(1)
+        blocks = [(f.group(1), text[: f.start()].count("\n") + 2) for f in _PYTHON_FENCE.finditer(text)]
+        prose = _PYTHON_FENCE.sub(lambda f: "\n" * f.group(0).count("\n"), text)
+        if not path.is_relative_to(_DESIGN_PAGES):
+            lines = prose.splitlines()
+            for span in _INLINE_CALL.finditer(prose):
+                line = prose[: span.start()].count("\n") + 1
+                if not re.search(r"\w(?:Error|Exception)\b", lines[line - 1]):
+                    blocks.append((span.group(1), line))
+        for block, fence_line in blocks:
             if _documents_a_refusal(block):
                 continue
             try:
                 tree = ast.parse(block)
             except SyntaxError:
                 continue
-            fence_line = text[: fence.start()].count("\n") + 2
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -292,6 +306,30 @@ def _rejected_keywords(name: str, keywords: tuple[str, ...], driver: str | None 
     return sorted(set(keywords) - (_keywords_the_factory_owns() | declared))
 
 
+def _missing_required_keywords(name: str, keywords: tuple[str, ...], driver: str | None = None) -> list[str]:
+    """Return the keywords ``Robot(name, mode="real", ...)`` needs but does not spell.
+
+    The factory refuses a native serial driver built with no ``port=`` before
+    construction (``_build_native_driver``), so a documented call that omits it
+    raises as written even though every keyword it does pass is accepted. The
+    twin transport steps an engine instead of a bus and is exempt, as there.
+
+    Args:
+        name: Robot name or alias.
+        keywords: Keyword names the call passes, excluding ``mode``.
+        driver: The ``driver=`` literal the call spells, or ``None``.
+
+    Returns:
+        ``["port"]`` when the call builds a serial native driver without one,
+        else empty.
+    """
+    driver_cls = _native_driver_the_call_builds(name, driver)
+    if driver_cls is None or "transport" in keywords or "port" in keywords:
+        return []
+    serial = "serial" in tuple(getattr(driver_cls, "TRANSPORTS", ()) or ())
+    return ["port"] if serial and "port" in constructor_keywords(driver_cls) else []
+
+
 class TestTheCorpusIsReached:
     """Premises: without these, a clean sweep below would mean nothing."""
 
@@ -322,6 +360,13 @@ class TestTheCorpusIsReached:
         calls = _documented_real_mode_calls()
         native = [c for c in calls if _native_driver_the_call_builds(c.name, c.driver) is not None]
         assert native, "no documented mode='real' call builds a native driver"
+
+    def test_a_call_in_a_prose_sentence_is_among_them(self) -> None:
+        """A sentence that hands the reader a call is graded like a fence."""
+        prose = [
+            c for c in _documented_real_mode_calls() if c.location.startswith("docs/learn/hardware/feetech-arms.md")
+        ]
+        assert any(c.name == "lekiwi_client" for c in prose), "the inline LeKiwi client call is not graded"
 
     def test_the_factory_owns_a_nonempty_keyword_set(self) -> None:
         owned = _keywords_the_factory_owns()
@@ -357,6 +402,15 @@ class TestEveryDocumentedRealModeKeywordIsAccepted:
                 )
         assert not offenders, "documented mode='real' calls that raise as written:\n  " + "\n  ".join(offenders)
 
+    def test_every_native_serial_call_names_its_port(self) -> None:
+        missing = [
+            f"{call.location}: Robot({call.name!r}, mode='real') builds a serial native driver with no "
+            f"{needed}, which the factory refuses before construction"
+            for call in _documented_real_mode_calls()
+            if (needed := _missing_required_keywords(call.name, call.keywords, call.driver))
+        ]
+        assert not missing, "documented mode='real' calls that raise as written:\n  " + "\n  ".join(missing)
+
 
 class TestTheGraderReportsAPlantedMistake:
     """Non-vacuity: the rule must grade values, not the spelling of a fence."""
@@ -370,6 +424,13 @@ class TestTheGraderReportsAPlantedMistake:
         """A teleoperator spelling must not pass the name rule either."""
         assert _names_no_registered_robot("so101_leader")
         assert not _names_no_registered_robot("so101")
+
+    def test_a_native_serial_call_without_a_port_is_reported(self) -> None:
+        """The call the factory refuses, the same call with a port, and the lerobot path."""
+        assert _missing_required_keywords("lekiwi", ()) == ["port"]
+        assert _missing_required_keywords("lekiwi", ("port",)) == []
+        assert _missing_required_keywords("lekiwi", ("transport",)) == []
+        assert _missing_required_keywords("lekiwi", (), "lerobot") == []
 
     def test_the_name_rule_reaches_both_verdicts(self) -> None:
         outcomes = {_names_no_registered_robot(n) for n in ("bi_so", "so101_leader", "so101", "koch")}

@@ -12,7 +12,7 @@ print(arm.foxglove_url)      # ws://127.0.0.1:8765
 arm.step(500)
 ```
 
-Open Foxglove, choose Foxglove WebSocket and paste the URL, or use `arm.foxglove_link`, which opens the desktop app there. The same keyword works on a real arm, `Robot("so101", mode="real", port=..., foxglove=True)`, and `STRANDS_ROBOTS_FOXGLOVE=1` turns it on for every `Robot()` in a shell without touching the code. When port 8765 is busy the next free one is taken and reported; `foxglove="0.0.0.0:8765"` serves the LAN and `":0"` picks an ephemeral port.
+Open Foxglove, choose Foxglove WebSocket and paste the URL, or use `arm.foxglove_link`, which opens the desktop app there. The same keyword works on a real arm, `Robot("so101", mode="real", driver="lerobot", port=..., foxglove=True)`, and `STRANDS_ROBOTS_FOXGLOVE=1` turns it on for every `Robot()` in a shell without touching the code. When port 8765 is busy the next free one is taken and reported; `foxglove="0.0.0.0:8765"` serves the LAN and `":0"` picks an ephemeral port.
 
 ## What you see
 

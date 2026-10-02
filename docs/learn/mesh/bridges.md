@@ -18,7 +18,7 @@ p = provision_robot("so101-arm-01")                   # per robot: cert + policy
 print(p.env_vars())                                   # STRANDS_IOT_THING_NAME, STRANDS_IOT_ENDPOINT, STRANDS_IOT_CERT_DIR, STRANDS_MESH_BACKEND=iot
 ```
 
-Export those variables, set `STRANDS_MESH_BACKEND=bridge`, and `Robot("so101", mode="real", mesh=True, peer_id="so101-arm-01")` publishes on both wires.
+Export those variables, set `STRANDS_MESH_BACKEND=bridge`, and `Robot("so101", mode="real", port=..., mesh=True, peer_id="so101-arm-01")` publishes on both wires.
 
 ## Three backends
 

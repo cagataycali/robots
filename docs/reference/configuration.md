@@ -8,7 +8,7 @@ Every environment variable the package reads, generated from the source at build
 
 There is no config file. Behaviour is set three ways, in precedence order:
 
-1. Keyword arguments on the call: `Robot("so101", mode="real", driver="strands")`.
+1. Keyword arguments on the call: `Robot("so101", mode="real", driver="strands", port=...)`.
 2. Environment variables, listed below. A variable named in the `grant` column of [refusal codes](refusal-codes.md) lifts one refusal; the `STRANDS_*_COMMAND_ALLOW` family pre-approves commands for the operator gate.
 3. Defaults in the code, shown in the `default` column when the read passes a literal; `unset` means the code handles the missing variable itself, in the module named under `read in`.
 

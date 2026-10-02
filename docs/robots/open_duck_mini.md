@@ -22,14 +22,14 @@ robot.cleanup()
 Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
 ```python title="sketch"
-robot = Robot("open_duck_mini", mode="real", driver="strands", port="/dev/ttyACM0")  # FeetechDriver
+robot = Robot("open_duck_mini", mode="real", port="/dev/ttyACM0")  # FeetechDriver
 ```
 
 Aliases: `bdx`, `mini_bdx`, `open_duck`, `open_duck_mini_v2`, `open_duck_v2`.
 
 ## Hardware
 
-**`FeetechDriver`** (selected with `driver="strands"`) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
+**`FeetechDriver`** (the default for this robot) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
 
 ## Policies verified on this robot
 

@@ -459,6 +459,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
             else ""
         )
         default = " The default when `driver=` is not given." if cov.default_driver == "lerobot" else ""
+        pin = "" if cov.default_driver == "lerobot" else ', driver="lerobot"'
         if cov.lerobot_type in BIMANUAL_ARM_CONFIG:
             cls = BIMANUAL_ARM_CONFIG[cov.lerobot_type][1]
             wiring = (
@@ -468,7 +469,7 @@ def _hardware_section(name: str, spec: dict, cov) -> str:  # noqa: ANN001
         else:
             wiring = f"{_lerobot_wiring(cov.lerobot_type)[1]}, `cameras=` the lerobot camera dict."
         out.append(
-            f'**lerobot.** `Robot("{name}", mode="real")` builds lerobot\'s `{cov.lerobot_type}` '
+            f'**lerobot.** `Robot("{name}", mode="real"{pin})` builds lerobot\'s `{cov.lerobot_type}` '
             f"with `pip install 'strands-robots[lerobot]'`; {wiring}{default}{source}"
         )
         out.append("")
