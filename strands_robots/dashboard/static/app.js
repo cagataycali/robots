@@ -1603,6 +1603,68 @@ function StrandsMark({ height = 18, title }) {
     }
   );
 }
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function looksLikeClose(c) {
+  const words2 = `${c.label ?? ""} ${c.text ?? ""}`.trim().toLowerCase();
+  if (/(^|\s)(close|dismiss)\b/.test(words2)) return true;
+  return /^[\u00d7\u2715\u2716\u274c\u2573x]$/.test((c.text ?? "").trim());
+}
+function looksDangerous(c) {
+  const words2 = `${c.label ?? ""} ${c.text ?? ""}`.toLowerCase();
+  return /\b(run|start|record|recording|stop|e-?stop|resume|delete|remove|despawn|deploy|train|calibrate|home|move|teleop|replay)\b/.test(words2);
+}
+function focusPlan(candidates) {
+  const autofocus = candidates.findIndex((c) => c.autofocus);
+  if (autofocus >= 0) return autofocus;
+  const close = candidates.findIndex(looksLikeClose);
+  if (close >= 0) return close;
+  const safe = candidates.findIndex((c) => !looksDangerous(c));
+  if (safe >= 0) return safe;
+  return "container";
+}
+function rememberOpener(active, body) {
+  if (!active || active === body) return null;
+  return { el: active };
+}
+function shouldRestoreFocus(s) {
+  if (!s.openerConnected) return false;
+  return s.activeInsideOverlay || s.activeIsBody;
+}
+function useDialogFocus(ref, open = true) {
+  const opener = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    const remembered = rememberOpener(document.activeElement, document.body);
+    opener.current = (remembered == null ? void 0 : remembered.el) instanceof HTMLElement ? remembered.el : null;
+    const id = requestAnimationFrame(() => {
+      var _a;
+      const node = ref.current;
+      if (!node || node.contains(document.activeElement)) return;
+      const els = [...node.querySelectorAll(FOCUSABLE)];
+      const plan = focusPlan(els.map((el) => ({
+        autofocus: el.hasAttribute("data-autofocus"),
+        label: el.getAttribute("aria-label") ?? el.getAttribute("title") ?? "",
+        text: el.textContent ?? ""
+      })));
+      if (plan === "container") {
+        if (!node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
+        node.focus();
+        return;
+      }
+      (_a = els[plan]) == null ? void 0 : _a.focus();
+    });
+    return () => {
+      var _a, _b, _c;
+      cancelAnimationFrame(id);
+      const active = document.activeElement;
+      if (shouldRestoreFocus({
+        activeInsideOverlay: ((_a = ref.current) == null ? void 0 : _a.contains(active)) ?? false,
+        activeIsBody: active === document.body,
+        openerConnected: ((_b = opener.current) == null ? void 0 : _b.isConnected) ?? false
+      })) (_c = opener.current) == null ? void 0 : _c.focus();
+    };
+  }, [ref, open]);
+}
 const SCHEME_KEY = "strands-dash-scheme";
 function storedScheme(storage = localStorage) {
   const v = storage.getItem(SCHEME_KEY);
@@ -1653,6 +1715,95 @@ function FleetBar({
   const quiet = quietNotice(quietChildren, absentChildren);
   const meshDown = mesh.online === false;
   const badge = connBadge(conn, { meshDown });
+  const [menuOpen, setMenuOpen] = reactExports.useState(false);
+  const menuRef = reactExports.useRef(null);
+  useDialogFocus(menuRef, menuOpen);
+  reactExports.useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+  const via = (fn) => () => {
+    setMenuOpen(false);
+    fn();
+  };
+  const connPill = /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "span",
+    {
+      className: `conn ${conn}${badge.tone ? ` ${badge.tone}` : ""}`,
+      title: badge.title,
+      "aria-label": badge.aria,
+      children: badge.label
+    }
+  );
+  const actions = /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    safetyFlash && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `safety ${safetyFlash}`, children: safetyFlash === "estop" ? "🛑 E-STOP" : "✅ RESUMED" }),
+    !online && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge warn", title: "this device has no network", children: "offline" }),
+    mesh.local_dev && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: "badge warnchip",
+        onClick: via(onWireSecurity),
+        title: "Robot mesh traffic is not encrypted. Fine on a trusted LAN - click for details and how to enable wire security.",
+        children: "mesh unencrypted · local only"
+      }
+    ),
+    meshDown && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge danger", title: "the dashboard's own mesh session is closed", children: "mesh down" }),
+    installable && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: via(onInstall), title: "Install as an app", children: "⤓ install" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: via(onDevices), title: "Local hardware and managed robots", children: "⚙ devices" }),
+    quiet && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: "chip warn",
+        onClick: via(onDevices),
+        title: `${quiet.detail}
+
+Open devices for its log — the refusal that kept it out of the fleet is in there (a missing calibration, a busy servo bus), and despawn is there too.`,
+        children: [
+          "🫥 ",
+          quiet.headline
+        ]
+      }
+    ),
+    absentDeath && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        className: "chip warn",
+        onClick: via(onDevices),
+        title: `${absentDeath.detail}
+
+Open devices for the exit status and the last output.`,
+        children: [
+          "⚰ ",
+          absentDeath.headline
+        ]
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "chip", onClick: via(onActivity), title: "Command history", children: [
+      "☰ activity",
+      activityCount > 0 ? ` (${activityCount})` : ""
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: via(onSettings), title: "Settings", children: "⚒ settings" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: "chip",
+        onClick: via(onHelp),
+        title: "What this page is, how to stop a robot, and where the docs are",
+        "aria-keyshortcuts": "?",
+        children: "? help"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SchemeToggle, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "peers", children: [
+      peerCount,
+      " peer",
+      peerCount === 1 ? "" : "s"
+    ] })
+  ] });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "fleetbar", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("a", { className: "logo", href: "https://strandsagents.com/", title: "Strands Agents", "aria-label": "Strands Agents", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 18, title: "Strands Agents" }) }),
@@ -1667,80 +1818,52 @@ function FleetBar({
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "fleet-right", children: [
-      safetyFlash && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `safety ${safetyFlash}`, children: safetyFlash === "estop" ? "🛑 E-STOP" : "✅ RESUMED" }),
-      !online && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge warn", title: "this device has no network", children: "offline" }),
-      mesh.local_dev && /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "fleet-phone", children: [
+      connPill,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          className: "badge warnchip",
-          onClick: onWireSecurity,
-          title: "Robot mesh traffic is not encrypted. Fine on a trusted LAN - click for details and how to enable wire security.",
-          children: "mesh unencrypted · local only"
-        }
-      ),
-      meshDown && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge danger", title: "the dashboard's own mesh session is closed", children: "mesh down" }),
-      installable && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onInstall, title: "Install as an app", children: "⤓ install" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onDevices, title: "Local hardware and managed robots", children: "⚙ devices" }),
-      quiet && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: "chip warn",
-          onClick: onDevices,
-          title: `${quiet.detail}
-
-Open devices for its log — the refusal that kept it out of the fleet is in there (a missing calibration, a busy servo bus), and despawn is there too.`,
+          className: `chip menubtn${menuOpen ? " on" : ""}`,
+          onClick: () => setMenuOpen((o) => !o),
+          "aria-expanded": menuOpen,
+          "aria-controls": "fleet-menu",
+          "aria-label": menuOpen ? "close the menu" : "open the menu: devices, activity, settings, help",
+          title: "devices, activity, settings, help",
           children: [
-            "🫥 ",
-            quiet.headline
+            "☰ menu",
+            activityCount > 0 ? ` (${activityCount})` : ""
           ]
-        }
-      ),
-      absentDeath && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          className: "chip warn",
-          onClick: onDevices,
-          title: `${absentDeath.detail}
-
-Open devices for the exit status and the last output.`,
-          children: [
-            "⚰ ",
-            absentDeath.headline
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "chip", onClick: onActivity, title: "Command history", children: [
-        "☰ activity",
-        activityCount > 0 ? ` (${activityCount})` : ""
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "chip", onClick: onSettings, title: "Settings", children: "⚒ settings" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "chip",
-          onClick: onHelp,
-          title: "What this page is, how to stop a robot, and where the docs are",
-          "aria-keyshortcuts": "?",
-          children: "? help"
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(SchemeToggle, {}),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "peers", children: [
-        peerCount,
-        " peer",
-        peerCount === 1 ? "" : "s"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "span",
-        {
-          className: `conn ${conn}${badge.tone ? ` ${badge.tone}` : ""}`,
-          title: badge.title,
-          "aria-label": badge.aria,
-          children: badge.label
         }
       )
-    ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "fleet-right", children: [
+      actions,
+      connPill
+    ] }),
+    menuOpen && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "menu-backdrop", onClick: () => setMenuOpen(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        ref: menuRef,
+        id: "fleet-menu",
+        className: "menu-sheet",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": "Menu",
+        onClick: (e) => e.stopPropagation(),
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "menu-head", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Menu" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "muted small mono", children: [
+              dashboardId || "fleet cockpit",
+              " · ",
+              backendLabel()
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: () => setMenuOpen(false), "aria-label": "close the menu", children: "✕" })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "menu-actions", children: actions })
+        ]
+      }
+    ) })
   ] });
 }
 function SchemeToggle() {
@@ -4865,68 +4988,6 @@ function cameraPlaceholder(ev) {
     title: ev.message
   };
 }
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-function looksLikeClose(c) {
-  const words2 = `${c.label ?? ""} ${c.text ?? ""}`.trim().toLowerCase();
-  if (/(^|\s)(close|dismiss)\b/.test(words2)) return true;
-  return /^[\u00d7\u2715\u2716\u274c\u2573x]$/.test((c.text ?? "").trim());
-}
-function looksDangerous(c) {
-  const words2 = `${c.label ?? ""} ${c.text ?? ""}`.toLowerCase();
-  return /\b(run|start|record|recording|stop|e-?stop|resume|delete|remove|despawn|deploy|train|calibrate|home|move|teleop|replay)\b/.test(words2);
-}
-function focusPlan(candidates) {
-  const autofocus = candidates.findIndex((c) => c.autofocus);
-  if (autofocus >= 0) return autofocus;
-  const close = candidates.findIndex(looksLikeClose);
-  if (close >= 0) return close;
-  const safe = candidates.findIndex((c) => !looksDangerous(c));
-  if (safe >= 0) return safe;
-  return "container";
-}
-function rememberOpener(active, body) {
-  if (!active || active === body) return null;
-  return { el: active };
-}
-function shouldRestoreFocus(s) {
-  if (!s.openerConnected) return false;
-  return s.activeInsideOverlay || s.activeIsBody;
-}
-function useDialogFocus(ref, open = true) {
-  const opener = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (!open) return;
-    const remembered = rememberOpener(document.activeElement, document.body);
-    opener.current = (remembered == null ? void 0 : remembered.el) instanceof HTMLElement ? remembered.el : null;
-    const id = requestAnimationFrame(() => {
-      var _a;
-      const node = ref.current;
-      if (!node || node.contains(document.activeElement)) return;
-      const els = [...node.querySelectorAll(FOCUSABLE)];
-      const plan = focusPlan(els.map((el) => ({
-        autofocus: el.hasAttribute("data-autofocus"),
-        label: el.getAttribute("aria-label") ?? el.getAttribute("title") ?? "",
-        text: el.textContent ?? ""
-      })));
-      if (plan === "container") {
-        if (!node.hasAttribute("tabindex")) node.setAttribute("tabindex", "-1");
-        node.focus();
-        return;
-      }
-      (_a = els[plan]) == null ? void 0 : _a.focus();
-    });
-    return () => {
-      var _a, _b, _c;
-      cancelAnimationFrame(id);
-      const active = document.activeElement;
-      if (shouldRestoreFocus({
-        activeInsideOverlay: ((_a = ref.current) == null ? void 0 : _a.contains(active)) ?? false,
-        activeIsBody: active === document.body,
-        openerConnected: ((_b = opener.current) == null ? void 0 : _b.isConnected) ?? false
-      })) (_c = opener.current) == null ? void 0 : _c.focus();
-    };
-  }, [ref, open]);
-}
 const TONE = {
   refusing: "warn",
   unrouted: "warn",
@@ -6343,7 +6404,8 @@ function AgentDock({ onSettings, startOpen = false, exampleRobot }) {
         (agent == null ? void 0 : agent.bridge_online) === false && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "badge danger", title: "the agent has no mesh bridge - its fleet tools cannot reach any robot", children: "no mesh" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "spacer" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: clearHistory, title: "Forget the conversation", children: "clear" }),
-        onSettings && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: onSettings, title: "Model & prompt", children: "⚒" })
+        onSettings && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: onSettings, title: "Model & prompt", children: "⚒" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "dock-min in-head", onClick: () => setOpen(false), "aria-label": "hide the conversation", title: "hide the conversation", children: "▾ hide" })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "div",
@@ -8197,7 +8259,7 @@ function ActivityLog({ live, open, onClose }) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "drawer-body", children: [
       entries.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Nothing yet. Every task, stop, e-stop, spawn, recording session and training job — from this UI, the agent, or voice — lands here with what the robot answered." }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true", children: activityAnnouncement(newest, openedAt.current) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "activity", role: "log", "aria-label": "activity — every command that left this dashboard", "aria-live": "off", children: entries.map((e, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: activityLine(e).tone, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "log", "aria-label": "activity — every command that left this dashboard", "aria-live": "off", children: /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "activity", children: entries.map((e, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: activityLine(e).tone, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "when", title: new Date(e.t * 1e3).toLocaleString(), children: ago(e.t, now) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: SOURCE_ICON[e.source] ?? "•" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "what", children: [
@@ -8223,7 +8285,7 @@ function ActivityLog({ live, open, onClose }) {
             e.result || null
           ].filter(Boolean).join("\n") })
         ] })
-      ] }, `${e.t}-${i}`)) })
+      ] }, `${e.t}-${i}`)) }) })
     ] })
   ] }) });
 }
@@ -10043,7 +10105,7 @@ function DevicePanel({ open, onClose }) {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("ul", { className: "boardlist", children: [
           freePorts.length === 0 && (() => {
             const line = boardListEmptyLine({ scanned: doc !== null, error });
-            return /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: "muted", role: "status", children: line.message });
+            return /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: "muted", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { role: "status", children: line.message }) });
           })(),
           freePorts.map((p) => {
             const v = roles[p.device];

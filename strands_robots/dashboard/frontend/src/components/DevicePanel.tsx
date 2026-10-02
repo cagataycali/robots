@@ -690,7 +690,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
               {/* `no servo board detected` used to appear whenever this array was empty — including while the first scan was in flight and when it FAILED (401 through the tunnel, dead dashboard). */}
               {freePorts.length === 0 && (() => {
                 const line = boardListEmptyLine({ scanned: doc !== null, error })
-                return <li className="muted" role="status">{line.message}</li>
+                return <li className="muted"><span role="status">{line.message}</span></li>
               })()}
               {freePorts.map(p => {
                 const v = roles[p.device]
