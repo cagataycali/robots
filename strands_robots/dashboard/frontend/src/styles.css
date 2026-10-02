@@ -2084,7 +2084,7 @@ img, video, canvas { max-width: 100%; }
 /* a card is a container, so its camera pair and its controls row answer to the CARD's width
    (one phone column, or one of three desktop columns) rather than to the viewport */
 .card { container-type: inline-size; container-name: card; }
-@container card (max-width: 400px) {
+@container card (max-width: 290px) {
   .cams.multi { grid-template-columns: 1fr; }
   .camtile { aspect-ratio: 16 / 9; }
   .controls { flex-wrap: wrap; }
@@ -2271,6 +2271,8 @@ img, video, canvas { max-width: 100%; }
 /* ── desktop (900-1199): the bar fits one row, drawers keep their width ───── */
 @media (min-width: 900px) and (max-width: 1199px) {
   .fleet-right .chip { padding-left: var(--s3); padding-right: var(--s3); }
+  /* the API origin is one tap away in Settings; here it cost the chips their row */
+  .brand .backend { display: none; }
 }
 
 /* phones only: the motion already in the file (pulse, fade, slides) obeys the OS switch */
