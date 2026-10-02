@@ -57,6 +57,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any
 
+import numpy as np
+
 from strands_robots.utils import get_base_dir
 
 __all__ = [
@@ -120,7 +122,7 @@ def _read_marker(marker: str) -> str | None:
     return cached if cached and os.path.isfile(cached) else None
 
 
-def _referenced_files(mjcf_path: str) -> list[str]:
+def _referenced_files(mjcf_path: str, _closing: frozenset[str] = frozenset()) -> list[str]:
     """Every file *mjcf_path* pulls in, transitively and absolute.
 
     An MJCF reaches outside its own directory in two ways, and the shipped
@@ -131,6 +133,9 @@ def _referenced_files(mjcf_path: str) -> list[str]:
       does this, so the whole arm's joints and geoms live in a sibling directory.
     * ``<compiler meshdir="../assets/meshes"/>`` - ``asimov_v0`` does this, so
       every mesh PhysX simulates is outside the entry directory.
+    * ``<asset><model file="../so_arm100/so_arm100.xml"/>`` + ``<attach>`` -
+      ``lekiwi`` composes the arm this way; the attached model is its own spec,
+      so it is closed over as a separate entry (its meshes against ITS dirs).
 
     Resolution follows MuJoCo's own rules, matching
     :func:`strands_robots.simulation.isaac.loaders._mjcf_model_toplevel` and
@@ -202,8 +207,33 @@ def _referenced_files(mjcf_path: str) -> list[str]:
                     continue
                 includes.append(target)
                 _walk(target, os.path.dirname(target), seen | {target})
+            elif element.tag == "model":
+                # ``<asset><model file=...>`` attaches another MJCF as its OWN
+                # spec: its meshes resolve against ITS compiler dirs, so it is
+                # closed over as a separate entry rather than walked into this
+                # one's ``declared_dirs`` (which would mis-base every mesh).
+                # Path rule as for an include: relative to the declaring file.
+                value = element.get("file")
+                if not value:
+                    continue
+                target = os.path.normpath(
+                    os.path.abspath(value if os.path.isabs(value) else os.path.join(base_dir, value))
+                )
+                if target in seen or target in attached:
+                    continue
+                attached.append(target)
 
+    attached: list[str] = []
     _walk(entry, entry_dir, frozenset({entry}))
+    for model_path in attached:
+        # ``_closing`` holds the attached models this call tree is already
+        # closing over, so a cyclic ``<model>`` contributes its path once and no
+        # bytes, like a cyclic include. It is a parameter, not module state:
+        # concurrent digests of models attaching the same file must not see
+        # each other's walk and drop that file from their key.
+        if model_path not in _closing:
+            includes.append(model_path)
+            includes.extend(_referenced_files(model_path, _closing | {model_path}))
 
     def _base_for(tag: str) -> str:
         """The directory MuJoCo resolves a ``tag`` asset's relative file against.
@@ -646,6 +676,307 @@ def _author_position_drives(usd_file: str, mjcf_path: str) -> list[str]:
     return written
 
 
+class MjcfAssetError(ValueError):
+    """An attached model's asset cannot be placed without guessing.
+
+    Raised instead of taking the first candidate when two attached models
+    declare the same asset file string against their own directories and no
+    composed asset name tells them apart: a wrong-but-existing mesh compiles,
+    loads and is published into the shared USD cache under ``status: success``.
+    """
+
+
+def _attach_prefixes(mjcf_path: str, _seen: frozenset[str] = frozenset()) -> dict[str, list[str]]:
+    """``<model>`` file path -> every ``<attach prefix>`` the description gives it, transitively.
+
+    MuJoCo prefixes an attached model's asset names with the attach's ``prefix``
+    (an absent attribute is the empty prefix), which is how a composed mesh is
+    matched back to the model that declared it. Paths follow the include rule:
+    relative to the file that declares the ``<model>``.
+    """
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    try:
+        root = ET.parse(entry).getroot()
+    except (ET.ParseError, OSError):
+        return {}
+    files: dict[str, str] = {}  # model name -> file
+    prefixes: dict[str, list[str]] = {}  # model name -> prefixes
+
+    def _walk(el: ET.Element, base: str, seen: frozenset[str]) -> None:
+        for child in el.iter():
+            if child.tag == "include" and child.get("file"):
+                inc = os.path.normpath(os.path.join(base, child.get("file", "")))
+                if inc not in seen and os.path.isfile(inc):
+                    try:
+                        _walk(ET.parse(inc).getroot(), os.path.dirname(inc), seen | {inc})
+                    except (ET.ParseError, OSError):
+                        continue
+            elif child.tag == "model" and child.get("file") and child.get("name"):
+                files[child.get("name", "")] = os.path.normpath(os.path.join(base, child.get("file", "")))
+            elif child.tag == "attach" and child.get("model"):
+                prefixes.setdefault(child.get("model", ""), []).append(child.get("prefix", ""))
+
+    _walk(root, os.path.dirname(entry), _seen | {entry})
+    out: dict[str, list[str]] = {}
+    for name, path in files.items():
+        out.setdefault(path, []).extend(prefixes.get(name, []))
+        for inner, inner_prefixes in _attach_prefixes(path, _seen | {entry, path}).items():
+            # a model attached inside an attached model carries both prefixes
+            out.setdefault(inner, []).extend(p + q for p in prefixes.get(name, [""]) for q in inner_prefixes)
+    return out
+
+
+def _resolve_shared_asset_file(file: str, by_file: dict[str, list[str]]) -> str | None:
+    """The one path *file* resolves to across the attached models, None when no model declares it.
+
+    Raises:
+        MjcfAssetError: If two attached models resolve *file* to different paths;
+            the candidates are named so the caller can see which model's asset
+            would have been served.
+    """
+    candidates = sorted(set(by_file.get(file, [])))
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        raise MjcfAssetError(
+            f"asset file {file!r} is declared by {len(candidates)} attached models against their own "
+            f"directories ({', '.join(candidates)}) and no composed asset name claims it, so the flattened "
+            "copy cannot say which mesh is meant; give each <attach> a distinct prefix, or name the assets apart."
+        )
+    return candidates[0]
+
+
+def _attached_model_files(mjcf_path: str, _seen: frozenset[str] = frozenset()) -> list[str]:
+    """Absolute paths of every ``<asset><model file=...>`` the description attaches, transitively.
+
+    MuJoCo's ``<model>`` asset plus ``<attach>`` composes a second MJCF as its own
+    spec, so that model keeps its OWN ``<compiler meshdir>``: ``lekiwi`` attaches
+    ``../so_arm100/so_arm100.xml``, whose meshes live in ``so_arm100/assets/``. The
+    path is relative to the file that declares it (an ``<include>``d fragment
+    included), the same rule as an include.
+    """
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    try:
+        root = ET.parse(entry).getroot()
+    except (ET.ParseError, OSError):
+        return []
+    found: list[str] = []
+
+    def _walk(el: ET.Element, base: str, seen: frozenset[str]) -> None:
+        for child in el:
+            if child.tag == "include" and child.get("file"):
+                rel = child.get("file", "")
+                inc = os.path.normpath(os.path.join(base, rel))
+                if inc in seen or not os.path.isfile(inc):
+                    continue
+                try:
+                    _walk(ET.parse(inc).getroot(), os.path.dirname(inc), seen | {inc})
+                except (ET.ParseError, OSError):
+                    continue
+            elif child.tag == "asset":
+                for model in child.iter("model"):
+                    model_file = model.get("file")
+                    if model_file:
+                        path = os.path.normpath(os.path.join(base, model_file))
+                        if path not in seen and os.path.isfile(path) and path not in found:
+                            found.append(path)
+                            found.extend(p for p in _attached_model_files(path, seen | {path}) if p not in found)
+
+    _walk(root, os.path.dirname(entry), _seen | {entry})
+    return found
+
+
+def _spec_asset_path(spec_dir: str, subdir: str, file: str) -> str:
+    return file if os.path.isabs(file) else os.path.normpath(os.path.join(spec_dir, subdir or "", file))
+
+
+def _flatten_attached_models(mjcf_path: str, work_dir: str) -> str:
+    """*mjcf_path*, or a single-file copy in *work_dir* whose asset paths are all absolute.
+
+    The Isaac MJCF importer resolves every mesh against the ENTRY model's
+    ``meshdir``, so a mesh an attached ``<model>`` declares against its own
+    ``meshdir`` is looked for in the wrong directory and the conversion fails -
+    ``lekiwi`` reports ``lekiwi/assets/Base.stl`` for the arm's
+    ``so_arm100/assets/Base.stl`` although MuJoCo loads the model. Only a model
+    that attaches another is rewritten; every other description goes to the
+    importer untouched. The copy is MuJoCo's own ``MjSpec.to_xml`` of the
+    composed model, with each mesh, texture, height field and skin path resolved
+    the way MuJoCo resolved it.
+    """
+    attached = _attached_model_files(mjcf_path)
+    if not attached:
+        return mjcf_path
+    import mujoco
+
+    # Two maps back to the attached models: the composed asset NAME (the attach
+    # prefix + the name the child gave it) -> where that child keeps the file,
+    # and the bare file string -> every path the children resolve it to. The
+    # name is what tells two models' ``assets/link.obj`` apart; the file string
+    # alone is first-wins, which served the wrong model's mesh under success.
+    prefixes = _attach_prefixes(mjcf_path)
+    by_name: dict[tuple[str, str], str] = {}
+    by_file: dict[str, list[str]] = {}
+
+    def _asset_name(asset: object, file: str) -> str:
+        name = str(getattr(asset, "name", "") or "")
+        return name or os.path.splitext(os.path.basename(file))[0]  # MuJoCo's default: the file stem
+
+    for child in attached:
+        cspec = mujoco.MjSpec.from_file(child)
+        cdir = os.path.dirname(child)
+        for kind, subdir in (("meshes", cspec.meshdir), ("hfields", cspec.meshdir), ("skins", cspec.meshdir)):
+            for asset in getattr(cspec, kind, []):
+                if asset.file:
+                    path = _spec_asset_path(cdir, subdir, asset.file)
+                    by_file.setdefault(asset.file, []).append(path)
+                    for prefix in prefixes.get(child, [""]):
+                        by_name.setdefault((kind, prefix + _asset_name(asset, asset.file)), path)
+        for tex in cspec.textures:
+            if tex.file:
+                path = _spec_asset_path(cdir, cspec.texturedir, tex.file)
+                by_file.setdefault(tex.file, []).append(path)
+                for prefix in prefixes.get(child, [""]):
+                    by_name.setdefault(("textures", prefix + _asset_name(tex, tex.file)), path)
+
+    spec = mujoco.MjSpec.from_file(mjcf_path)
+    pdir = os.path.dirname(os.path.abspath(mjcf_path))
+
+    def _resolve(kind: str, asset: object, file: str, subdir: str) -> str:
+        # Name FIRST: an asset a composed name claims is the attached model's,
+        # whatever file of that name the entry model happens to ship (MuJoCo
+        # refuses duplicate asset names at from_file, so an entry asset's name
+        # can never appear in by_name). Checking the entry's file first handed
+        # the arm's ``link.obj`` the base's ``link.obj`` under ``status: success``.
+        named = by_name.get((kind, _asset_name(asset, file)))
+        if named is not None:
+            return named
+        own = _spec_asset_path(pdir, subdir, file)
+        if os.path.isfile(own):
+            return own
+        return _resolve_shared_asset_file(file, by_file) or own  # None: not an attached asset; compile names it
+
+    for kind in ("meshes", "hfields", "skins"):
+        for asset in getattr(spec, kind, []):
+            if asset.file:
+                asset.file = _resolve(kind, asset, asset.file, spec.meshdir)
+    for tex in spec.textures:
+        if tex.file:
+            tex.file = _resolve("textures", tex, tex.file, spec.texturedir)
+    spec.meshdir = ""
+    spec.texturedir = ""
+    spec.compile()  # fails here, naming the file, if a path is still wrong
+    root = ET.fromstring(spec.to_xml())
+    # ``to_xml`` writes an attached model's ROOT default (``main`` under an
+    # empty prefix) as a nested ``<default>`` with no class name, which MuJoCo's
+    # own parser rejects ("empty class name"). Naming it is not enough: with an
+    # empty prefix the attached joints carry neither the baked values nor a
+    # ``class=`` reference, so a class nothing refers to silently resets their
+    # armature, damping and ranges to MuJoCo's defaults. The attached root body
+    # therefore gets ``childclass=`` pointing at the renamed default, and the
+    # copy is accepted only when it compiles to the SAME model as the original.
+    orphaned: list[str] = []
+    for n, parent in enumerate(el for el in root.iter("default")):
+        for nested in parent.findall("default"):
+            if not nested.get("class"):
+                name = f"strands_attached_root_{n}_{len(orphaned)}"
+                nested.set("class", name)
+                orphaned.append(name)
+    attached_roots = [
+        body
+        for body in _attached_root_bodies(mjcf_path)
+        if (el := root.find(f".//body[@name='{body}']")) is not None and not el.get("childclass")
+    ]
+    flat = os.path.join(work_dir, os.path.basename(mjcf_path))
+    original = _model_fingerprint(mujoco.MjModel.from_xml_path(mjcf_path))
+    diverged: list[str] = []
+    for assignment in _childclass_assignments(orphaned, attached_roots):
+        for body, cls in assignment:
+            el = root.find(f".//body[@name='{body}']")
+            if el is not None:
+                el.set("childclass", cls)
+        ET.ElementTree(root).write(flat, encoding="unicode")
+        diverged = _fingerprint_divergence(original, _model_fingerprint(mujoco.MjModel.from_xml_path(flat)))
+        if not diverged:
+            return flat
+        for body, _cls in assignment:
+            el = root.find(f".//body[@name='{body}']")
+            if el is not None and "childclass" in el.attrib:
+                del el.attrib["childclass"]
+    raise MjcfAssetError(
+        f"the flattened copy of {mjcf_path} compiles to a different model than the original "
+        f"({', '.join(diverged)} differ); the attached model's root default could not be re-bound, "
+        "so the copy is refused rather than converted with the wrong physics"
+    )
+
+
+def _attached_root_bodies(mjcf_path: str) -> list[str]:
+    """The composed names (``prefix + body``) of every ``<attach>`` root body, in document order."""
+    entry = os.path.normpath(os.path.abspath(mjcf_path))
+    out: list[str] = []
+
+    def _walk(path: str, seen: frozenset[str]) -> None:
+        try:
+            root = ET.parse(path).getroot()
+        except (ET.ParseError, OSError):
+            return
+        for el in root.iter():
+            if el.tag == "attach" and el.get("body"):
+                out.append(f"{el.get('prefix', '')}{el.get('body')}")
+            elif el.tag == "include" and el.get("file"):
+                inc = os.path.normpath(os.path.join(os.path.dirname(path), el.get("file", "")))
+                if inc not in seen and os.path.isfile(inc):
+                    _walk(inc, seen | {inc})
+
+    _walk(entry, frozenset({entry}))
+    return out
+
+
+def _childclass_assignments(classes: list[str], bodies: list[str]) -> list[list[tuple[str, str]]]:
+    """Every way to bind the orphaned root defaults to the attached root bodies; ``[[]]`` when none.
+
+    Document order is tried first (``to_xml`` writes the nested defaults in
+    attach order), then every other permutation; the caller keeps the first
+    one whose model matches the original. Attach counts are small, so the
+    permutations stay small.
+    """
+    from itertools import permutations
+
+    if not classes or not bodies:
+        return [[]]
+    k = min(len(classes), len(bodies))
+    seen: list[list[tuple[str, str]]] = []
+    for perm in permutations(classes, k):
+        assignment = list(zip(bodies[:k], perm, strict=True))
+        if assignment not in seen:
+            seen.append(assignment)
+    return seen
+
+
+_FINGERPRINT_FIELDS = (
+    "nbody", "njnt", "ngeom", "nmesh", "nu", "nsite",
+    "jnt_range", "jnt_stiffness", "dof_armature", "dof_damping", "dof_frictionloss",
+    "geom_size", "geom_type", "body_mass", "actuator_gear", "actuator_ctrlrange",
+)  # fmt: skip
+
+
+def _model_fingerprint(model: Any) -> dict[str, list[float]]:
+    """The physics a flattened copy must reproduce, field by field, as flat float lists."""
+    out: dict[str, list[float]] = {}
+    for field in _FINGERPRINT_FIELDS:
+        value = getattr(model, field)
+        out[field] = [float(v) for v in np.asarray(value, dtype=float).ravel()]
+    return out
+
+
+def _fingerprint_divergence(a: dict[str, list[float]], b: dict[str, list[float]]) -> list[str]:
+    """The fingerprint fields on which *a* and *b* disagree (lengths included)."""
+    return [
+        field
+        for field in _FINGERPRINT_FIELDS
+        if len(a[field]) != len(b[field]) or not np.allclose(a[field], b[field], rtol=1e-6, atol=1e-9)
+    ]
+
+
 def _post_import_fixups(usd_file: str, mjcf_path: str, *, import_scene: bool) -> None:
     """Author what the importer leaves out, on the USD it just wrote.
 
@@ -786,12 +1117,16 @@ def convert_mjcf_to_usd(
     # for a conversion that in fact succeeded.
     staging = tempfile.mkdtemp(prefix=f".{key}.{os.getpid()}.", suffix=".tmp", dir=out_dir)
     try:
-        config = MJCFImporterConfig()
-        config.mjcf_path = os.path.abspath(mjcf_path)
-        config.usd_path = staging
-        config.fix_base = fix_base
-        config.import_scene = import_scene
-        produced = MJCFImporter(config=config).import_mjcf()
+        # A model that attaches another goes to the importer as one flattened
+        # file (see _flatten_attached_models); the scratch copy is a temp
+        # directory beside staging and is gone before this returns.
+        with tempfile.TemporaryDirectory(prefix=f".{key}.flat.", dir=out_dir) as flat_dir:
+            config = MJCFImporterConfig()
+            config.mjcf_path = os.path.abspath(_flatten_attached_models(mjcf_path, flat_dir))
+            config.usd_path = staging
+            config.fix_base = fix_base
+            config.import_scene = import_scene
+            produced = MJCFImporter(config=config).import_mjcf()
     except BaseException:
         _remove_tree(staging)
         raise
