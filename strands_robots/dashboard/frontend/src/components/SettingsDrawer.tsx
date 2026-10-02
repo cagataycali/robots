@@ -9,6 +9,7 @@ import {
   setAuthToken, setBackendBase,
 } from '../lib/endpoints'
 import ConsentSettings from './ConsentSettings'
+import ExtrasList from './ExtrasList'
 import PasskeyList from './PasskeyList'
 import { useConfig, type ApplyResult } from '../lib/useConfig'
 import {
@@ -579,6 +580,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
           {tab === 'env' && config && (
             <section>
               <h3>Environment</h3>
+              <ExtrasList />
+              <h4>.env</h4>
               <p className="hint">
                 Written to <code>{config.env_file}</code> (chmod 600). Secrets show masked; leaving a
                 mask untouched leaves the stored value alone.{' '}

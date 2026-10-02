@@ -1174,6 +1174,7 @@ const BUNDLE_ROUTES = [
   "/api/auth/register/",
   "/api/auth/register/begin",
   "/api/auth/register/finish",
+  "/api/auth/renew",
   "/api/auth/status",
   "/api/calibration",
   "/api/calibration/run",
@@ -1196,8 +1197,12 @@ const BUNDLE_ROUTES = [
   "/api/devices/spawn",
   "/api/devices/spawn-remembered",
   "/api/devices/{p}/cameras",
+  "/api/env",
+  "/api/env/install",
+  "/api/env/install/{p}",
   "/api/fleet",
   "/api/health",
+  "/api/mesh/iot/registry",
   "/api/mesh/restart",
   "/api/mesh/safety/estop",
   "/api/mesh/safety/resume",
@@ -1212,6 +1217,7 @@ const BUNDLE_ROUTES = [
   "/api/record/session",
   "/api/record/upload-preflight",
   "/api/robots/registry",
+  "/api/robots/{p}/ping",
   "/api/robots/{p}/policy-fit",
   "/api/robots/{p}/reset",
   "/api/robots/{p}/stop",
@@ -3970,6 +3976,7 @@ const KNOWN = {
   moveit2: { label: "MoveIt 2 — planner bridge", group: "Motion planning (nothing learned)" },
   wbc: { label: "GR00T whole-body control (SONIC)", group: "Humanoid whole-body motion" },
   wbc_gait: { label: "GR00T whole-body control — gait clock", group: "Humanoid whole-body motion" },
+  holosoma: { label: "Amazon FAR Holosoma — G1 locomotion", group: "Humanoid whole-body motion" },
   motionbricks: { label: "NVIDIA MotionBricks — G1 motion", group: "Humanoid whole-body motion" },
   kimodo: { label: "NVIDIA Kimodo — G1 text-to-motion", group: "Humanoid whole-body motion" },
   protomotions: { label: "ProtoMotions — G1 motion tracker", group: "Humanoid whole-body motion" }
@@ -6724,6 +6731,140 @@ function ConsentSettings() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Revoking applies to robots started from now on: a peer that is already running keeps the permission it was started with until you respawn it." })
   ] });
 }
+function record(x) {
+  return x && typeof x === "object" && !Array.isArray(x) ? x : null;
+}
+function missingExtra(body) {
+  const top = record(body);
+  if (!top) return null;
+  const candidates = [top, record(top.error), record(top.detail)];
+  for (const c of candidates) {
+    if (!c) continue;
+    const extra = c.missing_extra;
+    if (typeof extra === "string" && extra.trim()) {
+      return {
+        extra: extra.trim(),
+        remedy: typeof c.remedy === "string" && c.remedy.trim() ? c.remedy.trim() : null,
+        driver: typeof c.driver === "string" && c.driver.trim() ? c.driver.trim() : null
+      };
+    }
+  }
+  return null;
+}
+function installLabel(extra) {
+  return `install strands-robots[${extra}]`;
+}
+function installSentence(run, busy) {
+  if (!run) return busy ? "starting the install…" : "";
+  if (run.status === "running") return `installing [${run.extra}]… ${run.lines.length} lines so far`;
+  if (run.status === "done") return `installed [${run.extra}] — spawn again`;
+  return `install of [${run.extra}] failed (exit ${run.exit_code ?? "?"}) — read the log below`;
+}
+function installTail(run, n = 8) {
+  if (!run) return [];
+  return run.lines.slice(Math.max(0, run.lines.length - n));
+}
+function extraRowSentence(row) {
+  if (row.installed) return "installed";
+  const shown = row.missing.slice(0, 4).join(", ");
+  const more = row.missing.length > 4 ? ` and ${row.missing.length - 4} more` : "";
+  return `missing ${shown}${more}`;
+}
+function InstallExtra({ extra, reason: reason2, onDone }) {
+  const [run, setRun] = reactExports.useState(null);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const timer = reactExports.useRef(null);
+  reactExports.useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+  const poll = (id) => {
+    timer.current = window.setTimeout(async () => {
+      try {
+        const r = await api(`/api/env/install/${id}`);
+        setRun(r);
+        if (r.status === "running") poll(id);
+        else {
+          setBusy(false);
+          if (r.status === "done") onDone == null ? void 0 : onDone();
+        }
+      } catch (e) {
+        setBusy(false);
+        setError((e == null ? void 0 : e.message) ?? String(e));
+      }
+    }, 1e3);
+  };
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    setRun(null);
+    try {
+      const r = await post("/api/env/install", { extra });
+      setRun(r);
+      poll(r.id);
+    } catch (e) {
+      setBusy(false);
+      setError(e instanceof HttpError && e.status === 409 ? `another install is still running — wait for it: ${e.message}` : (e == null ? void 0 : e.message) ?? String(e));
+    }
+  };
+  const tail = installTail(run);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "install-extra", role: "group", "aria-label": `install ${extra}`, children: [
+    reason2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint", children: reason2 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", disabled: busy, onClick: () => void start(), children: busy ? "installing…" : installLabel(extra) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", role: "status", children: installSentence(run, busy) })
+    ] }),
+    error && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
+      "⚠ ",
+      error
+    ] }),
+    tail.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "install-log", "aria-label": "install log tail", children: tail.join("\n") })
+  ] });
+}
+function ExtrasList() {
+  const [doc, setDoc] = reactExports.useState(null);
+  const [error, setError] = reactExports.useState(null);
+  const [installing, setInstalling] = reactExports.useState(null);
+  const load2 = () => api("/api/env").then((d) => {
+    setDoc(d);
+    setError(null);
+  }).catch((e) => setError((e == null ? void 0 : e.message) ?? String(e)));
+  reactExports.useEffect(() => {
+    void load2();
+  }, []);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "extras", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: "Python extras" }),
+    doc && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.python }),
+      " (Python ",
+      doc.version,
+      ", installs with ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.installer }),
+      doc.editable_source ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        ", editable from ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: doc.editable_source })
+      ] }) : null,
+      "). A spawn that needs an extra this interpreter lacks is refused with its name; install it here."
+    ] }),
+    error && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", children: [
+      "⚠ ",
+      error
+    ] }),
+    doc && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "extras-list", children: doc.extras.map((row) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "extra-row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("code", { children: [
+        "[",
+        row.name,
+        "]"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: row.installed ? "hint" : "hint warn", children: extraRowSentence(row) }),
+      !row.installed && installing !== row.name && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost tiny", onClick: () => setInstalling(row.name), children: "install" }),
+      installing === row.name && /* @__PURE__ */ jsxRuntimeExports.jsx(InstallExtra, { extra: row.name, onDone: () => {
+        setInstalling(null);
+        void load2();
+      } })
+    ] }, row.name)) })
+  ] });
+}
 function whenText(created, nowMs) {
   if (created === null || created === void 0 || created === "") return "";
   const n = typeof created === "number" ? created : Number(created);
@@ -7702,6 +7843,8 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
       ] }),
       tab === "env" && config && /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Environment" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ExtrasList, {}),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h4", { children: ".env" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
           "Written to ",
           /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: config.env_file }),
@@ -9286,6 +9429,7 @@ function DevicePanel({ open, onClose }) {
   useDialogFocus(sheetRef, open);
   const [robots, setRobots] = reactExports.useState([]);
   const [error, setError] = reactExports.useState(null);
+  const [gap, setGap] = reactExports.useState(null);
   const [busy, setBusy] = reactExports.useState(false);
   const [status, setStatus] = reactExports.useState(null);
   const [snip, setSnip] = reactExports.useState(null);
@@ -9389,12 +9533,14 @@ function DevicePanel({ open, onClose }) {
     setStatus(null);
     setConsent(null);
     setNotice(null);
+    setGap(null);
     retry.current = { fn, label: label2, kind };
     try {
       const r = await fn();
       setStatus((r == null ? void 0 : r.error) ? `⚠ ${r.error}` : `${label2}: ${(r == null ? void 0 : r.peer_id) ?? "ok"}`);
       setConsent(findConsent(r));
       setNotice(spawnNotice(r));
+      setGap(missingExtra(r));
       await load2();
     } catch (e) {
       const v = deviceActionFailure({
@@ -9405,6 +9551,7 @@ function DevicePanel({ open, onClose }) {
       setStatus(v.text);
       setConsent(findConsent(e == null ? void 0 : e.body));
       setNotice(spawnNotice(e == null ? void 0 : e.body));
+      setGap(missingExtra(e == null ? void 0 : e.body));
       if (v.ambiguous) await load2();
     } finally {
       setBusy(false);
@@ -9532,6 +9679,17 @@ function DevicePanel({ open, onClose }) {
         error
       ] }),
       scan && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: scan.tone === "bad" ? "result bad" : scan.tone === "warn" ? "result warn" : "result ok", children: scan.text }),
+      gap && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        InstallExtra,
+        {
+          extra: gap.extra,
+          reason: gap.remedy ? `this environment cannot run that spawn${gap.driver ? ` on the ${gap.driver} driver` : ""}: ${gap.remedy}` : null,
+          onDone: () => {
+            setGap(null);
+            setStatus(`installed [${gap.extra}] — spawn again`);
+          }
+        }
+      ),
       notice && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result warn", role: "status", children: [
         "⚠ ",
         notice.text,
@@ -9999,14 +10157,14 @@ function DevicePanel({ open, onClose }) {
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "snippet", children: snip.code }),
                 (() => {
-                  const gap = hubAddressMissing(snip.code);
-                  if (!gap) return null;
+                  const gap2 = hubAddressMissing(snip.code);
+                  if (!gap2) return null;
                   const draft = cleanHubHost(hubDraft);
                   const typed = hubDraft.trim() !== "";
                   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "muted small", children: [
                       "No hub address — ",
-                      gap,
+                      gap2,
                       ". The machine that runs this file needs an address it can reach THIS dashboard at; type the one you know."
                     ] }),
                     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [

@@ -252,3 +252,81 @@ class TestTheRoutes:
         assert detail["driver"] == "strands"
         assert "pip install 'strands-robots[dashboard]'" in detail["remedy"]
         assert "so101" in detail["error"]
+
+
+# ---------------------------------------------------------------------------
+# The page: the extra name travels from the refusal to the button unchanged.
+# ---------------------------------------------------------------------------
+
+from tests._dashboard_frontend import FRONTEND_SRC, requires_node, run_frontend  # noqa: E402
+
+_COMPONENTS = FRONTEND_SRC / "components"
+
+
+@requires_node
+class TestThePageReadsTheExtraOffBothRefusalShapes:
+    def test_the_412_body_and_the_200_with_error_body_both_name_the_extra(self) -> None:
+        got = run_frontend(
+            """
+const m = await import('./missingExtra.ts')
+out({
+  refused: m.missingExtra({ error: { error: 'cannot run', missing_extra: 'dashboard', remedy: "pip install 'strands-robots[dashboard]'", driver: 'strands' } }),
+  fastapi: m.missingExtra({ detail: { missing_extra: 'lerobot' } }),
+  dead: m.missingExtra({ peer_id: 'x', error: "ImportError: 'lerobot' is required", missing_extra: 'lerobot' }),
+  none: m.missingExtra({ peer_id: 'x', status: 'running' }),
+  junk: [m.missingExtra(null), m.missingExtra('text'), m.missingExtra({ missing_extra: '  ' })],
+  label: m.installLabel('lerobot'),
+  sentences: [
+    m.installSentence(null, true),
+    m.installSentence({ id: 'a', extra: 'lerobot', status: 'running', exit_code: null, lines: ['x', 'y'] }, true),
+    m.installSentence({ id: 'a', extra: 'lerobot', status: 'done', exit_code: 0, lines: [] }, false),
+    m.installSentence({ id: 'a', extra: 'lerobot', status: 'failed', exit_code: 1, lines: [] }, false),
+  ],
+  tail: m.installTail({ id: 'a', extra: 'x', status: 'done', exit_code: 0, lines: Array.from({ length: 12 }, (_, i) => `l${i}`) }),
+  rows: [m.extraRowSentence({ name: 'a', installed: true, missing: [] }), m.extraRowSentence({ name: 'b', installed: false, missing: ['p', 'q', 'r', 's', 't', 'u'] })],
+})
+"""
+        )
+        assert got["refused"] == {
+            "extra": "dashboard",
+            "remedy": "pip install 'strands-robots[dashboard]'",
+            "driver": "strands",
+        }
+        assert got["fastapi"] == {"extra": "lerobot", "remedy": None, "driver": None}
+        assert got["dead"]["extra"] == "lerobot"
+        assert got["none"] is None
+        assert got["junk"] == [None, None, None]
+        assert got["label"] == "install strands-robots[lerobot]"
+        assert got["sentences"][0] == "starting the install…"
+        assert "2 lines" in got["sentences"][1]
+        assert "spawn again" in got["sentences"][2]
+        assert "exit 1" in got["sentences"][3]
+        assert got["tail"] == [f"l{i}" for i in range(4, 12)]
+        assert got["rows"] == ["installed", "missing p, q, r, s and 2 more"]
+
+
+class TestTheButtonSendsOnlyTheServersName:
+    """Static source cells: the extra the button posts is the one the server named, verbatim."""
+
+    def test_install_extra_posts_the_extra_it_was_given_and_nothing_else(self) -> None:
+        src = (_COMPONENTS / "InstallExtra.tsx").read_text(encoding="utf-8")
+        assert "post<InstallStatus>('/api/env/install', { extra })" in src
+        assert "package" not in src.lower().replace("packages", ""), "no package name is ever composed on the page"
+        assert "`/api/env/install/${id}`" in src, "the poll reads the run the server returned"
+
+    def test_the_devices_panel_offers_the_install_for_both_shapes(self) -> None:
+        src = (_COMPONENTS / "DevicePanel.tsx").read_text(encoding="utf-8")
+        assert "setGap(missingExtra(r))" in src, "a 200-with-error body (dead child) is read"
+        assert "setGap(missingExtra(e?.body))" in src, "a 412 refusal body is read"
+        assert "<InstallExtra" in src
+
+    def test_the_settings_environment_tab_lists_the_extras(self) -> None:
+        src = (_COMPONENTS / "SettingsDrawer.tsx").read_text(encoding="utf-8")
+        assert "<ExtrasList />" in src
+        extras = (_COMPONENTS / "ExtrasList.tsx").read_text(encoding="utf-8")
+        assert "api<EnvDoc>('/api/env')" in extras
+
+    def test_the_bundle_calls_the_env_routes(self) -> None:
+        generated = (FRONTEND_SRC / "lib" / "bundleRoutes.generated.ts").read_text(encoding="utf-8")
+        for route in ("'/api/env'", "'/api/env/install'", "'/api/env/install/{p}'"):
+            assert route in generated, route
