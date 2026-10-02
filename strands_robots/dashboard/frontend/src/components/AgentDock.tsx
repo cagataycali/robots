@@ -250,6 +250,8 @@ export default function AgentDock({ onSettings, startOpen = false, exampleRobot 
             <span className="spacer" />
             <button className="btn ghost" onClick={clearHistory} title="Forget the conversation">clear</button>
             {onSettings && <button className="btn ghost" onClick={onSettings} title="Model & prompt">⚒</button>}
+            {/* Phone: the bar below has no room for a hide button beside STOP ALL, so the sheet carries its own (styles.css shows exactly one of the two). */}
+            <button className="dock-min in-head" onClick={() => setOpen(false)} aria-label="hide the conversation" title="hide the conversation">▾ hide</button>
           </div>
           {/* a `log` (a transcript that appends), NAMED so it can be found, and with live updates explicitly OFF. patchAgent appends deltas token by token, so a live region here would stutter the reply word by word and re-interrupt itself for its whole length — unstoppable and unreadable. */}
           <div

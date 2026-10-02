@@ -154,6 +154,21 @@
 
   /* the dock overlays the bottom of the viewport everywhere */
   --dock-h: 84px;
+  /* the fixed STOP ALL pill's footprint on a phone (it shares the command-bar row there) */
+  --estop-w: 118px;
+
+  /* "glass" surfaces, resolved to the flat tokens above: the fleet bar, the dock bar, the chat
+     bubbles and the dock inputs reference these, and until now nothing defined them, so the
+     sticky header and the command bar painted NO background and the fleet scrolled through
+     them. The docs draw edges, not blur, so these are the page and chip surfaces, 1px lines,
+     and a zero blur. */
+  --glass-1: var(--panel2);
+  --glass-2: var(--bg);
+  --glass-3: var(--bg);
+  --glass-border: var(--border);
+  --glass-border-hi: var(--border-hi);
+  --glass-blur: 0px; --glass-blur-lg: 0px; --glass-sat: 1;
+  --ease-out: cubic-bezier(.2, .7, .2, 1);
 
   font-size: 15px;
 }
@@ -836,7 +851,7 @@ a:hover { color: var(--accent-bright); }
 .sheet.estop-sheet { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
 /* Help sheet (JOURNEYS #7). Scrollable because it is read, not scanned, and the
    phone is where a tooltip could never have helped. */
-.sheet.help-sheet { max-width: 620px; max-height: 82vh; overflow-y: auto; }
+.sheet.help-sheet { max-width: 620px; max-height: 82dvh; overflow-y: auto; }
 .help-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .help-topic { margin-top: var(--s4); }
 .help-topic h3 { font-size: var(--fs-body); font-weight: 700; margin-bottom: var(--s2); }
@@ -1518,7 +1533,7 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible,
 .crashcard h3 { margin: 0 0 8px; font-size: 15px; }
 .crashcard p { margin: 6px 0; font-size: 13px; line-height: 1.45; }
 .crashcard pre {
-  margin: 10px 0; padding: 9px 11px; overflow: auto; max-height: 30vh;
+  margin: 10px 0; padding: 9px 11px; overflow: auto; max-height: 30dvh;
   font-size: 12px; white-space: pre-wrap; word-break: break-word;
   background: var(--panel2); border-radius: var(--r3);
 }
@@ -2017,3 +2032,220 @@ pre.startsnip {
 .card.registry .pingnote { font-family: var(--mono); font-size: var(--fs-micro); color: var(--dim); margin-left: var(--s2); }
 .card.registry .pingnote.answered { color: var(--accent); }
 .card.registry .pingnote.offline, .card.registry .pingnote.forbidden, .card.registry .pingnote.error { color: var(--amber); }
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+ * Responsive layout system (phone pass, 2026-10-01).
+ *
+ * Breakpoints: phone < 640, tablet 640-899, desktop 900-1199, wide 1200+. Measured on the
+ * live dashboard at 390x844 before this section existed: the brand's nowrap subtitle made
+ * the header 544px wide, every action chip AND the LIVE pill sat at x=552..729, STOP ALL
+ * (fixed right:14px of a 730px layout) at x=603, the page scrolled 339px sideways, and the
+ * sticky header was 304px tall. Nothing here changes a token, a colour or a route: it is
+ * where things go and how big a finger needs them.
+ *
+ * Safety invariant kept from the a11y pass: STOP ALL is never behind a menu. On a phone it
+ * leaves the unreachable top-right corner and becomes the left pill of the command-bar row,
+ * fixed, z-index 200, with every sheet and drawer padding its last line clear of it.
+ * ══════════════════════════════════════════════════════════════════════════════ */
+
+/* backdrop-filter (even a zero blur) makes an element the containing block of its fixed
+   descendants: the phone menu sheet rendered INSIDE the sticky header landed at top=-328. The
+   glass tokens resolve to zero blur anyway, so the filters go. */
+.fleetbar, .dock-bar, .dock-panel, .bubble.agent, .dock-bar input, .mic, .dock-send:disabled {
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+
+/* media never overflow a column, whatever the aspect box around them says */
+img, video, canvas { max-width: 100%; }
+
+/* the brand can shrink: the subtitle ellipsises instead of pushing the actions off-screen */
+.brand { min-width: 0; flex: 1 1 auto; }
+.brand > div { min-width: 0; }
+.brand .sub { overflow: hidden; text-overflow: ellipsis; }
+
+/* the phone-only row is absent from 640px up */
+.fleet-phone { display: none; }
+.dock-min.in-head { display: none; }
+
+/* tab strips scroll inside their drawer, with a right-edge fade saying "more" */
+.tabs {
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+}
+.tabs::-webkit-scrollbar { display: none; }
+
+/* a card is a container, so its camera pair and its controls row answer to the CARD's width
+   (one phone column, or one of three desktop columns) rather than to the viewport */
+.card { container-type: inline-size; container-name: card; }
+@container card (max-width: 400px) {
+  .cams.multi { grid-template-columns: 1fr; }
+  .camtile { aspect-ratio: 16 / 9; }
+  .controls { flex-wrap: wrap; }
+  .controls select, .controls input { flex: 1 1 100%; width: 100%; min-width: 0; max-width: none; }
+  .controls .btn { flex: 1 1 0; min-height: 44px; }
+  .jname { width: 64px; }
+}
+
+/* ── phone ─────────────────────────────────────────── */
+@media (max-width: 639px) {
+  /* header: wordmark + LIVE + menu, one row, nothing reserved for a top-right STOP (it is not there) */
+  .fleetbar {
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+    padding-left: calc(12px + env(safe-area-inset-left));
+    padding-right: calc(12px + env(safe-area-inset-right));
+    gap: var(--s2);
+  }
+  .brand .backend { display: none; }
+  .fleet-right { display: none; }
+  .fleet-phone { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; }
+  .fleet-phone .conn { white-space: nowrap; }
+  .menubtn { min-height: 44px; }
+
+  /* the menu sheet: full-width bottom sheet, role=dialog, its own close button */
+  .menu-backdrop {
+    position: fixed; inset: 0; z-index: 80; background: #000a;
+    display: flex; align-items: flex-end; animation: fade var(--dur) ease-out;
+  }
+  .menu-sheet {
+    width: 100%; max-height: calc(100dvh - 48px); overflow-y: auto;
+    background: var(--bg); border-top: 1px solid var(--border-hi);
+    border-radius: var(--r4) var(--r4) 0 0;
+    padding: var(--s4) var(--s5) calc(var(--s5) + 64px + env(safe-area-inset-bottom));
+    animation: sheetup var(--dur) ease-out;
+  }
+  @keyframes sheetup { from { transform: translateY(24px); opacity: .6; } }
+  .menu-head { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s4); }
+  .menu-head h2 { font-size: var(--fs-lg); font-weight: 600; }
+  .menu-head .muted { flex: 1 1 100%; order: 3; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu-head .btn.ghost { margin-left: auto; min-width: 44px; min-height: 44px; }
+  .menu-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .menu-actions .chip, .menu-actions .badge, .menu-actions .safety, .menu-actions .peers {
+    min-height: 48px; display: inline-flex; align-items: center; justify-content: flex-start;
+    font-size: var(--fs-small); padding: 0 var(--s4); white-space: normal; text-align: left;
+  }
+  .menu-actions .badge.warnchip, .menu-actions .badge.danger, .menu-actions .safety { grid-column: 1 / -1; }
+  .menu-actions .peers { justify-content: center; border: 1px dashed var(--border-hi); border-radius: var(--rpill); }
+
+  /* STOP ALL: a fixed red pill at the left of the command-bar row, thumb height, above everything */
+  .estop-layer {
+    top: auto; right: auto;
+    left: calc(12px + env(safe-area-inset-left));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .estop {
+    min-height: 44px; min-width: var(--estop-w); border-radius: var(--rpill);
+    padding: 10px 12px; font-size: 13px; letter-spacing: .02em; white-space: nowrap;
+    background: var(--danger-fill); color: #fff; border-color: var(--danger-fill);
+  }
+  .estop.unreachable { background: color-mix(in srgb, var(--danger-fill) 70%, var(--bg)); border-style: dashed; border-color: #fff; }
+  .estop:hover { background: var(--danger-fill); }
+
+  /* the command bar leaves the pill its room; the hide button moves into the sheet head */
+  .dock-bar {
+    padding-left: calc(12px + env(safe-area-inset-left) + var(--estop-w) + var(--s3));
+    padding-right: calc(12px + env(safe-area-inset-right));
+    gap: var(--s2);
+  }
+  .dock-bar > .dock-min { display: none; }
+  .dock-min.in-head { display: inline-flex; align-items: center; min-height: 44px; }
+  .dock-bar input { padding: 11px 14px; }
+  /* the conversation opens over the fleet as a sheet */
+  .dock-panel { max-height: calc(100dvh - 64px - 48px); border-radius: var(--r4) var(--r4) 0 0; border: 1px solid var(--border-hi); border-bottom: 0; }
+  .dock-head { position: sticky; top: 0; background: var(--bg); z-index: 1; flex-wrap: nowrap; padding: var(--s2) var(--s3); }
+  .dock-head .chip.static { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; line-height: 44px; }
+  .dock-head .chip.static:first-child { flex: 1 1 auto; }
+  .dock-head .btn.ghost { flex-shrink: 0; min-width: 44px; }
+  .dock-min.in-head { flex-shrink: 0; white-space: nowrap; }
+  .dock-hint { text-align: left; line-height: 1.6; }
+
+  /* drawers (settings / devices / activity) are the whole screen; the head reserves nothing on
+     the right any more and sticks; the last line clears the pill */
+  .drawer, .drawer.wide { width: 100%; border-left: 0; }
+  .drawer-head { padding-right: var(--s4); padding-left: var(--s4); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  .drawer-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .drawer-head > div .btn { min-width: 44px; min-height: 44px; }
+  .drawer-body { padding: var(--s4); padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  .drawer-foot { padding-left: calc(var(--estop-w) + var(--s6)); padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom)); min-height: 64px; }
+
+  /* sheets (help / estop / consent / run confirm / record / train) are bottom sheets, a sticky head */
+  .sheet-backdrop { align-items: flex-end; padding: 0; }
+  .sheet, .sheet.help-sheet {
+    width: 100%; max-width: none; max-height: calc(100dvh - 24px);
+    border-radius: var(--r4) var(--r4) 0 0; border-bottom: 0;
+    padding: 0 var(--s5) calc(var(--s5) + 64px + env(safe-area-inset-bottom));
+  }
+  .sheet > h2, .sheet > .help-head {
+    position: sticky; top: 0; z-index: 1; background: var(--panel);
+    padding: var(--s4) 0 var(--s3); margin: 0; border-bottom: 1px solid var(--border);
+  }
+  .sheet > .help-head { padding-top: var(--s3); }
+  .sheet > .help-head .btn.ghost { min-width: 44px; min-height: 44px; }
+  .sheet-actions { flex-wrap: wrap; }
+  .sheet-actions .btn { min-height: 44px; flex: 1 1 auto; }
+  .sheet.estop-sheet.danger { box-shadow: inset 0 0 0 1px var(--danger); }
+
+  /* robot detail is a screen, not a window */
+  .detail-backdrop { padding: 0; }
+  .detail { width: 100%; border: 0; border-radius: 0; }
+  .detail-head { padding: var(--s3) var(--s4); padding-right: var(--s4); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  .detail-body { padding: var(--s4); padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+
+  /* cards: one column, full-width 16:9 camera, the controls a wrapped row of 44px targets */
+  .grid { padding: var(--s3); gap: var(--s3); padding-bottom: calc(var(--dock-h) + env(safe-area-inset-bottom)); }
+  .card { padding: var(--s4) var(--s3); }
+  .cams.multi { grid-template-columns: 1fr; }
+  .camtile { aspect-ratio: 16 / 9; }
+  .controls { flex-wrap: wrap; }
+  .controls select, .controls input { flex: 1 1 100%; width: 100%; min-width: 0; max-width: none; }
+  .controls .btn { flex: 1 1 0; min-height: 44px; }
+  .jname { width: 64px; }
+
+  /* tables scroll inside their card */
+  .jointtable { display: block; max-width: 100%; overflow-x: auto; }
+
+  /* forms: one column, native pickers, no iOS zoom */
+  .train-row, .resume-row, .cg-row, .row.fields { flex-direction: column; }
+  .train-row .field { flex: 1 1 auto; }
+  input:not([type=checkbox]):not([type=radio]), select, textarea { font-size: max(16px, var(--fs-body)); }
+  .tokenprompt { flex-wrap: wrap; }
+  .tokenprompt input { min-width: 0; flex: 1 1 100%; }
+
+  /* the top-right reservations existed for a STOP that is no longer up there */
+  .sessionwarn { padding-right: 14px; }
+  .train-sheet .train-head { padding-right: var(--s4); }
+  .train-sheet { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .toast { margin: var(--s3) var(--s3) 0; }
+  .empty-fleet { padding: var(--s6) var(--s4) calc(var(--dock-h) + var(--s6)); }
+  .empty-fleet pre { font-size: 12px; }
+}
+
+/* ── tablet (640-899): two columns, the bar is two rows (brand + LIVE, then the chips), drawers at 420 ── */
+@media (min-width: 640px) and (max-width: 899px) {
+  .fleetbar { display: grid; grid-template-columns: minmax(0, 1fr); padding-right: 14px; row-gap: var(--s2); }
+  .brand { padding-right: 136px; }
+  .fleet-right {
+    justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto;
+    scrollbar-width: none; padding-bottom: 2px;
+    mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent);
+  }
+  .fleet-right::-webkit-scrollbar { display: none; }
+  .fleet-right .chip, .fleet-right .badge, .fleet-right .conn, .fleet-right .peers { white-space: nowrap; flex-shrink: 0; }
+  /* the LIVE verdict leads the strip, never under the right-edge fade */
+  .fleet-right .conn { order: -1; }
+  .drawer { width: min(420px, 100%); }
+  .drawer.wide { width: min(560px, 100%); }
+  .detail-head { padding-right: 150px; }
+}
+
+/* ── desktop (900-1199): the bar fits one row, drawers keep their width ───── */
+@media (min-width: 900px) and (max-width: 1199px) {
+  .fleet-right .chip { padding-left: var(--s3); padding-right: var(--s3); }
+}
+
+/* phones only: the motion already in the file (pulse, fade, slides) obeys the OS switch */
+@media (max-width: 639px) and (prefers-reduced-motion: reduce) {
+  .menu-sheet, .menu-backdrop, .drawer, .drawer-backdrop, .sheet-backdrop, .detail-backdrop { animation: none; }
+}
