@@ -46,6 +46,12 @@ from strands_robots.tools.g1.g1_reference import (
     g1_motion_gates,
 )
 
+
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 # The ``@tool`` wrapper returns the wrapped function's value verbatim when
 # called in-process; the cells below call the verbs directly for that reason.
 _VERBS: dict[str, Any] = {
@@ -72,7 +78,7 @@ def test_the_import_pulls_no_sdk_module() -> None:
 @pytest.mark.parametrize("name", sorted(_VERBS))
 def test_a_verb_with_no_query_lists_its_whole_table(name: str) -> None:
     """The consolidation's rule: no argument means the catalogue, on every verb."""
-    result = _VERBS[name]()
+    result = _payload(_VERBS[name]())
     assert result["status"] == "success"
     assert result["count"] > 0, f"{name} answered an empty table"
 
@@ -81,7 +87,7 @@ class TestTheJointTable:
     """``g1_joints`` names exactly what ``G1Driver.send_action`` accepts."""
 
     def test_the_listing_is_every_slot_the_driver_names_once(self) -> None:
-        result = g1_joints()
+        result = _payload(g1_joints())
         assert result["count"] == _G1_NAMED_JOINTS
         assert sorted(row["name"] for row in result["joints"]) == sorted(_G1_JOINT_INDEX)
         indices = [row["index"] for row in result["joints"]]
@@ -90,14 +96,14 @@ class TestTheJointTable:
         assert result["groups"] == sorted(_GROUP_SLOTS)
 
     def test_every_row_carries_the_gain_pair_the_driver_would_use(self) -> None:
-        for row in g1_joints()["joints"]:
+        for row in _payload(g1_joints())["joints"]:
             slot = row["index"]
             assert row["kp"] == _SDK_KP[slot], f"kp for slot {slot} ({row['name']}) drifted from the driver's table"
             assert row["kd"] == _SDK_KD[slot]
 
     @pytest.mark.parametrize("group", sorted(_GROUP_SLOTS))
     def test_a_group_name_lists_that_group_verbatim(self, group: str) -> None:
-        result = g1_joints(group)
+        result = _payload(g1_joints(group))
         assert result["status"] == "success"
         assert result["group"] == group
         assert result["count"] == len(_GROUP_SLOTS[group])
@@ -111,21 +117,21 @@ class TestTheJointTable:
 
     def test_a_slot_resolves_to_the_driver_key(self) -> None:
         for name, slot in _G1_JOINT_INDEX.items():
-            result = g1_joints(slot)
+            result = _payload(g1_joints(slot))
             assert result["status"] == "success"
             assert (result["name"], result["index"]) == (name, slot)
             assert (result["kp"], result["kd"]) == (_SDK_KP[slot], _SDK_KD[slot])
 
     def test_a_name_resolves_to_the_driver_slot(self) -> None:
         for name, slot in _G1_JOINT_INDEX.items():
-            result = g1_joints(name)
+            result = _payload(g1_joints(name))
             assert result["status"] == "success", f"snake_case {name} refused: {result}"
             assert (result["index"], result["name"]) == (slot, name)
 
     @pytest.mark.parametrize("alias", ["LeftKnee", "leftKnee", "  LeftKnee  "])
     def test_a_camel_case_alias_resolves_to_the_canonical_key(self, alias: str) -> None:
         """The alias is one-way: the returned ``name`` is the spelling the wire takes."""
-        result = g1_joints(alias)
+        result = _payload(g1_joints(alias))
         assert result["status"] == "success", f"alias {alias!r} refused: {result}"
         assert result["name"] == "left_knee"
         assert result["index"] == _G1_JOINT_INDEX["left_knee"]
@@ -146,7 +152,7 @@ class TestTheMotionGates:
         assert WALK_FSMS, "an empty loco gate would admit no locomotion write at all"
 
     def test_the_listing_carries_every_scope_with_its_set_and_refusal(self) -> None:
-        result = g1_motion_gates()
+        result = _payload(g1_motion_gates())
         assert result["count"] == len(_SCOPE_SETS)
         assert result["scope"] is None
         assert result["scopes"] == sorted(_SCOPE_SETS)
@@ -158,7 +164,7 @@ class TestTheMotionGates:
 
     @pytest.mark.parametrize("scope", sorted(_SCOPE_SETS))
     def test_a_scope_filter_lists_that_scope_alone(self, scope: str) -> None:
-        result = g1_motion_gates(scope=scope)
+        result = _payload(g1_motion_gates(scope=scope))
         assert result["count"] == 1
         assert result["scope"] == scope
         [row] = result["gates"]
@@ -167,7 +173,7 @@ class TestTheMotionGates:
     def test_an_admitted_id_carries_no_refusal(self) -> None:
         for scope, admitted in _SCOPE_SETS.items():
             for fsm_id in admitted:
-                result = g1_motion_gates(fsm_id=fsm_id, scope=scope)
+                result = _payload(g1_motion_gates(fsm_id=fsm_id, scope=scope))
                 assert result["status"] == "success"
                 assert (result["scope"], result["fsm_id"]) == (scope, fsm_id)
                 assert result["admitted"] is True
@@ -179,14 +185,14 @@ class TestTheMotionGates:
     def test_an_id_outside_the_gate_carries_the_write_path_refusal(self, scope: str) -> None:
         """``42`` is outside both sets and outside the three-digit motion-switcher range."""
         assert 42 not in HANDSHAKE_FSMS and 42 not in WALK_FSMS
-        result = g1_motion_gates(fsm_id=42, scope=scope)
+        result = _payload(g1_motion_gates(fsm_id=42, scope=scope))
         assert result["admitted"] is False
         assert result["refusal_code"] == _FSM_REFUSAL_CODE
         assert result["refusal_text"] == ERR_CODES[_FSM_REFUSAL_CODE]
 
     def test_a_membership_query_with_no_scope_answers_for_the_arm_gate(self) -> None:
         """An unnamed scope is the arm-SDK gate - the broader of the two the driver keeps."""
-        result = g1_motion_gates(fsm_id=next(iter(sorted(HANDSHAKE_FSMS))))
+        result = _payload(g1_motion_gates(fsm_id=next(iter(sorted(HANDSHAKE_FSMS)))))
         assert result["scope"] == "arm"
         assert result["fsm_ids"] == sorted(HANDSHAKE_FSMS)
 
@@ -201,7 +207,7 @@ class TestTheArmActionTable:
         assert _ARM_ACTION_MAP["release arm"] == _ARM_RELEASE_ACTION_ID
 
     def test_the_listing_carries_the_map_the_gate_and_the_three_refusals(self) -> None:
-        result = g1_arm_actions()
+        result = _payload(g1_arm_actions())
         assert result["count"] == len(_ARM_ACTION_MAP)
         assert result["action_map"] == _ARM_ACTION_MAP
         result["action_map"]["synthetic"] = 999  # a fresh dict, not the constant
@@ -227,7 +233,7 @@ class TestTheArmActionTable:
     )
     def test_an_admitted_query_resolves_the_name_and_id_pair(self, query: str | int, echo: dict[str, Any]) -> None:
         """Both directions resolve, so a caller with either half gets the other."""
-        result = g1_arm_actions(query)
+        result = _payload(g1_arm_actions(query))
         assert result["status"] == "success"
         assert result["query"] == echo
         assert result["admitted"] is True
@@ -244,7 +250,7 @@ class TestTheArmActionTable:
         ids=["unknown-name", "unknown-id"],
     )
     def test_a_query_outside_the_set_carries_the_sdk_refusal(self, query: str | int, echo: dict[str, Any]) -> None:
-        result = g1_arm_actions(query)
+        result = _payload(g1_arm_actions(query))
         assert result["status"] == "success"
         assert result["query"] == echo
         assert result["admitted"] is False
@@ -270,25 +276,25 @@ class TestTheErrorCodeCatalogue:
         The transport codes matter separately: an RPC that never reached a
         handler is retry-worthy, a handler that refused is not.
         """
-        listed = {row["code"] for row in g1_error_codes()["error_codes"]}
+        listed = {row["code"] for row in _payload(g1_error_codes())["error_codes"]}
         for code in codes:
             assert code in listed, f"rc={code} is a {side}-side code the verbs quote; the catalogue must decode it"
 
     def test_the_listing_is_the_whole_catalogue_in_fresh_containers(self) -> None:
-        result = g1_error_codes()
+        result = _payload(g1_error_codes())
         assert result["count"] == len(ERR_CODES)
         assert result["codes"] == sorted(ERR_CODES)
         for row in result["error_codes"]:
             assert row["text"] == ERR_CODES[row["code"]]
         result["codes"].append(9999)
         result["error_codes"][0]["synthetic"] = True
-        fresh = g1_error_codes()
+        fresh = _payload(g1_error_codes())
         assert 9999 not in fresh["codes"]
         assert "synthetic" not in fresh["error_codes"][0]
 
     @pytest.mark.parametrize("code", [0, 7302])
     def test_a_known_code_decodes_to_the_catalogued_text(self, code: int) -> None:
-        result = g1_error_codes(code)
+        result = _payload(g1_error_codes(code))
         assert result["status"] == "success"
         assert result["query"] == {"code": code}
         assert result["known"] is True
@@ -303,7 +309,7 @@ class TestTheErrorCodeCatalogue:
         quotes would send a caller back to the constant. The envelope always
         names something, so a caller never branches on a missing key.
         """
-        result = g1_error_codes(code)
+        result = _payload(g1_error_codes(code))
         assert result["status"] == "success"
         assert result["known"] is False
         assert result["text"] == _UNKNOWN_CODE_TEXT
@@ -341,7 +347,7 @@ def test_a_refusal_names_the_value_the_domain_and_the_reference(
     verb: str, kwargs: dict[str, Any], named: list[str]
 ) -> None:
     """Every refusal in the family carries the same three anchors."""
-    result = _VERBS[verb](**kwargs)
+    result = _payload(_VERBS[verb](**kwargs))
     assert result["status"] == "error", f"{verb}({kwargs}) was admitted: {result}"
     for fragment in named:
         assert fragment in result["message"], f"{verb}({kwargs}) refusal did not name {fragment!r}: {result['message']}"

@@ -22,6 +22,11 @@ from unittest.mock import patch
 import pytest
 
 
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 @pytest.fixture(autouse=True)
 def _quiet_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """No real SDK, no real mesh, no real audit trail."""
@@ -41,7 +46,7 @@ def test_private_sdk_method_is_refused_before_dispatch(
     import strands_robots.tools.g1.use_unitree as uu
 
     with patch.object(uu, "_execute") as mock_exec:
-        result = uu.use_unitree("loco", private_name, {})
+        result = _payload(uu.use_unitree("loco", private_name, {}))
 
     assert result["status"] == "error", f"expected error, got {result}"
     assert result.get("dispatched") is False, "must report dispatched=False"
@@ -64,7 +69,7 @@ def test_public_mutative_method_is_not_blocked_by_private_guard(
         "_execute",
         return_value={"ok": True, "result": {"api_id": 7105}},
     ) as mock_exec:
-        result = uu.use_unitree("loco", "SetVelocity", {"vx": 0.1})
+        result = _payload(uu.use_unitree("loco", "SetVelocity", {"vx": 0.1}))
 
     # SetVelocity must have reached _execute
     mock_exec.assert_called_once()
@@ -78,7 +83,7 @@ def test_dunder_method_is_also_refused() -> None:
     import strands_robots.tools.g1.use_unitree as uu
 
     with patch.object(uu, "_execute") as mock_exec:
-        result = uu.use_unitree("loco", "__init__", {})
+        result = _payload(uu.use_unitree("loco", "__init__", {}))
 
     assert result["status"] == "error"
     assert result.get("dispatched") is False
