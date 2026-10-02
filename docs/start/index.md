@@ -10,7 +10,7 @@ Six rungs. Each page ends with a checkpoint sentence saying what you now have, a
 
 | rung | page | time | you need | you leave with |
 |---|---|---|---|---|
-| 0 | [See it](see-it.md) | 30 s | nothing | a captured run: an agent builds a scene, runs a policy, and is refused and then approved at the gate in front of a real arm |
+| 0 | [See it](see-it.md) | 30 s | nothing | a recorded conversation: an agent builds a scene in the simulator, runs a policy on it, and must ask a person before it may drive the real arm |
 | 1 | [Install](install.md), [Run it](first-robot.md) | 3 min | Python `{{extras:python}}` | an SO-101 in MuJoCo: joints moved, state read, a frame saved, a cube on the table |
 | 2 | [Talk to it](first-agent.md) | 10 min | a model provider | `Agent(tools=[robot])`, a sentence that moves the sim arm, the operator gate stopping a real one |
 | 3 | [Real arm](first-real-arm.md) | 30 min | an SO-101 on USB | the port found, the driver rehearsed on the model, the two lines that move it, calibration, what is refused |

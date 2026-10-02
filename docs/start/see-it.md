@@ -1,12 +1,12 @@
 ---
-description: "Stage 0, thirty seconds: a captured agent run. It builds a scene in the simulator from a sentence, runs a policy, and is refused and then approved at the operator gate in front of the real arm."
+description: "Thirty seconds: one recorded conversation. An agent builds a simulated scene from a sentence, runs a policy, and must ask a person before driving the real arm."
 ---
 
 # See it
 
-Nothing to install on this page. It is a captured run of `docs/hooks/transcripts/talk_to_it.py`: one Strands Agent holding two tools, the simulated SO-101 (`so101_sim`) and a `mode="real"` SO-101 with nothing on its port (`so101`), every call recorded. The `>` lines are what a person typed; the rest is what came back.
+Nothing to install. This is one recorded conversation with a Strands Agent that has two tools: a simulated SO-101 arm (`so101_sim`) and the real one (`so101`), unplugged. Lines starting with `>` are what the person typed; the rest is what the agent did.
 
-{{sim:talk-to-it-1|the scene before the first sentence: Robot("so101") and nothing else}}
+{{sim:talk-to-it-1|before the first sentence: the simulated arm alone on its table}}
 
 ## Build a scene from a sentence
 
@@ -20,9 +20,9 @@ tool_result success 'red_cube' added: box at [0.0, -0.2, 0.025], size=[0.05, 0.0
 tool_use so101_sim {"action": "render", "camera_name": "front", "width": 1280, "height": 720}
 ```
 
-{{sim:talk-to-it-2|what the agent built: the camera and the red cube it placed after reading the base pose}}
+{{sim:talk-to-it-2|what the agent built: a front camera, and the red cube in front of the arm}}
 
-The model read the state first, learned the arm extends along -Y, and put the cube at `y = -0.20`.
+Nobody told the agent which way the arm faces: it read the state first, saw that the front is -Y, and put the cube there.
 
 ## Run a policy on it
 
@@ -34,13 +34,13 @@ tool_result success Policy complete on 'so101' | MockPolicy | 3.0s | 150 steps
   Note: MockPolicy does not read the instruction. Its actions - a test motion on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-{{sim:talk-to-it-3|after the rollout: the test motion moved every joint, the cube is where it was}}
+{{sim:talk-to-it-3|after the run: every joint moved, and the cube is still where it was}}
 
-Nothing asked for approval so far: the simulation is never gated.
+No approval so far: nothing in a simulation can get hurt.
 
 ## Ask for the real arm
 
-The real arm is:
+Now the same request, to the real arm:
 
 ```text
 > Now run the same mock policy on the real so101 for 2 seconds with the same instruction.
@@ -54,7 +54,7 @@ operator> y
 tool_result error Robot connection failed: Could not connect on port '/dev/null'.
 ```
 
-The decline reached the model as a refusal it could explain; the approval dispatched the rollout, which then failed honestly because no arm was on the port. The full log with every message is [talk-to-it.txt](../assets/transcripts/talk-to-it.txt).
+The agent cannot move the real arm on its own. On no, it was told and could explain why. On yes, the command went out and failed with a plain error: no arm was plugged in. The full conversation is in [talk-to-it.txt](../assets/transcripts/talk-to-it.txt).
 
 
-You have now seen the whole shape of the project in one run: a robot is a tool, the model builds and drives a simulated scene from words, and a real arm moves only after a person says yes. Next rung: [Install](install.md), then [Run it](first-robot.md) to build that scene yourself.
+That is the whole idea: a robot is a tool, an agent builds and drives a simulated scene from words, and a real arm moves only after a person says yes. To build it yourself, [Install](install.md), then [Run it](first-robot.md).
