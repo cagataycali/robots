@@ -65,7 +65,7 @@ Run `lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --r
 
 ## LeKiwi
 
-`lekiwi` is an SO-101 on a three-wheel holonomic base with a Raspberry Pi. lerobot's `lekiwi` type runs on the Pi and `lekiwi_client` on your laptop; `Robot("lekiwi", mode="real", robot_ip="192.168.1.50")` builds the client. The native `FeetechDriver` registers for it too and drives the arm servos over a local serial port.
+`lekiwi` is an SO-101 on a three-wheel holonomic base with a Raspberry Pi. lerobot's `lekiwi` type runs on the Pi and `lekiwi_client` on your laptop: `Robot("lekiwi_client", mode="real", remote_ip="192.168.1.50")`. `Robot("lekiwi", mode="real")` builds the native `FeetechDriver`, which drives the arm servos over a local serial port.
 
 ## Twin transport
 

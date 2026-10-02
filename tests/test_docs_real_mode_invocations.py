@@ -68,6 +68,14 @@ _PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)
 #: has to fail if the extractor stops reaching the documentation.
 _MINIMUM_GRADED_CALLS = 20
 
+#: An inline code span in prose that spells a ``Robot(...)`` call. A sentence
+#: that hands the reader a call is copied as verbatim as a fence is.
+_INLINE_CALL = re.compile(r"`([^`\n]*\bRobot\([^`\n]*\))`")
+
+#: Design pages spell the calls a proposal would add, not calls that run today.
+#: An inline span on a line naming an exception is a refusal, as in a fence.
+_DESIGN_PAGES = _REPO_ROOT / "docs" / "reference" / "project"
+
 
 @dataclasses.dataclass(frozen=True)
 class _Invocation:
@@ -121,15 +129,21 @@ def _documented_real_mode_calls() -> list[_Invocation]:
     sources = sorted((_REPO_ROOT / "docs").rglob("*.md")) + [_REPO_ROOT / "README.md"]
     for path in sources:
         text = path.read_text(encoding="utf-8")
-        for fence in _PYTHON_FENCE.finditer(text):
-            block = fence.group(1)
+        blocks = [(f.group(1), text[: f.start()].count("\n") + 2) for f in _PYTHON_FENCE.finditer(text)]
+        prose = _PYTHON_FENCE.sub(lambda f: "\n" * f.group(0).count("\n"), text)
+        if not path.is_relative_to(_DESIGN_PAGES):
+            lines = prose.splitlines()
+            for span in _INLINE_CALL.finditer(prose):
+                line = prose[: span.start()].count("\n") + 1
+                if not re.search(r"\w(?:Error|Exception)\b", lines[line - 1]):
+                    blocks.append((span.group(1), line))
+        for block, fence_line in blocks:
             if _documents_a_refusal(block):
                 continue
             try:
                 tree = ast.parse(block)
             except SyntaxError:
                 continue
-            fence_line = text[: fence.start()].count("\n") + 2
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
@@ -322,6 +336,13 @@ class TestTheCorpusIsReached:
         calls = _documented_real_mode_calls()
         native = [c for c in calls if _native_driver_the_call_builds(c.name, c.driver) is not None]
         assert native, "no documented mode='real' call builds a native driver"
+
+    def test_a_call_in_a_prose_sentence_is_among_them(self) -> None:
+        """A sentence that hands the reader a call is graded like a fence."""
+        prose = [
+            c for c in _documented_real_mode_calls() if c.location.startswith("docs/learn/hardware/feetech-arms.md")
+        ]
+        assert any(c.name == "lekiwi_client" for c in prose), "the inline LeKiwi client call is not graded"
 
     def test_the_factory_owns_a_nonempty_keyword_set(self) -> None:
         owned = _keywords_the_factory_owns()
