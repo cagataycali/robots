@@ -1,12 +1,14 @@
 """Acceptance: two mesh peers in two processes exchange state and RPC over mTLS.
 
 Each peer is its own Python process holding ``Robot("so101", mode="sim",
-mesh=True)``. They share a CA and nothing else: ``beta`` listens on an explicit
-``tls/`` endpoint, ``alpha`` only dials it (no multicast). Over that one link
-``alpha`` must see ``beta`` in its peer list, receive ``beta``'s state samples,
-get an answer to a ``status`` RPC, and lock ``beta`` out with an e-stop that a
-wrong resume code does not clear and the right one does. Real Zenoh, real TLS,
-no doubles.
+mesh=True)``. They share a CA and nothing else: the robot listens on an
+explicit ``tls/`` endpoint, the operator only dials it (no multicast). Over that
+one link the operator must see the robot in its peer list, receive its state
+samples, get an answer to a ``status`` RPC, and lock it out with an e-stop that
+a wrong resume code does not clear and the right one does. The check runs under
+the permissive built-in ACL and under both shipped ACL templates, where a robot
+certificate must also fail to command the operator. Real Zenoh, real TLS, no
+doubles.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 pytestmark = pytest.mark.timeout(300)
 
 RESUME_CODE = "acceptance-resume"
+EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "mesh"
 
 # One peer: answers one JSON request per stdin line with one JSON line.
 PEER = """
@@ -88,13 +91,13 @@ def _issue(name: str, ca_key: Any, ca_name: Any, key: Any) -> Any:
     return builder.sign(ca_key, hashes.SHA256())
 
 
-def _write_pki(root: Path) -> None:
+def _write_pki(root: Path, peers: tuple[str, ...]) -> None:
     """A throwaway fleet CA and one leaf certificate per peer."""
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "acceptance-fleet-ca")])
     pem = serialization.Encoding.PEM
     (root / "ca.pem").write_bytes(_issue("acceptance-fleet-ca", ca_key, ca_name, ca_key).public_bytes(pem))
-    for peer in ("alpha", "beta"):
+    for peer in peers:
         key = ec.generate_private_key(ec.SECP256R1())
         (root / f"{peer}.pem").write_bytes(_issue(peer, ca_key, ca_name, key).public_bytes(pem))
         key_path = root / f"{peer}.key"
@@ -109,18 +112,21 @@ def _free_port() -> int:
 
 
 class _Peer:
-    def __init__(self, name: str, root: Path, **endpoints: str) -> None:
+    def __init__(self, name: str, root: Path, acl: Path | None, **endpoints: str) -> None:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("STRANDS_MESH", "ZENOH_"))}
         env.update(
             MUJOCO_GL=os.environ.get("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl"),
             STRANDS_MESH_TLS_CA=str(root / "ca.pem"),
             STRANDS_MESH_TLS_CERT=str(root / f"{name}.pem"),
             STRANDS_MESH_TLS_KEY=str(root / f"{name}.key"),
-            STRANDS_MESH_ACCEPT_PERMISSIVE_ACL="1",
             STRANDS_MESH_OVERRIDE_CODE=RESUME_CODE,
             STRANDS_MESH_AUDIT_DIR=str(root / f"audit-{name}"),
             **endpoints,
         )
+        if acl is None:
+            env["STRANDS_MESH_ACCEPT_PERMISSIVE_ACL"] = "1"
+        else:
+            env["STRANDS_MESH_ACL_FILE"] = str(acl)
         self.log = root / f"{name}.log"
         self.proc = subprocess.Popen(
             [sys.executable, "-c", PEER, name],
@@ -163,29 +169,42 @@ def _until(predicate: Any, seconds: float = 15.0) -> bool:
     return False
 
 
-def test_two_mesh_peers_exchange_state_and_rpc(tmp_path: Path) -> None:
-    _write_pki(tmp_path)
+@pytest.mark.parametrize(
+    ("acl", "operator", "robot"),
+    [
+        (None, "alpha", "beta"),
+        (EXAMPLES / "mesh_acl_example.json5", "op-1", "robot-a"),
+        (EXAMPLES / "mesh_acl_strict_per_peer.json5", "op-1", "robot-a"),
+    ],
+    ids=["permissive", "role_acl", "strict_acl"],
+)
+def test_two_mesh_peers_exchange_state_and_rpc(tmp_path: Path, acl: Path | None, operator: str, robot: str) -> None:
+    _write_pki(tmp_path, (operator, robot))
     endpoint = f"tls/127.0.0.1:{_free_port()}"
-    beta = _Peer("beta", tmp_path, ZENOH_LISTEN=endpoint)
-    alpha = _Peer("alpha", tmp_path, ZENOH_CONNECT=endpoint)
+    beta = _Peer(robot, tmp_path, acl, ZENOH_LISTEN=endpoint)
+    alpha = _Peer(operator, tmp_path, acl, ZENOH_CONNECT=endpoint)
     try:
-        assert _until(lambda: "beta" in alpha.ask("peers") and "alpha" in beta.ask("peers"))
+        assert _until(lambda: robot in alpha.ask("peers") and operator in beta.ask("peers"))
 
-        alpha.ask("subscribe", topic="strands/beta/state")
-        assert _until(lambda: alpha.ask("samples") > 0), "no state sample from beta reached alpha"
+        alpha.ask("subscribe", topic=f"strands/{robot}/state")
+        assert _until(lambda: alpha.ask("samples") > 0), f"no state sample from {robot} reached {operator}"
 
-        status = alpha.ask("send", to="beta", cmd={"action": "status"})
-        assert (status.get("responder_id"), status["result"].get("status")) == ("beta", "idle"), status
+        status = alpha.ask("send", to=robot, cmd={"action": "status"})
+        assert (status.get("responder_id"), status["result"].get("status")) == (robot, "idle"), status
 
-        assert "beta" in alpha.ask("estop")
-        assert _until(lambda: beta.ask("locked") is True), "beta did not lock out on alpha's e-stop"
+        if acl is not None:
+            reverse = beta.ask("send", to=operator, cmd={"action": "status"})
+            assert reverse == {"status": "timeout"}, f"a robot certificate commanded the operator: {reverse}"
 
-        wrong = alpha.ask("send", to="beta", cmd={"action": "resume", "override_code": "not-the-code"})
+        assert robot in alpha.ask("estop")
+        assert _until(lambda: beta.ask("locked") is True), f"{robot} did not lock out on {operator}'s e-stop"
+
+        wrong = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": "not-the-code"})
         assert (wrong["result"], beta.ask("locked")) == ({"status": "error", "error": "resume rejected"}, True)
 
-        right = alpha.ask("send", to="beta", cmd={"action": "resume", "override_code": RESUME_CODE})
+        right = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": RESUME_CODE})
         assert right["result"] == {"status": "ok"}, right
-        assert _until(lambda: beta.ask("locked") is False), "the right resume code did not clear beta"
+        assert _until(lambda: beta.ask("locked") is False), f"the right resume code did not clear {robot}"
     finally:
         alpha.close()
         beta.close()

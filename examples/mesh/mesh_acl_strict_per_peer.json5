@@ -13,10 +13,11 @@
 // one rule + one subject PER robot, hard-coding that robot's peer-id
 // prefix into the rule's key_exprs.
 //
-// The peer-id on the wire is the Zenoh key segment (e.g.
-// `<namespace>/robot-a/state/...`); after the namespace prefix is
-// stripped for ACL matching it appears as `robot-a/...`. Enumerate that
-// exact prefix below for each robot.
+// The peer-id is the second key segment: `strands/robot-a/state`, and a
+// reply from robot-a to op-1 travels on `strands/op-1/response/robot-a/<turn>`
+// (the fleet namespace prefix is stripped before matching). Spell them
+// with a leading `**/`: on Zenoh 1.x neither `strands/robot-a/state` nor
+// `robot-a/state` matched in a live two-peer run.
 //
 // MAINTENANCE COST
 // ----------------
@@ -29,125 +30,221 @@
 //
 // Zenoh 1.x quirks: see mesh_acl_example.json5 header (enabled:true
 // required; literal-CN matching only; interfaces optional;
-// namespace-relative key_exprs; put=ingress / declare_subscriber=egress).
+// namespace-relative key_exprs; every set granted in both flows).
 //
 // Reference test tree: tests/mesh/test_zenoh_transport_security.py
 {
   enabled: true,
   default_permission: "deny",
 
+  // Each message is checked on both nodes against the REMOTE peer's
+  // subject, so every role grants what it publishes (ingress put +
+  // egress declare_subscriber) and what it reads (ingress
+  // declare_subscriber + egress put). See mesh_acl_example.json5.
   rules: [
-    // ---- Shared fleet classes every robot may publish + subscribe ----
     {
-      id: "shared_publish",
-      messages: ["put"],
-      flows: ["ingress"],
-      permission: "allow",
-      key_exprs: ["**/presence", "**/health", "**/safety/**"],
-    },
-    {
-      id: "shared_subscribe",
-      messages: ["declare_subscriber"],
-      flows: ["egress"],
-      permission: "allow",
-      key_exprs: ["**/presence", "**/broadcast", "**/safety/**"],
-    },
-
-    // ---- Per-robot OWN-topic grants (one block per robot CN) ----
-    {
-      // robot-a: publish + subscribe ONLY to robot-a's own topics.
-      id: "robot_a_own_publish",
+      // robot-a: its own topics, its own replies, the shared classes.
+      id: "robot_a_publishes",
       messages: ["put"],
       flows: ["ingress"],
       permission: "allow",
       key_exprs: [
-        "robot-a/state/**",
-        "robot-a/pose",
-        "robot-a/imu",
-        "robot-a/odom",
-        "robot-a/lidar/**",
-        "robot-a/hand/**",
-        "robot-a/camera/**",
-        "robot-a/response/**",
+        "**/presence",
+        "**/health",
+        "**/robot-a/state",
+        "**/robot-a/state/**",
+        "**/robot-a/pose",
+        "**/robot-a/imu",
+        "**/robot-a/odom",
+        "**/robot-a/lidar/**",
+        "**/robot-a/hand/**",
+        "**/robot-a/camera/**",
+        "**/robot-a/stream",
+        "**/response/robot-a/*",
       ],
     },
     {
-      id: "robot_a_own_subscribe",
+      // A peer subscribes to ALL of its replies (`strands/<me>/response/**`);
+      // which robot may answer is held by robot_a_publishes above.
+      id: "robot_a_is_asked_for",
       messages: ["declare_subscriber"],
       flows: ["egress"],
       permission: "allow",
-      key_exprs: ["robot-a/cmd", "robot-a/response/**"],
+      key_exprs: [
+        "**/presence",
+        "**/health",
+        "**/robot-a/state",
+        "**/robot-a/state/**",
+        "**/robot-a/pose",
+        "**/robot-a/imu",
+        "**/robot-a/odom",
+        "**/robot-a/lidar/**",
+        "**/robot-a/hand/**",
+        "**/robot-a/camera/**",
+        "**/robot-a/stream",
+        "**/response/**",
+      ],
     },
     {
-      // robot-b: publish + subscribe ONLY to robot-b's own topics.
-      id: "robot_b_own_publish",
+      // robot-a: the shared classes plus its OWN cmd and replies - never another robot's.
+      id: "robot_a_reads",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/broadcast",
+        "**/safety/**",
+        "**/robot-a/cmd",
+        "**/robot-a/response/**",
+      ],
+    },
+    {
+      id: "robot_a_is_sent",
+      messages: ["put"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/broadcast",
+        "**/safety/**",
+        "**/robot-a/cmd",
+        "**/robot-a/response/**",
+      ],
+    },
+    {
+      // robot-b: its own topics, its own replies, the shared classes.
+      id: "robot_b_publishes",
       messages: ["put"],
       flows: ["ingress"],
       permission: "allow",
       key_exprs: [
-        "robot-b/state/**",
-        "robot-b/pose",
-        "robot-b/imu",
-        "robot-b/odom",
-        "robot-b/lidar/**",
-        "robot-b/hand/**",
-        "robot-b/camera/**",
-        "robot-b/response/**",
+        "**/presence",
+        "**/health",
+        "**/robot-b/state",
+        "**/robot-b/state/**",
+        "**/robot-b/pose",
+        "**/robot-b/imu",
+        "**/robot-b/odom",
+        "**/robot-b/lidar/**",
+        "**/robot-b/hand/**",
+        "**/robot-b/camera/**",
+        "**/robot-b/stream",
+        "**/response/robot-b/*",
       ],
     },
     {
-      id: "robot_b_own_subscribe",
+      // A peer subscribes to ALL of its replies (`strands/<me>/response/**`);
+      // which robot may answer is held by robot_b_publishes above.
+      id: "robot_b_is_asked_for",
       messages: ["declare_subscriber"],
       flows: ["egress"],
       permission: "allow",
-      key_exprs: ["robot-b/cmd", "robot-b/response/**"],
+      key_exprs: [
+        "**/presence",
+        "**/health",
+        "**/robot-b/state",
+        "**/robot-b/state/**",
+        "**/robot-b/pose",
+        "**/robot-b/imu",
+        "**/robot-b/odom",
+        "**/robot-b/lidar/**",
+        "**/robot-b/hand/**",
+        "**/robot-b/camera/**",
+        "**/robot-b/stream",
+        "**/response/**",
+      ],
     },
-
-    // ---- Operator: publish commands + broad observe (intentional) ----
     {
-      id: "operator_publish_cmds",
+      // robot-b: the shared classes plus its OWN cmd and replies - never another robot's.
+      id: "robot_b_reads",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/broadcast",
+        "**/safety/**",
+        "**/robot-b/cmd",
+        "**/robot-b/response/**",
+      ],
+    },
+    {
+      id: "robot_b_is_sent",
+      messages: ["put"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/broadcast",
+        "**/safety/**",
+        "**/robot-b/cmd",
+        "**/robot-b/response/**",
+      ],
+    },
+    {
+      // Operators command the fleet and announce themselves.
+      id: "operator_publishes",
       messages: ["put"],
       flows: ["ingress"],
       permission: "allow",
-      key_exprs: ["**/cmd", "**/broadcast", "**/safety/**"],
+      key_exprs: [
+        "**/presence",
+        "**/cmd",
+        "**/broadcast",
+        "**/safety/**",
+      ],
     },
     {
-      id: "operator_subscribe_all",
+      id: "operator_is_asked_for",
       messages: ["declare_subscriber"],
       flows: ["egress"],
       permission: "allow",
-      key_exprs: ["**"],
+      key_exprs: [
+        "**/presence",
+        "**/cmd",
+        "**/broadcast",
+        "**/safety/**",
+      ],
+    },
+    {
+      // INTENTIONAL operator-role privilege: operators observe the whole fleet.
+      id: "operator_reads",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "**",
+      ],
+    },
+    {
+      id: "operator_is_sent",
+      messages: ["put"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: [
+        "**",
+      ],
     },
   ],
 
   subjects: [
-    {
-      id: "robot_a",
-      cert_common_names: ["robot-a"],
-    },
-    {
-      id: "robot_b",
-      cert_common_names: ["robot-b"],
-    },
-    {
-      id: "operator_peer",
-      cert_common_names: ["op-1", "op-2"],
-    },
+    { id: "robot_a", cert_common_names: ["robot-a"] },
+    { id: "robot_b", cert_common_names: ["robot-b"] },
+    { id: "operator_peer", cert_common_names: ["op-1", "op-2"] },
   ],
 
   policies: [
     {
-      // robot-a sees ONLY its own topics + shared classes.
-      rules: ["shared_publish", "shared_subscribe", "robot_a_own_publish", "robot_a_own_subscribe"],
+      rules: ["robot_a_publishes", "robot_a_is_asked_for", "robot_a_reads", "robot_a_is_sent"],
       subjects: ["robot_a"],
     },
     {
-      // robot-b sees ONLY its own topics + shared classes.
-      rules: ["shared_publish", "shared_subscribe", "robot_b_own_publish", "robot_b_own_subscribe"],
+      rules: ["robot_b_publishes", "robot_b_is_asked_for", "robot_b_reads", "robot_b_is_sent"],
       subjects: ["robot_b"],
     },
     {
-      rules: ["operator_publish_cmds", "operator_subscribe_all"],
+      rules: ["operator_publishes", "operator_is_asked_for", "operator_reads", "operator_is_sent"],
       subjects: ["operator_peer"],
     },
   ],

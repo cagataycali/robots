@@ -17,9 +17,12 @@ Zenoh 1.x quirks (each verified against a live session):
 * ``key_exprs`` match the user-side key (the namespace prefix is
   stripped from the matcher's view), so ``**/cmd`` is the robust
   glob; ``"<namespace>/*/cmd"`` never matches.
-* ``declare_subscriber`` rules live in the ``egress`` flow (the
-  declare goes from subscriber to publisher); ``put`` rules live in
-  ``ingress`` (the publisher's cert CN is known to the receiver).
+* Both nodes check every message against the REMOTE peer's subject: a
+  ``put`` leaves the publisher as ``egress`` and arrives as ``ingress``,
+  a ``declare_subscriber`` travels the other way. A role therefore grants
+  what it publishes (ingress ``put`` + egress ``declare_subscriber``) and
+  what it reads (ingress ``declare_subscriber`` + egress ``put``); one
+  flow alone lets nothing cross, not even presence.
 
 JSON5 is the on-disk format (line + block comments, trailing commas,
 unquoted keys). The loader delegates to the ``json5`` PyPI dependency
