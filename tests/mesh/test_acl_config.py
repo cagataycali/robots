@@ -248,13 +248,9 @@ class TestJSON5EndToEnd:
 
         # Verify rules were parsed (not just comments)
         rule_ids = {r["id"] for r in parsed["rules"]}
-        assert "robot_publish_telemetry" in rule_ids
-        assert "operator_publish_cmds" in rule_ids
-        # Subscribe is now role-scoped: robots get a narrow rule, operators
-        # keep the broad observe rule. The prior single ``any_subscribe``
-        # rule that granted ``**`` to every role was replaced.
-        assert "robot_subscribe_scoped" in rule_ids
-        assert "operator_subscribe_all" in rule_ids
+        # Each role grants what it publishes and what it reads; robots read
+        # a narrow set, operators keep the broad observe grant.
+        assert {"robot_publishes", "robot_reads", "operator_publishes", "operator_reads"} <= rule_ids
 
         # Verify subjects parsed
         subject_ids = {s["id"] for s in parsed["subjects"]}
@@ -262,7 +258,7 @@ class TestJSON5EndToEnd:
         assert "operator_peer" in subject_ids
 
         # Verify nested arrays with trailing commas parsed correctly
-        robot_rule = next(r for r in parsed["rules"] if r["id"] == "robot_publish_telemetry")
+        robot_rule = next(r for r in parsed["rules"] if r["id"] == "robot_publishes")
         assert "**/presence" in robot_rule["key_exprs"]
         assert "**/response/**" in robot_rule["key_exprs"]
 

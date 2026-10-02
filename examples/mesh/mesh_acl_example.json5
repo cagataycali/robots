@@ -57,21 +57,37 @@
 //     prefix is stripped before matching). Use `**/cmd` style
 //     globs, NOT `<namespace>/*/cmd`.
 //
-//  5. `put` rules live in `ingress` (where the publishing peer's
-//     cert CN is known to the receiver). `declare_subscriber` lives
-//     in `egress` (the declare flows from subscriber to publisher).
+//  5. Both nodes check every message against the REMOTE peer's
+//     subject, so each key set is granted in both flows (see the
+//     comment above `rules`).
 {
   enabled: true,
   default_permission: "deny",
 
+  // Every message is checked TWICE, once on each node, and each node
+  // checks it against the REMOTE peer's subject: a put leaves the
+  // publisher as `egress` and reaches the subscriber as `ingress`; a
+  // subscriber declaration travels the other way. So a role is two key
+  // sets, each granted in both flows:
+  //
+  //   publishes P: ingress put (what the role may send us) and egress
+  //                declare_subscriber (whose data we may ask it for);
+  //   reads     S: ingress declare_subscriber (what it may ask us for)
+  //                and egress put (what we may send it).
+  //
+  // Granting only one flow per set leaves the two nodes disagreeing, and
+  // nothing crosses: not even presence, so the peers never discover each
+  // other. tests_integ/acceptance/test_two_mesh_peers_exchange_state_and_rpc.py
+  // runs this file between an operator and a robot in two processes.
   rules: [
     {
-      id: "robot_publish_telemetry",
+      id: "robot_publishes",
       messages: ["put"],
       flows: ["ingress"],
       permission: "allow",
       key_exprs: [
         "**/presence",
+        "**/state",
         "**/state/**",
         "**/health",
         "**/pose",
@@ -80,30 +96,52 @@
         "**/lidar/**",
         "**/hand/**",
         "**/camera/**",
+        "**/stream",
         "**/response/**",
       ],
     },
     {
-      id: "operator_publish_cmds",
-      messages: ["put"],
-      flows: ["ingress"],
+      id: "robot_is_asked_for",
+      messages: ["declare_subscriber"],
+      flows: ["egress"],
       permission: "allow",
       key_exprs: [
-        "**/cmd",
-        "**/broadcast",
-        "**/safety/**",
+        "**/presence",
+        "**/state",
+        "**/state/**",
+        "**/health",
+        "**/pose",
+        "**/imu",
+        "**/odom",
+        "**/lidar/**",
+        "**/hand/**",
+        "**/camera/**",
+        "**/stream",
+        "**/response/**",
       ],
     },
     {
-      // Robot subscribe is intentionally NARROW: only fleet-shared,
-      // low-impact topic classes plus the robot's own cmd/response.
-      // It deliberately does NOT include `**`, `**/state/**`,
-      // `**/camera/**`, or another peer's `**/cmd` - a robot has no
-      // operational need to observe another robot's control or sensor
-      // streams. Operators that need the robot to read a specific peer
-      // should route through `tell`/`send` RPC, not a raw subscribe.
-      id: "robot_subscribe_scoped",
+      // Robot reads are intentionally NARROW: only fleet-shared,
+      // low-impact topic classes plus cmd/response. They deliberately do
+      // NOT include `**`, `**/state/**` or `**/camera/**` - a robot has no
+      // operational need to observe another robot's sensor streams.
+      // Operators that need the robot to read a specific peer should route
+      // through `tell`/`send` RPC, not a raw subscribe.
+      id: "robot_reads",
       messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/broadcast",
+        "**/safety/**",
+        "**/cmd",
+        "**/response/**",
+      ],
+    },
+    {
+      id: "robot_is_sent",
+      messages: ["put"],
       flows: ["egress"],
       permission: "allow",
       key_exprs: [
@@ -115,26 +153,83 @@
       ],
     },
     {
-      // INTENTIONAL operator-role privilege: operators monitor the whole
-      // fleet, so they keep a broad subscribe. Scoped to the
-      // operator_peer subject only (see policies below) - robots never
-      // reference this rule.
-      id: "operator_subscribe_all",
+      // Operators command the fleet and announce themselves. They do not
+      // publish telemetry or responses, so a robot never takes an
+      // operator's word for a robot's state.
+      id: "operator_publishes",
+      messages: ["put"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["**/presence", "**/cmd", "**/broadcast", "**/safety/**"],
+    },
+    {
+      id: "operator_is_asked_for",
       messages: ["declare_subscriber"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: ["**/presence", "**/cmd", "**/broadcast", "**/safety/**"],
+    },
+    {
+      // INTENTIONAL operator-role privilege: operators monitor the whole
+      // fleet, so they read `**`. Bound to the operator_peer subject only
+      // (see policies below) - robots never reference these two rules.
+      id: "operator_reads",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["**"],
+    },
+    {
+      id: "operator_is_sent",
+      messages: ["put"],
       flows: ["egress"],
       permission: "allow",
       key_exprs: ["**"],
     },
     {
-      // Dashboard subscribe is OBSERVE-ONLY: presence, health, safety
-      // events, camera frames, state and rollout streams - everything a
-      // read-only fleet dashboard (examples/fleet/dashboard.py, epic
-      // #2179) renders. It deliberately does NOT include `**/cmd`,
-      // `**/broadcast` or `**/response/**`: a dashboard has no
-      // operational need to observe the command/RPC plane, and this
-      // role must never be a quiet path to it.
-      id: "dashboard_subscribe_observe",
+      // The dashboard's ONLY publish grant: its own presence, so operators
+      // see it on the mesh. Zenoh 1.x key_exprs cannot interpolate the
+      // peer's cert CN (see the header), so this is the presence topic
+      // CLASS - the role still cannot publish commands, broadcasts or
+      // safety traffic, which is what makes it read-only where it matters.
+      id: "dashboard_publishes",
+      messages: ["put"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: ["**/presence"],
+    },
+    {
+      id: "dashboard_is_asked_for",
       messages: ["declare_subscriber"],
+      flows: ["egress"],
+      permission: "allow",
+      key_exprs: ["**/presence"],
+    },
+    {
+      // Dashboard reads are OBSERVE-ONLY: presence, health, safety events,
+      // camera frames, state and rollout streams - everything a read-only
+      // fleet dashboard renders. They deliberately do NOT include
+      // `**/cmd`, `**/broadcast` or `**/response/**`: a dashboard has no
+      // operational need to observe the command/RPC plane, and this role
+      // must never be a quiet path to it.
+      id: "dashboard_reads",
+      messages: ["declare_subscriber"],
+      flows: ["ingress"],
+      permission: "allow",
+      key_exprs: [
+        "**/presence",
+        "**/health",
+        "**/safety/**",
+        "**/camera/**",
+        "**/state",
+        "**/state/**",
+        "**/stream",
+        "**/pose",
+      ],
+    },
+    {
+      id: "dashboard_is_sent",
+      messages: ["put"],
       flows: ["egress"],
       permission: "allow",
       key_exprs: [
@@ -142,24 +237,10 @@
         "**/health",
         "**/safety/**",
         "**/camera/**",
+        "**/state",
         "**/state/**",
         "**/stream",
         "**/pose",
-      ],
-    },
-    {
-      // The dashboard's ONLY publish grant: announcing its own presence
-      // so operators can see it on the mesh. Zenoh 1.x key_exprs cannot
-      // interpolate the peer's cert CN (see the header), so this is the
-      // presence topic CLASS - the role still cannot publish commands,
-      // broadcasts or safety traffic, which is the boundary that makes
-      // it read-only where it matters.
-      id: "dashboard_publish_presence",
-      messages: ["put"],
-      flows: ["ingress"],
-      permission: "allow",
-      key_exprs: [
-        "**/presence",
       ],
     },
   ],
@@ -195,19 +276,19 @@
   policies: [
     {
       // Robots: publish telemetry + scoped subscribe. NO blanket `**`.
-      rules: ["robot_publish_telemetry", "robot_subscribe_scoped"],
+      rules: ["robot_publishes", "robot_is_asked_for", "robot_reads", "robot_is_sent"],
       subjects: ["robot_peer"],
     },
     {
       // Operators: publish commands + broad observe (intentional).
-      rules: ["operator_publish_cmds", "operator_subscribe_all"],
+      rules: ["operator_publishes", "operator_is_asked_for", "operator_reads", "operator_is_sent"],
       subjects: ["operator_peer"],
     },
     {
       // Dashboards: observe-only. May watch the fleet and announce their
       // own presence; may NOT publish commands, broadcasts or safety
       // traffic - a compromised dashboard cert can watch, not actuate.
-      rules: ["dashboard_subscribe_observe", "dashboard_publish_presence"],
+      rules: ["dashboard_publishes", "dashboard_is_asked_for", "dashboard_reads", "dashboard_is_sent"],
       subjects: ["dashboard_peer"],
     },
   ],
