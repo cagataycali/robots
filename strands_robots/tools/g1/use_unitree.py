@@ -78,7 +78,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_motion
-from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, ensure_dds
+from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, as_tool_result, ensure_dds
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +535,7 @@ def _gate(service_name: str, operation_name: str, high_danger: bool, tool_contex
 
 
 @tool(context=True)
+@as_tool_result
 def use_unitree(
     service_name: str,
     operation_name: str,
@@ -597,7 +598,8 @@ def use_unitree(
             STRANDS_UNITREE_COMMAND_ALLOW or BYPASS_TOOL_CONSENT=true.
 
     Returns:
-        Dict with status/message plus service, operation, label, result,
+        A tool result whose ``status`` is the call's and whose
+        ``content[0]["json"]`` is a dict with status/message plus service, operation, label, result,
         mutative and high_danger flags. On error: the message plus
         available_operations or the expected signature where useful.
 

@@ -39,6 +39,12 @@ import pytest
 
 import strands_robots.tools.g1.use_unitree as uu
 
+
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 #: ``LocoClient.SetVelocity`` is ``self._Call(ROBOT_API_ID_LOCO_SET_VELOCITY, ...)``.
 WALK_API_ID = 7105
 
@@ -90,13 +96,15 @@ def robot(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> _RpcClient:
 class TestTheRawTransportCarriesTheSameCommand:
     def test_the_typed_operation_reaches_the_robot_through_the_raw_transport(self, robot: _RpcClient) -> None:
         """The premise: refusing ``_Call`` refuses the wire form of a walk."""
-        res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0}, tool_context=_ctx("y"))
+        res = _payload(
+            uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0}, tool_context=_ctx("y"))
+        )
 
         assert res["status"] == "success", res
         assert robot.rpc == [(WALK_API_ID, WALK_PARAMETER)]
 
     def test_the_raw_form_of_that_walk_never_reaches_the_bus(self, robot: _RpcClient) -> None:
-        res = uu.use_unitree("loco", "_Call", RAW_WALK)
+        res = _payload(uu.use_unitree("loco", "_Call", RAW_WALK))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.rpc == [], f"private plumbing reached the robot: {robot.rpc}"
@@ -106,7 +114,7 @@ class TestNoConsentPathWidensTheSurface:
     def test_an_approving_operator_cannot_buy_a_raw_rpc(self, robot: _RpcClient) -> None:
         ctx = _ctx("y")
 
-        res = uu.use_unitree("loco", "_Call", RAW_WALK, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "_Call", RAW_WALK, tool_context=ctx))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.rpc == []
@@ -117,7 +125,7 @@ class TestNoConsentPathWidensTheSurface:
     ) -> None:
         monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
 
-        res = uu.use_unitree("loco", "_Call", RAW_WALK)
+        res = _payload(uu.use_unitree("loco", "_Call", RAW_WALK))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.rpc == []
@@ -129,7 +137,7 @@ class TestNoConsentPathWidensTheSurface:
         """``*`` pre-approves every operation of this tool; ``_Call`` is not one."""
         monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, allow)
 
-        res = uu.use_unitree("loco", "_Call", RAW_WALK)
+        res = _payload(uu.use_unitree("loco", "_Call", RAW_WALK))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.rpc == []
@@ -138,7 +146,7 @@ class TestNoConsentPathWidensTheSurface:
 class TestTheRefusalStillSaysWhatTheCallWas:
     def test_the_flags_are_present_so_a_refused_raw_call_never_reads_as_harmless(self, robot: _RpcClient) -> None:
         """Absent flags are the shape ``.get("high_danger")`` cannot tell from False."""
-        res = uu.use_unitree("loco", "_Call", RAW_WALK, label="walk")
+        res = _payload(uu.use_unitree("loco", "_Call", RAW_WALK, label="walk"))
 
         assert res["mutative"] is True
         assert res["high_danger"] is True
@@ -163,14 +171,16 @@ class TestTheTypedSurfaceIsUnchanged:
     """The control: refusing the plumbing must not refuse what it sits under."""
 
     def test_a_read_is_still_ungated(self, robot: _RpcClient) -> None:
-        res = uu.use_unitree("loco", "GetFsmId", {})
+        res = _payload(uu.use_unitree("loco", "GetFsmId", {}))
 
         assert res["status"] == "success", res
         assert res["mutative"] is False and res["high_danger"] is False
 
     def test_a_declined_typed_write_is_still_the_gate_s_refusal(self, robot: _RpcClient) -> None:
         """Not the private-name refusal - the operator was asked and said no."""
-        res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0}, tool_context=_ctx("n"))
+        res = _payload(
+            uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0}, tool_context=_ctx("n"))
+        )
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert "private SDK methods" not in res["message"]

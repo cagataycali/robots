@@ -174,7 +174,7 @@ class TestDiscoveryDegradesOnlyForAnAbsentSdk:
         # rather than returning a differently-sourced answer as a success.
         res = mod.use_unitree("meta", "describe_operation", {"service_name": "loco", "operation_name": "Move"})
         assert res["status"] == "error"
-        assert "bug in the reader" in res["message"]
+        assert "bug in the reader" in res["content"][0]["json"]["message"]
 
     def test_an_unintrospectable_operation_is_not_reported_as_parameterless(
         self, monkeypatch: pytest.MonkeyPatch
@@ -199,3 +199,25 @@ class TestDiscoveryDegradesOnlyForAnAbsentSdk:
         assert out["source"] == "inspect"
         assert [p["name"] for p in out["parameters"]] == ["vx", "vy"]
         assert out["signature"].startswith("Move(")
+
+
+@pytest.mark.parametrize(
+    ("verb", "kwargs"),
+    [
+        ("g1_joints", {"query": "no_such_joint"}),
+        ("g1_motion_gates", {"scope": "no_such_scope"}),
+        ("use_unitree", {"service_name": "no_such_service", "operation_name": "x"}),
+    ],
+)
+def test_a_refused_lookup_reaches_the_agent_as_a_failed_call(verb: str, kwargs: dict[str, Any]) -> None:
+    """Strands reads ``status`` only off a dict that also carries ``content``.
+
+    A flat ``{"status": "error", ...}`` dict reaches the model as a successful
+    call, so a refused ``use_unitree`` write would read as one that landed.
+    """
+    from strands import Agent
+
+    agent = Agent(tools=[getattr(g1_pkg, verb)], callback_handler=None)
+    result = getattr(agent.tool, verb)(**kwargs)
+    assert result["status"] == "error"
+    assert result["content"][0]["json"]["status"] == "error"

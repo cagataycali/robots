@@ -26,6 +26,11 @@ import pytest
 import strands_robots.tools.g1.use_unitree as uu
 
 
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 class _Recorder:
     """Stand-in SDK client that records every method call instead of moving a robot."""
 
@@ -94,7 +99,7 @@ class TestWithoutApprovalNothingIsDispatched:
     )
     def test_a_declined_high_danger_op_never_reaches_the_client(self, robot: _Recorder, service: str, op: str) -> None:
         params = {"fsm_id": 0} if op == "SetFsmId" else {}
-        res = uu.use_unitree(service, op, params, tool_context=_ctx("n - the robot is standing"))
+        res = _payload(uu.use_unitree(service, op, params, tool_context=_ctx("n - the robot is standing")))
 
         assert res["status"] == "error", res
         assert res["dispatched"] is False
@@ -105,7 +110,7 @@ class TestWithoutApprovalNothingIsDispatched:
 
     def test_no_tool_context_refuses_and_names_both_escape_hatches(self, robot: _Recorder) -> None:
         """Headless with nothing pre-approved fails closed, not open."""
-        res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0})
+        res = _payload(uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.0}))
 
         assert res["status"] == "error", res
         assert res["dispatched"] is False
@@ -115,7 +120,7 @@ class TestWithoutApprovalNothingIsDispatched:
 
     def test_a_merely_mutative_op_is_gated_too(self, robot: _Recorder) -> None:
         """``audio.TtsMaker`` is not high-danger but it is a write; a write asks."""
-        res = uu.use_unitree("audio", "TtsMaker", {"text": "hi"}, tool_context=_ctx("no"))
+        res = _payload(uu.use_unitree("audio", "TtsMaker", {"text": "hi"}, tool_context=_ctx("no")))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert res["high_danger"] is False and res["mutative"] is True
@@ -125,7 +130,7 @@ class TestWithoutApprovalNothingIsDispatched:
         ctx = MagicMock(name="ToolContext")
         ctx.interrupt.side_effect = RuntimeError("no interrupt channel")
 
-        res = uu.use_unitree("loco", "ZeroTorque", {}, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "ZeroTorque", {}, tool_context=ctx))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.calls == []
@@ -134,7 +139,7 @@ class TestWithoutApprovalNothingIsDispatched:
 class TestAnApprovalDispatchesExactlyOnce:
     def test_an_approved_op_is_sent_once_with_its_parameters(self, robot: _Recorder) -> None:
         ctx = _ctx("y")
-        res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.1}, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.1}, tool_context=ctx))
 
         assert res["status"] == "success", res
         assert robot.calls == [("SetVelocity", {"vx": 0.3, "vy": 0.0, "vyaw": 0.1, "duration": 1.0})]
@@ -143,7 +148,7 @@ class TestAnApprovalDispatchesExactlyOnce:
     def test_the_interrupt_names_the_tool_and_the_pair(self, robot: _Recorder) -> None:
         """The operator is told which tool asks and what exactly it wants to send."""
         ctx = _ctx("y")
-        uu.use_unitree("loco", "ZeroTorque", {}, tool_context=ctx)
+        _payload(uu.use_unitree("loco", "ZeroTorque", {}, tool_context=ctx))
 
         interrupt_id = ctx.interrupt.call_args.args[0]
         reason = ctx.interrupt.call_args.kwargs["reason"]
@@ -160,7 +165,7 @@ class TestPreApprovalIsSilent:
         monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, "audio.TtsMaker, loco.SetVelocity")
         ctx = _ctx("n")
 
-        res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.1, "vy": 0.0, "vyaw": 0.0}, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "SetVelocity", {"vx": 0.1, "vy": 0.0, "vyaw": 0.0}, tool_context=ctx))
 
         assert res["status"] == "success", res
         assert [name for name, _ in robot.calls] == ["SetVelocity"]
@@ -172,7 +177,7 @@ class TestPreApprovalIsSilent:
         """Pre-approving SetVelocity does not pre-approve ZeroTorque on the same service."""
         monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, "loco.SetVelocity")
 
-        res = uu.use_unitree("loco", "ZeroTorque", {}, tool_context=_ctx("n"))
+        res = _payload(uu.use_unitree("loco", "ZeroTorque", {}, tool_context=_ctx("n")))
 
         assert res["status"] == "error" and res["dispatched"] is False
         assert robot.calls == []
@@ -180,7 +185,7 @@ class TestPreApprovalIsSilent:
     def test_star_pre_approves_every_pair(self, robot: _Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, "*")
 
-        res = uu.use_unitree("motion_switcher", "ReleaseMode", {})
+        res = _payload(uu.use_unitree("motion_switcher", "ReleaseMode", {}))
 
         assert res["status"] == "success", res
         assert robot.calls == [("ReleaseMode", {})]
@@ -188,7 +193,7 @@ class TestPreApprovalIsSilent:
     def test_bypass_tool_consent_lifts_the_gate(self, robot: _Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
 
-        res = uu.use_unitree("loco", "ZeroTorque", {})
+        res = _payload(uu.use_unitree("loco", "ZeroTorque", {}))
 
         assert res["status"] == "success", res
         assert robot.calls == [("ZeroTorque", {})]
@@ -196,14 +201,14 @@ class TestPreApprovalIsSilent:
 
 class TestReadsAndStopsAreNeverGated:
     def test_a_read_needs_no_context_and_no_approval(self, robot: _Recorder) -> None:
-        res = uu.use_unitree("loco", "GetFsmId", {})
+        res = _payload(uu.use_unitree("loco", "GetFsmId", {}))
 
         assert res["status"] == "success", res
         assert robot.calls == [("GetFsmId", {})]
 
     def test_a_read_with_a_context_never_interrupts(self, robot: _Recorder) -> None:
         ctx = _ctx("n")
-        res = uu.use_unitree("loco", "GetFsmId", {}, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "GetFsmId", {}, tool_context=ctx))
 
         assert res["status"] == "success", res
         ctx.interrupt.assert_not_called()
@@ -211,14 +216,14 @@ class TestReadsAndStopsAreNeverGated:
     def test_stop_move_goes_out_without_asking(self, robot: _Recorder) -> None:
         """The emergency stop must not be behind the prompt it is meant to rescue."""
         ctx = _ctx("n")
-        res = uu.use_unitree("loco", "StopMove", {}, tool_context=ctx)
+        res = _payload(uu.use_unitree("loco", "StopMove", {}, tool_context=ctx))
 
         assert res["status"] == "success", res
         assert robot.calls == [("StopMove", {})]
         ctx.interrupt.assert_not_called()
 
     def test_meta_operations_need_no_context(self) -> None:
-        res = uu.use_unitree("meta", "list_services")
+        res = _payload(uu.use_unitree("meta", "list_services"))
 
         assert res["status"] == "success"
 

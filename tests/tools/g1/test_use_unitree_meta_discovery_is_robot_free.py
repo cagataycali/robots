@@ -17,6 +17,11 @@ import subprocess
 import sys
 
 
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 def test_importing_use_unitree_pulls_no_sdk_submodule() -> None:
     """Measured in a clean interpreter, not against this session's ``sys.modules``.
 
@@ -48,7 +53,7 @@ def test_list_services_names_the_six_sdk_clients() -> None:
 def test_meta_list_services_answers_through_the_tool() -> None:
     from strands_robots.tools.g1.use_unitree import use_unitree
 
-    res = use_unitree("meta", "list_services")
+    res = _payload(use_unitree("meta", "list_services"))
     assert res["status"] == "success"
     assert any(s["service_name"] == "loco" for s in res["result"])
 
@@ -56,7 +61,7 @@ def test_meta_list_services_answers_through_the_tool() -> None:
 def test_meta_rejects_an_unknown_service() -> None:
     from strands_robots.tools.g1.use_unitree import use_unitree
 
-    res = use_unitree("nope", "Anything")
+    res = _payload(use_unitree("nope", "Anything"))
     assert res["status"] == "error"
     assert "unknown service" in res["message"]
 

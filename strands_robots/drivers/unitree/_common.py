@@ -24,9 +24,11 @@ mock the bus and skips the SDK entirely on Thor.
 
 from __future__ import annotations
 
+import functools
 import importlib
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from strands_robots.drivers.base import refuse
@@ -320,6 +322,24 @@ def live_handle_refusal(
     if not callable(getattr(driver, accessor, None)):
         return refuse(f"{verb}: `driver` of type {type(driver).__name__!r} does not expose {expected}")
     return None
+
+
+def as_tool_result(verb: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Return ``verb``'s flat ``{"status": ..., ...}`` dict as a Strands tool result.
+
+    Strands only reads ``status`` off a dict that also carries ``content``; a
+    flat dict reaches the agent as a successful call whose text happens to say
+    ``"error"``. Wrapping the payload as ``{"status": s, "content": [{"json":
+    payload}]}`` - the shape every driver envelope already has - makes a
+    refusal reach the agent as a failed call. Apply it under ``@tool``.
+    """
+
+    @functools.wraps(verb)
+    def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = verb(*args, **kwargs)
+        return {"status": payload["status"], "content": [{"json": payload}]}
+
+    return wrapper
 
 
 def snapshot_handle_refusal(verb: str, driver: Any) -> dict[str, Any] | None:

@@ -25,6 +25,12 @@ import pytest
 
 import strands_robots.tools.g1.use_unitree as uu
 
+
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 #: Plausible future SDK verbs, none starting with a MUTATIVE_PREFIXES entry.
 UNKNOWN_VERBS = ("Frobnicate", "Recover", "Continue", "Trigger", "Activate", "Engage", "ArmTask", "DoThing")
 
@@ -107,7 +113,7 @@ class TestTheClassifierIsAnAllowlist:
 class TestAnUnknownVerbNeverReachesTheRobotUnapproved:
     @pytest.mark.parametrize("verb", UNKNOWN_VERBS)
     def test_declined_by_the_operator_it_is_not_dispatched(self, robot: _Recorder, verb: str) -> None:
-        res = uu.use_unitree("loco", verb, {}, tool_context=_ctx("n"))
+        res = _payload(uu.use_unitree("loco", verb, {}, tool_context=_ctx("n")))
 
         assert res["status"] == "error", res
         assert res["dispatched"] is False
@@ -116,7 +122,7 @@ class TestAnUnknownVerbNeverReachesTheRobotUnapproved:
 
     @pytest.mark.parametrize("verb", UNKNOWN_VERBS)
     def test_headless_with_nothing_pre_approved_it_is_refused(self, robot: _Recorder, verb: str) -> None:
-        res = uu.use_unitree("loco", verb, {})
+        res = _payload(uu.use_unitree("loco", verb, {}))
 
         assert res["status"] == "error", res
         assert res["dispatched"] is False
@@ -125,7 +131,7 @@ class TestAnUnknownVerbNeverReachesTheRobotUnapproved:
 
     def test_approved_by_the_operator_it_runs(self, robot: _Recorder) -> None:
         """The gate asks; it does not forbid. A ``y`` still lets a new verb through."""
-        res = uu.use_unitree("loco", "Frobnicate", {}, tool_context=_ctx("y"))
+        res = _payload(uu.use_unitree("loco", "Frobnicate", {}, tool_context=_ctx("y")))
 
         assert res["status"] == "success", res
         assert res["mutative"] is True
@@ -135,14 +141,14 @@ class TestAnUnknownVerbNeverReachesTheRobotUnapproved:
         self, robot: _Recorder, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(uu.COMMAND_ALLOW_ENV, "loco.Frobnicate")
-        res = uu.use_unitree("loco", "Frobnicate", {})
+        res = _payload(uu.use_unitree("loco", "Frobnicate", {}))
 
         assert res["status"] == "success", res
         assert robot.calls == ["Frobnicate"]
 
     def test_a_read_is_still_never_gated(self, robot: _Recorder) -> None:
         """Headless, nothing pre-approved, no context: a read must still answer."""
-        res = uu.use_unitree("loco", "GetFsmId", {})
+        res = _payload(uu.use_unitree("loco", "GetFsmId", {}))
 
         assert res["status"] == "success", res
         assert res["mutative"] is False

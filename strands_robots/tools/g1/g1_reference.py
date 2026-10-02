@@ -10,7 +10,9 @@ One rule covers all four: **no query lists the table, a query resolves one
 entry in it.** That is why there are four verbs rather than the nine this
 package used to publish - a table's catalogue and its membership question are
 one verb with an optional argument, not two tool-schema slots in every agent's
-context.
+context. Each verb's answer is the ``content[0]["json"]`` block of its tool
+result, and the result's own ``status`` is the answer's, so a refused query
+reaches the agent as a failed call.
 
 The four tables, and the write each one decides before it is attempted:
 
@@ -62,6 +64,7 @@ from strands_robots.drivers.unitree._common import (
     ERR_CODES,
     HANDSHAKE_FSMS,
     WALK_FSMS,
+    as_tool_result,
 )
 
 _ISSUE = "Refs strands-labs/robots#358."
@@ -140,6 +143,7 @@ def _joint_table(group: str) -> dict[str, Any]:
 
 
 @tool
+@as_tool_result
 def g1_joints(query: str | int = "") -> dict[str, Any]:
     """Read the joint-name / slot / gain table ``G1Driver.send_action`` writes against.
 
@@ -239,6 +243,7 @@ def _unknown_scope(scope: str) -> dict[str, Any]:
 
 
 @tool
+@as_tool_result
 def g1_motion_gates(fsm_id: int | None = None, scope: str = "") -> dict[str, Any]:
     """Read the FSM-id sets ``G1Driver._check_motion_gates`` admits writes on.
 
@@ -353,6 +358,7 @@ _TOPIC_BUSY_CODE: int = 7400
 
 
 @tool
+@as_tool_result
 def g1_arm_actions(query: str | int = "") -> dict[str, Any]:
     """Read the arm-action ids ``G1ArmActionClient.ExecuteAction`` admits.
 
@@ -440,6 +446,7 @@ _UNKNOWN_CODE_TEXT: str = "unknown"
 
 
 @tool
+@as_tool_result
 def g1_error_codes(code: int | None = None) -> dict[str, Any]:
     """Read the SDK return codes the G1's locomotion and arm handlers surface.
 

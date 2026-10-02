@@ -89,9 +89,9 @@ def _drive_use_ros(response: object) -> dict[str, Any] | None:
 def _drive_use_unitree(response: object) -> dict[str, Any] | None:
     """A ``loco.SetVelocity`` through the raw Unitree escape hatch.
 
-    The tool answers a ``{"status", "message"}`` envelope rather than content
-    blocks, so this drive performs the same translation the dashboard drive does,
-    and the shared cells grade one shape. ``_execute`` is stood in for so an
+    The tool answers its structured payload in a ``json`` content block, so this
+    drive lifts the payload's message into a text block, the same translation the
+    dashboard drive does, and the shared cells grade one shape. ``_execute`` is stood in for so an
     approval does not try to reach a DDS bus.
     """
     with patch.object(unitree_mod, "_execute", return_value={"ok": True, "result": 0}):
@@ -100,7 +100,7 @@ def _drive_use_unitree(response: object) -> dict[str, Any] | None:
         )
     if res["status"] != "error":
         return None
-    return {"status": "error", "content": [{"text": res["message"]}]}
+    return {"status": "error", "content": [{"text": res["content"][0]["json"]["message"]}]}
 
 
 class _AnsweredInterrupts(dict):

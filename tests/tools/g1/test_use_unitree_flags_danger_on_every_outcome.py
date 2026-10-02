@@ -33,6 +33,12 @@ import pytest
 
 import strands_robots.tools.g1.use_unitree as uu
 
+
+def _payload(result: dict) -> dict:
+    """Read the structured answer out of the tool-result envelope."""
+    return result["content"][0]["json"]
+
+
 #: A read: not mutative, not high-danger. The control every parametrized failure
 #: row is graded against, so a pin that flagged everything would fail here.
 HARMLESS_READ = ("loco", "GetFsmId")
@@ -151,7 +157,7 @@ def test_a_high_danger_call_that_fails_is_still_flagged_high_danger(
     for attr, value in dict(_failure_rows())[outcome].items():
         monkeypatch.setattr(uu, attr, value)
 
-    res = uu.use_unitree(service_name, operation_name, {})
+    res = _payload(uu.use_unitree(service_name, operation_name, {}))
 
     assert res["status"] == "error", res
     assert res["high_danger"] is True, f"{outcome}: {res}"
@@ -170,7 +176,7 @@ def test_a_read_that_fails_is_flagged_harmless_rather_than_left_unflagged(
     for attr, value in dict(_failure_rows())[outcome].items():
         monkeypatch.setattr(uu, attr, value)
 
-    res = uu.use_unitree(*HARMLESS_READ, {})
+    res = _payload(uu.use_unitree(*HARMLESS_READ, {}))
 
     assert res["status"] == "error", res
     assert res["high_danger"] is False, f"{outcome}: {res}"
@@ -185,7 +191,7 @@ def test_a_parameter_mismatch_is_flagged_and_still_reports_the_signature(
     ``expected`` is the help a caller needs to retry, and the flags are what say
     whether retrying is dangerous; the envelope owes both at once.
     """
-    res = uu.use_unitree("loco", "SetVelocity", {"speed": 0.5})
+    res = _payload(uu.use_unitree("loco", "SetVelocity", {"speed": 0.5}))
 
     assert res["status"] == "error"
     assert "parameter mismatch" in res["message"]
@@ -202,7 +208,7 @@ def test_an_unknown_operation_is_flagged_not_dangerous_and_lists_the_real_ones(
     ``available_operations`` survives alongside the flags for the same reason
     ``expected`` does above.
     """
-    res = uu.use_unitree("loco", "GetNoSuchThing", {})
+    res = _payload(uu.use_unitree("loco", "GetNoSuchThing", {}))
 
     assert res["status"] == "error"
     assert res["high_danger"] is False
@@ -225,7 +231,7 @@ def test_a_diagnostic_key_from_execute_cannot_shadow_the_safety_flags(
         lambda *_a, **_kw: {"ok": False, "error": "boom", "high_danger": False, "mutative": False},
     )
 
-    res = uu.use_unitree("loco", "ZeroTorque", {})
+    res = _payload(uu.use_unitree("loco", "ZeroTorque", {}))
 
     assert res["high_danger"] is True, res
     assert res["mutative"] is True, res
@@ -233,7 +239,7 @@ def test_a_diagnostic_key_from_execute_cannot_shadow_the_safety_flags(
 
 def test_a_successful_call_still_carries_the_flags_and_the_parameters(bus: None) -> None:
     """Control: the outcome that already worked is unchanged."""
-    res = uu.use_unitree("loco", "SetVelocity", {"vx": 0.1, "vy": 0.0, "vyaw": 0.0})
+    res = _payload(uu.use_unitree("loco", "SetVelocity", {"vx": 0.1, "vy": 0.0, "vyaw": 0.0}))
 
     assert res["status"] == "success"
     assert res["result"] == 0
@@ -253,7 +259,7 @@ def test_the_danger_warning_is_logged_even_when_the_call_then_fails(
     monkeypatch.setattr(uu, "ensure_dds", lambda _i: "cyclonedds is not installed")
 
     with caplog.at_level("WARNING", logger="strands_robots.tools.g1.use_unitree"):
-        res = uu.use_unitree("loco", "ZeroTorque", {})
+        res = _payload(uu.use_unitree("loco", "ZeroTorque", {}))
 
     assert res["status"] == "error"
     assert [r.getMessage() for r in caplog.records] == ["use_unitree: loco.ZeroTorque is HIGH_DANGER"]
