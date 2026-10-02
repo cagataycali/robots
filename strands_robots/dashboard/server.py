@@ -49,6 +49,7 @@ from strands_robots.dashboard import (
     routes_config,
     routes_consent,
     routes_devices,
+    routes_env,
     routes_mesh,
     routes_record,
     routes_sim,
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(routes_train.router)
     routes_train.attach(app)
     app.include_router(routes_config.router)
+    app.include_router(routes_env.router)
     app.include_router(routes_consent.router)
     app.include_router(routes_voice.router)
     # The bridge tells the fleet apart from processes this dashboard spawned itself.
