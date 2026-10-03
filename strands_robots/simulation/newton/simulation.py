@@ -284,9 +284,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._joint_order: list[str] = []
         # Pending position targets keyed by (robot_name, short joint name).
         self._targets: dict[tuple[str, str], float] = {}
-        # Coordinate index of each (robot, joint) in the global joint_q /
-        # joint_target_q vector. For the revolute/prismatic joints of robot
-        # arms one coordinate maps to one DOF, so this also indexes targets.
+        # Coordinate index of each (robot, joint) in the global joint_q vector.
         self._joint_coord_index: dict[tuple[str, str], int] = {}
         # Short joint names per robot (rebuilt with the model).
         self._robot_joint_map: dict[str, list[str]] = {}
@@ -3066,8 +3064,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if self._control is None or self._control.joint_target_q is None:
             return
         tgt = self._control.joint_target_q.numpy()
+        # Newton lays joint_target_q out per DOF by default and per coordinate
+        # only under ``newton.use_coord_layout_targets``. The two agree for an
+        # arm, but a free base spans 7 coordinates and 6 DOFs, so indexing a
+        # DOF-shaped target by coordinate shifted every joint after the base
+        # by one and dropped the last.
+        layout = self._joint_coord_index if self._model.use_coord_layout_targets else self._joint_dof_index
         for (robot_name, jname), value in self._targets.items():
-            idx = self._joint_coord_index.get((robot_name, jname))
+            idx = layout.get((robot_name, jname))
             if idx is not None and idx < len(tgt):
                 tgt[idx] = value
         self._control.joint_target_q = self._wp.array(tgt, dtype=self._wp.float32, device=self._model.device)
