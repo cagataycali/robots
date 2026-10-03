@@ -62,10 +62,11 @@ from strands_robots.tools.episode_judge import read_predicate_verdict, sample_fr
 TASK = "sweep the arm base past 0.3 rad"
 SUCCESS_CLAUSE = {"all": [{"predicate": "joint_above", "joint": "Rotation", "value": 0.3}]}
 BENCHMARK_NAME = "so100_pan_reach"
-# Deliberately tight budget: with the mock policy's phase carrying across
-# episodes, episode 0 needs ~24 steps and runs out, episodes 1+ need ~9 and
-# succeed - so the dataset contains both verdict classes deterministically.
-STEP_BUDGET = 15
+# The mock policy restarts its sinusoid every episode and crosses 0.3 rad on
+# step 24. Episode 0 gets too few steps and runs out, the rest get enough, so
+# the dataset holds both verdict classes deterministically.
+SHORT_BUDGET = 15
+FULL_BUDGET = 40
 
 # The four tools are wrapped by the Strands @tool decorator; the scripted
 # judge calls the raw functions - byte-identical to what the agent invokes.
@@ -93,19 +94,22 @@ def record_dataset(root: str, episodes: int) -> list[dict]:
         if started.get("status") == "error":
             raise RuntimeError(f"start_recording failed: {started['content'][0]['text']}")
 
-        result = sim.run_policy(
-            robot_name="so100",
-            policy_provider="mock",
-            instruction=TASK,
-            n_episodes=episodes,
-            n_steps=STEP_BUDGET,
-            control_frequency=50.0,
-            stop_when=SUCCESS_CLAUSE,
-            seed=0,
-        )
-        if result.get("status") == "error":
-            raise RuntimeError(f"run_policy failed: {result['content'][0]['text']}")
-        rollouts = _json_payload(result)["episodes"]
+        rollouts = []
+        for episode in range(episodes):
+            sim.reset()  # every episode starts from the same pose
+            result = sim.run_policy(
+                robot_name="so100",
+                policy_provider="mock",
+                instruction=TASK,
+                n_steps=SHORT_BUDGET if episode == 0 else FULL_BUDGET,
+                control_frequency=50.0,
+                stop_when=SUCCESS_CLAUSE,
+                seed=episode,
+            )
+            if result.get("status") == "error":
+                raise RuntimeError(f"run_policy failed: {result['content'][0]['text']}")
+            # Each call records one dataset episode; its index is the loop's.
+            rollouts.append({**_json_payload(result), "episode": episode})
 
         stopped = sim.stop_recording()
         if stopped.get("status") == "error":

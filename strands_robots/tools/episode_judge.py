@@ -63,7 +63,10 @@ JUDGE_SYSTEM_PROMPT = (
     "then load_episode and sample_frames to inspect the recording, then "
     "write_label exactly once. If your own read of success differs from the "
     "verdict, say so via success_opinion - it is recorded as a dispute "
-    "annotation for human review, never applied to the verdict."
+    "annotation for human review, never applied to the verdict. Each recorded "
+    "frame is the state BEFORE its action, so an episode a predicate stopped "
+    "ends one control step short of the state that satisfied it: a last frame "
+    "just shy of the goal is not evidence against the verdict."
 )
 
 
