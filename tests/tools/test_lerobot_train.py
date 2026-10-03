@@ -237,11 +237,12 @@ def test_expert_only_policy_types_falls_back_when_lerobot_unimportable(
 # ---------------------------------------------------------------------------
 # Per-policy dtype / gradient_checkpointing field gating
 #
-# dtype and gradient_checkpointing are PER-POLICY config fields in lerobot: only
-# some policy configs declare them (the pi0 family, xvla, eo1 for dtype; the pi0
-# family, diffusion, molmoact2 for gradient_checkpointing). The default policy,
-# ACT, declares NEITHER, so emitting --policy.dtype / --policy.gradient_checkpointing
-# for it makes draccus abort with "unrecognized arguments" before training starts.
+# dtype and gradient_checkpointing are config fields only some lerobot policies
+# declare, and which ones moves with lerobot: 0.6.1 declares dtype on the pi0
+# family / xvla / eo1 only, while later lerobot puts it on PreTrainedConfig
+# itself. Emitting a flag the policy's config lacks makes draccus abort with
+# "unrecognized arguments" before training starts, so the gate reads the
+# installed registry and the pin below derives its cases from that registry.
 # ---------------------------------------------------------------------------
 def test_act_default_omits_dtype_and_gradient_checkpointing() -> None:
     """The default (ACT) invocation must not emit fields ACT's config lacks.
@@ -256,40 +257,40 @@ def test_act_default_omits_dtype_and_gradient_checkpointing() -> None:
     assert "--policy.gradient_checkpointing=true" not in cmd
 
 
-def test_dtype_emitted_for_policy_that_declares_it() -> None:
-    """A policy whose config declares dtype (pi05) still gets --policy.dtype."""
-    cmd = build_train_command(
-        dataset_root="/data/cubes",
-        policy_type="pi05",
-        dtype="bfloat16",
-    )
-    assert "--policy.dtype=bfloat16" in cmd
+def _policies_by_field(field: str) -> tuple[list[str], list[str]]:
+    """Split lerobot's registered policy types into (declares field, lacks field)."""
+    import dataclasses
+
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
+    declares: list[str] = []
+    lacks: list[str] = []
+    for name, cfg_cls in sorted(PreTrainedConfig.get_known_choices().items()):
+        (declares if field in {f.name for f in dataclasses.fields(cfg_cls)} else lacks).append(name)
+    return declares, lacks
 
 
-def test_explicit_dtype_on_policy_without_field_raises_clear_error() -> None:
-    """Explicit dtype= on a policy lacking the field fails strands-side, clearly.
+@pytest.mark.parametrize(
+    ("field", "kwargs", "flag"),
+    [
+        ("dtype", {"dtype": "bfloat16"}, "--policy.dtype=bfloat16"),
+        ("gradient_checkpointing", {"gradient_checkpointing": True}, "--policy.gradient_checkpointing=true"),
+    ],
+)
+def test_per_policy_flag_follows_the_installed_config(field: str, kwargs: dict[str, Any], flag: str) -> None:
+    """A per-policy flag is emitted for a policy whose config declares it, refused for one that lacks it.
 
-    Better a targeted ValueError naming the policy than a draccus stack trace
-    from a doomed subprocess.
+    The cases come from the installed lerobot registry rather than a policy name
+    hardcoded to one lerobot release, so the pin holds whichever release decides
+    that ACT does or does not declare ``dtype``. A targeted ValueError naming the
+    policy beats a draccus stack trace from a doomed subprocess.
     """
-    pytest.importorskip("lerobot.policies")
-    with pytest.raises(ValueError, match="has no 'dtype' config field"):
-        build_train_command(
-            dataset_root="/data/cubes",
-            policy_type="act",
-            dtype="bfloat16",
-        )
-
-
-def test_gradient_checkpointing_on_policy_without_field_raises_clear_error() -> None:
-    """gradient_checkpointing on a policy lacking the field fails strands-side."""
-    pytest.importorskip("lerobot.policies")
-    with pytest.raises(ValueError, match="has no 'gradient_checkpointing' config field"):
-        build_train_command(
-            dataset_root="/data/cubes",
-            policy_type="act",
-            gradient_checkpointing=True,
-        )
+    declares, lacks = _policies_by_field(field)
+    assert declares, f"no registered lerobot policy declares {field!r}"
+    assert flag in build_train_command(dataset_root="/data/cubes", policy_type=declares[0], **kwargs)
+    for policy_type in lacks[:1]:
+        with pytest.raises(ValueError, match=f"has no '{field}' config field"):
+            build_train_command(dataset_root="/data/cubes", policy_type=policy_type, **kwargs)
 
 
 def test_policy_config_field_names_tracks_lerobot_registry() -> None:
