@@ -6,7 +6,7 @@ ROS 2 nodes (or the agent's own use_ros calls) can subscribe to it. With
 ``ros2_bridge=True`` the sim advertises, per robot:
 
   /<robot>/joint_states            sensor_msgs/msg/JointState  (every step)
-  /<robot>/<camera>/image_raw      sensor_msgs/msg/Image  (rgb8, per camera)
+  /<robot>/<camera>/image_raw      sensor_msgs/msg/Image  (rgb8, per add_camera view)
 
 Dependencies:
   pip install "strands-robots[sim-mujoco,ros2]"

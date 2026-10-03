@@ -420,7 +420,8 @@ class _FakeEngine(SimEngine):
 
 
 def test_publish_telemetry_forwards_joint_state(fake_ros: dict[str, Any]) -> None:
-    obs = {"shoulder_pan": 0.5, "elbow": -0.25, "front": np.zeros((2, 2, 3), dtype=np.uint8)}
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    obs = {"shoulder_pan": 0.5, "elbow": -0.25, "front": frame, "default": frame}
     engine = _FakeEngine(obs, ros2_bridge=True, ros2_domain=3)
     engine._publish_ros_telemetry()
 
@@ -430,6 +431,8 @@ def test_publish_telemetry_forwards_joint_state(fake_ros: dict[str, Any]) -> Non
     js = topics["/so101/joint_states"].messages[0]
     assert js.position == [0.5, -0.25]
     assert "/so101/front/image_raw" in topics
+    # The free overview camera is no sensor the mirrored arm carries.
+    assert "/so101/default/image_raw" not in topics
 
 
 class TestJointStateArraysNameTheSameJoints:
@@ -610,7 +613,8 @@ def test_publish_telemetry_skip_images_publishes_joints_only(fake_ros: dict[str,
     Pin the contract: joint_states still go out, but no ``image_raw`` publisher
     is created for camera keys present in the observation.
     """
-    obs = {"shoulder_pan": 0.5, "elbow": -0.25, "front": np.zeros((2, 2, 3), dtype=np.uint8)}
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    obs = {"shoulder_pan": 0.5, "elbow": -0.25, "front": frame, "default": frame}
     engine = _FakeEngine(obs, ros2_bridge=True, ros2_domain=3)
 
     engine._publish_ros_telemetry(skip_images=True)
