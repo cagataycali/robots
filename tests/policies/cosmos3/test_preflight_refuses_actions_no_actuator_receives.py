@@ -114,3 +114,21 @@ class TestNothingToJudgeAgainstPasses:
 
     def test_an_unknown_action_space_is_left_to_the_constructor(self) -> None:
         assert _reason(PANDA_SIM, embodiment="droid", action_space="not_a_space") is None
+
+
+class TestTheDocumentedRolloutPasses:
+    def test_the_run_it_fence_policy_config_passes_preflight(self) -> None:
+        """docs/learn/policies/cosmos3.md "Run it" must reach the server, not stop at this refusal."""
+        import ast
+        from pathlib import Path
+
+        page = (Path(__file__).parents[3] / "docs/learn/policies/cosmos3.md").read_text(encoding="utf-8")
+        fence = page.split("## Run it", 1)[1].split('```python title="sketch"', 1)[1].split("```", 1)[0]
+        call = next(
+            node
+            for node in ast.walk(ast.parse(fence))
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "run_policy"
+        )
+        config = ast.literal_eval(next(kw.value for kw in call.keywords if kw.arg == "policy_config"))
+        cameras = set(config["observation_mapping"])
+        assert _reason(PANDA_SIM | cameras, **config) is None

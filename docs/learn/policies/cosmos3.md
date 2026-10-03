@@ -61,6 +61,7 @@ result = sim.run_policy(
     policy_provider="cosmos3",
     policy_config={
         "embodiment": "droid",
+        "robot": "franka",
         "port": 8000,
         "observation_mapping": {
             "wrist": "observation/wrist_image_left",
