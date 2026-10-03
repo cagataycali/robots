@@ -704,10 +704,10 @@ def build_train_command(
     if save_freq is not None:
         cmd.append(f"--save_freq={save_freq}")
     # dtype and gradient_checkpointing are PER-POLICY config fields in lerobot:
-    # only some policy configs declare them (e.g. the pi0 family / xvla / eo1 for
-    # dtype; the pi0 family / diffusion / molmoact2 for gradient_checkpointing).
-    # Emitting --policy.dtype for a policy whose config lacks it (like the default
-    # ACT) makes draccus abort with "unrecognized arguments" before training even
+    # only some policy configs declare them (on lerobot 0.6.1 the pi0 family /
+    # xvla / eo1 for dtype; later lerobot declares dtype on every policy).
+    # Emitting --policy.dtype for a policy whose config lacks it (ACT on 0.6.1)
+    # makes draccus abort with "unrecognized arguments" before training even
     # starts. Gate each flag on the resolved config's fields, sourced live so it
     # tracks lerobot; when lerobot is not importable the field set is unknown and
     # the flag passes through unguarded.
@@ -906,8 +906,8 @@ def lerobot_train(
             have is allowed.
         dtype: Policy dtype (bfloat16, float32) for policies whose lerobot
             config declares a dtype field (e.g. the pi0 family, xvla). Default
-            None lets lerobot pick; ACT and most policies have no dtype field,
-            and passing dtype= for them raises before launch.
+            None lets lerobot pick; a policy whose installed config has no
+            dtype field (ACT on lerobot 0.6.1) raises before launch.
         gradient_checkpointing: Trade compute for memory on supported policies.
         lora: Enable LoRA/PEFT fine-tuning (full-VLM fit on one GPU).
         lora_r: LoRA rank.
