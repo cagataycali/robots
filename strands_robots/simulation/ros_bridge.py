@@ -15,7 +15,9 @@ mirrors are indistinguishable on the ROS 2 graph:
 * ``/<robot>/joint_states`` (``sensor_msgs/msg/JointState``) - joint names and
   positions, every sim step.
 * ``/<robot>/<camera>/image_raw`` (``sensor_msgs/msg/Image``, ``rgb8``) - one
-  message per attached camera that rendered a frame.
+  message per attached camera that rendered a frame. The free overview camera
+  (``default``) is not a sensor the mirrored robot carries, so it is not
+  published.
 
 ``rclpy`` and the ROS 2 message packages are optional, system-provided
 dependencies (they are not on PyPI); they are imported lazily, so importing this
@@ -25,7 +27,10 @@ ROS 2.
 
 from __future__ import annotations
 
+import numpy as np
+
 from strands_robots.ros_telemetry import RosTelemetryBridge
+from strands_robots.utils import FREE_CAMERA_TOKENS
 
 
 class SimRosBridge(RosTelemetryBridge):
@@ -39,3 +44,9 @@ class SimRosBridge(RosTelemetryBridge):
     """
 
     default_node_name = "strands_sim"
+
+    def publish_image(self, robot: str, camera: str, image: np.ndarray) -> None:
+        """Publish a camera frame, unless it is the free overview camera."""
+        if camera in FREE_CAMERA_TOKENS:
+            return
+        super().publish_image(robot, camera, image)
