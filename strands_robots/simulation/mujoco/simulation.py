@@ -525,6 +525,11 @@ _DEFAULT_ACTION_HORIZON = 8
 # surface rather than landing exactly on it.
 _MAX_SEAT_PASSES = 8
 _SEAT_TOLERANCE_M = 1e-4
+# The burial ``add_robot`` reports (:meth:`MuJoCoSimEngine._spawn_burial_warning`):
+# a millimetre, ten times the seating residual, so a model authored to rest on the
+# plane is not named; measured, 13 of the 145 simulatable registry robots are, the
+# shallowest (rby1) at 2.6 mm.
+_BURIAL_REPORT_M = 1e-3
 
 
 # The ``create_world`` parameters a LIVE world can still adopt, paired with the
@@ -2792,6 +2797,7 @@ class MuJoCoSimEngine(
             # would stack the terrain offset onto it again.
             self._seat_floating_bases_on_terrain(only=robot)
             mj.mj_forward(self._world._model, self._world._data)
+            burial_line = self._spawn_burial_warning(name, robot)
 
             # Attach the robot to the mesh as its own peer so the agent can
             # address it directly (e.g. ``robot_mesh tell target=<peer_id>``)
@@ -2818,6 +2824,7 @@ class MuJoCoSimEngine(
                             f"{mesh_line}\n"
                             f"{self._next_step_after_add(name, robot)}"
                             f"{hint_line}"
+                            f"{burial_line}"
                         )
                     }
                 ],
@@ -3322,6 +3329,55 @@ class MuJoCoSimEngine(
                 if buried <= _SEAT_TOLERANCE_M:
                     break
                 data.qpos[adr + 2] = float(data.qpos[adr + 2]) + buried
+
+    def _spawn_burial_warning(self, name: str, robot: SimRobot) -> str:
+        """Name how deep a freshly added robot starts inside the ground, or ``""``.
+
+        Terrain seating lifts a floating base out of a heightfield, but a flat
+        ground plane is left alone, and a fixed-base arm is never moved: an asset
+        authored for a recessed floor (LeKiwi's wheels, 34.6 mm), spawned in a
+        straight-legged zero pose (Unitree A1) or mounted below ``z=0`` starts
+        the episode inside the plane, and the contact solver ejects it on the
+        first step. Moving it would change the spawn every caller already
+        relies on, so the burial is measured with :meth:`_ground_burial_depth`
+        and reported with the ``position=`` that spawns it clear. Logged as a
+        warning too, because ``Robot(name)`` does not return this envelope.
+        Requires the caller's model lock.
+        """
+        world = self._world
+        if world is None or world._model is None:
+            return ""
+        model = world._model
+        jid = self._robot_free_base_joint_id(model, robot)
+        if jid >= 0:
+            bases = [int(model.jnt_bodyid[jid])]
+        else:  # fixed base: its top-level bodies; only the moving links collide with the plane
+            mj = self._mj
+            prefix = robot.namespace or ""
+            bases = [
+                body
+                for body in range(1, model.nbody)
+                if int(model.body_parentid[body]) == 0
+                and (body_name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body)) is not None
+                and body_name.startswith(prefix)
+                and not any(
+                    int(model.jnt_type[j]) == int(mj.mjtJoint.mjJNT_FREE)
+                    for j in range(
+                        int(model.body_jntadr[body]), int(model.body_jntadr[body]) + int(model.body_jntnum[body])
+                    )
+                )
+            ]
+        buried = max((self._ground_burial_depth(body) for body in bases), default=0.0)
+        if buried < _BURIAL_REPORT_M:
+            return ""
+        x, y, z = (float(v) for v in (robot.position or (0.0, 0.0, 0.0)))
+        lift = [round(x, 4), round(y, 4), round(z + buried, 4)]
+        message = (
+            f"'{name}' starts {buried * 1000:.1f} mm inside the ground, so the contact solver pushes it from the first step. "
+            f"Pass position={lift} to spawn it resting on the ground."
+        )
+        logger.warning(message)
+        return f"\nWarning: {message}"
 
     def _ground_burial_depth(self, base_body: int) -> float:
         """Vertical lift (metres, ``>= 0``) that takes ``base_body``'s tree out of the ground.
