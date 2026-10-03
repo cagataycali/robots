@@ -139,9 +139,20 @@ def joint_labels(name: str) -> dict[str, str]:
 
 
 def has_sim(name: str) -> bool:
-    """Check if a robot has simulation assets (MJCF/URDF)."""
+    """Check if ``Robot(name)`` can obtain a simulation model (MJCF/URDF).
+
+    An entry declaring ``auto_download: false`` is never fetched, so it counts
+    only once its model file is on disk; any other asset entry is downloaded on
+    first use. A pure filesystem check - no download, no network.
+    """
     info = get_robot(name)
-    return info is not None and "asset" in info
+    if info is None or "asset" not in info:
+        return False
+    if info["asset"].get("auto_download") is not False:
+        return True
+    from strands_robots.assets.manager import is_robot_asset_present  # same layer; manager imports registry
+
+    return is_robot_asset_present(name)
 
 
 def has_hardware(name: str) -> bool:
@@ -226,7 +237,8 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
         mode: Filter, one of :data:`LIST_ROBOTS_MODES`:
 
             - ``"all"``: every registered robot (no filter).
-            - ``"sim"``: robots with a simulation asset (``has_sim``).
+            - ``"sim"``: robots ``Robot(name)`` can simulate (``has_sim``); an
+              ``auto_download: false`` entry is listed once its asset is on disk.
             - ``"real"``: robots *declaring* a hardware backend
               (``has_hardware``). A robot a native driver can build without a
               declaration is not in this list;
@@ -260,7 +272,7 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
             entries[urdf_name] = urdf_info
     results = []
     for name, info in sorted(entries.items()):
-        _has_sim = "asset" in info
+        _has_sim = "asset" in info and (info["asset"].get("auto_download") is not False or has_sim(name))
         _has_real = "hardware" in info
 
         if mode == "sim" and not _has_sim:
