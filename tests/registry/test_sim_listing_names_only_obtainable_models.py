@@ -38,7 +38,9 @@ def test_a_never_fetched_model_is_listed_only_once_it_is_on_disk(name, tmp_path,
 
     assert listed() == {"has_sim": False, "in_sim_list": False, "row_has_sim": False}
 
-    asset = get_robot(name)["asset"]
+    info = get_robot(name)
+    assert info is not None
+    asset = info["asset"]
     model = tmp_path / "assets" / asset["dir"] / asset["model_xml"]
     model.parent.mkdir(parents=True)
     model.write_text("<mujoco/>")
