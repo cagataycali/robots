@@ -615,6 +615,7 @@ _PYTHON_ONLY_ACTIONS = frozenset(
         "robot_action_keys",
         "robot_joint_names",
         "run_multi_policy",
+        "saturated_actuators",
         "send_action",
         # The served mesh spec: read by the mesh layer, not an agent verb.
         "wire_tool_spec",
