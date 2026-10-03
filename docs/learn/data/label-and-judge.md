@@ -42,11 +42,11 @@ print(labels_path(root))                                                        
 | deterministic | the benchmark's predicates, from simulator state (`evaluate_benchmark`) | the `deterministic` block: `success`, `failure`, `steps`, `cumulative_reward`, `seed` | no |
 | judge | a VLM agent reading the recorded episode | the `judge` block: `quality`, `failure_mode`, `note`, `success_opinion`, `disputes_verdict`, `model`, `labeled_at` | no |
 
-`annotate_episode` refuses an episode with no deterministic verdict yet. A `success_opinion` that contradicts the predicate is recorded as `disputes_verdict: true` for a human to review; the `deterministic` block stays byte-identical. That precedence is structural, not advice.
+A recorded frame is the state before its action, so a `stop_when` episode ends one step short of the state that fired it. `annotate_episode` refuses an episode with no deterministic verdict yet. A `success_opinion` that contradicts the predicate is recorded as `disputes_verdict: true` for a human to review; the `deterministic` block stays byte-identical. That precedence is structural, not advice.
 
 ## The sidecar
 
-Labels live in `episode_labels.json` at the dataset root, next to LeRobot's `meta/`, `data/` and `videos/`, so training can filter episodes without rewriting the dataset. It travels with the directory and dies with it. `schema_version` is 1; `read_labels(root)` returns the document, `deterministic_verdict(root, episode)` one verdict.
+Labels live in `episode_labels.json` at the dataset root, next to LeRobot's `meta/`, `data/` and `videos/`, so training can filter episodes without rewriting the dataset. `schema_version` is 1; `read_labels(root)` returns the document, `deterministic_verdict(root, episode)` one verdict.
 
 Vocabulary is fixed so filters match on identity:
 
@@ -75,7 +75,7 @@ judge(f"Label every episode of the dataset at {root}. Sample four frames each, w
 | `read_predicate_verdict(root, episode)` | the authoritative deterministic verdict |
 | `write_label(root, episode, quality, failure_mode=None, note="", success_opinion=None, judge_model="")` | the judge block, through `annotate_episode` |
 
-Every tool returns the `{"status", "content"}` envelope and never raises: a run over a hundred episodes reports the one it could not read. `sample_frames` with images needs the `[lerobot]` extra to decode video.
+Every tool returns the `{"status", "content"}` envelope and never raises. `sample_frames` with images needs the `[lerobot]` extra to decode video.
 
 ## Filtering for training
 
