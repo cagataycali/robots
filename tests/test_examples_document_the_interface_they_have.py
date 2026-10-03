@@ -701,3 +701,31 @@ def test_the_undeclared_rule_separates_a_named_dependency_from_a_silent_one(sour
 def test_the_script_gate_reads_the_entry_point_in_either_spelling(source: str, is_script: bool) -> None:
     """An app's submodule is graded by its README, not by a header it has not got."""
     assert _is_script(ast.parse(source)) is is_script
+
+
+def test_a_provider_swap_the_post_tune_example_offers_names_what_the_trainer_asks_for(tmp_path: Path) -> None:
+    """Every input the swapped-to trainer refuses the example's own spec for is named.
+
+    ``examples/07_post_tune_any_policy.py`` offers ``PROVIDER = "cosmos3"`` as a
+    swap. Its ``TrainSpec`` is built for lerobot ACT from scratch, and the Cosmos
+    trainer refuses it three ways (``base_model``, ``extra["sft_toml"]``,
+    ``COSMOS_ROOT``). The header said only the provider string changed, so a
+    reader who swapped it met three refusals the file never mentioned.
+    """
+    from strands_robots.training import TrainSpec, create_trainer
+
+    path = _REPO_ROOT / "examples" / "07_post_tune_any_policy.py"
+    tree = parse_file(path)
+    docstring = ast.get_docstring(tree) or ""
+    call = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "TrainSpec"
+    )
+    # The two paths are module constants; every other keyword is a literal.
+    kwargs = {
+        kw.arg: ast.literal_eval(kw.value) for kw in call.keywords if kw.arg and not isinstance(kw.value, ast.Name)
+    }
+    spec = TrainSpec(dataset_root=str(tmp_path), output_dir=str(tmp_path / "out"), **kwargs)
+    problems = [p for p in create_trainer("cosmos3", device="cpu").validate(spec) if "dataset_root" not in p]
+    assert problems, "the cosmos3 trainer accepts the example's spec; the rule grades nothing"
+    unnamed = [p for p in problems if not set(re.findall(r"\w*_\w*", p)) & set(re.findall(r"\w*_\w*", docstring))]
+    assert not unnamed, f"{path.name} offers a cosmos3 swap but does not name: {unnamed}"
