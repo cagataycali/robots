@@ -41,13 +41,16 @@ import pytest
 
 pytest.importorskip("psutil")
 
+import importlib
+
 import psutil  # noqa: E402
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import session_is_running  # noqa: E402
 from tests._package_ast import parse_file
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 #: A pid this process certainly holds, so "exists" is settled and the only thing
 #: under test is the spelling it is written down in.
@@ -300,7 +303,7 @@ def test_no_session_tool_converts_a_recorded_pid() -> None:
     keeping a session store would have to be added to a hand-written roster
     before this could catch it.
     """
-    tools_dir = Path(train_mod.__file__).parent
+    tools_dir = Path(str(train_mod.__file__)).parent
     converts: list[str] = []
     for module in sorted(tools_dir.rglob("*.py")):
         for node in ast.walk(parse_file(module)):

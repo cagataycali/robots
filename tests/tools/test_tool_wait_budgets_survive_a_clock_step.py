@@ -31,6 +31,7 @@ behaviour, driven through the real ``spin_for``.
 
 from __future__ import annotations
 
+import importlib
 import pathlib
 import time
 from typing import Any
@@ -38,7 +39,8 @@ from typing import Any
 import pytest
 
 import strands_robots.ros as ros_mod
-import strands_robots.tools.serial_tool as serial_mod
+
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 
 def test_every_deadline_in_the_ros_tool_is_built_on_one_clock() -> None:
@@ -203,7 +205,7 @@ def test_a_monitor_record_timestamp_stays_on_the_wall_clock() -> None:
     absolute stamp a reader correlates with other logs, so it must not move with
     it. This fails if the module is swept clock-blind rather than per value.
     """
-    source = pathlib.Path(serial_mod.__file__).read_text(encoding="utf-8")
+    source = pathlib.Path(str(serial_mod.__file__)).read_text(encoding="utf-8")
     assert '"timestamp": time.time(),' in source, (
         "the monitor record's timestamp must stay on the wall clock: it is an absolute stamp, "
         "and a time.monotonic() value (seconds of process uptime) is meaningless to a reader"

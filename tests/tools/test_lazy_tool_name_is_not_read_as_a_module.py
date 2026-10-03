@@ -214,7 +214,7 @@ class TestNoSourceReadsALazyToolNameAsAModule:
         assert offenders == {}, (
             "these reads resolve a tool object and then use it as a module, so they "
             f"depend on an unrelated import running first: {offenders}. Import the "
-            "submodule directly - `import strands_robots.tools.<name> as ...` or "
+            'submodule directly - `importlib.import_module("strands_robots.tools.<name>")` or '
             "`from strands_robots.tools.<name> import <name>`."
         )
 
@@ -245,14 +245,12 @@ class TestTheRuleFlagsTheReadItIsFor:
     _STRING_PATCH_TARGET_NESTED = 'patch("strands_robots.tools.serial_tool.time.sleep")\n'
     _STRING_TARGET_SHARED_ATTRIBUTE = 'patch("strands_robots.tools.pose_tool.tool_name")\n'
     _MODULE_HANDLE = 'mod = importlib.import_module("strands_robots.tools.pose_tool")\nmonkeypatch.setattr(mod, "MotorController", object)\n'
-    _SUBMODULE_IMPORT = "import strands_robots.tools.pose_tool as pose_mod\npose_mod.pose_tool(action='list_poses')\n"
     _SUBMODULE_FROM_IMPORT = "from strands_robots.tools.pose_tool import pose_tool\npose_tool(action='list_poses')\n"
 
     _CASES = (
         pytest.param(_AMBIGUOUS_THEN_MODULE_READ, True, id="ambiguous-import-then-tool-name-read"),
         pytest.param(_AMBIGUOUS_THEN_DUNDER_READ, True, id="ambiguous-import-then-dunder-read"),
         pytest.param(_AMBIGUOUS_THEN_SHARED_READ, False, id="ambiguous-import-but-shared-attribute"),
-        pytest.param(_SUBMODULE_IMPORT, False, id="submodule-import"),
         pytest.param(_SUBMODULE_FROM_IMPORT, False, id="submodule-from-import"),
         pytest.param(_STRING_PATCH_TARGET, True, id="string-patch-target"),
         pytest.param(_STRING_PATCH_TARGET_NESTED, True, id="string-patch-target-through-a-module"),

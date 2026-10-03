@@ -35,6 +35,7 @@ rule between two parameters is not a property of either.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import json
 from pathlib import Path
@@ -43,7 +44,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.run_policy as rp_mod
 from strands_robots.simulation.recording import (
     dataset_recording_option_error,
     rate_mismatch_explanation,
@@ -51,6 +51,8 @@ from strands_robots.simulation.recording import (
 )
 from strands_robots.utils import positive_finite_number_error
 from tests.tools.test_run_policy import _FakeSim
+
+rp_mod = importlib.import_module("strands_robots.tools.run_policy")
 
 #: Rates that disagree in both directions, plus the pair the library defaults
 #: used to collide at (``fps=30`` against ``control_frequency=50.0``).

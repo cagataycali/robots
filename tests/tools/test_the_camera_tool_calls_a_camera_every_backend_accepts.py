@@ -24,6 +24,7 @@ and the non-vacuity floor below is over this module alone.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import pathlib
 from dataclasses import dataclass
@@ -31,12 +32,13 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
 from tests._package_ast import parse_file
 from tests.tools._camera_stand_in import CONTRACTS
 
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
+
 #: The module whose camera calls are graded here.
-_SOURCE = pathlib.Path(cam_mod.__file__)
+_SOURCE = pathlib.Path(str(cam_mod.__file__))
 
 #: Every way this module gets hold of a camera, and the contracts a call on it
 #: must satisfy. A camera from the factory can be either backend, so it must

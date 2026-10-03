@@ -48,6 +48,7 @@ spelling and is left alone; only a supplied value is held to the domain.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import math
 import threading
@@ -58,9 +59,10 @@ import numpy as np
 import pytest
 
 import strands_robots._pacing as pacing_mod
-import strands_robots.tools.run_policy as rp_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import boolean_flag_error
+
+rp_mod = importlib.import_module("strands_robots.tools.run_policy")
 
 #: Truthy spellings of "off": each selected the posture the word asks to skip.
 TRUTHY_NON_BOOLEANS: tuple[Any, ...] = ("false", "no", "off", "0", 1, 2, math.nan)

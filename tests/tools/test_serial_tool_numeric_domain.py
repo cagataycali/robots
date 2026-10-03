@@ -44,6 +44,11 @@ action or a new numeric option cannot ship unguarded.
 from __future__ import annotations
 
 import ast
+
+# The module object itself is needed - for the option tables the drift guard
+# scans and for the source it parses - so every name in it, the tool included, is
+# reached through this one alias.
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -51,10 +56,7 @@ from typing import Any
 import pytest
 import serial
 
-# The module object itself is needed - for the option tables the drift guard
-# scans and for the source it parses - so every name in it, the tool included, is
-# reached through this one alias.
-import strands_robots.tools.serial_tool as serial_mod
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 # ``Goal_Position`` and ``Goal_Velocity`` are sign-magnitude on the STS/SMS
 # series (lerobot: ``STS_SMS_SERIES_ENCODINGS_TABLE`` declares bit 15 for both),

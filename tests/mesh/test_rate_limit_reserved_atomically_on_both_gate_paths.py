@@ -32,6 +32,7 @@ configured maximum.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import threading
 from collections.abc import Iterator
@@ -40,7 +41,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 ACTION = "emergency_stop"
 LIMIT = 3

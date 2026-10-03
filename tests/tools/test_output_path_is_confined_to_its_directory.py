@@ -35,6 +35,7 @@ The sites covered are the ones where a caller-supplied component reaches a path:
 
 from __future__ import annotations
 
+import importlib
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -42,9 +43,10 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots._path_validation import resolve_output_path, validate_save_path
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 # Names that resolve outside the directory they are joined onto. The first two are
 # the realistic shapes - a traversal in the name, and a traversal reached through

@@ -37,10 +37,13 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+import importlib
+
 from strands_robots.tools import _process_stop  # noqa: E402
 from tests._package_ast import parse_file
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 #: A pid this process holds, so "the process exists" is settled and the only
 #: thing under test is what a read does to the record.

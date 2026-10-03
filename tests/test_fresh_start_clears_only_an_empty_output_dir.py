@@ -45,12 +45,15 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_train as tool_mod  # noqa: E402
+import importlib
+
 import strands_robots.training.lerobot as trainer_mod  # noqa: E402
 from strands_robots.tools.lerobot_train import lerobot_train  # noqa: E402
 from strands_robots.training.base import TrainSpec  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
 from strands_robots.utils import stale_output_dir_is_clearable  # noqa: E402
+
+tool_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 # The directory shapes an ``output_dir`` can be in when a fresh start looks at
 # it. ``clearable`` is the verdict BOTH entry points must reach.

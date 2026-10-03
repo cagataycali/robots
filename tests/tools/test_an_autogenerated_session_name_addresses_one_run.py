@@ -27,10 +27,13 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_teleoperate as teleop_mod  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
+import importlib
+
 from strands_robots.tools import _process_stop  # noqa: E402
 from tests.tool_result_contract import tool_json  # noqa: E402
+
+teleop_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 FROZEN = 1_700_000_000.0
 

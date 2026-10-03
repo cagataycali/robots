@@ -17,15 +17,17 @@ one.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import pathlib
 
 import pytest
 import serial
 
-import strands_robots.tools.pose_tool as pose_tool_module
 from strands_robots.tools.pose_tool import PoseManager, pose_tool
 from tests.tools.conftest import ReadingSerial, position_packet
+
+pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
 
 # wrist_flex, id 4 of the six SO-101 joints. Chosen mid-chain rather than last
 # so the reading it falls out of is not merely shorter than expected.

@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.use_lerobot as M
+M = importlib.import_module("strands_robots.tools.use_lerobot")
 
 # The tool is wrapped by the Strands @tool decorator; call the raw function.
 _fn = getattr(M.use_lerobot, "__wrapped__", None) or M.use_lerobot

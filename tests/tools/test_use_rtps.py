@@ -18,13 +18,15 @@ one of them twice.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import json
 from typing import Any
 
 import pytest
 
 import strands_robots.rtps.participant as participant_mod
-import strands_robots.tools.use_rtps as rtps_mod
+
+rtps_mod = importlib.import_module("strands_robots.tools.use_rtps")
 
 use_rtps = rtps_mod.use_rtps
 

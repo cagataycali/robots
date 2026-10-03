@@ -38,6 +38,7 @@ the suite.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import json
 import math
@@ -46,7 +47,6 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.pose_tool as pose_tool_module
 from strands_robots.tools.pose_tool import (
     MotorController,
     PoseManager,
@@ -55,6 +55,8 @@ from strands_robots.tools.pose_tool import (
     _stored_pose_target_error,
     pose_tool,
 )
+
+pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
 
 
 @pytest.fixture(autouse=True)
@@ -336,7 +338,7 @@ class TestReachingHomeStaysOutOfScope:
 
     def test_every_home_literal_is_inside_its_configured_travel(self) -> None:
         """Read off the literals themselves, so retuning one out of range fires."""
-        module = ast.parse(Path(pose_tool_module.__file__).read_text())
+        module = ast.parse(Path(str(pose_tool_module.__file__)).read_text())
         assignments = [
             node
             for node in ast.walk(module)

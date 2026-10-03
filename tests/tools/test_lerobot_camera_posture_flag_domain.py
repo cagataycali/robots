@@ -29,6 +29,10 @@ that a flag added to the signature cannot skip the roster.
 from __future__ import annotations
 
 import glob
+
+# The module object is needed for the ``cv2``/``os`` handles the tool imports and
+# for the roster's signature scan, so every name is reached through this alias.
+import importlib
 import inspect
 import json
 import os
@@ -37,11 +41,10 @@ from typing import Any
 import numpy as np
 import pytest
 
-# The module object is needed for the ``cv2``/``os`` handles the tool imports and
-# for the roster's signature scan, so every name is reached through this alias.
-import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.utils import boolean_flag_error
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 # One value per rejection reason of the shared posture domain: the two spellings
 # of *off* that read as *on*, the integers that pass as a silent posture, and the

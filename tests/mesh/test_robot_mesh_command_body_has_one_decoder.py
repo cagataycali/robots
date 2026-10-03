@@ -36,6 +36,7 @@ syntax error that is not there.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import json
 import sys
@@ -45,8 +46,9 @@ from unittest.mock import patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
 from tests._package_ast import parse_file
+
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 #: Nesting depth that exhausts the scanner's stack. 60k levels of ``[`` is
 #: 120 KB of text -- depth, not size, is what it runs out of room for.

@@ -29,6 +29,11 @@ byte-identical while moving it ahead of the destruction.
 from __future__ import annotations
 
 import ast
+
+# Imported as a module rather than also pulling the tool out by name: the
+# structural sweep below reads the shipped source via ``inspect.getfile``, and
+# one import of a module is clearer than two forms of it.
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -36,13 +41,11 @@ from typing import Any
 import numpy as np
 import pytest
 
-# Imported as a module rather than also pulling the tool out by name: the
-# structural sweep below reads the shipped source via ``inspect.getfile``, and
-# one import of a module is clearer than two forms of it.
-import strands_robots.tools.run_policy as rp_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import positive_count_error, positive_finite_number_error
 from tests.tools.test_run_policy import _FakeSim
+
+rp_mod = importlib.import_module("strands_robots.tools.run_policy")
 
 #: Values no control loop can be driven at. ``inf`` is here because a rate is a
 #: divisor: ``1 / inf`` is 0, so it is a rate no period can be built from rather

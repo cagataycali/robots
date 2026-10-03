@@ -28,15 +28,17 @@ refused for it.
 
 from __future__ import annotations
 
+# The module object is needed for the factory seam the recorder replaces, so the
+# tool is reached through this alias rather than off the tools package.
+import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-# The module object is needed for the factory seam the recorder replaces, so the
-# tool is reached through this alias rather than off the tools package.
-import strands_robots.tools.lerobot_camera as cam_mod
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 
 @pytest.fixture

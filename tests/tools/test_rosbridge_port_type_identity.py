@@ -31,6 +31,7 @@ Four things have to stay true together, and they are grouped that way below:
 from __future__ import annotations
 
 import enum
+import importlib
 import sys
 import types as _types
 from typing import Any
@@ -38,9 +39,10 @@ from typing import Any
 import pytest
 
 import strands_robots.rosbridge as transport_mod
-import strands_robots.tools.use_rosbridge as rb_mod
 from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.utils import tcp_port_error
+
+rb_mod = importlib.import_module("strands_robots.tools.use_rosbridge")
 
 use_rosbridge = rb_mod.use_rosbridge
 

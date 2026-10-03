@@ -37,6 +37,7 @@ makes the sign the only behaviour that moved.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -44,8 +45,6 @@ from typing import Any
 import pytest
 import serial
 
-import strands_robots.tools.pose_tool as pose_mod
-import strands_robots.tools.serial_tool as serial_mod
 from strands_robots.drivers.feetech.protocol import (
     SIGN_BIT,
     WORD_LENGTH,
@@ -56,6 +55,9 @@ from strands_robots.drivers.feetech.protocol import (
     write_packet,
 )
 from strands_robots.tools.pose_tool import MotorController
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 #: The joint every cell drives, and its servo ID.
 MOTOR = "shoulder_pan"

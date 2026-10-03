@@ -50,15 +50,18 @@ import pytest
 pytest.importorskip("pyarrow")
 pytest.importorskip("psutil")
 
+import importlib
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import strands_robots.tools.lerobot_train as lerobot_train_tool
 from strands_robots.dataset_metadata import read_dataset_episode_indices
 from strands_robots.tools.run_policy import run_policy as run_policy_tool
 from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.utils import declared_count
 from strands_robots.verify_dataset import verify_dataset
+
+lerobot_train_tool = importlib.import_module("strands_robots.tools.lerobot_train")
 
 #: Every spelling a two-episode dataset's header could carry that is not a
 #: count. ``2.0`` and ``"2"`` are the "right number, wrong type" pair; ``2.5``

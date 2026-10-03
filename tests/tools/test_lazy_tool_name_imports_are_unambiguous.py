@@ -18,10 +18,9 @@ spelling                                     cold    tool cached first   submodu
 ``from strands_robots.tools import X`` is the only spelling that writes the
 *tool* into that slot: a submodule import writes the module, and the two bottom
 rows never read or write it. So one such read anywhere in the process is what
-makes the module-alias form order-dependent, and that form is what this tree
-uses widely as a monkeypatch target - it then yields the tool, and the patch
-target read raises ``AttributeError`` rather than naming an import-order
-problem.
+makes the module-alias form order-dependent: it then yields the tool, and a
+patch target read off it raises ``AttributeError`` rather than naming an
+import-order problem. Both spellings that read the slot are banned here.
 
 Both failure directions were live: two tests read the name and used the result
 as a module (``AttributeError: 'DecoratedFunctionTool' object has no attribute
@@ -94,7 +93,12 @@ def _shadowable_names() -> frozenset[str]:
 
 
 def _ambiguous_reads(tree: ast.AST, shadowable: frozenset[str]) -> list[tuple[int, str]]:
-    """Every ``from strands_robots.tools import <shadowable>`` under ``tree``.
+    """Every read of a shadowable name through the package slot under ``tree``.
+
+    Two statements read that slot: ``from strands_robots.tools import <name>``,
+    and ``import strands_robots.tools.<name> as <alias>``, which binds
+    ``getattr(strands_robots.tools, "<name>")`` rather than the submodule, so it
+    yields the tool once anything in the process has cached it there.
 
     Args:
         tree: A parsed module.
@@ -104,13 +108,18 @@ def _ambiguous_reads(tree: ast.AST, shadowable: frozenset[str]) -> list[tuple[in
         ``(line, name)`` for each imported name that is shadowable, in source
         order.
     """
-    return sorted(
-        (node.lineno, alias.name)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == _PACKAGE_MODULE
-        for alias in node.names
-        if alias.name in shadowable
-    )
+    prefix = f"{_PACKAGE_MODULE}."
+    reads = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == _PACKAGE_MODULE:
+            reads += [(node.lineno, alias.name) for alias in node.names if alias.name in shadowable]
+        elif isinstance(node, ast.Import):
+            reads += [
+                (node.lineno, alias.name.removeprefix(prefix))
+                for alias in node.names
+                if alias.asname and alias.name.removeprefix(prefix) in shadowable and alias.name.startswith(prefix)
+            ]
+    return sorted(reads)
 
 
 def _ambiguous_reads_in_fence(body: str, shadowable: frozenset[str]) -> list[tuple[int, str]]:
@@ -253,9 +262,9 @@ class TestNoAmbiguousReadShipsInTheTree:
 
         assert not offenders, (
             "a tool name that is also a submodule is read off the tools package, so which object "
-            "the name binds to is decided by what the process imported first - and the read caches "
-            "the tool, which turns the module-alias form used elsewhere into a read of the tool: "
-            f"{offenders}"
+            "the name binds to is decided by what the process imported first. Read the module with "
+            '`importlib.import_module("strands_robots.tools.<name>")` and the tool with '
+            f"`from strands_robots.tools.<name> import <name>`: {offenders}"
         )
 
 
@@ -300,23 +309,31 @@ class TestTheScanIsNonVacuous:
 
     def test_a_constructed_ambiguous_read_is_flagged(self) -> None:
         """The rule detects the spelling it bans, wherever the alias points."""
-        source = "from strands_robots.tools import pose_tool\nfrom strands_robots.tools import use_ros as r\n"
+        source = (
+            "from strands_robots.tools import pose_tool\n"
+            "from strands_robots.tools import use_ros as r\n"
+            "import strands_robots.tools.robot_mesh as rm\n"
+            "import strands_robots.tools.robot_mesh\n"
+        )
 
-        assert _ambiguous_reads(ast.parse(source), _shadowable_names()) == [(1, "pose_tool"), (2, "use_ros")]
+        assert _ambiguous_reads(ast.parse(source), _shadowable_names()) == [
+            (1, "pose_tool"),
+            (2, "use_ros"),
+            (3, "robot_mesh"),
+        ]
 
     @pytest.mark.parametrize(
         "source",
         [
-            "import strands_robots.tools.pose_tool as pose_mod\n",
             "from strands_robots.tools.pose_tool import pose_tool\n",
             "import importlib\n\npose_mod = importlib.import_module('strands_robots.tools.pose_tool')\n",
             "from strands_robots.tools import load_episode\n",
             "from strands_robots import Robot\n",
         ],
-        ids=["module-alias", "tool-off-submodule", "import-module", "not-a-submodule", "unrelated"],
+        ids=["tool-off-submodule", "import-module", "not-a-submodule", "unrelated"],
     )
     def test_an_unambiguous_read_is_not_flagged(self, source: str) -> None:
-        """Both remedies, the plain-module form, and a name with no submodule.
+        """Both remedies and a name with no submodule.
 
         ``load_episode`` is one of several names exported from a single module,
         so no submodule shadows it and the package attribute has one value.

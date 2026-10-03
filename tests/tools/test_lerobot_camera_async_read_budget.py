@@ -30,18 +30,20 @@ asynchronous read again without taking a budget.
 
 from __future__ import annotations
 
+# The module object itself is needed - for the ``cv2``/``os`` handles the tool
+# module imports and for the signature guard's ``vars()`` scan - so every name in
+# it, the tool included, is reached through this one alias.
+import importlib
 import inspect
 from typing import Any
 
 import numpy as np
 import pytest
 
-# The module object itself is needed - for the ``cv2``/``os`` handles the tool
-# module imports and for the signature guard's ``vars()`` scan - so every name in
-# it, the tool included, is reached through this one alias.
-import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.utils import positive_finite_number_error
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 # Actions whose handler selects the asynchronous read, and therefore consumes the
 # caller's budget.

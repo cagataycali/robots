@@ -34,13 +34,15 @@ What is pinned here:
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
 import pytest
 
-import strands_robots.tools.harness_memory as hm
 from tests.tool_result_contract import tool_json
+
+hm = importlib.import_module("strands_robots.tools.harness_memory")
 
 TRACE = [{"action": "run_policy", "instruction": "grasp the bowl", "n_steps": 20}]
 

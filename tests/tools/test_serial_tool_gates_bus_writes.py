@@ -16,14 +16,16 @@ The audit row is graded beside the other gates in
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools.serial_tool as serial_mod
 from strands_robots._motion_grants import consume_grant, deposit_grant
+
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 PORT = "/dev/ttyFAKE0"
 

@@ -49,6 +49,7 @@ that the schema says which series it belongs to.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import re
 from typing import Any
@@ -56,8 +57,9 @@ from typing import Any
 import pytest
 import serial
 
-import strands_robots.tools.serial_tool as serial_mod
 from strands_robots.drivers.feetech.protocol import MAX_GOAL_POSITION
+
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 #: The bound a field's schema entry declares, as the model reads it. ``motor_id``
 #: carries a second interval for the reply-expecting actions, so the *first*

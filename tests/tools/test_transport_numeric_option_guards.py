@@ -27,6 +27,7 @@ so the guards, the per-action scoping, the cross-transport parity and the
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import sys
 import time
@@ -40,10 +41,11 @@ import pytest
 import strands_robots.ros as ros_transport_mod
 import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as participant_mod
-import strands_robots.tools.use_ros as ros_mod
-import strands_robots.tools.use_rosbridge as rosbridge_mod
-import strands_robots.tools.use_rtps as rtps_mod
 from strands_robots.tools._numeric_options import numeric_option_error
+
+ros_mod = importlib.import_module("strands_robots.tools.use_ros")
+rosbridge_mod = importlib.import_module("strands_robots.tools.use_rosbridge")
+rtps_mod = importlib.import_module("strands_robots.tools.use_rtps")
 
 # Values outside the accepted domain of each option, with the reason each one is
 # unusable. ``inf`` matters as much as ``0``: it passes a bare ``rate > 0`` test

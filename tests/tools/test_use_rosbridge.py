@@ -9,6 +9,7 @@ structured error contract are exercised with nothing installed.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 import types as _types
@@ -17,7 +18,8 @@ from typing import Any
 import pytest
 
 import strands_robots.rosbridge as transport_mod
-import strands_robots.tools.use_rosbridge as rb_mod
+
+rb_mod = importlib.import_module("strands_robots.tools.use_rosbridge")
 
 use_rosbridge = rb_mod.use_rosbridge
 

@@ -30,15 +30,17 @@ names it.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
 from tests._docs_hooks import docs_hook
 from tests._package_ast import parse_file
+
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH_TOOL_SOURCE = Path(inspect.getsourcefile(rmt) or "")
