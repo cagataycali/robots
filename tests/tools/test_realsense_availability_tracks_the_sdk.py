@@ -17,12 +17,14 @@ equality, from the other side.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.tools.lerobot_camera import lerobot_camera
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 # The install that works on every platform this package supports: on macOS the
 # wheel ships as ``pyrealsense2-macosx``, which a bare ``pip install

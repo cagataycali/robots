@@ -35,7 +35,9 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import importlib
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 
 SessionManager = tele_mod.SessionManager
 lerobot_teleoperate = tele_mod.lerobot_teleoperate

@@ -18,14 +18,16 @@ the CRITICAL record is read off ``caplog``.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rm
 from strands_robots.tools.robot_mesh import robot_mesh
+
+rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
 TARGET = "so100-lab-1"
 

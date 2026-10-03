@@ -29,14 +29,16 @@ for a maintainer rather than something this change takes. The controls in
 
 from __future__ import annotations
 
+import importlib
 import time
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rmt
 from strands_robots.mesh.session import clear_peers, update_peer
+
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 _SIM_ID = "so101_sim-a1b2"
 _REAL_ID = "so101_real-c3d4"

@@ -25,16 +25,18 @@ per-episode records.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import strands_robots.policies as policies_pkg
-import strands_robots.tools.run_policy as rp_mod
 from strands_robots.policies import list_providers
 from strands_robots.policies.mock import MockPolicy
 from tests.tools.test_run_policy import _FakeSim, _ok_rollout
+
+rp_mod = importlib.import_module("strands_robots.tools.run_policy")
 
 ROOT = "/tmp/run-policy-policy-preflight"
 

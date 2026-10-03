@@ -44,6 +44,7 @@ Refs #3356.
 from __future__ import annotations
 
 import ast
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -53,8 +54,9 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-import strands_robots.tools.download_assets as tool_mod
 from strands_robots.assets import download as dl
+
+tool_mod = importlib.import_module("strands_robots.tools.download_assets")
 
 download_assets = tool_mod.download_assets
 

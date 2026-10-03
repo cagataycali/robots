@@ -17,12 +17,13 @@ All paths are hardware-free: the agent-side connection is a stub injected via
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rm
+rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 class _StubConnection:

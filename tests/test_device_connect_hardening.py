@@ -872,7 +872,7 @@ def test_init_device_connect_insecure_emits_prominent_warning(caplog):
 
 def test_no_forced_insecure_setdefault_in_source():
     # The agent-side connector must NOT force insecure mode process-wide.
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     src = __import__("inspect").getsource(rm._dc_ensure_connected)
     assert 'setdefault("DEVICE_CONNECT_ALLOW_INSECURE"' not in src
@@ -887,7 +887,7 @@ def test_broadcast_dispatch_uses_validated_command(monkeypatch):
     the raw caller string (which could differ from what was approved)."""
     from unittest.mock import MagicMock
 
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     conn = MagicMock(name="conn")
     conn.broadcast.return_value = [{"device_id": "d1", "result": {}}]
@@ -912,7 +912,7 @@ def test_broadcast_dispatch_uses_validated_command(monkeypatch):
 def test_broadcast_dispatch_without_validated_command_is_rejected(monkeypatch):
     from unittest.mock import MagicMock
 
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     conn = MagicMock(name="conn")
     monkeypatch.setattr(
@@ -931,7 +931,7 @@ def test_broadcast_dispatch_without_validated_command_is_rejected(monkeypatch):
 
 
 def test_with_identity_noop_when_unset(monkeypatch):
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     monkeypatch.delenv("STRANDS_ROBOT_MESH_AGENT_ID", raising=False)
     monkeypatch.delenv("DEVICE_CONNECT_CLIENT_ID", raising=False)
@@ -941,7 +941,7 @@ def test_with_identity_noop_when_unset(monkeypatch):
 
 
 def test_with_identity_stamps_source_device(monkeypatch):
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     monkeypatch.setenv("STRANDS_ROBOT_MESH_AGENT_ID", "trusted-controller")
     out = rm._with_identity({"instruction": "go"})
@@ -956,7 +956,7 @@ def test_tell_invoke_carries_identity(monkeypatch):
     the DC command envelope so the device's allowlist can match it."""
     from unittest.mock import MagicMock
 
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     monkeypatch.setenv("STRANDS_ROBOT_MESH_AGENT_ID", "trusted-controller")
     conn = MagicMock(name="conn")
@@ -976,7 +976,7 @@ def test_tell_invoke_carries_identity(monkeypatch):
 
 
 def test_rpc_is_interrupt_required():
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     assert "rpc" in rm._resolve_interrupt_actions()
 
@@ -986,7 +986,7 @@ def test_rpc_declined_by_operator_is_rejected(monkeypatch):
     fail closed when the operator declines."""
     from unittest.mock import MagicMock
 
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     monkeypatch.setenv("STRANDS_ROBOT_MESH_DC", "off")
     ctx = MagicMock(name="ToolContext")
@@ -1007,7 +1007,7 @@ def test_rpc_declined_by_operator_is_rejected(monkeypatch):
 def test_rpc_surfaces_function_in_interrupt(monkeypatch):
     from unittest.mock import MagicMock
 
-    import strands_robots.tools.robot_mesh as rm
+    rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
     monkeypatch.setenv("STRANDS_ROBOT_MESH_DC", "off")
     ctx = MagicMock(name="ToolContext")

@@ -17,6 +17,7 @@ Hardware-free: ``device_connect_agent_tools.connection`` is a fake module.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 import types
@@ -24,7 +25,7 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rm
+rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
 REFUSAL = {"status": "error", "reason": "caller not authorized for 'stop'", "caller": "my-agent"}
 NOT_HALTED = {"ok": False, "error": "no rollout to stop"}

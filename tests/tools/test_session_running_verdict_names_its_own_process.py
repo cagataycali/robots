@@ -51,16 +51,19 @@ import pytest
 
 pytest.importorskip("psutil")
 
+import importlib
+
 import psutil  # noqa: E402
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from strands_robots.tools._process_stop import (  # noqa: E402
     _IDENTITY_TOLERANCE_S,
     PID_STARTED_SINCE_BOOT,
     process_started_since_boot,
     session_is_running,
 )
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 #: The two session tools, the extra keywords each needs to be called at all, and
 #: the session name and ``action`` value a record of theirs carries.

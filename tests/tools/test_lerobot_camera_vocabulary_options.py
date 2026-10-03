@@ -31,17 +31,19 @@ against, so the accepted set and the enforced set cannot drift.
 
 from __future__ import annotations
 
+# The module object itself is needed - for the ``cv2`` handle the tool module
+# imports and for the vocabulary maps the drift guards read - so every name in it,
+# the tool included, is reached through this one alias.
+import importlib
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 
-# The module object itself is needed - for the ``cv2`` handle the tool module
-# imports and for the vocabulary maps the drift guards read - so every name in it,
-# the tool included, is reached through this one alias.
-import strands_robots.tools.lerobot_camera as cam_mod
 from tests.tools._camera_stand_in import Camera, Opened, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 # Actions that open a camera configured with the caller's selectors. Every one of
 # them must therefore have those selectors validated.

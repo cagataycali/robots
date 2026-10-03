@@ -27,12 +27,12 @@ plugged into the machine running the suite.
 
 from __future__ import annotations
 
+import importlib
 import math
 from typing import Any
 
 import pytest
 
-import strands_robots.tools.pose_tool as pose_mod
 from strands_robots.tools.pose_tool import (
     MotorController,
     PoseManager,
@@ -42,6 +42,8 @@ from strands_robots.tools.pose_tool import (
 from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 from .conftest import FakeSerial, ReadingSerial
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 
 
 @pytest.fixture(autouse=True)

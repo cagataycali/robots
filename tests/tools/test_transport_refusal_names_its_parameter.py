@@ -22,6 +22,7 @@ helper that copies the sentence is held to it the moment it lands.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import pathlib
 import re
@@ -30,15 +31,16 @@ from typing import Any
 import pytest
 
 import strands_robots.rosbridge as transport_mod
-import strands_robots.tools.use_rosbridge as ur
 from strands_robots.utils import tcp_port_error
 from tests._package_ast import parse_file
+
+ur = importlib.import_module("strands_robots.tools.use_rosbridge")
 
 # The sentence that constitutes the promise. Any helper whose docstring carries
 # it has told its callers the message names their parameter.
 PROMISE = "The parameter name it came from, used in the message"
 
-PACKAGE_ROOT = pathlib.Path(ur.__file__).resolve().parent.parent
+PACKAGE_ROOT = pathlib.Path(str(ur.__file__)).resolve().parent.parent
 
 # One below the shared 16-bit ceiling: the highest port this transport carries.
 ADDRESSABLE_PORT = 65534

@@ -29,6 +29,7 @@ Usage::
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import time
 from collections.abc import Callable
@@ -39,7 +40,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 #: Every camera ``_create_camera`` can hand back, read off the module under test
 #: so this tuple cannot name a class the tool does not use: the ``Camera``

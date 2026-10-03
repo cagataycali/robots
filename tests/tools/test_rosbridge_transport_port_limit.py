@@ -26,15 +26,17 @@ at the bottom fails and says so, which is the signal to widen
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 
 import strands_robots.rosbridge as transport_mod
-import strands_robots.tools.use_rosbridge as ur
 from strands_robots.drivers.ros.rosbridge_robot import RosbridgeRobot
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import tcp_port_error
+
+ur = importlib.import_module("strands_robots.tools.use_rosbridge")
 
 # The one port that the shared domain accepts and the transport cannot carry.
 UNADDRESSABLE_PORT = 65535
@@ -156,7 +158,7 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         which of them apply this bound. The other tools talk to plain sockets
         and must keep the whole port space.
         """
-        root = Path(ur.__file__).resolve().parent.parent
+        root = Path(str(ur.__file__)).resolve().parent.parent
         sources = {
             path.name: path.read_text(encoding="utf-8")
             for glob in ("tools/*.py", "drivers/ros/*_robot.py", "rosbridge.py")

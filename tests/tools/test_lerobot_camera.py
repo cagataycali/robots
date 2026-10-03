@@ -11,6 +11,7 @@ by substituting a fake camera, and pin two invariants the tool must uphold:
 
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -18,9 +19,10 @@ from unittest import mock
 import numpy as np
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
 from strands_robots.tools.lerobot_camera import lerobot_camera
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 
 def _texts(result: dict[str, Any]) -> str:

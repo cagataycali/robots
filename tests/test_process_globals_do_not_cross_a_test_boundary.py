@@ -34,11 +34,12 @@ import pytest
 import strands_robots
 import strands_robots.audit as audit
 import strands_robots.dashboard.auth as auth
-import strands_robots.tools.robot_mesh as rmt
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, register_predicate
 from strands_robots.utils import require_optional
 from tests._package_ast import parse_file
 from tests.conftest import AUDIT_PROCESS_FLAGS, DASHBOARD_AUTH_PROCESS_STATE, WARN_ONCE_MEMOS
+
+rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 #: The mesh action whose window a row spends. Any of them would do; this one is
 #: the rate-limited verb the tool's own tests drain.

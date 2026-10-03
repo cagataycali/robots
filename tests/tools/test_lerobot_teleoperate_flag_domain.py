@@ -50,8 +50,9 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
 from strands_robots.utils import boolean_flag_error  # noqa: E402
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate

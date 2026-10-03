@@ -38,14 +38,16 @@ value in range that is not addressable, and that name recorded the opposite.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from typing import Any
 
 import pytest
 import serial
 
-import strands_robots.tools.serial_tool as serial_mod
 from strands_robots.drivers.feetech import protocol as feetech_protocol
+
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 # Stated here rather than read off the module under test, so these cells grade
 # the Protocol 1 address space rather than agreeing with whatever the module

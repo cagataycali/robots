@@ -17,6 +17,7 @@ was taken. The audit row is graded beside the other gates in
 
 from __future__ import annotations
 
+import importlib
 import os
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import strands_robots.tools.pose_tool as pose_mod
 from strands_robots._motion_grants import consume_grant, deposit_grant
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 
 PORT = "/dev/ttyFAKE0"
 

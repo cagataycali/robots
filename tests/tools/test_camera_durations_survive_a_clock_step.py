@@ -42,6 +42,7 @@ clock.
 from __future__ import annotations
 
 import ast
+import importlib
 import pathlib
 import re
 import time
@@ -49,8 +50,9 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.lerobot_camera as cam_mod
 from tests.tools._camera_stand_in import Camera, stands_in_for
+
+cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
 
 #: Real seconds each modelled device operation takes. Wide enough that a clock
 #: step can be armed to land inside a specific window, and small enough to keep
@@ -232,7 +234,7 @@ def test_no_span_in_the_module_can_be_built_from_the_wall_clock_again() -> None:
     rather than "the stamps only". The premise below states that the stamps are
     still written, so this is not read as a module that stopped stamping.
     """
-    source = pathlib.Path(cam_mod.__file__).read_text(encoding="utf-8")
+    source = pathlib.Path(str(cam_mod.__file__)).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     wall_reads = [

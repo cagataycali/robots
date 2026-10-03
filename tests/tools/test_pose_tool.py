@@ -19,13 +19,13 @@ every returned ``text`` field must be plain ASCII.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 import serial
 
-import strands_robots.tools.pose_tool as pose_mod
 from strands_robots.tools.pose_tool import (
     MotorController,
     PoseManager,
@@ -35,6 +35,8 @@ from strands_robots.tools.pose_tool import (
 from tests.tool_result_contract import tool_json
 
 from .conftest import FakeSerial
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 
 
 @pytest.fixture(autouse=True)
@@ -327,7 +329,7 @@ def test_pose_tool_reset_to_home_is_ascii(cwd_tmp, reading_serial) -> None:
 
 def test_module_source_is_ascii() -> None:
     """Regression: the whole module must be ASCII-only (no emojis / degree sign)."""
-    src = Path(pose_mod.__file__).read_text(encoding="utf-8")
+    src = Path(str(pose_mod.__file__)).read_text(encoding="utf-8")
     assert src.isascii(), "pose_tool.py contains non-ASCII characters"
 
 

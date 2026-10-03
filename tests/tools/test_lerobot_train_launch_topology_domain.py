@@ -50,9 +50,12 @@ import pytest
 
 pytest.importorskip("psutil")
 
+import importlib
+
 import strands_robots  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
 from tests.tools.test_lerobot_train import _write_dataset  # noqa: E402
+
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 
 build_train_command = train_mod.build_train_command
 

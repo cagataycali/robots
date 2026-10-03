@@ -39,6 +39,7 @@ lerobot is installed.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 from pathlib import Path
 from typing import Any
@@ -46,7 +47,7 @@ from typing import Any
 import pytest
 import serial
 
-import strands_robots.tools.serial_tool as serial_mod
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 #: Bit index the vendor declares for ``Goal_Velocity`` on the STS/SMS series -
 #: lerobot spells it ``STS_SMS_SERIES_ENCODINGS_TABLE["Goal_Velocity"] = 15`` and

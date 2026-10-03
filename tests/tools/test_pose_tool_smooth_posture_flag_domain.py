@@ -40,6 +40,7 @@ suite.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import math
 from typing import Any
@@ -47,7 +48,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-import strands_robots.tools.pose_tool as pose_mod
 from strands_robots.tools.pose_tool import (
     MotorController,
     PoseManager,
@@ -57,6 +57,8 @@ from strands_robots.tools.pose_tool import (
 from strands_robots.utils import boolean_flag_error
 
 from .conftest import FakeSerial, ReadingSerial
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 
 
 @pytest.fixture(autouse=True)

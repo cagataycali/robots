@@ -32,6 +32,7 @@ un-gated the way these two did.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import threading
 from pathlib import Path
@@ -43,12 +44,13 @@ import pytest
 import strands_robots.ros as ros_transport_mod
 import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as rtps_participant_mod
-import strands_robots.tools.use_ros as ros_mod
 from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobot
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
 from tests._package_ast import parse_file
+
+ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 
 # A surface the blocklist has carried since the gate was introduced, and the
 # namespaced spelling a bare entry also has to cover.
@@ -71,7 +73,7 @@ _TRANSPORTS: tuple[tuple[str, Any, Any, str], ...] = (
     ("use_rosbridge", use_rosbridge, rosbridge_transport_mod, "geometry_msgs/Twist"),
 )
 
-_TOOLS_DIR = Path(ros_mod.__file__).resolve().parent
+_TOOLS_DIR = Path(str(ros_mod.__file__)).resolve().parent
 #: The package root, so the single-owner pin below reads every module rather
 #: than one directory: the gate itself sits in ``core``, and a second copy
 #: anywhere would make two transports disagree just as surely.

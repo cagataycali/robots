@@ -16,12 +16,13 @@ entry points are monkeypatched, so no transport is ever opened.
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rm
+rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
 
 @pytest.fixture

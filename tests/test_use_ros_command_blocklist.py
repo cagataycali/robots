@@ -10,6 +10,7 @@ refuses correctly is worthless if a verb never consults it.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import os
 import re
@@ -22,7 +23,6 @@ import pytest
 
 import strands_robots._command_gate as gate_mod
 import strands_robots.ros as ros_transport_mod
-import strands_robots.tools.use_ros as ros_mod
 from strands_robots._command_gate import (
     approve_response,
     canonical_command_name,
@@ -32,6 +32,8 @@ from strands_robots._command_gate import (
 from strands_robots.ros import GATE_TOOL, never_gated
 from strands_robots.tools.use_ros import use_ros
 from tests._docs_hooks import docs_hook
+
+ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 
 # The verbs that carry a command to a robot, with the parameter naming the
 # surface and the module-level helper each one reaches once the gate allows it.
@@ -417,7 +419,7 @@ def test_every_command_verb_branch_hands_the_transport_the_operator_gate() -> No
     command verb handed :func:`~strands_robots.ros.never_gated` - or handed
     nothing, which the transport refuses outright - cannot reach an operator.
     """
-    module = ast.parse(Path(ros_mod.__file__).read_text(encoding="utf-8"))
+    module = ast.parse(Path(str(ros_mod.__file__)).read_text(encoding="utf-8"))
     dispatch = next(node for node in ast.walk(module) if isinstance(node, ast.FunctionDef) and node.name == "use_ros")
     gated: set[str] = set()
     ungated: set[str] = set()

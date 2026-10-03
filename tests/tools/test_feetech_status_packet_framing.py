@@ -16,14 +16,16 @@ and no arm attached.
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 import pytest
 import serial
 
-import strands_robots.tools.pose_tool as pose_mod
 from strands_robots.drivers.feetech.protocol import parse_sync_read_replies
 from strands_robots.tools.pose_tool import MotorController, pose_tool
+
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 
 #: The ID of ``shoulder_pan``, and the position its reply carries throughout.
 #: 1024 is a quarter turn from the 4095-count full scale, which puts the joint at

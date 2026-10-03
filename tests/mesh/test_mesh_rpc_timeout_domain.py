@@ -29,6 +29,7 @@ reports an empty fleet for a broadcast that was published.
 """
 
 import ast
+import importlib
 import inspect
 import logging
 import math
@@ -39,9 +40,10 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.robot_mesh as _tool
 from strands_robots.mesh import core
 from strands_robots.utils import positive_finite_number_error
+
+_tool = importlib.import_module("strands_robots.tools.robot_mesh")
 
 #: Budgets no ``Event.wait`` can honor as a wait of that length.
 _UNUSABLE: tuple[Any, ...] = (0, -1.0, math.nan, math.inf, -math.inf, True, False, "30", None, [0.5])

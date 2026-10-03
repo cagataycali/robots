@@ -39,6 +39,8 @@ import pytest
 
 pytest.importorskip("psutil")
 
+import importlib
+
 from strands.types.interrupt import Interrupt  # noqa: E402
 from strands.types.tools import ToolUse  # noqa: E402
 
@@ -47,16 +49,17 @@ import strands_robots._command_gate as gate_mod  # noqa: E402
 import strands_robots.dashboard.agent_hitl as dash_hitl_mod  # noqa: E402
 import strands_robots.hardware_robot as hw_mod  # noqa: E402
 import strands_robots.tools.g1.use_unitree as unitree_mod  # noqa: E402
-import strands_robots.tools.lerobot_train as train_mod  # noqa: E402
-import strands_robots.tools.pose_tool as pose_mod  # noqa: E402
-import strands_robots.tools.robot_mesh as mesh_mod  # noqa: E402
-import strands_robots.tools.serial_tool as serial_mod  # noqa: E402
 from strands_robots._command_gate import gate_command  # noqa: E402
 from strands_robots._motion_grants import consume_grant  # noqa: E402
 from strands_robots.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
 from tests._hardware_robot import hardware_robot_on
 from tests._package_ast import parse_file
+
+train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
+pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
+mesh_mod = importlib.import_module("strands_robots.tools.robot_mesh")
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 # A reply that carries a reason. Every gate accepts a canonical affirmative only,
 # so this is always a decline - which is exactly why the audit row is the only

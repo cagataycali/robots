@@ -31,6 +31,7 @@ is to repair the thing it names.
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from pathlib import Path
@@ -38,8 +39,9 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.harness_memory as hm
 from tests.tool_result_contract import assert_strands_tool_result, tool_json
+
+hm = importlib.import_module("strands_robots.tools.harness_memory")
 
 TRACE: list[dict[str, Any]] = [{"action": "run_policy", "instruction": "grasp the bowl"}]
 SUMMARY: dict[str, Any] = {"strategy": "approach, grasp, lift", "avoid": ["empty grasp"]}

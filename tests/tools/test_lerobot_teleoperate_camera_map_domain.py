@@ -55,7 +55,9 @@ pytest.importorskip("psutil")
 # needs it; the sibling registry test gates on the same module.
 pytest.importorskip("lerobot")
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import importlib
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 
 build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate

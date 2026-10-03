@@ -40,13 +40,13 @@ The two neighbours are the control: both were already signed, both are unchanged
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import inspect
 from pathlib import Path
 
 import pytest
 
-import strands_robots.tools.serial_tool as serial_mod
 from strands_robots.drivers.feetech.bus import (
     READABLE_REGISTERS,
     SO_ARM_MOTORS,
@@ -61,6 +61,8 @@ from strands_robots.drivers.feetech.protocol import (
     read_packet,
 )
 from tests.drivers.conftest import FakeServoPort
+
+serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 #: The vendor SDK is an incidental dependency here - it arrives transitively
 #: through ``lerobot[feetech]``. Scoped to the one class that needs it rather

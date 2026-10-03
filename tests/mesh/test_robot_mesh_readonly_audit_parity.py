@@ -21,13 +21,14 @@ the dispatcher, so an action added to it is covered without editing this file.
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 from typing import Any
 
 import pytest
 
-import strands_robots.tools.robot_mesh as rm
+rm = importlib.import_module("strands_robots.tools.robot_mesh")
 
 # Two devices, one of them exposing an actuation surface by name. The function
 # names matter: they are what makes ``peers`` a reconnaissance read rather than

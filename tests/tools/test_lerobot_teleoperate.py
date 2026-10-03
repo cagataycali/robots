@@ -24,10 +24,13 @@ import pytest
 
 pytest.importorskip("psutil")
 
-import strands_robots.tools.lerobot_teleoperate as tele_mod  # noqa: E402
+import importlib
+
 from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import session_is_running  # noqa: E402
 from tests.tool_result_contract import tool_json  # noqa: E402
+
+tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 
 # Bind the public names off the single module handle rather than a second
 # ``from ... import`` of the same module (CodeQL: import + import-from of one
@@ -530,7 +533,7 @@ def test_dagger_preflight_is_a_class_the_docstring_licenses(monkeypatch: pytest.
     import ast
     import importlib.util as _iu
 
-    source = Path(tele_mod.__file__).read_text(encoding="utf-8")
+    source = Path(str(tele_mod.__file__)).read_text(encoding="utf-8")
     builder = next(
         node
         for node in ast.parse(source).body
