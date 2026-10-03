@@ -7,9 +7,11 @@ with ``create_trainer(provider)`` (here lerobot ACT), EXPORT a loadable
 artifact, and DEPLOY it back via ``create_policy`` - all with the SAME provider
 name on both the training and inference sides.
 
-Swap ``PROVIDER`` to "cosmos3" and only the provider string changes: the
-lerobot draccus CLI (ACT through GR00T N1.7, by ``policy_type``) and Cosmos's
-TOML+DCP pipeline both hide behind one ``TrainSpec`` + ``Trainer`` lifecycle.
+The lerobot draccus CLI (ACT through GR00T N1.7, by ``policy_type``) and
+Cosmos's TOML+DCP pipeline both hide behind one ``TrainSpec`` + ``Trainer``
+lifecycle. Swapping ``PROVIDER`` to "cosmos3" also needs a ``base_model`` to
+convert, a recipe in ``extra["sft_toml"]`` and a cosmos-framework checkout in
+``COSMOS_ROOT``; ``trainer.validate(spec)`` names whichever is missing.
 
 Dependencies: pip install "strands-robots[sim-mujoco,lerobot]" "lerobot[training]"
 Expected output: a trained ACT checkpoint under /tmp, loaded back as a Policy.
@@ -24,7 +26,7 @@ os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 from strands_robots import MockPolicy, Robot, create_policy
 from strands_robots.training import TrainSpec, create_trainer
 
-PROVIDER = "lerobot_local"  # swap -> "cosmos3" (only this changes)
+PROVIDER = "lerobot_local"  # or "cosmos3": see the docstring for what else it needs
 DATASET_ROOT = "/tmp/strands_post_tune_ds"
 OUTPUT_DIR = "/tmp/strands_post_tune_ft"
 
@@ -104,4 +106,4 @@ if deployed["status"] != "success":
     raise SystemExit(f"deploy rollout failed: {deployed['content'][0]['text']}")
 info = next(item["json"] for item in deployed["content"] if "json" in item)
 print(f"deployed: {info['steps_used']} steps in {info['elapsed_s']}s")
-print("\nLoop closed: record -> train -> export -> load -> run. Swap PROVIDER to 'cosmos3' to retarget the same flow.")
+print("\nLoop closed: record -> train -> export -> load -> run.")
