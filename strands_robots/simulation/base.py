@@ -1471,6 +1471,16 @@ class SimEngine(ABC):
         """
         return {}
 
+    def saturated_actuators(self, robot_name: str) -> list[str] | None:
+        """Return the actuators of ``robot_name`` whose applied force sits at its force limit now.
+
+        Keyed like :meth:`robot_action_keys`. A position servo pinned at its
+        limit is pushing against contact or a joint stop instead of reaching its
+        command, which key resolution cannot see. ``[]`` means none is pinned;
+        the default ``None`` means the backend cannot tell.
+        """
+        return None
+
     # Guards the one-time creation of an engine's per-thread binding slot.
     # Two rollouts starting on two threads must not each create a slot and
     # have one of them lost; after creation the slot itself is thread-local.
@@ -3626,6 +3636,14 @@ class SimEngine(ABC):
             actuator per key, so the step is unknown for per-actuator purposes
             rather than a miss - a rollout keyed entirely that way reports an
             empty map and ``0.0``, not the ``1.0`` of a robot that never moved.
+
+            Achievement: resolution says a command reached an actuator, not that
+            the actuator achieved it, so an arm driven into the table reads
+            healthy on every field above. ``saturated_step_rate`` is the
+            fraction of steps on which any of the robot's actuators sat at its
+            force limit, and ``saturation_rate`` the same per actuator (from
+            :meth:`saturated_actuators`; both ``None`` on a backend that cannot
+            tell). A short burst is a fast move; most of a rollout is a stall.
 
             Video: ``video_path`` (``None`` when no MP4 was written),
             ``video_frames`` and ``video_fps`` (the rate the MP4 plays at -

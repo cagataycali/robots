@@ -2611,6 +2611,14 @@ class PolicyRunner:
                 _coarse_failure_steps = 0
                 _last_unresolved: list[str] = []
                 _last_coarse_error = ""
+                # Steps an actuator spent pinned at its force limit. Resolution
+                # says a command reached the actuator; this says whether the
+                # actuator could achieve it, so an arm driven into the table no
+                # longer reads as healthy. ``None`` from the backend means it
+                # cannot tell, and the fields then report ``None`` too.
+                _saturated: dict[str, int] = dict.fromkeys(_robot_actuators, 0)
+                _saturation_known_steps = 0
+                _saturated_steps = 0
 
                 onframe_failure_limit = (
                     max_onframe_failures if max_onframe_failures is not None else _MAX_CONSECUTIVE_ONFRAME_FAILURES
@@ -2631,7 +2639,7 @@ class PolicyRunner:
                     nonlocal step_count, _action_errors, consecutive_onframe_failures
                     nonlocal _total_failure_steps, _coarse_failure_steps, _last_unresolved
                     nonlocal _last_coarse_error, _applied_actions, _known_resolution_steps
-                    nonlocal _actions_commanding
+                    nonlocal _actions_commanding, _saturation_known_steps, _saturated_steps
 
                     # Read BEFORE the send, off the action as the policy emitted it,
                     # so the tally is a fact about the policy's output rather than
@@ -2646,6 +2654,15 @@ class PolicyRunner:
                     # that aborts this step; the resolution records whether physical
                     # application is known.
                     _applied_actions += 1
+                    try:
+                        _pinned = self.sim.saturated_actuators(robot_name)
+                    except Exception:  # noqa: BLE001 - stats are best-effort, never fatal
+                        _pinned = None
+                    if _pinned is not None:
+                        _saturation_known_steps += 1
+                        _saturated_steps += bool(_pinned)
+                        for _name in _pinned:
+                            _saturated[_name] = _saturated.get(_name, 0) + 1
                     _is_error = isinstance(_send_result, dict) and _send_result.get("status") == "error"
                     # Resolve which of the robot's actuators this step actually drove
                     # only when the backend gives a COMPLETE per-key breakdown. A
@@ -3158,6 +3175,22 @@ class PolicyRunner:
         else:
             payload["action_resolution_rate"] = {}
             payload["partial_action_failure_rate"] = 0.0
+
+        if _saturation_known_steps > 0:
+            payload["saturated_step_rate"] = round(_saturated_steps / _saturation_known_steps, 4)
+            payload["saturation_rate"] = {
+                name: round(count / _saturation_known_steps, 4) for name, count in _saturated.items()
+            }
+            if _saturated_steps:
+                _pinned_names = sorted((n for n, c in _saturated.items() if c), key=lambda n: -_saturated[n])
+                text += (
+                    f"\n\nForce-limited: on {payload['saturated_step_rate']:.0%} of steps an actuator sat at "
+                    f"its force limit ({', '.join(_pinned_names)}): it could not deliver what its command asked, "
+                    "as when an arm stalls against contact or a joint stop."
+                )
+        else:
+            payload["saturated_step_rate"] = None
+            payload["saturation_rate"] = None
 
         # A rollout where every step either explicitly resolved no key or was
         # coarsely refused is not a usable success. For coarse errors, preserve

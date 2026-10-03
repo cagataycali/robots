@@ -3634,6 +3634,29 @@ class MuJoCoSimEngine(
                 ranges[key] = (float(low), float(high))
         return ranges
 
+    def saturated_actuators(self, robot_name: str) -> list[str] | None:
+        """The ``forcelimited`` actuators whose ``actuator_force`` MuJoCo clamped to ``forcerange``.
+
+        Overrides :meth:`SimEngine.saturated_actuators`. MuJoCo clamps the
+        force exactly, so a pinned actuator reads its bound; the tolerance only
+        absorbs float noise.
+        """
+        if self._world is None or self._world._model is None or not registered(self._world.robots, robot_name):
+            return None
+        model, data = self._world._model, self._world._data
+        pfx = self._world.robots[robot_name].namespace or ""
+        pinned: list[str] = []
+        for act_id in self._world.robots[robot_name].actuator_ids:
+            if not model.actuator_forcelimited[act_id]:
+                continue
+            low, high = model.actuator_forcerange[act_id]
+            force = float(data.actuator_force[act_id])
+            tol = 1e-6 * max(1.0, abs(float(low)), abs(float(high)))
+            if force >= high - tol or force <= low + tol:
+                raw = model.actuator(act_id).name
+                pinned.append(raw[len(pfx) :] if pfx and raw.startswith(pfx) else raw)
+        return pinned
+
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
 
