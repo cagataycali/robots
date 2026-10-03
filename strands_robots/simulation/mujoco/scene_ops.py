@@ -663,7 +663,8 @@ def geom_body_path(model: Any, geom_id: int, mj: Any) -> list[str]:
                 path.append(str(name))
             body = int(model.body_parentid[body])
     except (IndexError, AttributeError):
-        pass
+        # A lookup that raises ends the walk; the names collected so far stand.
+        return path
     return path
 
 
