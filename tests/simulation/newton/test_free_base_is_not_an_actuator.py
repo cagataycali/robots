@@ -28,6 +28,9 @@ on every CI job rather than being skipped.
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
+
+import pytest
 
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
@@ -154,3 +157,45 @@ class TestTheRecordedWidthRoundTrips:
 
         assert result["status"] == "success", result
         assert engine._targets == {("g1", name): 0.1 for name in _SCALAR_JOINTS}
+
+
+class _TargetBuffer:
+    """The slice of a Warp array ``_write_targets`` reads back."""
+
+    def __init__(self, values: list[float]) -> None:
+        self.values = list(values)
+
+    def numpy(self) -> list[float]:
+        return list(self.values)
+
+
+@pytest.mark.parametrize(
+    ("coord_layout", "width", "knee_index"),
+    [
+        # Newton's default: one target per DOF; the free base spans 6, so the
+        # first scalar joint (hip_yaw) is DOF 6 and the knee DOF 8.
+        (False, 6 + len(_SCALAR_JOINTS), 8),
+        # ``newton.use_coord_layout_targets``: one target per coordinate; the
+        # free base spans 7 (xyz + quaternion), so the knee is coordinate 9.
+        (True, 7 + len(_SCALAR_JOINTS), 9),
+    ],
+)
+def test_a_target_lands_on_its_own_joint_behind_a_free_base(coord_layout, width, knee_index):
+    """Pre-fix every target was written at the coordinate index, so on the
+    default DOF layout the knee's target drove the ankle and the last joint's
+    target fell off the end of the array - a walking policy toppled whatever
+    it commanded."""
+    engine = _engine(free_base=True)
+    engine._joint_coord_index = {("g1", name): 7 + i for i, name in enumerate(_SCALAR_JOINTS)}
+    engine._joint_dof_index = {("g1", name): 6 + i for i, name in enumerate(_SCALAR_JOINTS)}
+    engine._model = SimpleNamespace(use_coord_layout_targets=coord_layout, device="cpu")
+    engine._control = SimpleNamespace(joint_target_q=_TargetBuffer([0.0] * width))
+    engine._wp = SimpleNamespace(float32="float32", array=lambda values, dtype, device: _TargetBuffer(values))
+    engine._targets = {("g1", name): float(i + 1) for i, name in enumerate(_SCALAR_JOINTS)}
+
+    NewtonSimEngine._write_targets(engine)
+
+    written = engine._control.joint_target_q.values
+    first = knee_index - _SCALAR_JOINTS.index("knee")
+    assert written[first:] == [1.0, 2.0, 3.0, 4.0]
+    assert written[:first] == [0.0] * first
