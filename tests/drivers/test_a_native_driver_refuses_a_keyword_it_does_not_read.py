@@ -79,10 +79,14 @@ class TestTheFactoryRefusesAKeywordTheDriverDoesNotDeclare:
         assert driver.bus.timeout == 0.5
 
     def test_both_drivers_refuse_the_same_typo(self) -> None:
-        """The native path is the mirror of the lerobot path, not its exception."""
+        """The native path is the mirror of the lerobot path, not its exception.
+
+        Both refusals arrow at the keyword the caller meant, as the camera-option
+        and teleoperator refusals do, instead of leaving it to be found in a roster.
+        """
         pytest.importorskip("lerobot.robots.config")
         for driver in ("strands", "lerobot"):
-            with pytest.raises(ValueError, match="prot"):
+            with pytest.raises(ValueError, match=r"Did you mean: 'prot' -> 'port'\?"):
                 Robot("so101", mode="real", driver=driver, prot="/dev/ttyACM0")
 
 
