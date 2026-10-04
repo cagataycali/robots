@@ -193,6 +193,36 @@
       ],
       "dim_policy": "pad"
     },
+    "lekiwi_sim": {
+      "__note__": "SIM: Ekumen-OS lekiwi/lekiwi.xml. state_keys are the 9 joints a recording writes (three omniwheel joints, then the SO-ARM100 arm); action_keys are the actuators send_action resolves: wheel VELOCITY actuators (rad/s) then arm position actuators (rad). The bare name 'lekiwi' is lerobot's hardware driver type, so it stays an alias of lekiwi_real; a checkpoint trained on the real robot's body-frame x.vel/y.vel/theta.vel does not drive these wheels.",
+      "obs_rename": {
+        "front": "observation.images.image",
+        "wrist": "observation.images.wrist_image"
+      },
+      "state_keys": [
+        "base_back_wheel_joint",
+        "base_right_wheel_joint",
+        "base_left_wheel_joint",
+        "Rotation",
+        "Pitch",
+        "Elbow",
+        "Wrist_Pitch",
+        "Wrist_Roll",
+        "Jaw"
+      ],
+      "action_keys": [
+        "base_back_wheel",
+        "base_right_wheel",
+        "base_left_wheel",
+        "Rotation",
+        "Pitch",
+        "Elbow",
+        "Wrist_Pitch",
+        "Wrist_Roll",
+        "Jaw"
+      ],
+      "dim_policy": "pad"
+    },
     "panda": {
       "__note__": "SIM: franka_emika_panda/panda.xml. 7 arm joints + 2 finger joints.",
       "obs_rename": {

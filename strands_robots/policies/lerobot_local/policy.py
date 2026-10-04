@@ -42,6 +42,7 @@ from .embodiment import (
     hardware_pos_keys,
     observed_state_keys,
     registered_sim_embodiment,
+    state_key_mismatch_detail,
     state_key_remedy,
 )
 from .processor import POSTPROCESSOR_CONFIG, PREPROCESSOR_CONFIG, ProcessorBridge
@@ -3034,6 +3035,9 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             RuntimeError: If model is not loaded and no path is set.
+            ValueError: If the declared embodiment binds none of the
+                observation's state keys while the model declares
+                ``observation.state``; the message names the embodiment that does.
         """
         if not self._loaded:
             if self.pretrained_name_or_path:
@@ -3081,6 +3085,14 @@ class LerobotLocalPolicy(Policy):
                 # batched-tensor contract independent of which steps the
                 # checkpoint's pipeline happens to ship.
                 batch = self._fixup_preprocessed_batch(batch)
+                if "observation.state" in self._input_features and "observation.state" not in batch:
+                    # The pack step found none of the embodiment's state_keys and
+                    # passed the observation on; the model would fail on a bare
+                    # KeyError('observation.state'). Raise the step's own diagnosis.
+                    raise ValueError(
+                        f"lerobot_local: embodiment {self._embodiment.name!r} packed no observation.state. "
+                        + state_key_mismatch_detail(list(self._embodiment.state_keys), observation_dict, total=True)
+                    )
             else:
                 # Legacy heuristic path (no embodiment declared). B12: remap
                 # strands-native obs (bare camera names + per-joint scalars) to
