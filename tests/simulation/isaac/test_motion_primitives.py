@@ -213,9 +213,23 @@ class TestValidationReusesTheCore:
     def test_missing_target_yaw_matches_core_wording(self):
         sim, _ = _make_sim()
         result = sim.rotate_wrist(robot_name="arm")
-        _, _, expected = MotionPrimitivesCore()._validate_rotate_wrist_args(None, 0.02, 200)
+        _, _, expected = MotionPrimitivesCore()._validate_rotate_wrist_args(None, 0.02, 200, "arm")
         assert result == expected
         assert "target_yaw" in result["content"][0]["text"]
+
+    @pytest.mark.parametrize(
+        ("verb", "payload", "param"),
+        [
+            ("set_gripper", "close", "state"),
+            ("move_to", [0.3, 0.0, 0.2], "position"),
+            ("rotate_wrist", 0.3, "target_yaw"),
+        ],
+    )
+    def test_a_positional_payload_is_named_where_it_landed(self, verb, payload, param):
+        sim, art = _make_sim()
+        text = getattr(sim, verb)(payload)["content"][0]["text"]
+        assert f"it received {payload!r}; name the argument instead: {verb}({param}=...)" in text
+        assert art.applied == []
 
     @pytest.mark.parametrize("tol", [0.0, -0.1, math.nan, math.inf, True, "0.05"])
     def test_bad_tol_matches_core_wording(self, tol):

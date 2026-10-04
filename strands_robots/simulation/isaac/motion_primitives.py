@@ -777,7 +777,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         registry-metadata-first classification ``set_gripper`` uses, see
         :meth:`_resolve_gripper_dofs`) are excluded from the IK solve and its
         restart seeding, and are HELD at their live position for the whole
-        servo descent - ``set_gripper("close") -> move_to(...)`` carries the
+        servo descent - ``set_gripper(state="close") -> move_to(...)`` carries the
         held object rather than releasing it.
 
         REFUSES WHILE A POLICY RUNS on the same robot: ``policy_running`` is
@@ -849,7 +849,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         # pose-vector rule the scene-construction calls use, same tol /
         # max_steps domains, same wording.
         target, target_quat, max_steps, orientation_tol, arg_err = self._validate_move_to_args(
-            position, orientation, tol, max_steps, orientation_tol
+            position, orientation, tol, max_steps, orientation_tol, robot_name
         )
         if arg_err is not None:
             return arg_err
@@ -1227,7 +1227,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
             stale/malformed, or the resolved joint has no usable limits to map
             ``open``/``close`` onto. Never raises.
         """
-        steps, arg_err = self._validate_set_gripper_args(state, steps)
+        steps, arg_err = self._validate_set_gripper_args(state, steps, robot_name)
         if arg_err is not None:
             return arg_err
         assert state is not None  # narrowed by the shared validator
@@ -1357,7 +1357,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
             stale/malformed (same contract as ``set_gripper``), the target is
             out of range, or servo convergence times out. Never raises.
         """
-        target_yaw, max_steps, arg_err = self._validate_rotate_wrist_args(target_yaw, tol, max_steps)
+        target_yaw, max_steps, arg_err = self._validate_rotate_wrist_args(target_yaw, tol, max_steps, robot_name)
         if arg_err is not None:
             return arg_err
 
