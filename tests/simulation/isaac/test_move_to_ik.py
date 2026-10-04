@@ -267,7 +267,7 @@ class TestValidationReusesTheCore:
     def test_missing_position_matches_core_wording(self):
         sim, art = _make_sim()
         result = sim.move_to(robot_name="arm")
-        _, _, _, _, expected = MotionPrimitivesCore()._validate_move_to_args(None, None, 0.01, 200)
+        _, _, _, _, expected = MotionPrimitivesCore()._validate_move_to_args(None, None, 0.01, 200, None, "arm")
         assert result == expected
         assert "position" in _text(result)
         assert art.applied == []

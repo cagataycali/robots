@@ -883,6 +883,46 @@ def _extract_result_json(result: object) -> dict[str, Any] | None:
     return None
 
 
+def _send_resolvable(sim: Any, action: Any, robot_name: str | None, n_substeps: int) -> Any:
+    """``sim.send_action``, resending the resolvable keys of a batch it refused for the rest.
+
+    ``send_action`` applies a batch whole or not at all, so a policy that emits
+    one key the robot lacks (an embodiment-superset checkpoint) would never move
+    it. A rollout drives the keys that resolve and reports the ones that did
+    not: when the refusal names its ``unresolved_keys`` and ``applied`` is
+    empty, the remaining keys are sent once more with the same substep count,
+    and the result carries the complete ``{"unresolved_keys", "applied"}``
+    breakdown the step accounting reads. Any other result is returned as is.
+    """
+    result = sim.send_action(action, robot_name=robot_name, n_substeps=n_substeps)
+    if not isinstance(action, Mapping) or not isinstance(result, dict) or result.get("status") != "error":
+        return result
+    payload = _extract_result_json(result)
+    unresolved = payload.get("unresolved_keys") if payload is not None else None
+    if payload is None or payload.get("applied") != [] or not isinstance(unresolved, list):
+        return result
+    try:
+        dropped = set(unresolved)
+    except TypeError:
+        return result
+    rest = {key: value for key, value in action.items() if key not in dropped}
+    if not rest or len(rest) == len(action):
+        return result
+    resent = sim.send_action(rest, robot_name=robot_name, n_substeps=n_substeps)
+    if not isinstance(resent, dict) or resent.get("status") != "success":
+        return resent
+    applied = list(rest)
+    return {
+        "status": "error",
+        "content": [
+            {
+                "text": f"Keys {unresolved} could not be resolved on '{robot_name}' and were dropped. Applied: {applied}."
+            },
+            {"json": {"unresolved_keys": list(unresolved), "applied": applied}},
+        ],
+    }
+
+
 def _diverged_error(result: object) -> str | None:
     """The backend's divergence sentence when ``result`` reports one, else ``None``.
 
@@ -2648,7 +2688,7 @@ class PolicyRunner:
                     # positionally to every actuator, so a non-empty one commands.
                     if action_commands_robot(action_dict) if isinstance(action_dict, Mapping) else len(action_dict) > 0:
                         _actions_commanding += 1
-                    _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next())
+                    _send_result = _send_resolvable(self.sim, action_dict, robot_name, substeps.next())
                     # ``send_action`` has returned. Count the call here rather than
                     # beside ``step_count`` below so the tally survives a legacy hook
                     # that aborts this step; the resolution records whether physical
@@ -4349,7 +4389,7 @@ class PolicyRunner:
                             if steps >= max_steps:
                                 break
                             _raise_if_diverged(
-                                self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next()),
+                                _send_resolvable(self.sim, action_dict, robot_name, substeps.next()),
                                 ep,
                                 steps,
                             )
@@ -4391,7 +4431,7 @@ class PolicyRunner:
                             if steps >= max_steps:
                                 break
                             _raise_if_diverged(
-                                self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=substeps.next()),
+                                _send_resolvable(self.sim, action_dict, robot_name, substeps.next()),
                                 ep,
                                 steps,
                             )
@@ -4924,7 +4964,7 @@ class PolicyRunner:
                                 break
                             action_applied = dict(action_in_chunk)
                             _raise_if_diverged(
-                                self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=substeps.next()),
+                                _send_resolvable(self.sim, action_applied, robot_name, substeps.next()),
                                 ep,
                                 steps,
                             )

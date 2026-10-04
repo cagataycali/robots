@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from strands_robots.hardware_robot import _FORWARDABLE_KWARGS
-from strands_robots.robot import Robot, _reject_hardware_kwargs_in_sim
+from strands_robots.drivers import list_native_drivers
+from strands_robots.hardware_robot import _ADDRESS_FIELDS, _FORWARDABLE_KWARGS
+from strands_robots.robot import Robot, _hardware_only_kwargs, _reject_hardware_kwargs_in_sim
 
 pytest.importorskip("mujoco")
 
@@ -42,12 +43,28 @@ def test_helper_is_silent_without_hardware_keywords():
     assert _reject_hardware_kwargs_in_sim({"num_envs": 4}, "so101", "sim") is None
 
 
-def test_refused_set_is_the_hardware_forwardable_set():
-    # One source of truth: every name the hardware class forwards is refused
-    # here, and nothing else is.
-    for key in _FORWARDABLE_KWARGS:
+def test_refused_set_covers_every_hardware_source():
+    # One source of truth per job: the forwardable set, the network address
+    # fields, and the robot's own native driver constructor all count.
+    for key in (*_FORWARDABLE_KWARGS, *_ADDRESS_FIELDS):
         with pytest.raises(TypeError, match=f"{key}="):
             _reject_hardware_kwargs_in_sim({key: 1}, "so101", "sim")
+
+
+@pytest.mark.parametrize(
+    ("robot", "key", "value"),
+    [
+        ("g1", "network_interface", "eth0"),
+        ("g1", "motion_switcher_client_factory", object()),
+        ("unitree_go2", "network_interface", "eth0"),
+        ("lekiwi", "remote_ip", "192.168.1.10"),
+        ("reachy_mini", "ip_address", "reachy-mini.local"),
+        ("franka", "host", "172.16.0.2"),
+    ],
+)
+def test_a_documented_hardware_keyword_on_a_sim_robot_is_refused(robot, key, value):
+    with pytest.raises(TypeError, match=rf"{key}=.*Add mode='real'"):
+        Robot(robot, **{key: value})
 
 
 def test_the_refusal_names_the_driver_not_the_physicality():
@@ -85,7 +102,8 @@ def test_no_refused_keyword_is_a_spawn_keyword_of_a_shipped_sim_backend():
         "isaac": {field.name for field in dataclasses.fields(IsaacConfig)},
     }
     for backend, names in spawn_keywords.items():
-        collision = sorted(names & set(_FORWARDABLE_KWARGS))
+        refused = {key for robot in list_native_drivers() for key in _hardware_only_kwargs(robot)}
+        collision = sorted(names & (refused | set(_FORWARDABLE_KWARGS) | set(_ADDRESS_FIELDS)))
         assert not collision, (
             f"{backend} binds {collision}, which Robot(mode='sim') now refuses: "
             "a working call would start raising. Carve the name out of the refusal."

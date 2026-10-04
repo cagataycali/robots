@@ -1429,6 +1429,12 @@ class SimEngine(ABC):
         joints - and those keys are themselves ordered by this roster, so the
         two cannot be a transposition of each other. Order must match the
         backend's joint ordering.
+
+        Raises:
+            ValueError: ``robot_name`` is not in the world. The message names
+                the robots that are, so a robot added as ``"g1"`` and asked
+                for as ``"unitree_g1"`` is told its real name instead of
+                handed an empty roster that binds a policy to nothing.
         """
         ...
 
@@ -1889,9 +1895,14 @@ class SimEngine(ABC):
 
         Schema:
             - ``"<joint_name>"`` (float): One entry per joint on the robot,
-              keyed by the *short* joint name (e.g. ``"shoulder_pan"``).
-              The schema is stable regardless of multi-robot namespacing
-              at the physics-engine level.
+              keyed by the model's joint name with any multi-robot
+              namespace stripped (``"joint1"`` on the Panda, ``"1"`` on the
+              SO-101). The schema is stable regardless of multi-robot
+              namespacing at the physics-engine level. A registry
+              ``joint_labels`` name (``"shoulder_pan"``) is a write-side
+              alias: ``send_action`` takes it, the observation keeps the
+              model's name, so recorded datasets and trained checkpoints keep
+              one column per joint.
             - ``"<joint_name>.vel"`` (float): The same joint's velocity
               (rad/s or m/s), one entry per scalar joint, additive beside the
               position key so position-only consumers are unaffected.
@@ -2310,9 +2321,11 @@ class SimEngine(ABC):
         locks.
 
         Returns:
-            Dict with ``status`` and ``content``. When action keys cannot
-            be resolved, the ``content`` list includes a ``json`` block with
-            ``unresolved_keys`` so callers can self-correct. ``status`` is
+            Dict with ``status`` and ``content``. A batch is applied whole or
+            not at all: when any action key cannot be resolved, nothing is
+            written, the world does not advance, and the ``content`` list
+            includes a ``json`` block with ``unresolved_keys`` and an empty
+            ``applied`` so callers can self-correct and resend. ``status`` is
             ``"error"`` when ``n_substeps`` is outside its domain.
         """
         ...

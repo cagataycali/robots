@@ -67,7 +67,7 @@ from strands_robots.registry import (
     list_robots,
     resolve_name,
 )
-from strands_robots.utils import refusal_repr
+from strands_robots.utils import did_you_mean, refusal_repr
 
 if TYPE_CHECKING:
     from strands_robots.drivers import HardwareDriver
@@ -274,6 +274,27 @@ def _tool_name_error(tool_name: Any) -> str | None:
     return None
 
 
+def _hardware_only_kwargs(canonical: str) -> tuple[str, ...]:
+    """Return the keywords that only configure ``canonical``'s hardware driver, in a stable order.
+
+    Args:
+        canonical: Canonical robot name.
+
+    Returns:
+        The hardware class's forwardable set, then its network address fields,
+        then the robot's native driver constructor keywords - deduplicated, and
+        without any name :func:`Robot` itself binds (``cameras``, ``tool_name``).
+    """
+    from strands_robots.hardware_robot import _ADDRESS_FIELDS, _FORWARDABLE_KWARGS
+    from strands_robots.simulation.base import own_keyword_names
+
+    driver_cls = get_native_driver_class(canonical)
+    driver_keywords = constructor_keywords(driver_cls) if driver_cls is not None else ()
+    own = set(own_keyword_names(Robot))
+    names = (*_FORWARDABLE_KWARGS, *_ADDRESS_FIELDS, *driver_keywords)
+    return tuple(key for key in dict.fromkeys(names) if key not in own)
+
+
 def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, requested_mode: str) -> None:
     """Refuse a hardware-only keyword on a simulated robot, naming the mode.
 
@@ -283,8 +304,14 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     "a physical robot": ``Robot("so101", port="/dev/cu.usbmodem…")`` with
     ``mode="real"`` forgotten built a simulator under ``status=success`` while
     the arm on the desk stayed still. The real branch already reports the
-    sim-only spawn keywords it cannot honour; this is the mirror. The list is
-    the hardware class's own forwardable set, so it cannot drift from it.
+    sim-only spawn keywords it cannot honour; this is the mirror.
+
+    The refused names are derived, never listed here: the hardware class's
+    forwardable set, the network address fields its lerobot configs spell
+    (``ip_address``, ``remote_ip``, ``host``), and every keyword the robot's
+    own native driver constructor binds (``network_interface`` on a G1), less
+    this factory's own parameters. A driver that grows a keyword is guarded
+    the day it lands.
 
     What the set has in common is the driver, not the physicality: ``mock=``
     asks for a mocked servo bus and ``is_simulation=`` points the lerobot
@@ -301,9 +328,7 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     Raises:
         TypeError: naming every hardware keyword supplied and the remedy.
     """
-    from strands_robots.hardware_robot import _FORWARDABLE_KWARGS
-
-    supplied = [key for key in _FORWARDABLE_KWARGS if key in kwargs]
+    supplied = [key for key in _hardware_only_kwargs(canonical) if key in kwargs]
     if not supplied:
         return
     names = ", ".join(f"{key}=" for key in supplied)
@@ -461,7 +486,7 @@ def _build_native_driver(
     accepted = constructor_keywords(driver_cls)
     if unknown := sorted(set(kwargs) - set(accepted)):
         raise ValueError(
-            f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
+            f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}.{did_you_mean(unknown, accepted)} "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
 

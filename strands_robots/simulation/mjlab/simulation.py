@@ -700,14 +700,14 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         """Joint names in MJCF order, free joint first (the recording column order)."""
         spec = registry_entry(self._robots, robot_name)
         if spec is None:
-            raise KeyError(f"Robot '{robot_name}' not found")
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(spec.joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
         """Actuator names in MJCF order: the order a numeric ``send_action`` vector uses."""
         spec = registry_entry(self._robots, robot_name)
         if spec is None:
-            raise KeyError(f"Robot '{robot_name}' not found")
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(spec.actuator_names)
 
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:

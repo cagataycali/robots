@@ -677,7 +677,7 @@ def robot_page(name: str) -> str:
         lines += ["Aliases: " + ", ".join(f"`{a}`" for a in aliases) + ".", ""]
     labels = spec.get("joint_labels")
     if labels:
-        lines += ["| Model joint | Action key |", "|---|---|"]
+        lines += ["| Observation key | `send_action` label |", "|---|---|"]
         lines += [f"| `{k}` | `{v}` |" for k, v in labels.items()]
         lines.append("")
     gripper = spec.get("gripper")

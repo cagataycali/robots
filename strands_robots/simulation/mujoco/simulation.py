@@ -1293,10 +1293,11 @@ class MuJoCoSimEngine(
 
         Returns:
             Dict with ``status`` ("success" or "error") and ``content``.
-            When some action keys could not be resolved to actuators/joints,
-            the ``content`` list includes a ``json`` block with an
-            ``unresolved_keys`` list (and ``applied``) so callers can
-            self-correct instead of silently losing commands. ``status`` is
+            A batch is applied whole or not at all: when any key cannot be
+            resolved to an actuator/joint, ``status`` is ``"error"``, nothing is
+            written, the world does not advance, and the ``content`` list
+            carries a ``json`` block with ``unresolved_keys`` (and an empty
+            ``applied``) so callers can self-correct and resend. ``status`` is
             ``"error"`` when ``n_substeps`` is outside that domain, and nothing
             is written when it is.
         """
@@ -1326,6 +1327,26 @@ class MuJoCoSimEngine(
             return coerce_error
         assert action_map is not None  # narrow for mypy: no error implies a mapping
         with self._lock:
+            # Every key is resolved before any is written, so a batch naming a
+            # key this robot lacks is refused whole: nothing reaches ``ctrl`` and
+            # the world does not advance. Pre-fix the valid keys were written
+            # and stepped first, and the ``"error"`` that followed described a
+            # world that had already moved - a caller retrying on it stroked the
+            # valid joints twice. An installed action controller owns its own
+            # key mapping (task-space keys name no actuator), so it is not
+            # pre-resolved here.
+            if self._get_action_controller() is None:
+                model, mj = self._world._model, self._mj
+                entry = registry_entry(self._world.robots, robot_name)
+                pfx = entry.namespace if entry else ""
+                refused: list[str] = []
+                for key in action_map:
+                    actuator, reason = self._action_key_actuator(model, key, pfx, mj, robot_name)
+                    if actuator < 0:
+                        self._warn_unresolved_action_key(robot_name, pfx, key, reason)
+                        refused.append(key)
+                if refused:
+                    return self._unresolved_action_refusal(robot_name, refused, applied=[])
             self._unresolved_action_keys: list[str] = []
             unstable_before = instability_counts(self._mj, self._world._data)
             self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
@@ -1335,27 +1356,36 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
         applied = [k for k in action_map if k not in unresolved]
         if unresolved:
-            # Surface the actual valid actuator names so the user can
-            # self-correct without inspecting the MJCF by hand.
-            valid_keys = self._get_valid_action_keys(robot_name)
-            hint = f" Valid keys: {valid_keys}" if valid_keys else ""
-            if labels_hint := self._joint_labels_hint(robot_name):
-                hint += f" {labels_hint}"
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            f"Action partially applied: keys {unresolved} could not be "
-                            f"resolved to actuators or joints on '{robot_name}'. "
-                            f"Applied: {applied}. Use individual joint/actuator names "
-                            f"as dict keys.{hint}"
-                        )
-                    },
-                    {"json": {"unresolved_keys": unresolved, "applied": applied}},
-                ],
-            }
+            # Reached only when an installed action controller raised and the
+            # name-lookup fallback ran after it: the resolved keys were written.
+            return self._unresolved_action_refusal(robot_name, unresolved, applied=applied)
         return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
+
+    def _unresolved_action_refusal(self, robot_name: str, unresolved: list[str], applied: list[str]) -> dict[str, Any]:
+        """The ``send_action`` error naming ``unresolved`` keys and the robot's valid ones.
+
+        ``applied`` is empty for a batch refused before the write; it names the
+        written keys only on the action-controller fallback path.
+        """
+        # Surface the actual valid actuator names so the user can
+        # self-correct without inspecting the MJCF by hand.
+        valid_keys = self._get_valid_action_keys(robot_name)
+        hint = f" Valid keys: {valid_keys}" if valid_keys else ""
+        if labels_hint := self._joint_labels_hint(robot_name):
+            hint += f" {labels_hint}"
+        outcome = (
+            f"Action partially applied. Applied: {applied}."
+            if applied
+            else "Nothing was applied and the world did not advance."
+        )
+        text = (
+            f"Keys {unresolved} could not be resolved to actuators or joints on '{robot_name}'. {outcome} "
+            f"Use individual joint/actuator names as dict keys.{hint}"
+        )
+        return {
+            "status": "error",
+            "content": [{"text": text}, {"json": {"unresolved_keys": unresolved, "applied": applied}}],
+        }
 
     def physics_timestep(self) -> float | None:
         """Physics integration timestep (seconds) of the active world.
@@ -3581,7 +3611,7 @@ class MuJoCoSimEngine(
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Ordered joint names for ``robot_name`` (SimEngine ABC)."""
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(self._world.robots[robot_name].joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
@@ -3612,7 +3642,7 @@ class MuJoCoSimEngine(
         recording writes those columns in joint order.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return self._get_valid_action_keys(robot_name)
 
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:

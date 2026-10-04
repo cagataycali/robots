@@ -754,7 +754,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered short joint names for ``robot_name``."""
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(self._world.robots[robot_name].joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
@@ -787,8 +787,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # reach this list on engines built via ``__new__`` (the solver-free test
         # harness), which never run ``__init__``. Mirrors
         # ``_collect_recording_schema``'s read of the same map.
+        # The roster lookup runs first so a name the scene does not hold is
+        # refused by name before it is used as a key of the free-base map.
+        joints = self.robot_joint_names(robot_name)
         base_joint = getattr(self, "_robot_free_base_joint", {}).get(robot_name)
-        return [jn for jn in self.robot_joint_names(robot_name) if jn != base_joint]
+        return [jn for jn in joints if jn != base_joint]
 
     # Object management
 
@@ -1299,9 +1302,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 and it accepts ``0`` as a documented no-op.
 
         Returns:
-            Status dict. When some keys cannot be resolved to joints, the
-            ``content`` carries a ``json`` block with ``unresolved_keys`` and
-            ``applied`` so callers can self-correct. ``status`` is ``"error"``
+            Status dict. A batch is applied whole or not at all: when any key
+            cannot be resolved to a joint, nothing is written, the world does
+            not advance, and the ``content`` carries a ``json`` block with
+            ``unresolved_keys`` and an empty ``applied`` so callers can
+            self-correct and resend. ``status`` is ``"error"``
             when ``n_substeps`` is outside that domain, and no target is
             written when it is.
         """
@@ -1336,28 +1341,31 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # for a 6-DoF joint, while every read surface skipped it - so the value
         # named no signal the backend reports and no column it records.
         valid = set(self.robot_action_keys(robot_name))
-        unresolved = [k for k in action_map if k not in valid]
-        applied = [k for k in action_map if k in valid]
-        with self._lock:
-            for jname in applied:
-                self._targets[(robot_name, jname)] = float(action_map[jname])
-            self._write_targets()
-            self._advance(n_substeps)
-
-        if unresolved:
+        # Refused whole, before any target is written or the world advances:
+        # pre-fix the valid keys were written and stepped, and the ``"error"``
+        # that followed described a world that had already moved.
+        if unresolved := [k for k in action_map if k not in valid]:
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"Action partially applied: keys {unresolved} are not commandable joints on "
-                            f"'{robot_name}'. Applied: {applied}. Valid keys: {sorted(valid)}"
+                            f"Keys {unresolved} are not commandable joints on '{robot_name}'. Nothing was "
+                            f"applied and the world did not advance. Valid keys: {sorted(valid)}"
                         )
                     },
-                    {"json": {"unresolved_keys": unresolved, "applied": applied}},
+                    {"json": {"unresolved_keys": unresolved, "applied": []}},
                 ],
             }
-        return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
+        with self._lock:
+            for jname in action_map:
+                self._targets[(robot_name, jname)] = float(action_map[jname])
+            self._write_targets()
+            self._advance(n_substeps)
+        return {
+            "status": "success",
+            "content": [{"text": f"Action applied to '{robot_name}' ({len(action_map)} keys)."}],
+        }
 
     def set_joint_positions(
         self,

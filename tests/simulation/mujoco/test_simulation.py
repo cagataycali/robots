@@ -625,26 +625,28 @@ class TestRobotManagement:
         # Verify physics advanced
         assert sim_with_robot._world.sim_time > 0
 
-    def test_send_action_unresolved_keys_in_json_content_block(self, sim_with_robot):
-        """Unresolved action keys must surface as a ``json`` content block
-        (not a top-level sibling of ``status``/``content``), so the result
-        conforms to the Strands tool-result schema and agents can read the
-        structured payload alongside the human-readable ``text`` block."""
+    def test_send_action_refuses_a_batch_with_an_unresolved_key_whole(self, sim_with_robot):
+        """A batch naming one key the robot lacks writes nothing and does not step.
+
+        The refusal names the key in a ``json`` content block (not a top-level
+        sibling of ``status``/``content``) with an empty ``applied``, so a
+        caller that resends the corrected batch strokes each joint once.
+        """
+        data = sim_with_robot._world._data
+        ctrl_before, time_before = data.ctrl.copy(), data.time
         result = sim_with_robot.send_action(
             {"shoulder_pan_act": 0.3, "nonexistent_joint": 1.0},
             robot_name="arm1",
         )
         assert result["status"] == "error"
-        # Must NOT leak the key at the top level.
         assert "unresolved_keys" not in result
-        # Find the json content block.
         json_blocks = [c["json"] for c in result["content"] if "json" in c]
-        assert len(json_blocks) == 1, f"expected one json block, got {result['content']}"
-        payload = json_blocks[0]
-        assert payload["unresolved_keys"] == ["nonexistent_joint"]
-        assert "shoulder_pan_act" in payload["applied"]
-        # A human-readable text block must still be present.
-        assert any("text" in c for c in result["content"])
+        assert json_blocks == [{"unresolved_keys": ["nonexistent_joint"], "applied": []}]
+        assert "Nothing was applied" in result["content"][0]["text"]
+        assert list(data.ctrl) == list(ctrl_before)
+        assert data.time == time_before
+        assert sim_with_robot.send_action({"shoulder_pan_act": 0.3}, robot_name="arm1")["status"] == "success"
+        assert list(data.ctrl) != list(ctrl_before)
 
 
 # Camera Management
@@ -1207,9 +1209,6 @@ class TestPolicyExecution:
         keys = sim_with_robot.robot_action_keys("arm1")
         assert isinstance(joints, list) and joints, "robot_joint_names('arm1') is empty"
         assert isinstance(keys, list) and keys, "robot_action_keys('arm1') is empty"
-        # Unknown robots return an empty list rather than raising.
-        assert sim_with_robot.robot_joint_names("ghost") == []
-        assert sim_with_robot.robot_action_keys("ghost") == []
 
 
 # Action Dispatch

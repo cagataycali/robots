@@ -5358,13 +5358,17 @@ class IsaacSimulation(
         Returns
         -------
         list[str]
-            Joint names in articulation order, or an empty list if
-            ``robot_name`` is not present (matches the silent-empty
-            convention used by :meth:`get_observation` for unknown robots).
+            Joint names in articulation order.
+
+        Raises
+        ------
+        ValueError
+            ``robot_name`` is not in the scene; the message names the robots
+            that are.
         """
         with self._lock:
             if not registered(self._robots, robot_name):
-                return []
+                raise ValueError(self._unknown_robot_msg(robot_name))
             return list(self._robots[robot_name].joint_names)
 
     def remove_robot(self, name: str) -> dict[str, Any]:
@@ -6462,9 +6466,10 @@ class IsaacSimulation(
             :class:`~strands_robots.simulation.policy_runner.PolicyRunner` can
             count action failures (it increments ``_action_errors`` when the
             returned ``status`` is ``"error"``). When ``action`` is a dict and
-            some keys don't name a joint on ``robot_name``, the ``content`` list
-            carries a ``json`` block with ``unresolved_keys`` / ``applied`` so
-            callers can self-correct -- mirroring the MuJoCo backend.
+            any key doesn't name a joint on ``robot_name``, nothing is applied,
+            the world does not step, and the ``content`` list carries a ``json``
+            block with ``unresolved_keys`` and an empty ``applied`` so callers
+            can self-correct -- mirroring the MuJoCo backend.
             ``status`` is ``"error"`` when ``n_substeps`` is outside its domain,
             and no joint target is applied when it is.
 
@@ -6570,7 +6575,22 @@ class IsaacSimulation(
             joint_set = set(robot.joint_names)
             # A site-actuated free body is driven by its motors, named as MuJoCo names them.
             motors = {a.name for a in robot.site_drive.actuators} if robot.site_drive is not None else set()
-            unresolved = [k for k in action_map if k not in joint_set and k not in motors]
+            # Refused whole, before any target is applied or the world steps:
+            # pre-fix the named joints were applied and stepped first, and the
+            # ``"error"`` that followed described a world that had already moved.
+            if unresolved := [k for k in action_map if k not in joint_set and k not in motors]:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Keys {unresolved} could not be resolved to joints on '{robot_name}'. Nothing "
+                                f"was applied and the world did not advance. Valid keys: {robot.joint_names}"
+                            )
+                        },
+                        {"json": {"unresolved_keys": unresolved, "applied": []}},
+                    ],
+                }
             # ``joint_indices`` restricts an ``ArticulationAction`` to a subset
             # of the articulation's DOFs. Command ONLY the named joints and
             # leave the rest at their current PD targets (parity with the
@@ -6669,22 +6689,6 @@ class IsaacSimulation(
                         self._sim_time = self._world_clock()
                         self._step_count += 1
                         stepped += 1
-
-            if unresolved:
-                applied = [k for k in action_map if k not in unresolved]
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"Action partially applied: keys {unresolved} could not be "
-                                f"resolved to joints on '{robot_name}'. Applied: {applied}. "
-                                f"Valid keys: {robot.joint_names}"
-                            )
-                        },
-                        {"json": {"unresolved_keys": unresolved, "applied": applied}},
-                    ],
-                }
 
             if diverged := _diverged_robots_error(self, "send_action", [robot_name]):
                 return diverged
