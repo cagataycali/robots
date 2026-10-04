@@ -33,6 +33,7 @@ from numpy.typing import NDArray
 
 from strands_robots.policies.base import Policy
 from strands_robots.utils import (
+    did_you_mean,
     finite_vector_error,
     name_list_error,
     positive_finite_number_error,
@@ -147,6 +148,29 @@ def _action_scale_error(value: Any, source: str) -> str | None:
 MICRODUCK_POLICIES_HF_REPO = "pollen-robotics/microduck-policies"
 
 
+def _shipped_weights_hint(hub: Any, name: str, revision: str | None) -> str:
+    """The clause naming what the Hub repository does carry, for a failed fetch.
+
+    Args:
+        hub: The ``huggingface_hub`` module the download went through.
+        name: The bare weight name that could not be fetched.
+        revision: The Hub revision the download asked for.
+
+    Returns:
+        A ``Did you mean`` clause for a near miss, else the list of ``.onnx``
+        files the repository carries; ``""`` when the listing itself fails
+        (offline, no access), so the hint never replaces the original cause.
+    """
+    try:
+        files = hub.list_repo_files(MICRODUCK_POLICIES_HF_REPO, revision=revision)
+    except Exception:  # noqa: BLE001 - the hint is best-effort; the refusal already names the cause
+        return ""
+    shipped = sorted(f for f in files if f.endswith(".onnx"))
+    if not shipped:
+        return ""
+    return did_you_mean([name], shipped) or f" It carries: {', '.join(shipped)}."
+
+
 def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = None) -> Path:
     """Return a local file for a Microduck weight, fetching a bare name from the Hub.
 
@@ -169,7 +193,8 @@ def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = No
     Raises:
         FileNotFoundError: When the path names directories and does not exist,
             or the bare name is not a file the Hub repository carries. Both
-            messages name the repository and the name that was asked for.
+            messages name the repository and the name that was asked for; a
+            failed fetch also names the nearest weight the repository carries.
         ImportError: When a bare name needs downloading and ``huggingface_hub``
             is not installed (the remedy names the ``[microduck]`` extra).
     """
@@ -195,6 +220,7 @@ def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = No
     except Exception as exc:  # noqa: BLE001 - one door for every Hub-side failure
         raise FileNotFoundError(
             f"Microduck ONNX policy {path.name!r} could not be fetched from {MICRODUCK_POLICIES_HF_REPO}: {exc}"
+            f"{_shipped_weights_hint(hub, path.name, revision)}"
         ) from exc
     logger.info("Microduck weight %s fetched from %s", path.name, MICRODUCK_POLICIES_HF_REPO)
     return Path(downloaded)
