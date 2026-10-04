@@ -30,7 +30,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import ensure_lerobot_family_registered
+from strands_robots.utils import did_you_mean, ensure_lerobot_family_registered
 
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator as LeRobotTeleoperator
@@ -201,7 +201,8 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
     unknown = set(kwargs) - recognised
     if unknown:
         raise ValueError(
-            f"Unknown kwarg(s) for teleop_type={teleop_type!r}: {sorted(unknown)}. "
+            f"Unknown kwarg(s) for teleop_type={teleop_type!r}: "
+            f"{sorted(unknown)}.{did_you_mean(sorted(unknown), sorted(recognised))} "
             f"This teleoperator's dataclass accepts: {sorted(valid_fields)}. "
             f"The cross-device allowlist is: {sorted(set(forwardable) | always_allowed)}. "
             f"(If this is a typo, fix it.)"

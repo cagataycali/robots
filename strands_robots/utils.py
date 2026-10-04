@@ -1,5 +1,6 @@
 """Shared utilities for strands-robots."""
 
+import difflib
 import functools
 import importlib
 import logging
@@ -512,6 +513,25 @@ def refusal_repr(value: Any) -> str:
         return repr(value)
     except Exception:
         return _describe_unrenderable(value)
+
+
+def did_you_mean(unknown: Sequence[object], accepted: Sequence[str]) -> str:
+    """The ``" Did you mean: 'prot' -> 'port'?"`` clause for an unknown-keyword refusal.
+
+    Args:
+        unknown: The names the caller passed that nothing accepts.
+        accepted: Every name the refusing call would have taken.
+
+    Returns:
+        One ``'typo' -> 'name'`` pair per unknown name that scores at least 0.7
+        against an accepted one, behind a leading space; ``""`` when none does.
+    """
+    pairs = []
+    for key in unknown:
+        close = difflib.get_close_matches(str(key), list(accepted), n=1, cutoff=0.7)
+        if close:
+            pairs.append(f"{key!r} -> {close[0]!r}")
+    return f" Did you mean: {', '.join(pairs)}?" if pairs else ""
 
 
 def refusal_str(value: Any) -> str:
