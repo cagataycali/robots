@@ -245,12 +245,13 @@ class TestUsableValuesStayUsable:
         assert _call(sim, {"gripper": 0.04})["status"] == "success"
         assert list(np.asarray(art.last_action.joint_indices)) == [JOINTS.index("gripper")]
 
-    def test_an_unresolved_key_is_still_reported_with_the_keys_it_applied(self, fake_isaacsim_types) -> None:  # noqa: F811
-        """Name resolution is a separate question from the value domain."""
-        sim = _running_sim(_FakeArticulation())
+    def test_an_unresolved_key_refuses_the_batch_whole(self, fake_isaacsim_types) -> None:  # noqa: F811
+        """Name resolution is a separate question from the value domain; a miss applies nothing."""
+        art = _FakeArticulation()
+        sim = _running_sim(art)
 
         result = _call(sim, {"gripper": 0.04, "nosuchjoint": 0.1})
         assert result["status"] == "error"
         payload = next(block["json"] for block in result["content"] if "json" in block)
-        assert payload["unresolved_keys"] == ["nosuchjoint"]
-        assert payload["applied"] == ["gripper"], "the report must name keys, not the vector's floats"
+        assert payload == {"unresolved_keys": ["nosuchjoint"], "applied": []}
+        assert art.last_action is None, "the resolvable key must not be applied either"

@@ -2310,9 +2310,11 @@ class SimEngine(ABC):
         locks.
 
         Returns:
-            Dict with ``status`` and ``content``. When action keys cannot
-            be resolved, the ``content`` list includes a ``json`` block with
-            ``unresolved_keys`` so callers can self-correct. ``status`` is
+            Dict with ``status`` and ``content``. A batch is applied whole or
+            not at all: when any action key cannot be resolved, nothing is
+            written, the world does not advance, and the ``content`` list
+            includes a ``json`` block with ``unresolved_keys`` and an empty
+            ``applied`` so callers can self-correct and resend. ``status`` is
             ``"error"`` when ``n_substeps`` is outside its domain.
         """
         ...
