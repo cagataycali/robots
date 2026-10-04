@@ -1619,7 +1619,8 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
         ``(None, None)`` when ``color`` is ``None`` (omitted - the caller
         applies its own documented default), ``(rgba, None)`` with exactly 4
         finite floats, or ``(None, error_message)`` for an unusable component
-        count, a non-numeric or ``bool`` component, or a ``nan``/``inf`` one.
+        count, a non-numeric or ``bool`` component, a ``nan``/``inf`` one, or a
+        component outside 0..1.
     """
     if color is None:
         return None, None
@@ -1653,6 +1654,11 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
             f"component - a partial '{param_name}' cannot be applied "
             "without inventing the missing values."
         )
+    # Every backend documents each channel in 0..1 and writes it verbatim into the
+    # renderer, so a web-style ``[255, 0, 0]`` landed as 255.0 under a success.
+    if any(not 0.0 <= c <= 1.0 for c in floats):
+        hint = " - divide 0..255 channels by 255" if max(floats) > 1.0 and max(floats) <= 255.0 else ""
+        return None, (f"{method}: '{param_name}' components must be in 0..1, got {floats}{hint}.")
     return (floats if count == 4 else [*floats, 1.0]), None
 
 

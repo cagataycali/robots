@@ -69,7 +69,8 @@ INF = float("inf")
 #: truthiness read swallowed as *omitted*), three unusable component counts, the
 #: two non-finite channels, a ``bool`` (an ``int`` subclass, so ``float(True)``
 #: would silently mean the channel 1.0), a bare string (an iterable of
-#: 1-character strings), and a non-iterable scalar.
+#: 1-character strings), a non-iterable scalar, and channels outside the
+#: documented 0..1 (a web-style 0..255 triple among them).
 UNUSABLE_COLORS: tuple[Any, ...] = (
     [],
     [0.1],
@@ -80,6 +81,11 @@ UNUSABLE_COLORS: tuple[Any, ...] = (
     [True, 0.0, 0.0],
     "abcd",
     0.5,
+    [-0.1, 0.0, 0.0],
+    [1.01, 0.0, 0.0],
+    [255, 0, 0],
+    [0.1, 0.2, 0.3, 1.5],
+    [1e9, 1e9, 1e9],
 )
 
 #: Accepted spellings, each with the 4 components it must become. The NumPy
