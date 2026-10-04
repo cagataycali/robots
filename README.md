@@ -51,6 +51,9 @@ from strands import Agent
 from strands_robots import Robot
 
 robot = Robot("so100")              # MuJoCo sim by default; mode="real" for hardware
+robot.add_object(name="red_cube", shape="box", size=[0.05, 0.05, 0.05],
+                 position=[0.0, -0.2, 0.025], color=[1.0, 0.0, 0.0])  # the arm faces -Y
+robot.add_camera(name="front", position=[0.3, -0.7, 0.45], target=[0.0, -0.2, 0.03])
 Agent(tools=[robot])("pick up the red cube")
 ```
 
