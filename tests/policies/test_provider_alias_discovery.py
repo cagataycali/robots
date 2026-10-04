@@ -430,18 +430,33 @@ def test_the_composite_spelling_builds_through_the_factory() -> None:
     assert policy.provider_name == "composite"
 
 
-def test_the_persistent_spelling_resolves_but_is_not_buildable_here() -> None:
-    """Control: why the second wrapper is documented as a direct construction.
+@pytest.mark.parametrize(
+    ("provider", "kwargs", "says"),
+    [
+        ("persistent", {}, "Construct it directly: from strands_robots.policies.persistent import PersistentPolicy"),
+        ("persistent", {"provider": "mock"}, "create_policy has already bound that name"),
+        ("composite", {}, "CompositePolicy (policy provider 'composite') requires 'lower', 'upper'"),
+    ],
+)
+def test_a_wrapper_create_policy_cannot_build_is_refused_naming_the_way_to_build_it(
+    provider: str, kwargs: dict, says: str
+) -> None:
+    """Both auto-discovered wrappers resolve; built wrong, the refusal names the provider and the fix.
 
     ``PersistentPolicy``'s first parameter is named ``provider``, which
-    :func:`create_policy` has already bound, so no keyword can reach it. That is
-    what makes reporting it as a provider wrong rather than merely incomplete.
+    :func:`create_policy` binds, so no keyword can reach it: CPython's bare
+    ``missing 1 required positional argument`` / ``got multiple values`` named
+    neither the provider nor direct construction.
     """
-    from strands_robots.policies.factory import import_policy_class
+    from strands_robots.policies.factory import import_policy_class, policy_provider_error
 
-    assert import_policy_class("persistent").__name__ == "PersistentPolicy"
-    with pytest.raises(TypeError, match="provider"):
-        create_policy("persistent")
+    assert import_policy_class(provider).__name__ in {"PersistentPolicy", "CompositePolicy"}
+    with pytest.raises(TypeError) as raised:
+        create_policy(provider, **kwargs)
+    assert says in str(raised.value)
+    # The agent-tool channel reports the persistent collision as a provider fact
+    # (no config fixes it); composite's missing halves are config, left to the build.
+    assert (policy_provider_error(provider, **kwargs) is not None) is (provider == "persistent")
 
 
 @pytest.mark.parametrize("module_name", ["base", "factory"])

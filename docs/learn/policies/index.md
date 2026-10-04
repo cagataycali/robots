@@ -61,7 +61,7 @@ From the registry at build time; "Also spelled" lists the shorthands `create_pol
 
 {{providers:table}}
 
-`composite` and `persistent` resolve by module name, outside the registry.
+`composite` and `persistent` resolve by module name; construct `PersistentPolicy(provider="mock")` directly.
 
 ## Build one
 
