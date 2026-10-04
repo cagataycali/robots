@@ -1017,6 +1017,30 @@ class RenderingMixin:
             actuator or joint (empty list when all keys applied).
         """
 
+        unresolved: list[str] = []
+        for key, value in action_dict.items():
+            ai, reason = self._action_key_actuator(model, key, pfx, mj, robot_name)
+            if ai < 0:
+                # #367: an action key that resolves to neither an actuator nor
+                # a joint is silently dropped today. Silent gripper drops are
+                # exactly the failure mode #318 was filed to fix, so surface it
+                # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
+                self._warn_unresolved_action_key(robot_name, pfx, key, reason)
+                unresolved.append(key)
+                continue
+            self._write_ctrl(model, data, ai, pfx, key, value, mj)
+
+        return unresolved
+
+    def _action_key_actuator(self, model: Any, key: str, pfx: str, mj: Any, robot_name: str) -> tuple[int, str]:
+        """The actuator an action ``key`` drives, as ``(id, "")``, or ``(-1, reason)``.
+
+        Writes nothing, so :meth:`send_action` can resolve a whole batch before
+        any value reaches ``ctrl``. A key resolves as an actuator name, then as
+        a joint name (or a registry joint label) driven by an actuator. Both
+        lookups try the robot's namespace prefix ahead of the raw name.
+        """
+
         def _lookup(obj_type: Any, name: str) -> int:
             """Try namespaced lookup first, fall back to raw."""
             if pfx:
@@ -1025,46 +1049,25 @@ class RenderingMixin:
                     return i
             return int(mj_name_to_id(model, obj_type, name))
 
-        unresolved: list[str] = []
-        for key, value in action_dict.items():
-            act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
-            if act_id >= 0:
-                self._write_ctrl(model, data, act_id, pfx, key, value, mj)
-                continue
-
-            # Fallback: key is a joint name. Find the actuator that drives
-            # this joint, handling BOTH transmission types:
-            #   * JOINT / JOINTINPARENT - actuator_trnid[ai, 0] == jnt_id
-            #   * TENDON               - the joint participates in a tendon
-            #     (via wrap entries) whose tendon id == actuator_trnid[ai, 0]
-            # Tendon grippers (e.g. the Franka/Panda ``split`` actuator that
-            # drives finger_joint1/2) were silently dropped before this branch
-            # because their actuator_trnid points at the *tendon*, not the
-            # finger joint - see issue #318.
-            jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
-            if jnt_id < 0 and robot_name:
-                # A registry joint label (``shoulder_pan`` for the SO-101's
-                # joint ``1``), the spelling ``get_robot_state`` prints and
-                # ``set_joint_positions`` accepts for the same joint.
-                jnt_id = self._resolve_joint_label(key, robot_name)
-            if jnt_id < 0:
-                # #367: an action key that resolves to neither an actuator nor
-                # a joint is silently dropped today. Silent gripper drops are
-                # exactly the failure mode #318 was filed to fix, so surface it
-                # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
-                self._warn_unresolved_action_key(robot_name, pfx, key, "no actuator or joint")
-                unresolved.append(key)
-                continue
-
-            ai = self._actuator_for_joint(model, jnt_id, mj)
-            if ai < 0:
-                self._warn_unresolved_action_key(robot_name, pfx, key, "joint has no driving actuator")
-                unresolved.append(key)
-                continue
-
-            self._write_ctrl(model, data, ai, pfx, key, value, mj)
-
-        return unresolved
+        act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
+        if act_id >= 0:
+            return act_id, ""
+        # Fallback: key is a joint name. ``_actuator_for_joint`` handles BOTH
+        # transmission types - JOINT / JOINTINPARENT, and TENDON (the joint
+        # participates in a tendon whose id is the actuator's trnid), which is
+        # how the Franka/Panda ``split`` gripper drives finger_joint1/2 (#318).
+        jnt_id = _lookup(mj.mjtObj.mjOBJ_JOINT, key)
+        if jnt_id < 0 and robot_name:
+            # A registry joint label (``shoulder_pan`` for the SO-101's joint
+            # ``1``), the spelling ``get_robot_state`` prints and
+            # ``set_joint_positions`` accepts for the same joint.
+            jnt_id = self._resolve_joint_label(key, robot_name)
+        if jnt_id < 0:
+            return -1, "no actuator or joint"
+        ai = self._actuator_for_joint(model, jnt_id, mj)
+        if ai < 0:
+            return -1, "joint has no driving actuator"
+        return ai, ""
 
     def _write_ctrl(
         self,
