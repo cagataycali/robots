@@ -21,7 +21,15 @@ robot.cleanup()
 
 The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
+```python title="sketch"
+robot = Robot("spot", mode="real", port="192.168.80.3")  # SpotDriver
+```
+
 Aliases: `boston_dynamics_spot`.
+
+## Hardware
+
+**`SpotDriver`** (the default for this robot) speaks gRPC through `bosdyn-client`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#spotdriver).
 
 ## Policies verified on this robot
 

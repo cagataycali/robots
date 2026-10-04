@@ -58,6 +58,7 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
         "`hello-robot-stretch-body`, on the robot",
         "drivers.md",
     ),
+    "strands_robots.drivers.spot": ("gRPC (bosdyn-client)", "`[spot]`", "drivers.md"),
     "strands_robots.drivers.crazyflie": ("radio (CRTP over Crazyradio)", "`[crazyflie]`", "drivers.md"),
     "strands_robots.drivers.earthrover": ("http (earth-rovers-sdk)", "`[earthrover]`", "drivers.md"),
     "strands_robots.drivers.yahboom_m3pro": (
