@@ -67,7 +67,7 @@ from strands_robots.registry import (
     list_robots,
     resolve_name,
 )
-from strands_robots.utils import refusal_repr
+from strands_robots.utils import did_you_mean, refusal_repr
 
 if TYPE_CHECKING:
     from strands_robots.drivers import HardwareDriver
@@ -486,7 +486,7 @@ def _build_native_driver(
     accepted = constructor_keywords(driver_cls)
     if unknown := sorted(set(kwargs) - set(accepted)):
         raise ValueError(
-            f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}. "
+            f"Unknown kwarg(s) for {canonical!r} on driver='strands': {unknown}.{did_you_mean(unknown, accepted)} "
             f"{driver_cls.__name__} accepts: {list(accepted)}. (If this is a typo, fix it.)"
         )
 

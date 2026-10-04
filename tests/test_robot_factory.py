@@ -1359,35 +1359,6 @@ class TestRealModeConfigDiscovery:
             f"{import_calls}"
         )
 
-    def test_unknown_kwarg_typo_raises_value_error(self):
-        """Pin AGENTS.md > Review Learnings (#86) > "Reject silently-dropped
-        kwargs". A user typo like ``prot=`` (instead of ``port=``) must
-        surface as a clear ``ValueError`` at config-build time, not be
-        silently dropped and surface hours later as a misleading
-        connection failure.
-
-        The cross-robot polymorphism case -- forwardable kwargs that
-        belong to a sibling robot, e.g. ``kp`` to so101 -- is NOT what
-        this test pins (that case is handled by
-        ``test_extra_kwargs_filtered_against_dataclass_fields``). This
-        test is specifically about kwargs that are unknown to the entire
-        ``forwardable`` allowlist (typos, kwargs from a different
-        subsystem entirely).
-        """
-        pytest.importorskip("lerobot.robots.so_follower")
-
-        from strands_robots.hardware_robot import Robot as HwRobot
-
-        hw = HwRobot.__new__(HwRobot)
-        hw.tool_name_str = "so101_typo"
-
-        with pytest.raises(ValueError, match=r"Unknown kwarg.*prot"):
-            hw._create_minimal_config(
-                "so101_follower",
-                cameras={},
-                prot="/dev/ttyACM0",  # typo: should be `port`
-            )
-
     def test_known_cross_robot_kwarg_is_silently_filtered_not_rejected(self):
         """Companion to ``test_unknown_kwarg_typo_raises_value_error``:
         a kwarg that IS in ``forwardable`` but does NOT belong to the

@@ -37,7 +37,7 @@ def test_build_config_gamepad_field():
 
 
 def test_build_config_rejects_typo_kwarg():
-    with pytest.raises(ValueError, match=r"Unknown kwarg.*prot"):
+    with pytest.raises(ValueError, match=r"\['prot'\]\. Did you mean: 'prot' -> 'port'\?"):
         _build_teleop_config("so101_leader", prot="/dev/ttyACM1")
 
 

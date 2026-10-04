@@ -68,6 +68,7 @@ from strands_robots.utils import (
     boolean_flag_error,
     camera_token_error,
     dds_domain_id_error,
+    did_you_mean,
     ensure_lerobot_family_registered,
     positive_count_error,
     positive_finite_number_error,
@@ -297,14 +298,8 @@ def _camera_option_vocabulary(camera_name: str, config: Mapping[str, Any]) -> tu
 
     unknown = sorted(set(config) - set(fields) - {_CAMERA_TYPE_KEY}, key=repr)
     if unknown:
-        hints = []
-        for key in unknown:
-            close = difflib.get_close_matches(str(key), accepted, n=1, cutoff=0.7)
-            if close:
-                hints.append(f"{key!r} -> {close[0]!r}")
-        hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
         raise ValueError(
-            f"Unknown option(s) for camera {camera_name!r}: {unknown}.{hint} "
+            f"Unknown option(s) for camera {camera_name!r}: {unknown}.{did_you_mean(unknown, accepted)} "
             f"{ConfigClass.__name__} accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
             f"the camera backend). (If this is a typo, fix it.)"
         )
@@ -1486,7 +1481,7 @@ class Robot(TeleopMixin, AgentTool):
         if unknown:
             raise ValueError(
                 f"Unknown kwarg(s) for robot_type={robot_type!r}: "
-                f"{sorted(unknown)}. This robot's dataclass accepts: "
+                f"{sorted(unknown)}.{did_you_mean(sorted(unknown), sorted(recognised))} This robot's dataclass accepts: "
                 f"{sorted(valid_fields)}. The cross-robot allowlist is: "
                 f"{sorted(set(forwardable) | always_allowed)}. "
                 f"(If this is a typo, fix it.)"
