@@ -267,13 +267,13 @@ class XArmDriver:
             return api
         try:
             arm = api(self._host, is_radian=True)
-        except (OSError, RuntimeError) as exc:
+        except Exception as exc:  # the SDK raises a bare Exception("connect socket failed") for an unreachable host
             self._connect_error = f"XArmDriver: controller at {self._host!r} did not answer: {exc}"
             return self._connect_error
         if not getattr(arm, "connected", False):
             self._connect_error = f"XArmDriver: controller at {self._host!r} did not answer"
             return self._connect_error
-        if (reason := self._error_refusal(arm)) is not None:
+        if (reason := self._connect_refusal(arm)) is not None:
             self._release(arm)
             self._connect_error = reason
             return reason
@@ -299,14 +299,37 @@ class XArmDriver:
         except (OSError, RuntimeError) as exc:
             logger.debug("XArmDriver: disconnect raised %s", exc)
 
+    def _connect_refusal(self, arm: Any) -> str | None:
+        """Fetch the controller's error word with a round-trip and refuse a fault.
+
+        ``arm.error_code`` and ``arm.state`` are report-stream caches that start
+        at ``0`` and ``4`` and are not filled until the first report packet,
+        which ``XArmAPI`` does not wait for. Right after connecting they say
+        nothing about the controller, so the words are fetched here.
+        ``state`` is not gated: ``4`` is how a controller boots, and the servo
+        recipe that follows is what clears it.
+        """
+        try:
+            code, words = arm.get_err_warn_code()
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            return f"XArmDriver: reading the controller's error word failed: {exc}"
+        if code != 0:
+            return f"XArmDriver: get_err_warn_code returned code {code}"
+        return self._fault_reason(words[0])
+
+    def _fault_reason(self, code: int) -> str | None:
+        """Name a non-zero controller error word, or ``None`` for ``0``."""
+        if not code:
+            return None
+        return (
+            f"XArmDriver: controller at {self._host!r} holds error code {code}. Clear it from "
+            "UFactory Studio or with clean_error() once the cause is fixed; a write now moves nothing."
+        )
+
     def _error_refusal(self, arm: Any) -> str | None:
-        """Name the controller's error word, or ``None`` when it holds none."""
-        code = getattr(arm, "error_code", 0)
-        if code:
-            return (
-                f"XArmDriver: controller at {self._host!r} holds error code {code}. Clear it from "
-                "UFactory Studio or with clean_error() once the cause is fixed; a write now moves nothing."
-            )
+        """Name the error word or a non-moving state from the report-stream caches."""
+        if (reason := self._fault_reason(getattr(arm, "error_code", 0))) is not None:
+            return reason
         state = getattr(arm, "state", None)
         if state in STATES_THAT_DO_NOT_MOVE:
             return f"XArmDriver: controller at {self._host!r} is in state {state} (suspended or stopping)"

@@ -25,19 +25,29 @@ HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 
 
 class FakeXArm:
-    """Records calls; answers like the SDK's ``XArmAPI(port, is_radian=True)``."""
+    """Records calls; answers like the SDK's ``XArmAPI(port, is_radian=True)``.
+
+    ``error_code`` and ``state`` start at the SDK's pre-report cache values
+    (``0`` and ``4``); the error word the controller really holds is only
+    visible through ``get_err_warn_code``, as on a freshly connected arm.
+    """
 
     def __init__(self, port: str, is_radian: bool = False) -> None:
         self.port, self.is_radian = port, is_radian
         self.connected = True
         self.error_code = 0
         self.warn_code = 0
-        self.state = 2
+        self.state = 4
+        self.held_error = 0
         self.mode = 0
         self.joint_speed_limit = [0.0001, 3.0]
         self.angles = list(HOME)
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.servo_code = 0
+
+    def get_err_warn_code(self, show: bool = False, lang: str = "en") -> tuple[int, list[int]]:
+        self.error_code = self.held_error
+        return 0, [self.held_error, self.warn_code]
 
     def motion_enable(self, enable: bool = True) -> int:
         self.calls.append(("motion_enable", (enable,)))
@@ -127,8 +137,9 @@ def test_connect_enters_servo_mode_in_the_vendor_order(sdk: dict[str, FakeXArm])
     ("setup", "expected"),
     [
         ({"port": None}, "no controller address"),
-        ({"error_code": 22}, "holds error code 22"),
+        ({"held_error": 22}, "holds error code 22"),
         ({"connected": False}, "did not answer"),
+        ({"raises": Exception("connect socket failed")}, "did not answer: connect socket failed"),
     ],
 )
 def test_connect_refuses_and_never_energises_a_faulted_arm(
@@ -137,6 +148,8 @@ def test_connect_refuses_and_never_energises_a_faulted_arm(
     original = FakeXArm.__init__
 
     def faulted(self: FakeXArm, port: str, is_radian: bool = False) -> None:
+        if "raises" in setup:
+            raise setup["raises"]
         original(self, port, is_radian)
         for key, value in setup.items():
             if key != "port":
@@ -147,7 +160,7 @@ def test_connect_refuses_and_never_energises_a_faulted_arm(
     reason = driver.connect_eagerly()
     assert reason is not None and expected in reason
     assert not driver.is_connected
-    assert all(call[0] != "motion_enable" for call in sdk.get("arm", FakeXArm("x")).calls)
+    assert all(call[0] != "motion_enable" for call in (sdk["arm"].calls if "arm" in sdk else []))
 
 
 def test_connect_without_the_sdk_names_the_install(monkeypatch: pytest.MonkeyPatch) -> None:
