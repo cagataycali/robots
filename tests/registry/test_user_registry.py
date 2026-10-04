@@ -130,19 +130,20 @@ class TestRegisterRobotDuplicates:
         register_robot(name="test_bot", model_xml="bot.xml", asset_dir=str(robot_dir), description="v2", overwrite=True)
         assert get_robot("test_bot")["description"] == "v2"
 
-    def test_overriding_package_robot_logs_info(self, tmp_path, caplog):
-        """Registering a name that exists in the package registry emits an info log."""
+    def test_a_built_in_name_is_refused_unless_overwrite(self, tmp_path, caplog):
+        """A built-in name is refused like a user duplicate; overwrite=True shadows it, unregister restores it."""
         panda_dir = _make_robot(tmp_path / "assets", name="panda", xml_name="panda.xml")
+        curated = get_robot("panda")["description"]
+        kwargs = {"name": "panda", "model_xml": "panda.xml", "asset_dir": str(panda_dir), "description": "Custom"}
+        with pytest.raises(ValueError, match=r"'panda' is a built-in robot \(.*overwrite=True"):
+            register_robot(**kwargs)
+        assert get_robot("panda")["description"] == curated
         with caplog.at_level(logging.INFO, logger="strands_robots.registry.user_registry"):
-            register_robot(
-                name="panda",
-                model_xml="panda.xml",
-                asset_dir=str(panda_dir),
-                description="Custom panda",
-            )
+            register_robot(**kwargs, overwrite=True)
         assert any("exists in package registry" in m for m in caplog.messages)
-        assert get_robot("panda")["description"] == "Custom panda"
+        assert get_robot("panda")["description"] == "Custom"
         unregister_robot("panda")
+        assert get_robot("panda")["description"] == curated
 
 
 class TestRegisterRobotValidation:
