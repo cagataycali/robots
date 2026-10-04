@@ -1209,9 +1209,19 @@ class TestPolicyExecution:
         keys = sim_with_robot.robot_action_keys("arm1")
         assert isinstance(joints, list) and joints, "robot_joint_names('arm1') is empty"
         assert isinstance(keys, list) and keys, "robot_action_keys('arm1') is empty"
-        # Unknown robots return an empty list rather than raising.
-        assert sim_with_robot.robot_joint_names("ghost") == []
-        assert sim_with_robot.robot_action_keys("ghost") == []
+        # Unknown robots now raise ValueError with a Did-you-mean hint rather
+        # than returning an empty list. Returning ``[]`` silently was the
+        # footgun flagged in cagataycali/robots-harness#NNN (bugbash fire 31):
+        # a user who followed docs/robots/unitree_g1.md verbatim with
+        # ``Robot("g1")`` + ``robot.robot_joint_names("unitree_g1")`` got
+        # ``[]`` and silently keyed a policy's state vector to zero columns.
+        import pytest
+        with pytest.raises(ValueError, match="no robot named 'ghost'"):
+            sim_with_robot.robot_joint_names("ghost")
+        # robot_action_keys defaults to robot_joint_names() in the base class,
+        # so it now propagates the same error.
+        with pytest.raises(ValueError, match="no robot named 'ghost'"):
+            sim_with_robot.robot_action_keys("ghost")
 
 
 # Action Dispatch

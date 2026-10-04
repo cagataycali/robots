@@ -3609,9 +3609,34 @@ class MuJoCoSimEngine(
         return list(self._world.robots.keys())
 
     def robot_joint_names(self, robot_name: str) -> list[str]:
-        """Ordered joint names for ``robot_name`` (SimEngine ABC)."""
-        if self._world is None or not registered(self._world.robots, robot_name):
+        """Ordered joint names for ``robot_name`` (SimEngine ABC).
+
+        Raises :class:`ValueError` when ``robot_name`` is a string that names
+        no registered robot, so a caller who follows ``docs/robots/<robot>.md``
+        verbatim after instantiating with an alias (e.g. ``Robot("g1")`` + the
+        quickstart's ``robot.robot_joint_names("unitree_g1")``) is told what
+        to type instead of being handed ``[]`` and silently keying a policy's
+        state vector to zero columns.
+
+        Non-string input still returns ``[]`` to preserve the best-effort
+        tolerance pinned by
+        ``tests/simulation/test_unhashable_entity_name_is_reported.py``: an
+        unhashable name (list/dict/set) is reported as "no such entity"
+        rather than raising ``TypeError`` out of a dict membership test.
+        """
+        if self._world is None:
             return []
+        if not registered(self._world.robots, robot_name):
+            # Preserve best-effort tolerance for non-str input (unhashable
+            # name is a documented contract elsewhere).
+            if not isinstance(robot_name, str):
+                return []
+            known = list(self._world.robots.keys()) if self._world.robots else []
+            hint = close_match_hint(robot_name, known)
+            listing = f" Registered: {known}." if known else " No robots are registered."
+            raise ValueError(
+                f"robot_joint_names: no robot named {robot_name!r}.{listing}{hint}"
+            )
         return list(self._world.robots[robot_name].joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
@@ -3640,9 +3665,22 @@ class MuJoCoSimEngine(
         :func:`~strands_robots.simulation.mujoco.rendering._keys_in_joint_order`):
         this list orders the ``observation.state`` vector a policy reads, and a
         recording writes those columns in joint order.
+
+        Raises :class:`ValueError` on a str ``robot_name`` that names no
+        registered robot, mirroring :meth:`robot_joint_names`; non-str input
+        remains best-effort empty for the unhashable-tolerance contract.
         """
-        if self._world is None or not registered(self._world.robots, robot_name):
+        if self._world is None:
             return []
+        if not registered(self._world.robots, robot_name):
+            if not isinstance(robot_name, str):
+                return []
+            known = list(self._world.robots.keys()) if self._world.robots else []
+            hint = close_match_hint(robot_name, known)
+            listing = f" Registered: {known}." if known else " No robots are registered."
+            raise ValueError(
+                f"robot_action_keys: no robot named {robot_name!r}.{listing}{hint}"
+            )
         return self._get_valid_action_keys(robot_name)
 
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:

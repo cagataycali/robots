@@ -135,8 +135,17 @@ class TestRobotActionKeysDefault:
         # actuators match its joints needs no override.
         assert SimEngine.robot_action_keys(_Stub(), "anything") == ["a", "b", "c"]
 
-    def test_missing_robot_returns_empty(self, sim):
-        assert sim.robot_action_keys("does_not_exist") == []
+    def test_missing_robot_raises_with_hint(self, sim):
+        # Formerly: assert sim.robot_action_keys("does_not_exist") == []
+        # cagataycali/robots-harness bugbash fire 31: returning [] silently on a
+        # str name that misses the registry is a silent-wrong footgun (a user
+        # following docs/robots/unitree_g1.md verbatim with Robot("g1") +
+        # robot.robot_joint_names("unitree_g1") got [] and silently keyed a
+        # policy's state vector to zero columns). It now raises ValueError with
+        # the registered-robots listing and a difflib Did-you-mean hint.
+        import pytest
+        with pytest.raises(ValueError, match="no robot named 'does_not_exist'"):
+            sim.robot_action_keys("does_not_exist")
 
 
 class TestValidActionKeyHint:
