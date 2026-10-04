@@ -132,6 +132,21 @@ def _err(text: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"status": "error", "content": content}
 
 
+def _went_to_robot_name(action: str, param: str, robot_name: Any) -> str:
+    """Refusal suffix for a missing ``param`` when the caller DID pass ``robot_name``.
+
+    The primitives take ``robot_name`` first, so ``set_gripper("close")`` binds
+    ``"close"`` to ``robot_name`` and leaves ``state`` unset. Naming where the
+    value went turns "got None" into the slip the caller actually made.
+    """
+    if robot_name is None:
+        return ""
+    return (
+        f" The first positional argument is 'robot_name', and it received {refusal_repr(robot_name)};"
+        f" name the argument instead: {action}({param}=...)."
+    )
+
+
 class MotionPrimitivesCore:
     """Backend-agnostic half of the motion primitives.
 
@@ -160,6 +175,7 @@ class MotionPrimitivesCore:
         tol: Any,
         max_steps: Any,
         orientation_tol: Any = None,
+        robot_name: Any = None,
     ) -> tuple[np.ndarray | None, np.ndarray | None, int, float | None, dict[str, Any] | None]:
         """Shared ``move_to`` parameter domain (before any engine state is read).
 
@@ -178,9 +194,21 @@ class MotionPrimitivesCore:
         dropping a tolerance the caller set is how an unmet request goes
         unnoticed. When an orientation IS given and no tolerance is passed the
         default is :data:`_DEFAULT_ORIENTATION_TOL_RAD`.
+
+        ``robot_name`` is read only to explain a missing ``position``: when the
+        target landed in the first positional slot, the refusal says so.
         """
         if position is None:
-            return None, None, 0, None, _err("move_to requires 'position' ([x, y, z] target in meters).")
+            return (
+                None,
+                None,
+                0,
+                None,
+                _err(
+                    "move_to requires 'position' ([x, y, z] target in meters)."
+                    + _went_to_robot_name("move_to", "position", robot_name)
+                ),
+            )
         # Same guard the scene-construction entry points use, so a pose
         # `add_object`/`move_object` refuses is refused here too. `len()` on a
         # value with no length (a scalar, an iterator) raises a bare TypeError,
@@ -234,8 +262,19 @@ class MotionPrimitivesCore:
         )
         return target, quat, int(max_steps), resolved_orientation_tol, None
 
-    def _validate_set_gripper_args(self, state: Any, steps: Any) -> tuple[int, dict[str, Any] | None]:
-        """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``."""
+    def _validate_set_gripper_args(
+        self, state: Any, steps: Any, robot_name: Any = None
+    ) -> tuple[int, dict[str, Any] | None]:
+        """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``.
+
+        ``robot_name`` is read only to explain a missing ``state`` (see
+        :func:`_went_to_robot_name`).
+        """
+        if state is None:
+            return 0, _err(
+                'set_gripper requires \'state\' ("open" or "close").'
+                + _went_to_robot_name("set_gripper", "state", robot_name)
+            )
         if state not in ("open", "close"):
             return 0, _err(f'set_gripper: \'state\' must be "open" or "close", got {refusal_repr(state)}.')
         err = self._validate_step_budget("set_gripper", "steps", steps)
@@ -244,11 +283,22 @@ class MotionPrimitivesCore:
         return int(steps), None
 
     def _validate_rotate_wrist_args(
-        self, target_yaw: Any, tol: Any, max_steps: Any
+        self, target_yaw: Any, tol: Any, max_steps: Any, robot_name: Any = None
     ) -> tuple[float, int, dict[str, Any] | None]:
-        """Shared ``rotate_wrist`` parameter domain: ``(target_yaw, max_steps, None)`` or ``(0, 0, error)``."""
+        """Shared ``rotate_wrist`` parameter domain: ``(target_yaw, max_steps, None)`` or ``(0, 0, error)``.
+
+        ``robot_name`` is read only to explain a missing ``target_yaw`` (see
+        :func:`_went_to_robot_name`).
+        """
         if target_yaw is None:
-            return 0.0, 0, _err("rotate_wrist requires 'target_yaw' (wrist joint set-point in radians).")
+            return (
+                0.0,
+                0,
+                _err(
+                    "rotate_wrist requires 'target_yaw' (wrist joint set-point in radians)."
+                    + _went_to_robot_name("rotate_wrist", "target_yaw", robot_name)
+                ),
+            )
         if not _is_finite_real(target_yaw):
             return (
                 0.0,

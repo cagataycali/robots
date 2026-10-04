@@ -215,6 +215,25 @@ class TestSetGripperArgValidation:
         assert (steps, err) == (12, None)
 
 
+class TestAMissingPayloadNamesWhereItLanded:
+    """The primitives take ``robot_name`` first: ``set_gripper("close")`` puts "close" there."""
+
+    @pytest.mark.parametrize(
+        ("verb", "param", "call"),
+        [
+            ("set_gripper", "state", lambda c, rn: c._validate_set_gripper_args(None, 12, rn)[-1]),
+            ("move_to", "position", lambda c, rn: c._validate_move_to_args(None, None, 0.01, 200, None, rn)[-1]),
+            ("rotate_wrist", "target_yaw", lambda c, rn: c._validate_rotate_wrist_args(None, 0.02, 200, rn)[-1]),
+        ],
+    )
+    def test_the_refusal_says_robot_name_received_it(self, core: MotionPrimitivesCore, verb, param, call) -> None:
+        assert f"requires '{param}'" in _error_text(call(core, None))
+        assert "robot_name" not in _error_text(call(core, None))
+        text = _error_text(call(core, "close"))
+        assert f"'robot_name', and it received 'close'; name the argument instead: {verb}({param}=...)" in text
+        assert "got None" not in text
+
+
 class TestRotateWristArgValidation:
     def test_missing_target_yaw_is_refused(self, core: MotionPrimitivesCore) -> None:
         _, _, err = core._validate_rotate_wrist_args(None, 0.02, 200)

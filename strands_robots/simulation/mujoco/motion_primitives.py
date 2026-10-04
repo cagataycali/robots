@@ -498,7 +498,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         :meth:`_resolve_gripper_actuators`) are excluded from the IK solve
         and its restart seeding, and are HELD at their live position for the
         whole servo descent - a closed gripper stays closed through staging
-        and transport, so ``set_gripper("close") -> move_to(...)`` carries the
+        and transport, so ``set_gripper(state="close") -> move_to(...)`` carries the
         held object rather than releasing it.
 
         COMMANDED-DOF SOLVE (contract): the IK solve is restricted to the
@@ -582,7 +582,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         # pose-vector rule the scene-construction calls use, same tol /
         # max_steps domains, same wording.
         target, target_quat, max_steps, orientation_tol, arg_err = self._validate_move_to_args(
-            position, orientation, tol, max_steps, orientation_tol
+            position, orientation, tol, max_steps, orientation_tol, robot_name
         )
         if arg_err is not None:
             return arg_err
@@ -1174,7 +1174,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             (:meth:`_finger_contacts`), rather than reporting an empty grasp
             the backend never looked for.
         """
-        steps, arg_err = self._validate_set_gripper_args(state, steps)
+        steps, arg_err = self._validate_set_gripper_args(state, steps, robot_name)
         if arg_err is not None:
             return arg_err
         assert state is not None  # narrowed by the shared validator
@@ -1307,7 +1307,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             the target is out of range, or servo convergence times out.
             Never raises.
         """
-        target_yaw, max_steps, arg_err = self._validate_rotate_wrist_args(target_yaw, tol, max_steps)
+        target_yaw, max_steps, arg_err = self._validate_rotate_wrist_args(target_yaw, tol, max_steps, robot_name)
         if arg_err is not None:
             return arg_err
 
