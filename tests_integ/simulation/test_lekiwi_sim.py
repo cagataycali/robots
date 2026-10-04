@@ -44,7 +44,7 @@ def test_lekiwi_builds_and_steps(lekiwi_sim) -> None:
 
     lekiwi_sim.step(n_steps=300)
     state = lekiwi_sim.get_observation(robot_name=name, skip_images=True)
-    assert all(np.isfinite(v) for v in state.values())
+    assert all(np.isfinite(v).all() for v in state.values())
 
 
 def test_lekiwi_mock_policy_rollout_and_render(lekiwi_sim) -> None:
@@ -62,3 +62,13 @@ def test_lekiwi_mock_policy_rollout_and_render(lekiwi_sim) -> None:
 
     render = lekiwi_sim.render(camera_name="lekiwi/front", width=320, height=240)
     assert render["status"] == "success", render
+
+
+def test_lekiwi_sim_embodiment_matches_the_model(lekiwi_sim) -> None:
+    """The lerobot_local ``lekiwi_sim`` map names this model's joints and actuators, in order."""
+    from strands_robots.policies.lerobot_local.embodiment import load_embodiment
+
+    name = lekiwi_sim.list_robots()[0]
+    embodiment = load_embodiment("lekiwi_sim")
+    assert embodiment.state_keys == lekiwi_sim.robot_joint_names(name)
+    assert embodiment.action_keys == lekiwi_sim.robot_action_keys(name)

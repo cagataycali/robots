@@ -701,7 +701,7 @@ def observed_state_keys(observation: Mapping[str, Any]) -> list[str]:
     return [k for k, v in observation.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)]
 
 
-def _state_key_mismatch_detail(missing: list[str], observation: Mapping[str, Any], *, total: bool) -> str:
+def state_key_mismatch_detail(missing: list[str], observation: Mapping[str, Any], *, total: bool) -> str:
     """Describe declared ``state_keys`` absent from the observation, with the remedy.
 
     One text for both reactions to the same degradation - the warning
@@ -768,7 +768,7 @@ def _warn_state_key_mismatch(missing: list[str], observation: Mapping[str, Any],
     if sig in _WARNED_STATE_KEY_MISMATCH:
         return
     _WARNED_STATE_KEY_MISMATCH.add(sig)
-    logger.warning("lerobot_local: %s", _state_key_mismatch_detail(missing, observation, total=total))
+    logger.warning("lerobot_local: %s", state_key_mismatch_detail(missing, observation, total=total))
 
 
 def register_pack_state_step() -> type | None:
@@ -948,7 +948,7 @@ def register_pack_state_step() -> type | None:
             if missing:
                 if self.strict_keys:
                     raise ValueError(
-                        "strict_keys=True: " + _state_key_mismatch_detail(missing, observation, total=False)
+                        "strict_keys=True: " + state_key_mismatch_detail(missing, observation, total=False)
                     )
                 # Written in place: the list is the policy's, so replacing it
                 # would leave the policy holding the empty one it passed in.
