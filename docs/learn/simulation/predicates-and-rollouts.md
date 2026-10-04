@@ -60,7 +60,7 @@ You should see:
 30 ['base_ang_vel_xy', 'base_below_z', 'base_beyond_x', 'base_beyond_y']
 False False
 Policy stopped early (stop_when condition met) on 'so101'
-RunPolicyStarted RunPolicyEnded predicate 20
+RunPolicyStarted RunPolicyEnded predicate 19
 Episodes: 2 | Success: 2/2 (100.0%)
 Episodes: 2 | Success: 2 | Failure: 0 (100.0% success)
 ```
