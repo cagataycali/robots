@@ -74,6 +74,23 @@ class TestFactory:
         with pytest.raises(ValueError, match="No trainer registered"):
             create_trainer("does_not_exist_xyz")
 
+    def test_unknown_provider_offers_did_you_mean_hint(self):
+        # Parity with create_policy() for a near-miss: both resolvers address
+        # the same provider families, so a typo on the training side should get
+        # the same hint the policy side gives.
+        with pytest.raises(ValueError, match=r"Did you mean:.*'lerobot_local'"):
+            create_trainer("lerbot_local")  # typo: missing 'o'
+
+    def test_case_fold_resolves_registered_provider(self):
+        # Parity with create_policy()'s fold: "Lerobot_Local" and "cosmos-3"
+        # should land on the registered spelling rather than a 404, mirroring
+        # the gr00t/groot and nvidia-cosmos3/cosmos3 precedent on the policy
+        # side (see policies/factory.py:_resolve_policy_class).
+        from strands_robots.training.lerobot import LerobotTrainer
+
+        assert import_trainer_class("Lerobot_Local") is LerobotTrainer
+        assert import_trainer_class("lerobot-local") is LerobotTrainer
+
     def test_runtime_register_and_alias(self):
         register_trainer("custom_x", lambda: MockTrainer, aliases=["cx"])
         assert isinstance(create_trainer("custom_x"), MockTrainer)

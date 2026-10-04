@@ -28,6 +28,7 @@ answer for the same set of names.
 
 from __future__ import annotations
 
+import difflib
 import importlib
 import logging
 from collections.abc import Callable
@@ -126,12 +127,22 @@ def import_trainer_class(provider: str) -> type[Trainer]:
     if resolved in _runtime_registry:
         return _runtime_registry[resolved]()
 
+    # Case + dash fold, mirroring policies.factory._resolve_policy_class so a
+    # user who copied "Lerobot_Local" or "cosmos-3" from a tutorial lands on
+    # the registered spelling instead of a 404. The fold is only used to find
+    # a hit; the raised message below keeps the user's original spelling.
+    folded = provider.lower().replace("-", "_")
+    if folded != provider:
+        resolved_folded = _runtime_aliases.get(folded, folded)
+        if resolved_folded in _runtime_registry:
+            return _runtime_registry[resolved_folded]()
+
     # A removed provider is refused with its own sentence, not "no trainer":
     # its family still trains, under lerobot_local's policy_type.
     if (removed := removed_provider_error(provider)) is not None:
         raise ValueError(removed)
 
-    cfg = get_policy_provider(provider)
+    cfg = get_policy_provider(provider) or (get_policy_provider(folded) if folded != provider else None)
     if cfg and "trainer" in cfg:
         tcfg = cfg["trainer"]
         mod = importlib.import_module(tcfg["module"])
@@ -160,7 +171,15 @@ def import_trainer_class(provider: str) -> type[Trainer]:
             if isinstance(attr, type) and issubclass(attr, Trainer) and attr is not Trainer:
                 return attr
 
-    raise ValueError(f"No trainer registered for provider '{provider}'. Available trainers: {list_trainers()}")
+    # Offer the nearest registered trainer, the way create_policy() does for a
+    # policy provider: case and dash are already folded above, and 0.6 is
+    # Robot()/create_policy()'s cutoff.
+    close = difflib.get_close_matches(folded, list_trainers(), n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
+    raise ValueError(
+        f"No trainer registered for provider '{provider}'.{hint} "
+        f"Available trainers: {list_trainers()}"
+    )
 
 
 def create_trainer(provider: str, **kwargs: Any) -> Trainer:
