@@ -85,7 +85,7 @@ in sim runs on the metal by changing `mode`.
 
 | | Read |
 |---|---|
-| **150+ robots across 8 categories** - arms, bimanual rigs, humanoids, quadrupeds, hands, drones - from one registry with asset auto-download | [Robots](docs/robots/index.md) |
+| **150+ robots across 8 categories** - arms, bimanual rigs, humanoids, hands, mobile bases, mobile_manip, aerial, expressive - from one registry with asset auto-download | [Robots](docs/robots/index.md) |
 | **Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7), Cosmos 3, MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](docs/learn/policies/index.md) |
 | **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](docs/learn/hardware/teleoperation.md), [Recording](docs/learn/data/record.md) |
 | **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](docs/learn/training/lerobot.md) |
