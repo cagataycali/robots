@@ -1,7 +1,12 @@
-"""Native CycloneDDS driver for the Unitree Go2 quadruped.
+"""Native CycloneDDS driver for the Unitree robots on the ``unitree_go`` wire: Go2 and H1.
 
 ``Robot("go2", mode="real", driver="strands", port=<ip>, network_interface="eth0")``
-builds one of these. The instance satisfies
+builds one of these, and so does ``Robot("h1", mode="real", ...)``. The two
+robots speak the same low-level protocol - the ``unitree_go`` ``LowCmd_``, the
+same header, CRC and motion-switcher release - and differ only in which joint
+sits in which ``motor_cmd`` slot and how each slot is driven. That difference is
+one :class:`WireProfile` per robot (:data:`WIRE_PROFILES`); everything below
+reads the profile and nothing else is per-robot. The instance satisfies
 :class:`~strands_robots.drivers.base.HardwareDriver`, so
 :func:`~strands_robots.robot.Robot` returns it and the mesh, teleop rail and
 agent tool surface consume it exactly like the lerobot driver they replace -
@@ -71,6 +76,7 @@ import logging
 import threading
 import time
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots._pacing import Ticker
@@ -86,6 +92,7 @@ from strands_robots.drivers.base import (
 )
 from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK, sdk_missing
 from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
+from strands_robots.registry import resolve_name
 from strands_robots.utils import (
     finite_number_error,
     positive_count_error,
@@ -100,17 +107,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: The robots this driver registers for, read by
-#: :data:`strands_robots.drivers._SHIPPED_DRIVERS`. The Go2's ``go2`` alias
-#: resolves through :func:`~strands_robots.registry.resolve_name`, so only the
-#: canonical name is listed.
-SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2",)
+#: :data:`strands_robots.drivers._SHIPPED_DRIVERS`. The ``go2`` and ``h1``
+#: aliases resolve through :func:`~strands_robots.registry.resolve_name`, so only
+#: the canonical names are listed. Each has a :data:`WIRE_PROFILES` entry.
+SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2", "unitree_h1")
 
 #: Percentage below which the write gate refuses. Same floor as the G1 driver:
 #: a quadruped that browns out mid-step falls onto its own hardware.
 _BATTERY_FLOOR_PCT: float = 15.0
 
 #: Control-loop cadence. 500 Hz matches the SDK's own Go2 low-level example,
-#: which sleeps 0.002 s between ``rt/lowcmd`` writes. Firmware holds the last
+#: which sleeps 0.002 s between ``rt/lowcmd`` writes; the H1 example writes at
+#: 100 Hz, so 500 Hz is inside what its firmware takes. Firmware holds the last
 #: commanded posture only while frames keep arriving on cadence; a slower loop
 #: lets the legs droop between frames. A module constant so a test can retune it
 #: without patching a sleep.
@@ -196,6 +204,86 @@ GO2_JOINT_INDEX: dict[str, int] = {
     "RL_thigh_joint": 10,
     "RL_calf_joint": 11,
 }
+
+#: Joint name -> ``LowCmd_.motor_cmd`` slot for the H1.
+#:
+#: The names are the ones the H1's MuJoCo description (``h1_mj_description``)
+#: declares; the slots are the SDK's ``H1JointIndex`` (the
+#: ``example/h1/low_level`` example in ``unitree_sdk2_python``). The two orders
+#: share nothing: the description starts at ``left_hip_yaw``, the wire at
+#: ``right_hip_roll``, and the hip-yaw motors sit at slots 7 and 8, after the
+#: torso. Slot 9 has no motor and is never written.
+H1_JOINT_INDEX: dict[str, int] = {
+    "right_hip_roll": 0,
+    "right_hip_pitch": 1,
+    "right_knee": 2,
+    "left_hip_roll": 3,
+    "left_hip_pitch": 4,
+    "left_knee": 5,
+    "torso": 6,
+    "left_hip_yaw": 7,
+    "right_hip_yaw": 8,
+    "left_ankle": 10,
+    "right_ankle": 11,
+    "right_shoulder_pitch": 12,
+    "right_shoulder_roll": 13,
+    "right_shoulder_yaw": 14,
+    "right_elbow": 15,
+    "left_shoulder_pitch": 16,
+    "left_shoulder_roll": 17,
+    "left_shoulder_yaw": 18,
+    "left_elbow": 19,
+}
+
+#: The H1's "weak" motors - the ankles and both arms - by slot. The SDK's H1
+#: example drives them with ``MotorCmd_.mode = 0x01`` and the low gain pair
+#: (``kp = 60, kd = 1.5``); every other driven slot is a high-torque joint
+#: motor driven with ``mode = 0x0A`` and ``kp = 200, kd = 5``. Sending the
+#: strong motors' mode byte to a weak motor, or the reverse, is a frame the
+#: firmware accepts with a valid CRC and drives wrongly.
+_H1_WEAK_SLOTS: frozenset[int] = frozenset({10, 11, 12, 13, 14, 15, 16, 17, 18, 19})
+_H1_MODE_WEAK: int = 0x01
+_H1_MODE_STRONG: int = 0x0A
+
+
+@dataclass(frozen=True)
+class WireProfile:
+    """What one robot needs from the shared ``unitree_go`` low-level frame.
+
+    Attributes:
+        model: The canonical registry name the profile drives.
+        joint_index: Joint name -> ``motor_cmd`` slot. A name absent here is
+            refused by :func:`build_lowcmd_from_action`.
+        mode: Slot -> ``MotorCmd_.mode`` byte written on every driven slot.
+        kp: Slot -> reference stiffness for a bare position target.
+        kd: Slot -> reference damping for a bare position target.
+    """
+
+    model: str
+    joint_index: dict[str, int]
+    mode: dict[int, int]
+    kp: dict[int, float]
+    kd: dict[int, float]
+
+
+#: One profile per supported robot, keyed by canonical name.
+WIRE_PROFILES: dict[str, WireProfile] = {
+    "unitree_go2": WireProfile(
+        model="unitree_go2",
+        joint_index=GO2_JOINT_INDEX,
+        mode=dict.fromkeys(GO2_JOINT_INDEX.values(), _MOTOR_MODE_SERVO),
+        kp={slot: _SDK_KP[slot] for slot in GO2_JOINT_INDEX.values()},
+        kd={slot: _SDK_KD[slot] for slot in GO2_JOINT_INDEX.values()},
+    ),
+    "unitree_h1": WireProfile(
+        model="unitree_h1",
+        joint_index=H1_JOINT_INDEX,
+        mode={s: _H1_MODE_WEAK if s in _H1_WEAK_SLOTS else _H1_MODE_STRONG for s in H1_JOINT_INDEX.values()},
+        kp={s: 60.0 if s in _H1_WEAK_SLOTS else 200.0 for s in H1_JOINT_INDEX.values()},
+        kd={s: 1.5 if s in _H1_WEAK_SLOTS else 5.0 for s in H1_JOINT_INDEX.values()},
+    ),
+}
+_GO2 = WIRE_PROFILES["unitree_go2"]
 
 
 def _resolve_message_class(cls_path: tuple[str, str]) -> Any:
@@ -321,13 +409,16 @@ def _seal(cmd: Any) -> str | None:
     return None
 
 
-def _soft_frame() -> tuple[Any, str | None]:
-    """Return an unsealed ``LowCmd_`` with the twelve driven slots enabled at zero gain.
+def _soft_frame(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+    """Return an unsealed ``LowCmd_`` with every driven slot enabled at zero gain.
 
-    The shape both write paths build on: ``mode`` is :data:`_MOTOR_MODE_SERVO`
-    and ``q``/``dq``/``tau``/``kp``/``kd`` are ``0.0`` on every
-    :data:`GO2_JOINT_INDEX` slot, so a slot nothing overwrites holds no
-    position and applies no torque but is never *disabled*. The caller seals.
+    The shape both write paths build on: ``mode`` is the profile's byte for the
+    slot and ``q``/``dq``/``tau``/``kp``/``kd`` are ``0.0`` on every slot of
+    ``profile.joint_index``, so a slot nothing overwrites holds no position and
+    applies no torque but is never *disabled*. The caller seals.
+
+    Args:
+        profile: The robot whose slots are enabled.
 
     Returns:
         ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent.
@@ -335,9 +426,9 @@ def _soft_frame() -> tuple[Any, str | None]:
     cmd, err = _new_lowcmd()
     if err is not None:
         return None, err
-    for slot in GO2_JOINT_INDEX.values():
+    for slot in profile.joint_index.values():
         motor = cmd.motor_cmd[slot]
-        motor.mode = _MOTOR_MODE_SERVO
+        motor.mode = profile.mode[slot]
         motor.q = 0.0
         motor.dq = 0.0
         motor.tau = 0.0
@@ -346,20 +437,20 @@ def _soft_frame() -> tuple[Any, str | None]:
     return cmd, None
 
 
-def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
-    """Build a Go2 ``LowCmd_`` from a caller's :meth:`Go2Driver.send_action` dict.
+def build_lowcmd_from_action(action: dict[str, Any], profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+    """Build a ``LowCmd_`` from a caller's :meth:`Go2Driver.send_action` dict.
 
     A free function so a test can walk the mapping without a driver instance,
     and so :meth:`Go2Driver.send_action` reads as "gate, build, publish".
 
     The mapping is:
 
-    * Every joint name in ``action`` must be a key of :data:`GO2_JOINT_INDEX`.
+    * Every joint name in ``action`` must be a key of ``profile.joint_index``.
       An unknown name refuses the whole action - the alternative is to silently
       drop a joint the caller believed was commanded, which is the worst
       failure mode on a legged robot.
     * A scalar value is the position target ``q``, taking the slot's
-      :data:`_SDK_KP` / :data:`_SDK_KD` gains with zero ``dq`` and ``tau``.
+      reference gains (``profile.kp`` / ``profile.kd``) with zero ``dq`` and ``tau``.
     * A dict value must carry ``"q"``; ``"kp"``, ``"kd"``, ``"dq"`` and
       ``"tau"`` are optional. An unknown inner key is refused for the same
       reason an unknown joint name is.
@@ -383,6 +474,7 @@ def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
 
     Args:
         action: Joint-name-keyed targets.
+        profile: The robot the frame is for.
 
     Returns:
         ``(cmd, None)`` on success, ``(None, reason)`` when the action dict is
@@ -392,14 +484,14 @@ def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
         return None, f"action must be a dict, got {type(action).__name__}"
     if not action:
         return None, "action is empty; nothing to command"
-    cmd, err = _soft_frame()
+    cmd, err = _soft_frame(profile)
     if err is not None:
         return None, err
     known_inner = set(_WIRE_FIELDS)
     for name, value in action.items():
-        slot = GO2_JOINT_INDEX.get(name)
+        slot = profile.joint_index.get(name)
         if slot is None:
-            allowed = ", ".join(sorted(GO2_JOINT_INDEX))
+            allowed = ", ".join(sorted(profile.joint_index))
             return None, f"unknown joint name {name!r}; expected one of: {allowed}"
         if isinstance(value, dict):
             unknown_inner = set(value) - known_inner
@@ -411,13 +503,13 @@ def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
             if "q" not in value:
                 return None, f"per-joint dict for {name!r} is missing required key 'q'"
             q = value["q"]
-            kp = value.get("kp", _SDK_KP[slot])
-            kd = value.get("kd", _SDK_KD[slot])
+            kp = value.get("kp", profile.kp[slot])
+            kd = value.get("kd", profile.kd[slot])
             dq = value.get("dq", 0.0)
             tau = value.get("tau", 0.0)
             supplied = {key: value[key] for key in _WIRE_FIELDS if key in value}
         else:
-            q, kp, kd, dq, tau = value, _SDK_KP[slot], _SDK_KD[slot], 0.0, 0.0
+            q, kp, kd, dq, tau = value, profile.kp[slot], profile.kd[slot], 0.0, 0.0
             supplied = {"q": value}
         for key, raw in supplied.items():
             reason = finite_number_error(raw, f"{name}.{key}", "send_action")
@@ -426,7 +518,7 @@ def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
         q_f, kp_f, kd_f = float(q), float(kp), float(kd)
         dq_f, tau_f = float(dq), float(tau)
         motor = cmd.motor_cmd[slot]
-        motor.mode = _MOTOR_MODE_SERVO
+        motor.mode = profile.mode[slot]
         motor.q = q_f
         motor.dq = dq_f
         motor.tau = tau_f
@@ -437,19 +529,22 @@ def build_lowcmd_from_action(action: dict[str, Any]) -> tuple[Any, str | None]:
     return cmd, None
 
 
-def build_zero_torque_lowcmd() -> tuple[Any, str | None]:
-    """Return a Go2 ``LowCmd_`` with every gain and effort zeroed.
+def build_zero_torque_lowcmd(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+    """Return a ``LowCmd_`` with every gain and effort zeroed.
 
     A zero-kp/kd/tau motor holds no position and applies no torque - the softest
     frame the protocol accepts, and what the control loop publishes on the way
-    out. The enable byte is still set on the twelve driven slots: a *Disable*
+    out. The enable byte is still set on every driven slot: a *Disable*
     frame cuts the motors dead and drops the robot onto its knees, whereas an
     enabled zero-gain frame lets it settle under its own weight.
+
+    Args:
+        profile: The robot the frame is for.
 
     Returns:
         ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent.
     """
-    cmd, err = _soft_frame()
+    cmd, err = _soft_frame(profile)
     if err is not None:
         return None, err
     if (err := _seal(cmd)) is not None:
@@ -472,6 +567,7 @@ class Go2Driver:
         *,
         port: str | None = None,
         network_interface: str = "eth0",
+        model: str | None = None,
         battery_floor_pct: float = _BATTERY_FLOOR_PCT,
         motion_switcher_client_factory: Callable[[str], Any] | None = None,
     ) -> None:
@@ -493,6 +589,14 @@ class Go2Driver:
                 binds to a NIC, not an address. Kept for logging and for
                 SSH-side helpers.
             network_interface: The interface CycloneDDS binds to.
+            model: Which robot's :class:`WireProfile` to drive, when
+                ``tool_name`` does not name one - a renamed mesh peer, or a
+                driver built directly. ``None`` reads the model off
+                ``tool_name`` and falls back to the Go2, the driver's first
+                robot; an H1 under a custom ``tool_name`` must pass
+                ``model="h1"``. The fallback is safe in the direction that
+                matters: an H1 joint name sent through the Go2 profile is
+                refused as an unknown joint, never written.
             battery_floor_pct: Percentage below which :meth:`send_action`
                 refuses to write. Separate from the sport-mode gate so a caller
                 can see which check refused.
@@ -507,7 +611,8 @@ class Go2Driver:
                 set the driver-base contract fixes.
 
         Raises:
-            ValueError: If ``battery_floor_pct`` is not a finite number. A
+            ValueError: If ``battery_floor_pct`` is not a finite number, or
+                ``model`` names a robot this driver has no profile for. A
                 ``nan`` floor would compare False against every reading, so the
                 driver would report a floor in :meth:`get_status` and enforce
                 nothing.
@@ -515,6 +620,12 @@ class Go2Driver:
         del cameras, data_config  # accepted for parity; unused here
         if err := finite_number_error(battery_floor_pct, "battery_floor_pct", "Go2Driver"):
             raise ValueError(err)
+        profile = WIRE_PROFILES.get(resolve_name(model or tool_name))
+        if profile is None and model is not None:
+            raise ValueError(
+                f"Go2Driver: model {model!r} has no wire profile; expected one of: {', '.join(SUPPORTED_ROBOTS)}"
+            )
+        self._profile = profile or _GO2
         self._tool_name = tool_name
         self._port = port
         self._network_interface = network_interface
@@ -574,7 +685,7 @@ class Go2Driver:
             {
                 "name": self._tool_name,
                 "description": (
-                    "Unitree Go2 native driver: reads the Go2's CycloneDDS bus for IMU, "
+                    f"Unitree {self._profile.model} native driver: reads the robot's CycloneDDS bus for IMU, "
                     "battery, per-joint telemetry and sport-mode body state; writes "
                     "joint-name-keyed low-level commands once sport mode is released."
                 ),
@@ -1064,7 +1175,7 @@ class Go2Driver:
             return refusal
         if self._pubs is None:
             return refuse("publisher not initialised - call connect_eagerly() first")
-        cmd, err = build_lowcmd_from_action(action)
+        cmd, err = build_lowcmd_from_action(action, self._profile)
         if err is not None:
             return refuse(err)
         try:
@@ -1081,7 +1192,7 @@ class Go2Driver:
                     "json": {
                         "topic": _TOPIC_LOWCMD,
                         "joints": sorted(action.keys()),
-                        "slots": sorted(GO2_JOINT_INDEX[name] for name in action),
+                        "slots": sorted(self._profile.joint_index[name] for name in action),
                         "sport_mode_released": self._sport_mode_released,
                     }
                 }
@@ -1328,7 +1439,7 @@ class Go2Driver:
                     "current": telemetry_float(getattr(bms, "current", None)),
                     "cycle": telemetry_int(getattr(bms, "cycle", None)),
                 }
-            joints = decode_motor_state(getattr(msg, "motor_state", None), GO2_JOINT_INDEX)
+            joints = decode_motor_state(getattr(msg, "motor_state", None), self._profile.joint_index)
             if joints is not None:
                 self._joints = joints
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
@@ -1523,7 +1634,7 @@ class _ControlLoop:
         if pubs is None:
             logger.warning("go2 control loop: no publisher at shutdown; no zero-torque frame sent")
             return
-        cmd, err = build_zero_torque_lowcmd()
+        cmd, err = build_zero_torque_lowcmd(self._driver._profile)
         if err is not None:
             logger.error("go2 control loop: cannot build the zero-torque frame: %s", err)
             return
@@ -1565,7 +1676,9 @@ class _ControlLoop:
                         break
                     if self._stop_event.is_set():
                         break
-                    cmd, err = build_lowcmd_from_action(action if isinstance(action, dict) else {})
+                    cmd, err = build_lowcmd_from_action(
+                        action if isinstance(action, dict) else {}, self._driver._profile
+                    )
                     if err is not None:
                         with self._lock:
                             self._refusals += 1

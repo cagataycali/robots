@@ -21,7 +21,15 @@ robot.cleanup()
 
 Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
+```python title="sketch"
+robot = Robot("unitree_h1", mode="real", port="192.168.123.161", network_interface="eth0")  # Go2Driver
+```
+
 Aliases: `h1`.
+
+## Hardware
+
+**`Go2Driver`** (the default for this robot) speaks CycloneDDS through `unitree_sdk2py`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#go2driver).
 
 ## Policies verified on this robot
 
