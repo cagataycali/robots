@@ -52,16 +52,18 @@ from strands_robots import Robot
 
 robot = Robot("so100")              # MuJoCo sim by default; mode="real" for hardware
 robot(action="add_object", name="red_cube", shape="box",
-      size=[0.025, 0.025, 0.025], position=[0.0, -0.20, 0.025],
+      size=[0.025, 0.025, 0.025], position=[0.0, 0.20, 0.025],
       color=[1.0, 0.0, 0.0, 1.0])
-robot(action="add_camera", name="front", position=[0.0, -0.5, 0.3],
-      target=[0.0, -0.2, 0.05])
+robot(action="add_camera", name="front", position=[0.0, 0.5, 0.3],
+      target=[0.0, 0.20, 0.025])
 Agent(tools=[robot])("pick up the red cube")
 ```
 
 A fresh `Robot("so100")` scene is the arm alone on a ground plane with one
-external camera; the two `action=` calls above put a red cube in front of the
-gripper and add a `front` camera so a language-conditioned policy has
+external camera; the two `action=` calls above put a red cube on the open
+`+Y` side of the base (the gripper at zero pose extends toward `-Y`, so this
+side is unoccluded) and add a `front` camera whose line of sight to the cube
+does not pass through the gripper, so a language-conditioned policy has
 something to see. [First robot](docs/start/first-robot.md) walks through the
 one-robot flow end-to-end.
 
