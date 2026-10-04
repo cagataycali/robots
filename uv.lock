@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
@@ -4767,6 +4767,33 @@ wheels = [
 ]
 
 [[package]]
+name = "rby1-sdk"
+version = "0.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/6f/bd606d1161176a4d97e43bdb76217c64afc0558a0359d5239b18f5debbf4/rby1_sdk-0.10.0.tar.gz", hash = "sha256:441af9e1d852382473aacdcb0526546e7f6e95bb50f84fdddf2c6b8328d50dd8", size = 93367340, upload-time = "2026-05-07T08:48:06.723Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/e7/820c62d6b874f21e40975869507c1318156ac93b04cff6930045d86384c9/rby1_sdk-0.10.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:3bf71e30d30cf367b58df526b576c9ccb2f5ddebcdef703257d649551a34b32c", size = 8042479, upload-time = "2026-05-07T08:47:33.815Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/e6/6c75d567880ce2b1d8d707d92dbf86ec562e4ac27cb1576406fbf5ca2beb/rby1_sdk-0.10.0-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:cb1acfd72864938abe20a1a76efcef232f0d9540c0e08370f26e59dfeeb6aa8d", size = 7883430, upload-time = "2026-05-07T08:47:35.925Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/06/efa2905ff3eed8d03060c1c3c0a171f092264da7993a40532d50529de582/rby1_sdk-0.10.0-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:786f10c45d08d2cbeb92e9c814e984a0d6fca824ed16d4879db66a79c5be428e", size = 7862813, upload-time = "2026-05-07T08:47:37.566Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/5e/b4e120fef14e598d42f5c20519c6abf53a0ce94cb3bcf83893e5b8a67c02/rby1_sdk-0.10.0-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:838cf9600da098b46ae4f5070e03bd534a63d0e8c5c17af4534c7005d13dda5b", size = 10429235, upload-time = "2026-05-07T08:47:39.268Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/3d/bca3e0f2e1d0453dda05534ab0914cb80ac03faa2003cbf1b10c634871be/rby1_sdk-0.10.0-cp312-cp312-manylinux_2_35_x86_64.whl", hash = "sha256:fc10eefa29a92a4caaea20d003e08f84cf9f8d755c7998294d0a0f85006757fc", size = 10395253, upload-time = "2026-05-07T08:47:41.242Z" },
+    { url = "https://files.pythonhosted.org/packages/20/c5/2a1ace819d66baa01c3c9da477d50c66e1e4d8ac28f1378ef28249586e68/rby1_sdk-0.10.0-cp312-cp312-manylinux_2_39_aarch64.whl", hash = "sha256:629c9897e97f7af68626c4557c0a0af42ded4e5c8605d2abb16a0bc839e6d2d0", size = 10548726, upload-time = "2026-05-07T08:47:43.545Z" },
+    { url = "https://files.pythonhosted.org/packages/06/cb/3748937224d6d7e795bd9addbe1db9d3e4efdd9f9a5ca011400259f550e0/rby1_sdk-0.10.0-cp312-cp312-manylinux_2_39_x86_64.whl", hash = "sha256:162692be047f6722e70e69f2ba1fe5054e0636345435f9fc095553cfd9dd24ee", size = 10747234, upload-time = "2026-05-07T08:47:45.573Z" },
+    { url = "https://files.pythonhosted.org/packages/48/16/621ee0421e55067734460241352614f6b6c1da85e007102e4de890753175/rby1_sdk-0.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:ab55efd74e01759ca6ec13d934d440a5ac54f47cf09e35aa4d3af358c251fe1d", size = 6360797, upload-time = "2026-05-07T08:47:47.845Z" },
+    { url = "https://files.pythonhosted.org/packages/f6/14/8d27b8e2ca20de715334274bec807ac2feba894d076b743aa73e631baf16/rby1_sdk-0.10.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:2ee5318a83990d29e53d0764b6eb8015289cb2001511ec151a8c52913968aaff", size = 8043013, upload-time = "2026-05-07T08:47:49.537Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/f8/2e565d5a5ccc04052a711d94c321d13481c988aa5ce026d716be22f6dce2/rby1_sdk-0.10.0-cp313-cp313-macosx_15_0_arm64.whl", hash = "sha256:0a039e4df5459a235483c9e6b202dd2d35c7c2a670074887e90b48858bd33a6b", size = 7883452, upload-time = "2026-05-07T08:47:51.328Z" },
+    { url = "https://files.pythonhosted.org/packages/79/25/ad4fdf99e90ea89de0dec8b9330c3f91add1204964e4796046b258a7957b/rby1_sdk-0.10.0-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:f7b33edff7ea02951dc1d289568a384605f31dd358307ef418a837af940e8313", size = 7862303, upload-time = "2026-05-07T08:47:53.238Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/aa/747c3a678028f1203cf2c518059903f7b569f475a794d073bfd57fcb193e/rby1_sdk-0.10.0-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:fd57ad1b4d5a47da6bb1a23b6b6c088e671fce0cf2f4a6b55daa966c415f54ab", size = 10429664, upload-time = "2026-05-07T08:47:55.053Z" },
+    { url = "https://files.pythonhosted.org/packages/70/64/6b4abea8a62980f1c28114bba0e480de40d0668b8f33cf21223cdfbff000/rby1_sdk-0.10.0-cp313-cp313-manylinux_2_35_x86_64.whl", hash = "sha256:45902d81a2c0dc8adad65af978c02bb679a992772ed97a7b29451afee71be9a1", size = 10397578, upload-time = "2026-05-07T08:47:57.037Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/2b/7c6a56af3f4679927ca029bf8ca4b793e051c749c32ff415ad8cadf34844/rby1_sdk-0.10.0-cp313-cp313-manylinux_2_39_aarch64.whl", hash = "sha256:db2ce7a765ef594f1e3350a2857ae5e21d972b594fdeb5f39864b6e056dc8e43", size = 10549993, upload-time = "2026-05-07T08:47:59.378Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/50/e013cebc997615a4213fd98515940d2350dd9e2719d329c17a415637144e/rby1_sdk-0.10.0-cp313-cp313-manylinux_2_39_x86_64.whl", hash = "sha256:11e484d2deeb66f09894cb05799dfbbd969864643485773a76d35b8d7e7f73db", size = 10746233, upload-time = "2026-05-07T08:48:01.413Z" },
+    { url = "https://files.pythonhosted.org/packages/ea/ea/b4b8e260c27c3d9de30217afd62a1d1a96799283b0543c1478dfdb6474b5/rby1_sdk-0.10.0-cp313-cp313-win_amd64.whl", hash = "sha256:efa738fa2974ec8d4c57a41089cc6097cf0e1e87755c5cebdd1b929a74198ce5", size = 6360482, upload-time = "2026-05-07T08:48:03.596Z" },
+]
+
+[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5491,6 +5518,7 @@ all = [
     { name = "pyyaml" },
     { name = "pyzmq" },
     { name = "qpsolvers", extra = ["daqp"], marker = "extra == 'extra-14-strands-robots-all' or (extra == 'extra-14-strands-robots-cosmos3-service' and extra == 'extra-14-strands-robots-sim-mjlab') or (extra == 'extra-14-strands-robots-inference' and extra == 'extra-14-strands-robots-sim-mjlab') or (extra == 'extra-14-strands-robots-mesh-iot' and extra == 'extra-14-strands-robots-voice')" },
+    { name = "rby1-sdk" },
     { name = "requests" },
     { name = "robot-descriptions" },
     { name = "roslibpy" },
@@ -5607,6 +5635,9 @@ protomotions = [
     { name = "huggingface-hub" },
     { name = "onnxruntime" },
     { name = "pyyaml" },
+]
+rby1 = [
+    { name = "rby1-sdk" },
 ]
 rl = [
     { name = "gymnasium" },
@@ -5842,6 +5873,8 @@ requires-dist = [
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-newton'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["daqp"], marker = "extra == 'sim-urdf'", specifier = ">=4.0.0" },
     { name = "qpsolvers", extras = ["quadprog"], marker = "extra == 'cosmos3-sim'", specifier = ">=4.0.0" },
+    { name = "rby1-sdk", marker = "extra == 'all'", specifier = ">=0.10.0,<0.11.0" },
+    { name = "rby1-sdk", marker = "extra == 'rby1'", specifier = ">=0.10.0,<0.11.0" },
     { name = "requests", marker = "extra == 'all'", specifier = ">=2.28.0,<3.0.0" },
     { name = "requests", marker = "extra == 'earthrover'", specifier = ">=2.28.0,<3.0.0" },
     { name = "robot-descriptions", marker = "extra == 'all'", specifier = ">=1.23.0,<2.0.0" },
@@ -5886,7 +5919,7 @@ requires-dist = [
     { name = "xacrodoc", marker = "extra == 'all'", specifier = ">=2.0.0,<3.0.0" },
     { name = "xacrodoc", marker = "extra == 'sim-urdf'", specifier = ">=2.0.0,<3.0.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rby1", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc"]
 
 [[package]]
 name = "sympy"

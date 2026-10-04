@@ -209,6 +209,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "a write is refused while the fall state is anything but `IS_READY`",
         ),
     },
+    "RBY1Driver": {
+        "module": "strands_robots/drivers/rby1.py",
+        "link": "gRPC through `rby1-sdk`",
+        "port": "the robot's `ip:port`",
+        "example": '"192.168.30.1:50051"',
+        "sdk": "`pip install 'strands-robots[rby1]'`",
+        "kwargs": "`control_frequency=50.0`, `priority=1`",
+        "units": "radians, torso, arms and head; no wheels or grippers",
+        "checks": (
+            "a pressed e-stop or faulted control manager is refused before power-on",
+            "range and per-step speed are gated on the robot's own dynamics model",
+            "`stop` cancels control; the next write opens a new stream",
+        ),
+    },
     "URDriver": {
         "module": "strands_robots/drivers/ur.py",
         "link": "RTDE through `ur_rtde`",

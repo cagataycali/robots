@@ -4,7 +4,7 @@ description: A Booster T1 takes upper-body joint targets and locomotion twists; 
 
 # Booster T1
 
-At the end of this page a Booster Robotics T1 humanoid takes upper-body joint targets and locomotion twists from `Robot("booster_t1", mode="real")`, and you know why the driver will never let you put stiffness on a leg.
+A Booster Robotics T1 humanoid takes upper-body joint targets and locomotion twists from `Robot("booster_t1", mode="real")`, and the driver never puts stiffness on a leg.
 
 This needs the T1 on the network and the vendor SDK wheel, which is not a strands-robots extra:
 
@@ -48,7 +48,7 @@ The wire literals (`mode = 0x0A` position mode, `kp=60 / kd=3`) are transcribed 
 | 10 | `waist` | onboard controller |
 | 11 to 22 | hips, knees, cranks | onboard controller, via `move()` |
 
-The map is a module constant, not read from the SDK, so a typo in an action dict is refused here, on a machine without the SDK.
+The map is a module constant, so a typo in an action dict is refused even without the SDK.
 
 ## Constructor
 
@@ -67,6 +67,6 @@ agent("Wave with the right arm, then walk two steps forward.")
 
 ## Simulation
 
-`Robot("booster_t1")` builds the MuJoCo twin with the same joint names. The onboard balance controller has no counterpart there, so a sim rollout that moves the legs exercises the physics, not the controller you meet on the robot.
+`Robot("booster_t1")` builds the MuJoCo twin with the same joint names. The onboard balance controller has no counterpart there: a sim rollout that moves the legs exercises physics, not the robot's controller.
 
 <robot-viewer name="booster_t1"></robot-viewer>

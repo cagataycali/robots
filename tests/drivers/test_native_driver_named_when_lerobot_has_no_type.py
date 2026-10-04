@@ -64,6 +64,7 @@ from strands_robots.registry import get_driver, get_robot, list_robots
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "open_duck_mini",
     "panda",
+    "rby1",
     "fr3",
     "fr3_v2",
     "ur5e",
