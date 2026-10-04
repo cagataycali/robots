@@ -21,7 +21,15 @@ robot.cleanup()
 
 Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).
 
+```python title="sketch"
+robot = Robot("rby1", mode="real", port="192.168.30.1:50051")  # RBY1Driver
+```
+
 Aliases: `rby1a`, `rainbow_rby1`.
+
+## Hardware
+
+**`RBY1Driver`** (the default for this robot) speaks gRPC through `rby1-sdk`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#rby1driver).
 
 ## Policies verified on this robot
 

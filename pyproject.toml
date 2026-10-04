@@ -330,6 +330,15 @@ ur = [
 earthrover = [
     "requests>=2.28.0,<3.0.0",
 ]
+# Rainbow Robotics client for the RB-Y1 native driver (strands_robots/drivers/rby1.py):
+# gRPC to the robot's control manager, plus the dynamics model the driver reads
+# its range and velocity gates from. Prebuilt cp312/cp313 wheels for linux
+# (x86_64, aarch64), macOS arm64 and win_amd64, depending only on numpy, so it is
+# a member of [all]: the driver's surface test grades its fake robot against the
+# real SDK.
+rby1 = [
+    "rby1-sdk>=0.10.0,<0.11.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -807,6 +816,7 @@ all = [
     "strands-robots[ollama]",
     "strands-robots[inference]",
     "strands-robots[foxglove]",
+    "strands-robots[rby1]",
     "strands-robots[rosbridge]",
     "strands-robots[sagemaker]",
     "strands-robots[earthrover]",
