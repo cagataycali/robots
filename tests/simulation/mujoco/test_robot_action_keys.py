@@ -135,9 +135,6 @@ class TestRobotActionKeysDefault:
         # actuators match its joints needs no override.
         assert SimEngine.robot_action_keys(_Stub(), "anything") == ["a", "b", "c"]
 
-    def test_missing_robot_returns_empty(self, sim):
-        assert sim.robot_action_keys("does_not_exist") == []
-
 
 class TestValidActionKeyHint:
     """The valid-key hint shown when an action key is dropped must return the

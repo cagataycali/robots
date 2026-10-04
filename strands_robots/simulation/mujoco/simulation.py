@@ -3611,7 +3611,7 @@ class MuJoCoSimEngine(
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Ordered joint names for ``robot_name`` (SimEngine ABC)."""
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(self._world.robots[robot_name].joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
@@ -3642,7 +3642,7 @@ class MuJoCoSimEngine(
         recording writes those columns in joint order.
         """
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return self._get_valid_action_keys(robot_name)
 
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:

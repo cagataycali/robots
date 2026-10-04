@@ -69,7 +69,7 @@ Keywords after the backend name go to the engine constructor. MuJoCo takes `tool
 
 ## Robots you can add
 
-`add_robot(name)` resolves a registry name (`so101`, `panda`, `g1`, `go2`, ...) through `strands_robots.simulation.model_registry`; `add_robot(name="arm", data_config="franka")` gives the instance its own name. `urdf_path` loads a file, which is also how [task objects](worlds-and-objects.md) enter a scene. `keyframe="home"` spawns a canonical pose from the model's `<keyframe>`. Joint names are the model's own: the SO-101 is `1..6`, the Panda is `joint1..joint7` plus `finger_joint1`, `finger_joint2`. Read them with `sim.robot_joint_names(name)`; the [robots catalog](../../robots/index.md) lists every name.
+`add_robot(name)` resolves a registry name (`so101`, `panda`, `g1`, `go2`, ...) through `strands_robots.simulation.model_registry`; `add_robot(name="arm", data_config="franka")` gives the instance its own name. `urdf_path` loads a file, which is also how [task objects](worlds-and-objects.md) enter a scene. `keyframe="home"` spawns a canonical pose from the model's `<keyframe>`. Joint names are the model's own: the SO-101 is `1..6`, the Panda is `joint1..joint7` plus `finger_joint1`, `finger_joint2`. `sim.robot_joint_names(name)` reads them, refusing an absent name; the [robots catalog](../../robots/index.md) lists every name.
 
 ## Where next
 

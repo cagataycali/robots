@@ -5358,13 +5358,17 @@ class IsaacSimulation(
         Returns
         -------
         list[str]
-            Joint names in articulation order, or an empty list if
-            ``robot_name`` is not present (matches the silent-empty
-            convention used by :meth:`get_observation` for unknown robots).
+            Joint names in articulation order.
+
+        Raises
+        ------
+        ValueError
+            ``robot_name`` is not in the scene; the message names the robots
+            that are.
         """
         with self._lock:
             if not registered(self._robots, robot_name):
-                return []
+                raise ValueError(self._unknown_robot_msg(robot_name))
             return list(self._robots[robot_name].joint_names)
 
     def remove_robot(self, name: str) -> dict[str, Any]:
