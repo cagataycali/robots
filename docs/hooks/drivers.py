@@ -52,6 +52,7 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
     ),
     "strands_robots.drivers.rby1": ("gRPC (rby1-sdk)", "`[rby1]`", "drivers.md"),
     "strands_robots.drivers.ur": ("ethernet (RTDE, port 30004)", "`[ur]`", "ur.md"),
+    "strands_robots.drivers.xarm": ("ethernet (xArm TCP)", "`[xarm]`", "drivers.md"),
     "strands_robots.drivers.stretch": (
         "USB on the robot (stretch_body)",
         "`hello-robot-stretch-body`, on the robot",

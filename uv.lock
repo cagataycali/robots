@@ -5532,6 +5532,7 @@ all = [
     { name = "webauthn", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_python_implementation != 'PyPy' and extra == 'extra-14-strands-robots-all') or (sys_platform != 'win32' and extra == 'extra-14-strands-robots-all') or (extra == 'extra-14-strands-robots-all' and extra == 'extra-14-strands-robots-sim-mjlab') or (extra == 'extra-14-strands-robots-all' and extra == 'extra-14-strands-robots-voice') or (extra == 'extra-14-strands-robots-cosmos3-service' and extra == 'extra-14-strands-robots-sim-mjlab') or (extra == 'extra-14-strands-robots-inference' and extra == 'extra-14-strands-robots-sim-mjlab') or (extra == 'extra-14-strands-robots-mesh-iot' and extra == 'extra-14-strands-robots-voice')" },
     { name = "websockets", version = "17.1", source = { registry = "https://pypi.org/simple" } },
     { name = "xacrodoc" },
+    { name = "xarm-python-sdk" },
 ]
 cosmos3-diffusers = [
     { name = "accelerate" },
@@ -5733,6 +5734,9 @@ wbc = [
     { name = "onnxruntime" },
     { name = "pyyaml" },
 ]
+xarm = [
+    { name = "xarm-python-sdk" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -5918,8 +5922,10 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'inference'", specifier = ">=17.1" },
     { name = "xacrodoc", marker = "extra == 'all'", specifier = ">=2.0.0,<3.0.0" },
     { name = "xacrodoc", marker = "extra == 'sim-urdf'", specifier = ">=2.0.0,<3.0.0" },
+    { name = "xarm-python-sdk", marker = "extra == 'all'", specifier = ">=1.18.0,<2.0.0" },
+    { name = "xarm-python-sdk", marker = "extra == 'xarm'", specifier = ">=1.18.0,<2.0.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rby1", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rby1", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "ur", "voice", "wbc", "xarm"]
 
 [[package]]
 name = "sympy"
@@ -7057,6 +7063,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ef/85/b4e9c53564bb5451dc1b199710b4815268e65b3d43c2f009c1ba20bd021c/xacrodoc-2.0.1.tar.gz", hash = "sha256:073652f88cf5a1f6bb489daccf025fe89d5d08e39a4aab3d0da036d9d5f42191", size = 44740330, upload-time = "2026-04-20T15:10:31.005Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/86/da/46848bdd75cf3d046ccb1879a2f683900730f5ee52794d0a3493d5af319b/xacrodoc-2.0.1-py3-none-any.whl", hash = "sha256:6fbc2a4ca2d937145d23af53d284ea18ca331c1586515e257d82814963da48b3", size = 17263, upload-time = "2026-04-20T15:10:27.39Z" },
+]
+
+[[package]]
+name = "xarm-python-sdk"
+version = "1.18.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/f1/5dcf5ed5bfd009b226a9656c1401df1782f7f86c7292696bb753366c9267/xarm_python_sdk-1.18.4.tar.gz", hash = "sha256:75acad469c106e1cb7074762015980372564e88a6d62b64ebaea1c7c580332d5", size = 230108, upload-time = "2026-05-21T04:08:48.871Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/25/ad2814469965e765dcf86c12276505a8aadd3d00c387aed82519f6c45434/xarm_python_sdk-1.18.4-py3-none-any.whl", hash = "sha256:943ce66308bc49619386d6eaf428a2783bcd202c1fbe3fe79de87d5f89647989", size = 193152, upload-time = "2026-05-21T04:08:47.281Z" },
 ]
 
 [[package]]
