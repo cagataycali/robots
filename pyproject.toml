@@ -316,6 +316,12 @@ crazyflie = [
 ur = [
     "ur-rtde>=1.6.0,<2.0.0",
 ]
+# UFactory xArm client for the xArm 7 native driver (strands_robots/drivers/xarm.py).
+# Pure Python with no dependencies of its own, so it is a member of [all]: the
+# driver's surface test grades its fake against the real XArmAPI.
+xarm = [
+    "xarm-python-sdk>=1.18.0,<2.0.0",
+]
 # HTTP transport for the EarthRover Mini Plus native driver
 # (strands_robots/drivers/earthrover.py). The driver talks to the vendor's
 # earth-rovers-sdk over HTTP -- GET /data for telemetry, POST /control to drive --
@@ -810,6 +816,7 @@ all = [
     "strands-robots[rosbridge]",
     "strands-robots[sagemaker]",
     "strands-robots[earthrover]",
+    "strands-robots[xarm]",
     "strands-robots[dashboard]",
     # Not [voice]: strands-agents[bidi] pins awscrt to one exact release through
     # aws-sdk-bedrock-runtime[awscrt], and awsiotsdk ([mesh-iot]) pins awscrt to

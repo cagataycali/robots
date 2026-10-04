@@ -21,7 +21,15 @@ robot.cleanup()
 
 Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
 
+```python title="sketch"
+robot = Robot("xarm7", mode="real", port="192.168.1.185")  # XArmDriver
+```
+
 Aliases: `ufactory_xarm7`.
+
+## Hardware
+
+**`XArmDriver`** (the default for this robot) speaks TCP through `xarm-python-sdk`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#xarmdriver).
 
 ## Policies verified on this robot
 

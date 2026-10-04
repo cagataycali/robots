@@ -223,6 +223,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "off hardware every read returns its cache and every write refuses `not connected`",
         ),
     },
+    "XArmDriver": {
+        "module": "strands_robots/drivers/xarm.py",
+        "link": "TCP through `xarm-python-sdk`",
+        "port": "controller IP",
+        "example": '"192.168.1.185"',
+        "sdk": "`pip install 'strands-robots[xarm]'`",
+        "kwargs": "`control_frequency=100.0`",
+        "units": "radians, `joint1 .. joint7`; no gripper yet",
+        "checks": (
+            "a controller holding an error code is refused before it is energised",
+            "`send_action` is `set_servo_angle_j`, refused past the reported joint speed limit",
+            "`stop` halts and re-arms servo mode",
+        ),
+    },
     "CrazyflieDriver": {
         "module": "strands_robots/drivers/crazyflie.py",
         "link": "CRTP over a Crazyradio through `cflib`",

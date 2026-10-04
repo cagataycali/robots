@@ -51,6 +51,7 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
         "booster-t1.md",
     ),
     "strands_robots.drivers.ur": ("ethernet (RTDE, port 30004)", "`[ur]`", "ur.md"),
+    "strands_robots.drivers.xarm": ("ethernet (xArm TCP)", "`[xarm]`", "drivers.md"),
     "strands_robots.drivers.crazyflie": ("radio (CRTP over Crazyradio)", "`[crazyflie]`", "drivers.md"),
     "strands_robots.drivers.earthrover": ("http (earth-rovers-sdk)", "`[earthrover]`", "drivers.md"),
     "strands_robots.drivers.yahboom_m3pro": (

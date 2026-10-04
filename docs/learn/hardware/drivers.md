@@ -4,7 +4,7 @@ description: How Robot(name, mode="real") picks its driver, the native drivers t
 
 # Drivers
 
-At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement for the agent, the mesh and the teleop loop.
+How `Robot(name, mode="real")` picks a driver, the {{n:native_drivers}} native drivers that ship and their wires, and the contract a driver implements.
 
 ```python
 from strands_robots.drivers import list_native_drivers, list_driver_coverage
@@ -25,7 +25,7 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; every other robot in the table below needs no declaration: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver` with no lerobot extra, loading the arm's lerobot calibration file when one exists. `omx`, `openarm` and `reachy2` have no native driver and fall back to lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for its documented teleop reads. `driver="strands"` on a robot with no native driver is refused by name.
 
-`port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
+`port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
 
 ## Shipped native drivers
 
@@ -81,6 +81,6 @@ robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
+A driver refuses before it writes: the Feetech bus a target outside the servo's travel, the G1 outside its FSM handshake states or under 15 percent battery, the Go2 until sport mode is released, the Booster T1 until upper-body control is enabled, the Robotiq until activation completes, the UR in `PROTECTIVE_STOP`, the xArm while its controller holds an error code. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).

@@ -60,6 +60,7 @@ _SHIPPED_DRIVERS: tuple[tuple[str, str, tuple[str, ...] | str], ...] = (
     ("strands_robots.drivers.robotiq.driver", "RobotiqDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.booster", "BoosterDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.ur", "URDriver", "SUPPORTED_ROBOTS"),
+    ("strands_robots.drivers.xarm", "XArmDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.crazyflie", "CrazyflieDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.earthrover", "EarthRoverDriver", "SUPPORTED_ROBOTS"),
     ("strands_robots.drivers.yahboom_m3pro", "YahboomM3ProDriver", "SUPPORTED_ROBOTS"),
