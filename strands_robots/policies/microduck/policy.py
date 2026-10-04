@@ -147,6 +147,22 @@ def _action_scale_error(value: Any, source: str) -> str | None:
 MICRODUCK_POLICIES_HF_REPO = "pollen-robotics/microduck-policies"
 
 
+#: Offline fallback for the 'Did you mean' hint when the Hub listing can't be
+#: reached. These are the shipped weight names documented at
+#: docs/learn/policies/microduck.md ("## What it is"); update together.
+_MICRODUCK_SHIPPED_WEIGHTS: tuple[str, ...] = (
+    "alpha_walking.onnx",
+    "alpha_stand.onnx",
+    "alpha_sitstand.onnx",
+    "roulade.onnx",
+    "ball_kick_left.onnx",
+    "ball_kick_right.onnx",
+    "roller.onnx",
+    "roller_crouch.onnx",
+    "alpha_ground_pick.onnx",
+)
+
+
 def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = None) -> Path:
     """Return a local file for a Microduck weight, fetching a bare name from the Hub.
 
@@ -193,8 +209,28 @@ def resolve_microduck_weight(onnx_path: str | Path, *, revision: str | None = No
             MICRODUCK_POLICIES_HF_REPO, path.name, revision=revision
         )
     except Exception as exc:  # noqa: BLE001 - one door for every Hub-side failure
+        # The 404 is the typo door - name the nearest shipped weight(s) if any.
+        # Same difflib pattern that strands_robots/policies/factory.py:399 uses
+        # on an unknown provider name; the Hub ships ~9 ONNX files and the
+        # list is cheap to fetch so we try that first and fall back to a
+        # documented static set so an offline typo still gets a hint.
+        hint = ""
+        try:
+            import difflib
+            try:
+                files = hub.list_repo_files(  # type: ignore[attr-defined]
+                    MICRODUCK_POLICIES_HF_REPO, revision=revision
+                )
+                candidates = [f for f in files if f.endswith(".onnx")]
+            except Exception:  # noqa: BLE001 - offline / network / auth
+                candidates = _MICRODUCK_SHIPPED_WEIGHTS
+            close = difflib.get_close_matches(path.name, candidates, n=3, cutoff=0.5)
+            if close:
+                hint = f" Did you mean: {', '.join(map(repr, close))}?"
+        except Exception:  # noqa: BLE001 - a hint is a nicety; never fail the fail
+            pass
         raise FileNotFoundError(
-            f"Microduck ONNX policy {path.name!r} could not be fetched from {MICRODUCK_POLICIES_HF_REPO}: {exc}"
+            f"Microduck ONNX policy {path.name!r} could not be fetched from {MICRODUCK_POLICIES_HF_REPO}: {exc}.{hint}"
         ) from exc
     logger.info("Microduck weight %s fetched from %s", path.name, MICRODUCK_POLICIES_HF_REPO)
     return Path(downloaded)
