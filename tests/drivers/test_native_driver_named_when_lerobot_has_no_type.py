@@ -59,7 +59,7 @@ from strands_robots.registry import get_driver, get_robot, list_robots
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
 #: rule itself, so another robot arriving in this position is caught there -
-#: which is how the Franka arms, the UR arms and the xArm 7 arrived here, each having moved
+#: which is how the Franka arms, the UR arms, the xArm 7 and the H1 arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "open_duck_mini",
@@ -73,6 +73,7 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "ur5e",
     "ur10e",
     "xarm7",
+    "unitree_h1",
 )
 
 #: Robots that reach the same site with no native driver, so the listing of

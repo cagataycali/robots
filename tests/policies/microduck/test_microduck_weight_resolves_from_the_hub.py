@@ -49,14 +49,23 @@ _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 # may send a reader to either.
 _GONE = re.compile(r"microduck/policies|policies/\*\.onnx")
 
+# What the Hub listing returns: weights plus the repository's own non-weight files.
+_SHIPPED = ["README.md", "alpha_walking.onnx", "alpha_stand.onnx", "roller.onnx", ".gitattributes"]
+
 
 class _Hub:
     """A ``huggingface_hub`` stand-in that records the one download it serves."""
 
-    def __init__(self, target: Path, *, fail: Exception | None = None) -> None:
+    def __init__(self, target: Path, *, fail: Exception | None = None, files: list[str] | None = None) -> None:
         self.calls: list[tuple[str, str, str | None]] = []
         self._target = target
         self._fail = fail
+        self._files = files
+
+    def list_repo_files(self, repo_id: str, revision: str | None = None) -> list[str]:
+        if self._files is None:
+            raise ConnectionError("offline")
+        return self._files
 
     def hf_hub_download(self, repo_id: str, filename: str, revision: str | None = None) -> str:
         self.calls.append((repo_id, filename, revision))
@@ -137,6 +146,32 @@ class TestTheResolver:
         assert MICRODUCK_POLICIES_HF_REPO in message
         assert "Entry Not Found" in message
         assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+    @pytest.mark.parametrize(
+        ("asked", "files", "hint"),
+        [
+            ("alpha_walkinng.onnx", _SHIPPED, "Did you mean: 'alpha_walkinng.onnx' -> 'alpha_walking.onnx'?"),
+            ("no_such_skill.onnx", _SHIPPED, "It carries: alpha_stand.onnx, alpha_walking.onnx, roller.onnx."),
+            ("alpha_walkinng.onnx", None, None),
+        ],
+        ids=["near-miss-names-the-neighbour", "far-miss-lists-the-repo", "listing-offline-adds-nothing"],
+    )
+    def test_a_failed_fetch_names_what_the_repo_carries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asked: str, files: list[str] | None, hint: str | None
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        stub = _Hub(tmp_path, fail=RuntimeError("404 Client Error: Entry Not Found"), files=files)
+        monkeypatch.setitem(utils._lazy_modules, "huggingface_hub", stub)
+
+        with pytest.raises(FileNotFoundError) as excinfo:
+            resolve_microduck_weight(asked)
+
+        message = str(excinfo.value)
+        assert "Entry Not Found" in message, "the hint never replaces the Hub's own cause"
+        if hint is None:
+            assert message.endswith("Entry Not Found")
+        else:
+            assert message.endswith(hint)
 
     def test_a_missing_hub_client_names_the_extra_that_installs_it(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
