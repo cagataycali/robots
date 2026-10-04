@@ -319,6 +319,44 @@ def _is_blank_port(name: str, value: object) -> bool:
     return not isinstance(value, str) or not value.strip()
 
 
+def _requires_lerobot_from_source_refusal(robot_type: str) -> str | None:
+    """Name the curated entry that promises ``robot_type`` under a from-source
+    lerobot, or ``None`` when no entry does.
+
+    Sibling of :func:`strands_robots.drivers.registry._native_driver_refusal`
+    and :func:`strands_robots.teleoperator._other_lerobot_kind_refusal`: all
+    three run before the generic ``Known lerobot robot types`` listing and all
+    three answer with ``None`` when the generic listing is the right answer.
+
+    The registry flag ``hardware.requires_lerobot_from_source`` is also
+    honored by ``docs/hooks/robot_pages.py`` and
+    ``tests/test_lerobot_hardware_conformance.py``; this is the runtime half
+    that was missing. Entries carrying the flag today: ``rebot_b601`` and
+    ``bi_rebot_b601``.
+
+    Args:
+        robot_type: The device type string handed to lerobot.
+
+    Returns:
+        A refusal naming the registry entry, the from-source install command
+        and the docs page, or ``None`` when no registry entry claims this
+        type with the flag set.
+    """
+    from strands_robots.registry.robots import find_requires_lerobot_from_source
+
+    canonical = find_requires_lerobot_from_source(robot_type)
+    if canonical is None:
+        return None
+    return (
+        f"Unsupported robot type: {robot_type!r}. The registry entry "
+        f"{canonical!r} declares this type as "
+        f"``requires_lerobot_from_source: true`` -- it is not in the current "
+        f"PyPI release of lerobot. Install lerobot from source: "
+        f"``pip install 'git+https://github.com/huggingface/lerobot'``. See "
+        f"docs/robots/{canonical}.md."
+    )
+
+
 def _requires_a_caller_value(field: dataclasses.Field) -> bool:
     """Answer whether a config dataclass field is one the caller must supply.
 
@@ -1381,6 +1419,18 @@ class Robot(TeleopMixin, AgentTool):
 
             if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
                 raise ValueError(other) from None
+
+            # Then: a type the registry declares exists but requires lerobot
+            # built from source (not in the current PyPI release). Honored by
+            # docs/hooks/robot_pages.py and tests/test_lerobot_hardware_
+            # conformance.py; without this branch, the generic fallback below
+            # lists ``Known lerobot robot types`` from the installed PyPI
+            # lerobot -- a list that by construction excludes the user's
+            # robot, with no hint that ``pip install git+https://github.com/
+            # huggingface/lerobot`` is the actual next step. See
+            # docs/robots/rebot_b601.md and docs/robots/bi_rebot_b601.md.
+            if source_hint := _requires_lerobot_from_source_refusal(robot_type):
+                raise ValueError(source_hint) from None
 
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of

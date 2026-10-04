@@ -199,6 +199,41 @@ def get_hardware_type(name: str) -> str | None:
     return None
 
 
+def find_requires_lerobot_from_source(lerobot_type: str) -> str | None:
+    """Return the registry name of the entry that declares ``lerobot_type``
+    with ``hardware.requires_lerobot_from_source: true``, or ``None``.
+
+    Mirror of the shape used by :func:`get_hardware_type` but keyed the other
+    way: given a lerobot robot type string (what lerobot's draccus registry
+    knows), find the curated entry that promises it and demands lerobot be
+    installed from source. The flag is also honored by
+    ``docs/hooks/robot_pages.py`` (generated docs) and
+    ``tests/test_lerobot_hardware_conformance.py`` (test skip list); the
+    registry entries that carry it today are ``rebot_b601`` and
+    ``bi_rebot_b601``.
+
+    Args:
+        lerobot_type: The lerobot robot type string (e.g.
+            ``"rebot_b601_follower"``), as resolved via
+            :func:`get_hardware_type`.
+
+    Returns:
+        The curated registry name that declares this type with the flag set,
+        or ``None`` when no entry claims it or the entry does not demand
+        a from-source lerobot.
+    """
+    reg = _load("robots")
+    for name, info in reg.get("robots", {}).items():
+        hw = info.get("hardware")
+        if not isinstance(hw, dict):
+            continue
+        if hw.get("lerobot_type") != lerobot_type:
+            continue
+        if hw.get("requires_lerobot_from_source"):
+            return name
+    return None
+
+
 def get_driver(name: str) -> str | None:
     """Get the driver a robot declares, verbatim, or ``None`` if it declares none.
 
