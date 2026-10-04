@@ -199,6 +199,23 @@ def get_hardware_type(name: str) -> str | None:
     return None
 
 
+def lerobot_from_source_entry(lerobot_type: str) -> str | None:
+    """Name the registry entry that builds ``lerobot_type`` only on lerobot main.
+
+    The reverse of :func:`get_hardware_type`: a robot whose entry sets
+    ``hardware.requires_lerobot_from_source`` has a lerobot type that the PyPI
+    release of lerobot does not ship yet.
+
+    Returns:
+        The canonical registry name, or ``None`` when no entry sets the flag for it.
+    """
+    for name, info in _load("robots").get("robots", {}).items():
+        hw = info.get("hardware") or {}
+        if hw.get("lerobot_type") == lerobot_type and hw.get("requires_lerobot_from_source"):
+            return str(name)
+    return None
+
+
 def get_driver(name: str) -> str | None:
     """Get the driver a robot declares, verbatim, or ``None`` if it declares none.
 
