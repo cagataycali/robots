@@ -27,6 +27,7 @@ The returned object is a raw lerobot ``Teleoperator`` - it duck-types to
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -200,8 +201,21 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
     recognised = set(forwardable) | always_allowed | valid_fields
     unknown = set(kwargs) - recognised
     if unknown:
+        # Mirror the courtesy the sibling refusals in this package already
+        # offer (robot.py:211 for Unknown robot, policies/factory.py:398,648
+        # for Unknown provider/kwarg, hardware_robot.py:252,302 for Unknown
+        # camera option): a typo like ``prot=`` for ``port=`` dumps 40+ field
+        # names here while the camera path arrows at the one correction, so
+        # the user has to visual-diff instead of read.
+        candidates = sorted(set(forwardable) | always_allowed | valid_fields)
+        hints = []
+        for key in sorted(unknown):
+            close = difflib.get_close_matches(str(key), candidates, n=1, cutoff=0.7)
+            if close:
+                hints.append(f"{key!r} -> {close[0]!r}")
+        hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
         raise ValueError(
-            f"Unknown kwarg(s) for teleop_type={teleop_type!r}: {sorted(unknown)}. "
+            f"Unknown kwarg(s) for teleop_type={teleop_type!r}: {sorted(unknown)}.{hint} "
             f"This teleoperator's dataclass accepts: {sorted(valid_fields)}. "
             f"The cross-device allowlist is: {sorted(set(forwardable) | always_allowed)}. "
             f"(If this is a typo, fix it.)"
