@@ -1352,7 +1352,7 @@ class Robot(TeleopMixin, AgentTool):
         try:
             ConfigClass = RobotConfig.get_choice_class(robot_type)
         except KeyError:
-            # Two registries can answer better than lerobot's own listing here,
+            # Three checks can answer better than lerobot's own listing here,
             # and each returns a reason or ``None`` so the listing survives when
             # neither applies.
             #
@@ -1381,6 +1381,18 @@ class Robot(TeleopMixin, AgentTool):
 
             if other := _other_lerobot_kind_refusal(robot_type, wanted="robot"):
                 raise ValueError(other) from None
+
+            # Last: a type the registry promises only on lerobot main. The
+            # listing below comes from the installed lerobot, so it cannot name
+            # this robot; the from-source install is the next step.
+            from strands_robots.registry.robots import lerobot_from_source_entry
+
+            if entry := lerobot_from_source_entry(robot_type):
+                raise ValueError(
+                    f"Unsupported robot type: {robot_type!r}. The installed lerobot does not ship it: "
+                    f"registry entry {entry!r} needs lerobot from source "
+                    f"(pip install 'git+https://github.com/huggingface/lerobot'). See docs/robots/{entry}.md."
+                ) from None
 
             available = sorted(RobotConfig.get_known_choices().keys())
             # ``from None`` -- the KeyError is an internal detail of
