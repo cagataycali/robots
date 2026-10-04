@@ -52,9 +52,22 @@ class TestGeomType:
         assert _geom_type("plane") == mujoco.mjtGeom.mjGEOM_PLANE
         assert _geom_type("ellipsoid") == mujoco.mjtGeom.mjGEOM_ELLIPSOID
 
-    def test_unknown_shape_raises_with_helpful_list(self):
-        with pytest.raises(ValueError, match="Unsupported shape"):
-            _geom_type("hyperboloid")
+    @pytest.mark.parametrize(
+        ("shape", "hint"),
+        [
+            ("boxx", " Did you mean 'box'?"),
+            ("sfere", " Did you mean 'sphere'?"),
+            ("cilinder", " Did you mean 'cylinder'?"),
+            ("Capsul", " Did you mean 'capsule'?"),
+            ("elipsoid", " Did you mean 'ellipsoid'?"),
+            ("hyperboloid", ""),
+        ],
+    )
+    def test_unknown_shape_names_the_closest_one_and_lists_the_rest(self, shape, hint):
+        supported = "Supported: box, capsule, cylinder, ellipsoid, mesh, plane, sphere."
+        with pytest.raises(ValueError) as exc:
+            _geom_type(shape)
+        assert str(exc.value) == f"Unsupported shape {shape!r}.{hint} {supported}"
 
 
 class TestNormalizeSize:

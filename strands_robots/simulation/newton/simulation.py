@@ -25,6 +25,7 @@ Lifecycle::
 
 from __future__ import annotations
 
+import difflib
 import logging
 import math
 import numbers
@@ -994,14 +995,17 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             }
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' already exists."}]}
-        if shape not in ("box", "sphere", "capsule", "cylinder", "mesh"):
+        newton_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
+        if shape not in newton_shapes:
+            close = difflib.get_close_matches(str(shape).lower(), newton_shapes, n=1, cutoff=0.6)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"Unsupported shape {shape!r} for Newton backend. "
-                            "Supported: box, sphere, capsule, cylinder, mesh."
+                            f"Unsupported shape {shape!r} for Newton backend.{hint} "
+                            f"Supported: {', '.join(newton_shapes)}."
                         )
                     }
                 ],

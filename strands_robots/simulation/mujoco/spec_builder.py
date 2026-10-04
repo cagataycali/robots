@@ -190,8 +190,10 @@ def _geom_type(shape: str) -> int:
     try:
         return _GEOM_TYPE_CACHE[shape]
     except KeyError as e:
-        supported = ", ".join(sorted(_GEOM_TYPE_CACHE.keys()))
-        raise ValueError(f"Unsupported shape {shape!r}. Supported: {supported}.") from e
+        known = sorted(_GEOM_TYPE_CACHE)
+        close = difflib.get_close_matches(str(shape).lower(), known, n=1, cutoff=0.6)
+        hint = f" Did you mean {close[0]!r}?" if close else ""
+        raise ValueError(f"Unsupported shape {shape!r}.{hint} Supported: {', '.join(known)}.") from e
 
 
 # Per-shape ``size`` contract: how many leading components the shape actually
