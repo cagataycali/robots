@@ -1421,14 +1421,15 @@ class SimEngine(ABC):
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered joint names for ``robot_name``.
 
-        This order is the one a LeRobotDataset recording writes the
-        ``observation.state`` columns in, so it is the order a policy must read
-        that vector back in. The rollout binds :meth:`robot_action_keys`
-        (``Policy.set_robot_state_keys``, ``send_action`` with a numeric vector,
-        ``PolicyRunner.replay``) because a robot's actuators are not always its
-        joints - and those keys are themselves ordered by this roster, so the
-        two cannot be a transposition of each other. Order must match the
-        backend's joint ordering.
+        This is every joint, in the backend's order, including a floating
+        base's free joint (``floating_base_joint`` on ``g1``), which has seven
+        position coordinates and no scalar column. A LeRobotDataset recording
+        writes ``observation.state`` in this order with free joints left out
+        (the base goes to the ``base_*`` columns), so on a floating-base robot
+        this list is one wider than that vector. Bind a policy with
+        :meth:`robot_action_keys` (``Policy.set_robot_state_keys``,
+        ``send_action`` with a numeric vector, ``PolicyRunner.replay``): it
+        skips the free joint and names actuators, which are not always joints.
 
         Raises:
             ValueError: ``robot_name`` is not in the world. The message names
