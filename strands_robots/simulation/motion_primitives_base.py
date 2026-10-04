@@ -234,6 +234,48 @@ class MotionPrimitivesCore:
         )
         return target, quat, int(max_steps), resolved_orientation_tol, None
 
+    @staticmethod
+    def _canonicalize_set_gripper_args(
+        robot_name: Any, state: Any
+    ) -> tuple[Any, Any]:
+        """Heal the ``set_gripper("open")`` positional misbind.
+
+        ``set_gripper`` keeps ``robot_name`` as the first positional for
+        historical compatibility, while its sibling primitives on the same
+        robot (``send_action``, ``set_joint_positions``) and the module's own
+        docstrings (``set_gripper("close") -> move_to(...)``) put the payload
+        first. The common slip is therefore ``set_gripper("open")``, which
+        binds ``"open"`` to ``robot_name`` and leaves ``state`` as ``None``;
+        the shared validator would then emit the (lying) refusal
+        ``got None``. If the slot that received the positional unambiguously
+        looks like a ``state`` value and ``state`` is unset, swap the two so
+        the primitive runs on the single-robot world the user clearly meant.
+        """
+        if state is None and isinstance(robot_name, str) and robot_name in ("open", "close"):
+            return None, robot_name
+        return robot_name, state
+
+    @staticmethod
+    def _canonicalize_move_to_args(
+        robot_name: Any, position: Any
+    ) -> tuple[Any, Any]:
+        """Heal the ``move_to([x, y, z])`` positional misbind.
+
+        Same slip as :meth:`_canonicalize_set_gripper_args`: ``move_to`` puts
+        ``robot_name`` first, so a positional ``[x, y, z]`` ends up bound
+        there and the real ``position`` stays ``None``. When the first
+        positional unambiguously looks like a 3D target and ``position`` is
+        unset, swap.
+        """
+        if (
+            position is None
+            and isinstance(robot_name, (list, tuple))
+            and len(robot_name) == 3
+            and all(isinstance(x, numbers.Real) and not isinstance(x, bool) for x in robot_name)
+        ):
+            return None, list(robot_name)
+        return robot_name, position
+
     def _validate_set_gripper_args(self, state: Any, steps: Any) -> tuple[int, dict[str, Any] | None]:
         """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``."""
         if state not in ("open", "close"):

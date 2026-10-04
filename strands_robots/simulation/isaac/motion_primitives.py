@@ -848,6 +848,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         # Shared with the MuJoCo adapter (motion_primitives_base): same
         # pose-vector rule the scene-construction calls use, same tol /
         # max_steps domains, same wording.
+        robot_name, position = self._canonicalize_move_to_args(robot_name, position)
         target, target_quat, max_steps, orientation_tol, arg_err = self._validate_move_to_args(
             position, orientation, tol, max_steps, orientation_tol
         )
@@ -1227,6 +1228,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
             stale/malformed, or the resolved joint has no usable limits to map
             ``open``/``close`` onto. Never raises.
         """
+        robot_name, state = self._canonicalize_set_gripper_args(robot_name, state)
         steps, arg_err = self._validate_set_gripper_args(state, steps)
         if arg_err is not None:
             return arg_err
