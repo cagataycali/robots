@@ -28,6 +28,7 @@ answer for the same set of names.
 
 from __future__ import annotations
 
+import difflib
 import importlib
 import logging
 from collections.abc import Callable
@@ -160,7 +161,12 @@ def import_trainer_class(provider: str) -> type[Trainer]:
             if isinstance(attr, type) and issubclass(attr, Trainer) and attr is not Trainer:
                 return attr
 
-    raise ValueError(f"No trainer registered for provider '{provider}'. Available trainers: {list_trainers()}")
+    # Offer the nearest trainer the way create_policy() offers the nearest
+    # policy provider: case and dash folded, Robot()'s 0.6 cutoff.
+    available = list_trainers()
+    close = difflib.get_close_matches(provider.lower().replace("-", "_"), available, n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
+    raise ValueError(f"No trainer registered for provider '{provider}'.{hint} Available trainers: {available}")
 
 
 def create_trainer(provider: str, **kwargs: Any) -> Trainer:

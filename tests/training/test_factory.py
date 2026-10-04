@@ -74,6 +74,15 @@ class TestFactory:
         with pytest.raises(ValueError, match="No trainer registered"):
             create_trainer("does_not_exist_xyz")
 
+    @pytest.mark.parametrize(
+        ("spelling", "suggested"),
+        [("Lerobot_Local", "lerobot_local"), ("lerbot_local", "lerobot_local"), ("cosmos-3", "cosmos3")],
+    )
+    def test_unknown_provider_names_the_closest_trainer(self, spelling, suggested):
+        """A near-miss spelling gets the hint create_policy() gives for the same name."""
+        with pytest.raises(ValueError, match=rf"Did you mean: [^?]*'{suggested}'"):
+            create_trainer(spelling)
+
     def test_runtime_register_and_alias(self):
         register_trainer("custom_x", lambda: MockTrainer, aliases=["cx"])
         assert isinstance(create_trainer("custom_x"), MockTrainer)
