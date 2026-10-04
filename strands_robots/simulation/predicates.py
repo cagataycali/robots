@@ -71,6 +71,7 @@ Register custom predicates with :func:`register_predicate`.
 
 from __future__ import annotations
 
+import difflib
 import inspect
 import logging
 import math
@@ -2300,6 +2301,19 @@ def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, 
     return None
 
 
+def _unknown_predicate_message(name: str) -> str:
+    """Refuse an unknown predicate name, naming the closest registered one.
+
+    Same shape as the ``Robot("<typo>")`` refusal: the hint is omitted when
+    nothing in the registry is close, so an unrelated name is not padded with
+    a random neighbour. The full valid list follows either way.
+    """
+    valid = sorted(PREDICATE_REGISTRY.keys())
+    close = difflib.get_close_matches(name, valid, n=1, cutoff=0.6)
+    hint = f" Did you mean '{close[0]}'?" if close else ""
+    return f"Unknown predicate '{name}'.{hint} Valid: {valid}"
+
+
 def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     """Instantiate a predicate from its name + kwargs.
 
@@ -2340,8 +2354,7 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
-        valid = sorted(PREDICATE_REGISTRY.keys())
-        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+        raise ValueError(_unknown_predicate_message(name))
     if (err := _keyword_set_error(name, factory, kwargs)) is not None:
         raise ValueError(err)
     if (err := _kwarg_domain_error(name, factory, kwargs)) is not None:
@@ -2417,8 +2430,7 @@ def predicate_kind(name: str) -> str:
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
-        valid = sorted(PREDICATE_REGISTRY.keys())
-        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+        raise ValueError(_unknown_predicate_message(name))
     annotation = str(getattr(factory, "__annotations__", {}).get("return", ""))
     if "Bool" in annotation:
         return "bool"
@@ -2449,8 +2461,7 @@ def predicate_reads_robot_base(name: str) -> bool:
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
-        valid = sorted(PREDICATE_REGISTRY.keys())
-        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+        raise ValueError(_unknown_predicate_message(name))
     try:
         return "robot" in inspect.signature(factory).parameters
     except (TypeError, ValueError):
