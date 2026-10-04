@@ -148,7 +148,7 @@ DRIVERS: dict[str, dict[str, object]] = {
         "example": '"192.168.123.161", network_interface="eth0"',
         "sdk": "`pip install 'strands-robots[ros2]'` then `git clone https://github.com/unitreerobotics/unitree_sdk2_python` and `pip install --no-deps -e ./unitree_sdk2_python`",
         "kwargs": '`network_interface="eth0"`, `battery_floor_pct=15.0`',
-        "units": "radians, keyed by joint name (`GO2_JOINT_INDEX`); an index is never accepted, because the SDK's leg order differs from the model's",
+        "units": "radians, keyed by joint name (`GO2_JOINT_INDEX`, `H1_JOINT_INDEX`); an index is never accepted, because the SDK's motor order differs from the model's",
         "checks": (
             "`send_action` refuses until `release_sport_mode()` has confirmed the onboard sport service is released",
             "`send_action` refuses under the battery floor",

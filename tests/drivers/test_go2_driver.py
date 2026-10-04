@@ -30,7 +30,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots.drivers import get_native_driver_class, list_native_drivers
+from strands_robots.drivers import get_native_driver_class, list_driver_coverage, list_native_drivers
 from strands_robots.drivers.base import missing_driver_members
 from strands_robots.drivers.go2 import (
     _LEVEL_FLAG_LOW,
@@ -39,6 +39,8 @@ from strands_robots.drivers.go2 import (
     _SDK_KD,
     _SDK_KP,
     GO2_JOINT_INDEX,
+    H1_JOINT_INDEX,
+    WIRE_PROFILES,
     Go2Driver,
     build_lowcmd_from_action,
     build_zero_torque_lowcmd,
@@ -1033,3 +1035,134 @@ def test_a_switcher_that_cannot_be_opened_names_what_failed() -> None:
     assert "cannot open MotionSwitcherClient" in reason
     assert "eth9" in reason
     assert driver._sport_mode_released is False
+
+
+# --------------------------------------------------------------------------- #
+# The H1: same unitree_go wire, its own slot map, mode bytes and gains.       #
+# --------------------------------------------------------------------------- #
+
+#: The H1's ``h1_mj_description`` joint order, read off the MuJoCo model. The
+#: wire order (the SDK's ``H1JointIndex``) shares nothing with it.
+_H1_DESCRIPTION_ORDER: tuple[str, ...] = (
+    "left_hip_yaw", "left_hip_roll", "left_hip_pitch", "left_knee", "left_ankle",
+    "right_hip_yaw", "right_hip_roll", "right_hip_pitch", "right_knee", "right_ankle",
+    "torso",
+    "left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow",
+    "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow",
+)  # fmt: skip
+
+#: ``(slot, mode byte, kp, kd)`` per H1 joint, transcribed from the SDK's
+#: ``example/h1/low_level/h1_low_level_example.py``: ``H1JointIndex`` for the
+#: slot, ``is_weak_motor`` for the 0x01 / 0x0A split and the kp/kd pair.
+_H1_SDK_WIRE: dict[str, tuple[int, int, float, float]] = {
+    "right_hip_roll": (0, 0x0A, 200.0, 5.0),
+    "right_hip_pitch": (1, 0x0A, 200.0, 5.0),
+    "right_knee": (2, 0x0A, 200.0, 5.0),
+    "left_hip_roll": (3, 0x0A, 200.0, 5.0),
+    "left_hip_pitch": (4, 0x0A, 200.0, 5.0),
+    "left_knee": (5, 0x0A, 200.0, 5.0),
+    "torso": (6, 0x0A, 200.0, 5.0),
+    "left_hip_yaw": (7, 0x0A, 200.0, 5.0),
+    "right_hip_yaw": (8, 0x0A, 200.0, 5.0),
+    "left_ankle": (10, 0x01, 60.0, 1.5),
+    "right_ankle": (11, 0x01, 60.0, 1.5),
+    "right_shoulder_pitch": (12, 0x01, 60.0, 1.5),
+    "right_shoulder_roll": (13, 0x01, 60.0, 1.5),
+    "right_shoulder_yaw": (14, 0x01, 60.0, 1.5),
+    "right_elbow": (15, 0x01, 60.0, 1.5),
+    "left_shoulder_pitch": (16, 0x01, 60.0, 1.5),
+    "left_shoulder_roll": (17, 0x01, 60.0, 1.5),
+    "left_shoulder_yaw": (18, 0x01, 60.0, 1.5),
+    "left_elbow": (19, 0x01, 60.0, 1.5),
+}
+
+
+def _released_h1() -> tuple[Go2Driver, _RecordingPublisher]:
+    """An H1 driver built the way the factory builds it, with its gates admitting."""
+    driver = Go2Driver(tool_name="unitree_h1", port="192.168.123.162")
+    driver._connected = True
+    driver._sport_mode_released = True
+    driver._battery = {"pct": 88.0, "current": 1.0, "cycle": 3}
+    pub = _RecordingPublisher()
+    driver._pubs = pub  # type: ignore[assignment]
+    return driver, pub
+
+
+def test_the_h1_is_natively_driven_on_the_go_wire() -> None:
+    """``Robot("h1", mode="real")`` reaches this driver, with the H1 profile.
+
+    The H1 shares the Go2's ``unitree_go`` protocol, so it is this driver with
+    the H1's :class:`~strands_robots.drivers.go2.WireProfile` rather than a
+    second module; coverage moves from ``()`` to ``("strands",)``.
+    """
+    assert get_native_driver_class("h1") is Go2Driver
+    assert list_driver_coverage()["unitree_h1"] == ("strands",)
+    assert Go2Driver(tool_name="unitree_h1")._profile is WIRE_PROFILES["unitree_h1"]
+    assert Go2Driver(tool_name="h1_lab", model="h1")._profile is WIRE_PROFILES["unitree_h1"]
+    assert Go2Driver(tool_name="go2")._profile is WIRE_PROFILES["unitree_go2"]
+    with pytest.raises(ValueError, match="no wire profile"):
+        Go2Driver(tool_name="x", model="unitree_g1")
+
+
+def test_the_h1_slot_mode_and_gains_are_the_sdks(stub_unitree_sdk: None) -> None:
+    """One full-body H1 write lands every joint on the SDK's slot, mode byte and gains.
+
+    The description's order shares nothing with ``H1JointIndex`` (the left hip
+    yaw is joint 0 in the model, slot 7 on the wire), and the ankles and arms
+    take mode ``0x01`` where the leg motors take ``0x0A``. Both mistakes would
+    publish a frame with a valid CRC, so the whole table is pinned against the
+    SDK's example. Slot 9 has no motor and stays at its zero default.
+    """
+    del stub_unitree_sdk
+    assert set(H1_JOINT_INDEX) == set(_H1_DESCRIPTION_ORDER)
+    assert [n for n, _ in sorted(H1_JOINT_INDEX.items(), key=lambda kv: kv[1])] != list(_H1_DESCRIPTION_ORDER)
+    driver, pub = _released_h1()
+    targets = {name: 0.01 * (i + 1) for i, name in enumerate(_H1_DESCRIPTION_ORDER)}
+    result = driver.send_action(targets)
+    assert result["status"] == "success", _text(result)
+    ((_topic, _cls, cmd),) = pub.writes
+    for name, (slot, mode, kp, kd) in _H1_SDK_WIRE.items():
+        motor = cmd.motor_cmd[slot]
+        assert (motor.mode, motor.q, motor.kp, motor.kd) == pytest.approx((mode, targets[name], kp, kd)), name
+    assert cmd.motor_cmd[9].mode == 0, "slot 9 is H1JointIndex.kNotUsedJoint"
+    zero, err = build_zero_torque_lowcmd(WIRE_PROFILES["unitree_h1"])
+    assert err is None, err
+    for name, (slot, mode, _kp, _kd) in _H1_SDK_WIRE.items():
+        assert (zero.motor_cmd[slot].mode, zero.motor_cmd[slot].kp) == (mode, 0.0), name
+
+
+@pytest.mark.parametrize(
+    ("model", "foreign_joint"),
+    [
+        pytest.param("unitree_h1", "FL_hip_joint", id="go2-joint-on-h1"),
+        pytest.param("go2", "left_knee", id="h1-joint-on-go2"),
+    ],
+)
+def test_a_joint_of_the_other_robot_is_refused_not_written(
+    stub_unitree_sdk: None, model: str, foreign_joint: str
+) -> None:
+    """Sharing a wire never lets one robot's joint name reach the other's slots."""
+    del stub_unitree_sdk
+    driver, pub = _released_h1() if model == "unitree_h1" else _released_driver()
+    result = driver.send_action({foreign_joint: 0.0})
+    assert result["status"] == "error"
+    assert "unknown joint name" in _text(result)
+    assert pub.writes == []
+
+
+def test_h1_lowstate_reads_joints_by_the_h1_slot_map() -> None:
+    """``rt/lowstate`` slot 7 is the H1's left hip yaw, and slot 9 is no joint."""
+
+    class _Motor:
+        def __init__(self, q: float) -> None:
+            self.q, self.dq, self.tau_est, self.temperature = q, 0.0, 0.0, 30
+
+    class _LowState:
+        motor_state = [_Motor(float(i)) for i in range(20)]
+
+    driver = Go2Driver(tool_name="h1")
+    driver._on_lowstate(_LowState())
+    joints = driver.state["joints"]
+    assert set(joints) == set(H1_JOINT_INDEX)
+    assert joints["left_hip_yaw"]["q"] == pytest.approx(7.0)
+    assert joints["left_ankle"]["q"] == pytest.approx(10.0)

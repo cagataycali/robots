@@ -1,12 +1,12 @@
 ---
-description: Install the Unitree SDK the way that works, reach a G1 or Go2 over CycloneDDS, and each driver's safety gate.
+description: Install the Unitree SDK the way that works, reach a G1, Go2 or H1 over CycloneDDS, and each driver's safety gate.
 ---
 
-# Unitree G1 and Go2
+# Unitree G1, Go2 and H1
 
-At the end of this page the vendor SDK is installed the one way that works, `Robot("g1", mode="real")` or `Robot("unitree_go2", mode="real")` reaches the robot over CycloneDDS, and you know the safety gate each driver enforces before a motor frame and the agent verbs on top.
+This page installs the vendor SDK the one way that works; then `Robot("g1", mode="real")`, `Robot("unitree_go2", mode="real")` or `Robot("h1", mode="real")` reaches the robot over CycloneDDS, and you know each driver's safety gate and the agent verbs on top.
 
-This needs the robot on the same Ethernet segment and the SDK below. Nothing imports `unitree_sdk2py` at module load; a missing SDK is a refusal carrying this recipe.
+The robot must share your Ethernet segment. Nothing imports `unitree_sdk2py` at module load; a missing SDK is a refusal carrying this recipe.
 
 ```python title="sketch"
 from strands_robots import Robot
@@ -18,7 +18,7 @@ print(g1.connect_eagerly())          # None, or a reason string
 
 ## Install the SDK
 
-`unitree_sdk2py` is not an extra: the PyPI `unitree-sdk2` wheel lacks its `g1` and `comm` packages and pins `cyclonedds==0.10.2`, which has no Python 3.12 wheel. The `[ros2]` extra carries the `cyclonedds` binding at the range this project bounds; the SDK comes from the vendor checkout. On macOS arm64 and x86_64 Linux:
+`unitree_sdk2py` is not an extra: the PyPI `unitree-sdk2` wheel lacks its `g1` and `comm` packages and pins `cyclonedds==0.10.2`, with no Python 3.12 wheel. The `[ros2]` extra carries the `cyclonedds` binding; the SDK comes from the vendor checkout. On macOS arm64 and x86_64 Linux:
 
 ```bash
 pip install 'strands-robots[ros2]'
@@ -49,7 +49,7 @@ A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed
 | write gate | FSM id in `HANDSHAKE_FSMS` `{500, 501, 801}` and battery at or above 15 percent | sport mode released (`CheckMode()` name is empty) and battery at or above 15 percent |
 | unlock | motion switcher | `go2.release_sport_mode()` |
 | control loop | `run_policy` at 500 Hz, per-step FSM re-gate, zero-torque frame on exit | `run_policy` at 500 Hz |
-| joints | 29, by name in `g1.py` | 12, by name in `GO2_JOINT_INDEX`; an index is never accepted because the SDK's `LegID` order differs from the URDF order |
+| joints | 29, by name in `g1.py` | by name: `GO2_JOINT_INDEX` (12), `H1_JOINT_INDEX` (19); never an index, the SDK's motor order is not the model's |
 
 Both refuse rather than warn: publishing `rt/lowcmd` while the onboard controller holds the motors is two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame reaches the motors only after the gate passes.
 
@@ -73,4 +73,4 @@ With `STRANDS_MESH=true` the G1 publishes `_imu`, `_battery`, `_lidar_state` and
 
 ## Simulation first
 
-Both robots have MuJoCo assets: `Robot("g1")` and `Robot("unitree_go2")` build the twin, and a locomotion policy from [policies](../policies/index.md) runs there before it runs on the metal.
+Each robot has a MuJoCo twin (`Robot("g1")`, `Robot("unitree_go2")`, `Robot("h1")`); run a locomotion policy from [policies](../policies/index.md) there before the metal.
