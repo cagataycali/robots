@@ -1889,9 +1889,14 @@ class SimEngine(ABC):
 
         Schema:
             - ``"<joint_name>"`` (float): One entry per joint on the robot,
-              keyed by the *short* joint name (e.g. ``"shoulder_pan"``).
-              The schema is stable regardless of multi-robot namespacing
-              at the physics-engine level.
+              keyed by the model's joint name with any multi-robot
+              namespace stripped (``"joint1"`` on the Panda, ``"1"`` on the
+              SO-101). The schema is stable regardless of multi-robot
+              namespacing at the physics-engine level. A registry
+              ``joint_labels`` name (``"shoulder_pan"``) is a write-side
+              alias: ``send_action`` takes it, the observation keeps the
+              model's name, so recorded datasets and trained checkpoints keep
+              one column per joint.
             - ``"<joint_name>.vel"`` (float): The same joint's velocity
               (rad/s or m/s), one entry per scalar joint, additive beside the
               position key so position-only consumers are unaffected.
