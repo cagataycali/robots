@@ -134,9 +134,10 @@ class TestEveryBackendRecordsTheIdWithTheRoot:
     """One resolve-and-stash, so no backend can record a root without its id."""
 
     def test_the_resolved_dir_is_stashed_with_the_id(self, tmp_path) -> None:
-        sim = RecordedSim({})
-        sim._stash_dataset_target(sim._recording_state(), "lab/wave", tmp_path)
-        assert sim._recording_state() == {"last_dataset_root": str(tmp_path), "last_dataset_repo_id": "lab/wave"}
+        state: dict = {}
+        sim = RecordedSim(state)
+        sim._stash_dataset_target(state, "lab/wave", tmp_path)
+        assert state == {"last_dataset_root": str(tmp_path), "last_dataset_repo_id": "lab/wave"}
 
     def test_the_root_is_stashed_in_exactly_one_module(self) -> None:
         # The id was added to one backend's longhand copy of resolve-and-stash,
