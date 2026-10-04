@@ -6923,7 +6923,7 @@ class IsaacSimulation(
 
         from strands_robots._async_utils import _resolve_coroutine
         from strands_robots.policies.base import resolve_chunk_length
-        from strands_robots.simulation.policy_runner import CooperativeStop
+        from strands_robots.simulation.policy_runner import CooperativeStop, policy_reads_images
 
         if not getattr(self, "_world_created", False) or self._world is None:
             return {"status": "error", "content": [{"text": "No world created. Use action='create_world' first."}]}
@@ -7068,7 +7068,9 @@ class IsaacSimulation(
         # Renders are expensive; skip camera readback when no policy needs
         # images AND no recording is active (recorded frames must carry the
         # camera images the schema declared).
-        any_needs_images = any(getattr(p, "requires_images", True) for p in policies.values())
+        any_needs_images, unreachable = policy_reads_images(policies.values())
+        if unreachable is not None:
+            return unreachable
         skip_images = not (any_needs_images or recording)
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)

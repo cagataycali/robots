@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
-from strands_robots.policies._ws_wire import silent_server_error
+from strands_robots.policies._ws_wire import require_held_connect, silent_server_error
 from strands_robots.policies.base import Policy, chunk_count_error, required_bodies_error
 from strands_robots.utils import (
     dial_host_error,
@@ -222,6 +222,7 @@ class RemotePolicy(Policy):
         for _param, _value in (("connect_timeout", connect_timeout), ("request_timeout", request_timeout)):
             if error := positive_finite_number_error(_value, _param, type(self).__name__):
                 raise ValueError(error)
+        require_held_connect(type(self).__name__, "inference")
         self.uri = endpoint if endpoint else f"ws://{host}:{port}"
         if not self.uri.startswith(("ws://", "wss://")):
             self.uri = f"ws://{self.uri}"

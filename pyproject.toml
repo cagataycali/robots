@@ -790,7 +790,7 @@ dashboard = [
 # this extra's name when it is absent. Not a member of [all]: [bidi] pins awscrt
 # to one exact release and [mesh-iot]'s awsiotsdk to another, so the bundle
 # would not resolve. The OpenAI backend needs only
-# ``websockets``, which the base dependency supplies at >=17.1 (strands' own
+# ``websockets``, which [inference] floors at >=17.1 (strands' own
 # ``bidi-openai`` extra would cap it below 17). Gemini Live is not offered:
 # its SDK, google-genai, caps websockets below 17 as well, so it cannot be
 # installed next to this package.

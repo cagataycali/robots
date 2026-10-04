@@ -162,7 +162,7 @@ from strands_robots.simulation.mujoco.spec_builder import (
     material_spec_error,
 )
 from strands_robots.simulation.observers import RunPolicyObserver
-from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner
+from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner, policy_reads_images
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.simulation.tool_frame import registry_tool_frame
@@ -7728,7 +7728,9 @@ class MuJoCoSimEngine(
 
         # Whether ANY policy needs images (renders are expensive; skip if none
         # need them AND we're not recording - recording always needs frames).
-        any_needs_images = any(getattr(p, "requires_images", True) for p in policies.values())
+        any_needs_images, unreachable = policy_reads_images(policies.values())
+        if unreachable is not None:
+            return unreachable
         skip_images = not (any_needs_images or recording)
 
         # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
