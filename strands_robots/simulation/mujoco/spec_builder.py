@@ -190,8 +190,17 @@ def _geom_type(shape: str) -> int:
     try:
         return _GEOM_TYPE_CACHE[shape]
     except KeyError as e:
-        supported = ", ".join(sorted(_GEOM_TYPE_CACHE.keys()))
-        raise ValueError(f"Unsupported shape {shape!r}. Supported: {supported}.") from e
+        known = sorted(_GEOM_TYPE_CACHE.keys())
+        supported = ", ".join(known)
+        # Mirror the did-you-mean pattern already used 40 lines above for
+        # MATERIAL_KEYS (and across 14+ other refusal sites in the package).
+        # cutoff=0.6 matches ``cuboid`` -> ``cylinder`` / ``boxx`` -> ``box``
+        # without widening the surface to arbitrary strings.
+        close = difflib.get_close_matches(str(shape).lower(), known, n=1, cutoff=0.6)
+        hint = f" Did you mean {close[0]!r}?" if close else ""
+        raise ValueError(
+            f"Unsupported shape {shape!r}.{hint} Supported: {supported}."
+        ) from e
 
 
 # Per-shape ``size`` contract: how many leading components the shape actually
