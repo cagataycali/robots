@@ -229,13 +229,17 @@ def register_robot(
         hardware: Hardware config dict (``lerobot_type``, ``driver``, ...).
             Optional with ``model_xml``; required without it, where it must
             declare a non-empty ``lerobot_type`` or ``driver="strands"``.
-        overwrite: If False (default), raises ValueError if robot already exists.
+        overwrite: If False (default), raises ValueError if *name* is already
+            registered, in the user overlay or as a built-in robot. True
+            replaces the user entry, or shadows the built-in until
+            :func:`unregister_robot` removes the user entry.
 
     Returns:
         The registered robot definition dict.
 
     Raises:
-        ValueError: If name already exists and ``overwrite`` is False, or if an
+        ValueError: If name already exists (user overlay or built-in) and
+            ``overwrite`` is False, or if an
             ``aliases`` entry collides with an existing canonical robot name or
             another robot's alias (the same constraint the loader enforces at
             read time, checked here so the registration cannot brick lookups).
@@ -280,16 +284,19 @@ def register_robot(
     # Load existing
     data = _load_user_registry()
 
-    # Check for existing (in user registry AND package registry)
-    if not overwrite:
-        if name in data.get("robots", {}):
+    # A name already taken - by the user overlay or by a built-in - is replaced only on request.
+    if name in data.get("robots", {}):
+        if not overwrite:
             raise ValueError(f"Robot '{name}' already in user registry. Use overwrite=True to replace.")
-        # Also check package registry
-        if get_robot(name) is not None:
-            logger.info(
-                "Robot '%s' exists in package registry - user registration will override it.",
-                name,
+    elif (built_in := get_robot(name)) is not None:
+        if not overwrite:
+            raise ValueError(
+                f"Robot '{name}' is a built-in robot ({built_in.get('description') or 'no description'}; "
+                f"{built_in.get('joints', 0)} joints, aliases {built_in.get('aliases', [])}). Registering it "
+                "would hide that entry; pick another name, or pass overwrite=True to shadow it "
+                "(unregister_robot() restores the built-in)."
             )
+        logger.info("Robot '%s' exists in package registry - user registration will override it.", name)
 
     if model_xml is None:
         asset_only = {
