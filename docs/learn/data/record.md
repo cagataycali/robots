@@ -42,9 +42,9 @@ Layout after `stop_recording()`:
 | `stop_recording(push_to_hub=False, bucket=None, run_id=None)` | flushes, finalizes, optionally pushes or syncs ([stream and sync](stream-and-sync.md)) |
 | `get_recording_status()` | `recording`, `steps`, `last_save` |
 | `replay_episode(repo_id, episode=0, speed=1.0)` | plays a recorded action stream back into the world |
-| `start_cameras_recording()` | plain MP4 with no dataset schema; runs under `[sim-mujoco]` alone |
+| `start_cameras_recording()` | an MP4 per camera, no dataset; MuJoCo samples wall time, Isaac returns a per-step `on_frame` hook |
 
-`overwrite=True` deletes the existing directory, and with it the label sidecar. A second `start_recording` on an open session is refused; stop the first.
+`overwrite=True` deletes the existing directory and its label sidecar. A second `start_recording` on an open session is refused.
 
 ## The recorder itself
 
