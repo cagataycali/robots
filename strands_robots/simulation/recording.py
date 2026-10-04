@@ -1327,6 +1327,8 @@ class DatasetRecordingMixin:
         if error := self._already_recording_error("start_recording", repo_id):
             return error
 
+        from strands_robots.dataset_source import resolve_dataset_dir
+
         probe = self._probe_recording_scene()
         with self._recording_start_lock():
             state["recording"] = True
@@ -1337,7 +1339,7 @@ class DatasetRecordingMixin:
             state["recording_fps"] = fps
             state["recording_task"] = task
             state.pop("step_recording_due", None)
-            dataset_dir = self._stash_dataset_target(repo_id, root)
+            dataset_dir = resolve_dataset_dir(repo_id, root)
 
             try:
                 schema = self._collect_recording_schema(probe)
@@ -1429,6 +1431,7 @@ class DatasetRecordingMixin:
                         video_height=schema.video_size[1],
                     )
                 resumed_line = self._arm_dataset_recorder(state, recorder, resumed=resume_existing)
+                self._stash_dataset_target(state, repo_id, dataset_dir)
                 recorded_cameras = {src: safe for src, safe, _w, _h in recorded}
                 scene_cameras = [name for name in self._recording_scene_cameras() if name]
                 return {
@@ -1685,38 +1688,26 @@ class DatasetRecordingMixin:
         last = state.get("last_dataset_repo_id")
         return str(last) if last else None
 
-    def _stash_dataset_target(self, repo_id: str, root: str | None) -> Path:
-        """Resolve the directory a recording writes to, stashed with its id.
+    @staticmethod
+    def _stash_dataset_target(state: dict[str, Any], repo_id: str, dataset_dir: Path) -> None:
+        """Remember where the recording that just started writes, with its id.
 
-        Every backend's ``start_recording`` resolves its target with
-        :func:`~strands_robots.dataset_source.resolve_dataset_dir` - the same
-        resolver ``DatasetRecorder.create()`` uses, so the facade and the
-        recorder agree on where a dataset lives (honouring ``$HF_LEROBOT_HOME``)
-        - and stashes it as ``last_dataset_root`` for the consumers that run
-        after the recorder is dropped (:meth:`_active_dataset_root`). The id it
-        was recorded under is stashed beside it, because a reader handed only an
-        ``owner/name`` id cannot derive a directory the caller chose with
-        ``root=``.
-
-        Resolving and stashing in ONE place is the point: the pair was written
-        out longhand in all three backends, so a value added to one of them left
-        the other two recording datasets no reader could locate.
+        ``last_dataset_root`` is what the consumers that run after the recorder
+        is dropped (:meth:`_active_dataset_root`, ``stop_recording(bucket=...)``,
+        replay) read, so it is written only once a recorder is armed: a refused
+        or failed ``start_recording`` keeps naming the dataset the session last
+        recorded, never a directory that was not written. The id is stashed
+        beside it, because a reader handed only an ``owner/name`` id cannot
+        derive a directory the caller chose with ``root=``.
 
         Args:
+            state: The recording state mapping (see :meth:`_recording_state`).
             repo_id: HuggingFace dataset id (``owner/name``) or a local path.
-            root: Explicit local dataset directory, if any.
-
-        Returns:
-            The resolved directory, for the caller's overwrite/resume logic.
+            dataset_dir: The directory :func:`~strands_robots.dataset_source.resolve_dataset_dir`
+                resolved - the one ``DatasetRecorder`` writes to.
         """
-        from strands_robots.dataset_source import resolve_dataset_dir
-
-        dataset_dir = resolve_dataset_dir(repo_id, root)
-        state = self._recording_state()
-        if state is not None:
-            state["last_dataset_root"] = str(dataset_dir)
-            state["last_dataset_repo_id"] = repo_id
-        return dataset_dir
+        state["last_dataset_root"] = str(dataset_dir)
+        state["last_dataset_repo_id"] = repo_id
 
     def stop_recording(
         self,
