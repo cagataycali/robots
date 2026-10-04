@@ -1421,14 +1421,21 @@ class SimEngine(ABC):
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered joint names for ``robot_name``.
 
-        This order is the one a LeRobotDataset recording writes the
-        ``observation.state`` columns in, so it is the order a policy must read
-        that vector back in. The rollout binds :meth:`robot_action_keys`
-        (``Policy.set_robot_state_keys``, ``send_action`` with a numeric vector,
-        ``PolicyRunner.replay``) because a robot's actuators are not always its
-        joints - and those keys are themselves ordered by this roster, so the
-        two cannot be a transposition of each other. Order must match the
-        backend's joint ordering.
+        This is the backend's raw joint roster. On a fixed-base arm it matches
+        the ``observation.state`` column order and so can be used directly to
+        key a policy; on a robot with a floating base it does NOT, because the
+        root joint is a 6-DoF free joint whose coordinates are
+        ``[xyz, quat]`` and so has no single scalar column. Every scalar
+        surface on this engine already skips that joint - :meth:`get_observation`,
+        :meth:`get_robot_state`, the dataset-recorder schema -- so for a
+        floating-base robot the roster is one wider than the recorded
+        ``observation.state`` vector and than :meth:`robot_action_keys` (see
+        :meth:`~strands_robots.simulation.newton.NewtonSimEngine.robot_action_keys`
+        for the long-form rationale). The ``observation.state`` ordering a
+        policy must bind is :meth:`robot_action_keys`; this method is for
+        callers that need the raw list (e.g. ``list_robot_joints`` prose), not
+        for ``Policy.set_robot_state_keys`` or ``PolicyRunner.replay``. Order
+        must match the backend's joint ordering.
 
         Raises:
             ValueError: ``robot_name`` is not in the world. The message names
