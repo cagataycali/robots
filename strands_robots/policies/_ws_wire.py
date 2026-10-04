@@ -28,6 +28,8 @@ hand a bare ``[Errno 111] Connection refused`` straight to the caller, which is
 the one report the start-the-server hint exists to replace.
 """
 
+import re
+from importlib import metadata
 from typing import Any
 
 
@@ -70,3 +72,42 @@ def close_quietly(ws: Any) -> None:
         ws.close()
     except Exception:  # noqa: BLE001 - a discarded connection is already lost
         pass
+
+
+def require_held_connect(owner: str, extra: str) -> None:
+    """Refuse a ``websockets`` that cannot hand back a connection held across calls.
+
+    Both WebSocket policy clients hold one connection for a whole rollout, which
+    ``websockets.sync.client.connect(..., legacy=True)`` is the supported way to
+    obtain from 17.1 on. ``websockets`` is not a base dependency, so a base
+    install can resolve an older release through another package, and there the
+    flag is forwarded to ``socket.create_connection`` and comes back as
+    ``TypeError: ... unexpected keyword argument 'legacy'`` on the first rollout
+    step, naming neither the package nor the fix. Asked here, while the client
+    is being built, the answer is the missing-dependency report every optional
+    provider gives. The installed release is read rather than ``connect``'s
+    signature: before 17.1 ``connect`` takes ``**kwargs`` too, which is how the
+    flag reached the socket.
+
+    Args:
+        owner: The client class, quoted in the report.
+        extra: The ``strands-robots`` extra that floors ``websockets`` for it.
+
+    Raises:
+        ImportError: When ``websockets`` is not installed, or is older than
+            17.1. The message names the installed release and the extra.
+    """
+    remedy = f"pip install 'strands-robots[{extra}]'"
+    try:
+        installed = metadata.version("websockets")
+    except metadata.PackageNotFoundError as exc:
+        raise ImportError(
+            f"{owner} needs the websockets package, which is not installed: {remedy}", name="websockets"
+        ) from exc
+    release = tuple(int(part) for part in re.findall(r"\d+", installed)[:2])
+    if release < (17, 1):
+        raise ImportError(
+            f"{owner} needs websockets>=17.1 to hold its connection (connect(legacy=True)); "
+            f"websockets {installed} is installed: {remedy}",
+            name="websockets",
+        )

@@ -41,7 +41,7 @@ import random
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1343,6 +1343,37 @@ class _PreservePrimaryObserverEscape:
         return True
 
 
+def policy_reads_images(policies: Iterable[Any]) -> tuple[bool, dict[str, Any] | None]:
+    """Whether any of ``policies`` reads camera frames, or the envelope when one cannot be asked.
+
+    A policy served elsewhere answers ``requires_images`` by connecting to its
+    server (:class:`~strands_robots.inference.client.RemotePolicy` mirrors the
+    served policy), so this read is a rollout's first contact with that server.
+    It happens before the loop whose handler turns a policy failure into
+    ``status="error"``, so an absent, silent or wrong peer used to leave
+    ``run_policy`` as a raised ``ConnectionError`` instead of the envelope the
+    same failure one step later is reported as.
+
+    Args:
+        policies: The policies the rollout will drive.
+
+    Returns:
+        ``(reads_images, None)``, or ``(True, envelope)`` when a policy could
+        not reach what it needs to answer; the envelope carries the policy's
+        own report and the ``stopped_reason="error"`` block.
+    """
+    try:
+        return any(getattr(p, "requires_images", True) for p in policies), None
+    except ConnectionError as exc:
+        return True, {
+            "status": "error",
+            "content": [
+                {"text": f"Policy failed before the first step: {exc}"},
+                {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
+            ],
+        }
+
+
 def _close_started_lifecycle_on_escape[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     """Close an opened observer lifecycle when ``run`` escapes by raising.
 
@@ -2286,6 +2317,11 @@ class PolicyRunner:
                 policy,
             )
 
+        # T26: skip camera rendering when the policy does not need images.
+        _reads_images, _unreachable = policy_reads_images((policy,))
+        if _unreachable is not None:
+            return _unreachable
+        _skip_images = not _reads_images
         # Video recording lifecycle (path validation + camera probe + writer)
         # lives in _RolloutVideoWriter so run() and evaluate() record identically.
         vwriter, _video_err = _RolloutVideoWriter.open(self.sim, video, control_frequency)
@@ -2312,8 +2348,6 @@ class PolicyRunner:
         # acted. Sampled once below, beside the per-step check it qualifies; see
         # :func:`stop_when_true_at_reset_warning`.
         stop_when_true_at_reset = False
-        # T26: skip camera rendering when the policy does not need images.
-        _skip_images = not getattr(policy, "requires_images", True)
         # Named-body poses the policy declared it needs (mimic trackers read an
         # anchor link). Resolved once here so an unknown name fails before the
         # loop instead of being read as a zero pose on every tick; () for the
@@ -4208,7 +4242,10 @@ class PolicyRunner:
             )
 
         # T26: skip camera rendering when the policy does not need images.
-        _skip_images = not getattr(policy, "requires_images", True)
+        _reads_images, _unreachable = policy_reads_images((policy,))
+        if _unreachable is not None:
+            return _unreachable
+        _skip_images = not _reads_images
         # Named-body poses the policy declared it needs (mimic trackers read an
         # anchor link). Resolved once here so an unknown name fails before the
         # loop instead of being read as a zero pose on every tick; () for the
@@ -4705,7 +4742,10 @@ class PolicyRunner:
             }
 
         # T26: skip camera rendering when the policy does not need images.
-        _skip_images = not getattr(policy, "requires_images", True)
+        _reads_images, _unreachable = policy_reads_images((policy,))
+        if _unreachable is not None:
+            return _unreachable
+        _skip_images = not _reads_images
         # Named-body poses the policy declared it needs (mimic trackers read an
         # anchor link). Resolved once here so an unknown name fails before the
         # loop instead of being read as a zero pose on every tick; () for the

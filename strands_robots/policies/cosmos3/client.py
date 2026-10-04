@@ -25,7 +25,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from strands_robots.policies._ws_wire import close_quietly, silent_server_error
+from strands_robots.policies._ws_wire import close_quietly, require_held_connect, silent_server_error
 from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -271,6 +271,7 @@ class Cosmos3WebsocketClient:
     ):
         if err := positive_finite_number_error(read_timeout, "read_timeout", type(self).__name__):
             raise ValueError(err)
+        require_held_connect(type(self).__name__, "cosmos3-service")
         self.host = host
         self.port = port
         self.api_key = api_key
