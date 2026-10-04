@@ -1209,9 +1209,6 @@ class TestPolicyExecution:
         keys = sim_with_robot.robot_action_keys("arm1")
         assert isinstance(joints, list) and joints, "robot_joint_names('arm1') is empty"
         assert isinstance(keys, list) and keys, "robot_action_keys('arm1') is empty"
-        # Unknown robots return an empty list rather than raising.
-        assert sim_with_robot.robot_joint_names("ghost") == []
-        assert sim_with_robot.robot_action_keys("ghost") == []
 
 
 # Action Dispatch

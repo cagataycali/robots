@@ -94,9 +94,6 @@ class TestTheFreeBaseIsNotAnActionKey:
         assert engine.robot_action_keys("g1") == _SCALAR_JOINTS
         assert engine.robot_action_keys("g1") == engine.robot_joint_names("g1")
 
-    def test_an_unknown_robot_yields_no_action_keys(self):
-        assert _engine(free_base=True).robot_action_keys("nobody") == []
-
 
 class TestSendActionRefusesAScalarTargetOnTheFreeBase:
     """A 6-DoF joint cannot hold a scalar position target, so it is refused."""

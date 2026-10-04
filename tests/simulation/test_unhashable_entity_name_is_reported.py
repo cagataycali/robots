@@ -195,11 +195,8 @@ class TestTheEnvelopeProbe:
 
 
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_a_best_effort_lookup_reports_nothing_rather_than_raising(sim, label, name):
-    """The two lookups documented as best-effort keep returning an empty list."""
-    assert sim.robot_joint_names(name) == []
-    assert sim.robot_action_keys(name) == []
-    # get_observation has no error channel either; it must still not raise.
+def test_get_observation_answers_an_unhashable_name_without_raising(sim, label, name):
+    """``get_observation`` has no error channel; it must still not raise."""
     assert isinstance(sim.get_observation(robot_name=name), dict)
 
 
@@ -371,11 +368,53 @@ def test_isaac_reports_an_unhashable_name_the_same_way(label, name):
 
 
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_isaac_best_effort_lookups_report_nothing_rather_than_raising(label, name):
-    """The two Isaac lookups with no error channel keep answering empty."""
-    engine = _isaac_engine()
-    assert engine.robot_joint_names(name) == []
-    assert engine.get_observation(robot_name=name) == {}
+def test_isaac_get_observation_answers_an_unhashable_name_empty(label, name):
+    """``get_observation`` has no error channel on Isaac either."""
+    assert _isaac_engine().get_observation(robot_name=name) == {}
+
+
+def _mjlab_engine() -> Any:
+    """An mjlab engine holding one robot; only its registry is read."""
+    from strands_robots.simulation.mjlab.simulation import MjlabEngine, _RobotSpec
+
+    engine = MjlabEngine.__new__(MjlabEngine)
+    engine._robots = {
+        "arm": _RobotSpec(
+            name="arm",
+            path="",
+            position=(0.0, 0.0, 0.0),
+            orientation=(1.0, 0.0, 0.0, 0.0),
+            keyframe=None,
+            joint_names=["pan"],
+            actuator_names=["pan"],
+        )
+    }
+    return engine
+
+
+# Every backend's roster lookups. A name the scene does not hold - the
+# canonical name of a robot added under an alias, or a value that is not a name
+# at all - is refused with the robots that are there, never answered with an
+# empty roster: an empty list binds a policy's state keys to nothing and every
+# joint silently holds still.
+_ROSTER_ENGINES: dict[str, Callable[[Any], Any]] = {
+    "mujoco": lambda sim: sim,
+    "newton": lambda _sim: _newton_engine(),
+    "isaac": lambda _sim: _isaac_engine(),
+    "mjlab": lambda _sim: _mjlab_engine(),
+}
+
+
+@pytest.mark.parametrize("method", ["robot_joint_names", "robot_action_keys"])
+@pytest.mark.parametrize("backend", sorted(_ROSTER_ENGINES))
+@pytest.mark.parametrize(
+    "name", ["arm_", "", *(n for _, n in UNHASHABLE)], ids=["typo", "empty", *(lbl for lbl, _ in UNHASHABLE)]
+)
+def test_a_roster_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend, method, name):
+    engine = _ROSTER_ENGINES[backend](sim)
+    with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
+        getattr(engine, method)(name)
+    assert getattr(engine, method)("arm"), f"{backend} {method}('arm') lost the registered robot"
 
 
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])

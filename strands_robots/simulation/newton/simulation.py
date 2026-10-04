@@ -754,7 +754,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered short joint names for ``robot_name``."""
         if self._world is None or not registered(self._world.robots, robot_name):
-            return []
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return list(self._world.robots[robot_name].joint_names)
 
     def robot_action_keys(self, robot_name: str) -> list[str]:
@@ -787,8 +787,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # reach this list on engines built via ``__new__`` (the solver-free test
         # harness), which never run ``__init__``. Mirrors
         # ``_collect_recording_schema``'s read of the same map.
+        # The roster lookup runs first so a name the scene does not hold is
+        # refused by name before it is used as a key of the free-base map.
+        joints = self.robot_joint_names(robot_name)
         base_joint = getattr(self, "_robot_free_base_joint", {}).get(robot_name)
-        return [jn for jn in self.robot_joint_names(robot_name) if jn != base_joint]
+        return [jn for jn in joints if jn != base_joint]
 
     # Object management
 

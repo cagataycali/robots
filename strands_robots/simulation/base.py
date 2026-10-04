@@ -1429,6 +1429,12 @@ class SimEngine(ABC):
         joints - and those keys are themselves ordered by this roster, so the
         two cannot be a transposition of each other. Order must match the
         backend's joint ordering.
+
+        Raises:
+            ValueError: ``robot_name`` is not in the world. The message names
+                the robots that are, so a robot added as ``"g1"`` and asked
+                for as ``"unitree_g1"`` is told its real name instead of
+                handed an empty roster that binds a policy to nothing.
         """
         ...
 
