@@ -67,4 +67,4 @@ export MUJOCO_GL=osmesa  # Linux, headless, software rendering
 strands-robots doctor
 ```
 
-Fifteen probes, none touching hardware or the network; [Doctor](doctor.md) lists each and what a `FAIL` means. Then move a robot: [First robot](first-robot.md).
+No probe touches hardware or the network; [Doctor](doctor.md) lists each and what a `FAIL` means. Then move a robot: [First robot](first-robot.md).
