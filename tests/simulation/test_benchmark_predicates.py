@@ -19,6 +19,8 @@ from strands_robots.simulation.predicates import (
     _extract_json,
     _StagedReward,
     make_predicate,
+    predicate_kind,
+    predicate_reads_robot_base,
     register_predicate,
 )
 
@@ -153,12 +155,31 @@ class TestRegistry:
         }
         assert required.issubset(PREDICATE_REGISTRY.keys())
 
-    def test_make_predicate_unknown_raises(self):
+    @pytest.mark.parametrize("lookup", [make_predicate, predicate_kind, predicate_reads_robot_base])
+    @pytest.mark.parametrize(
+        ("typo", "closest"),
+        [
+            ("joint_abovve", "joint_above"),
+            ("basetipped", "base_tipped"),
+            ("graspd", "grasped"),
+            ("distance_less", "distance_less_than"),
+            ("contact_any_body", "contact_any"),
+            ("totally_made_up", None),
+        ],
+    )
+    def test_unknown_name_names_the_closest_predicate(self, lookup, typo, closest):
+        # Every lookup by name refuses a typo the same way: the closest
+        # registered name when one is close, nothing when none is, and the
+        # full valid list either way so the user can fix the spec.
         with pytest.raises(ValueError) as exc:
-            make_predicate("totally_made_up")
-        assert "Unknown predicate" in str(exc.value)
-        # Error message should list valid names so the user can fix the spec.
-        assert "body_above_z" in str(exc.value)
+            lookup(typo)
+        msg = str(exc.value)
+        assert msg.startswith(f"Unknown predicate '{typo}'.")
+        if closest is None:
+            assert "Did you mean" not in msg
+        else:
+            assert f"Did you mean '{closest}'?" in msg
+        assert "'body_above_z'" in msg
 
     def test_register_predicate_rejects_shadow(self):
         with pytest.raises(ValueError):
