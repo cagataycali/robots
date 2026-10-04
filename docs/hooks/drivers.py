@@ -50,6 +50,7 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
         "`booster_robotics_sdk_python`, vendor wheel",
         "booster-t1.md",
     ),
+    "strands_robots.drivers.rby1": ("gRPC (rby1-sdk)", "`[rby1]`", "drivers.md"),
     "strands_robots.drivers.ur": ("ethernet (RTDE, port 30004)", "`[ur]`", "ur.md"),
     "strands_robots.drivers.xarm": ("ethernet (xArm TCP)", "`[xarm]`", "drivers.md"),
     "strands_robots.drivers.crazyflie": ("radio (CRTP over Crazyradio)", "`[crazyflie]`", "drivers.md"),
