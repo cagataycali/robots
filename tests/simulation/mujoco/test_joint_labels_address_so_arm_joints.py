@@ -12,6 +12,7 @@ any case).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -242,3 +243,37 @@ class TestTheShortFormIsLabelledToo:
             assert "may also be written by label" not in _text(result)
         finally:
             sim.destroy()
+
+
+@pytest.mark.parametrize("robot", ["so100", "so101"])
+def test_the_robot_page_table_names_what_each_side_of_the_api_speaks(robot):
+    """The page's left column is what ``get_observation`` returns; its right column is what ``send_action`` takes.
+
+    Observed: a reader of the SO-101 page wrote ``send_action({"shoulder_pan": v})``
+    (accepted), then read ``obs["shoulder_pan"]`` back and hit ``KeyError`` - the
+    observation keeps the model's joint name, and the table's two columns were
+    headed "Model joint" / "Action key", which never said which one a read returns.
+    """
+    from tests._docs_hooks import docs_hook
+
+    page = docs_hook("robot_pages").robot_page(robot)
+    header = "| Observation key | `send_action` label |"
+    assert header in page, f"the {robot} page does not name the observation side of its joint table"
+    rows = page.split(header, 1)[1].split("\n\n", 1)[0].splitlines()[2:]
+    table = dict(re.findall(r"\| `([^`]+)` \| `([^`]+)` \|", "\n".join(rows)))
+    assert table == joint_labels(robot)
+
+    sim = Simulation()
+    sim.create_world()
+    res = sim.add_robot(name=robot)
+    if res["status"] != "success":
+        sim.destroy()
+        pytest.skip(_text(res))
+    try:
+        for obs_key, label in table.items():
+            result = sim.send_action({label: 0.1}, robot_name=robot)
+            assert result["status"] == "success", _text(result)
+            obs = sim.get_observation(robot_name=robot, skip_images=True)
+            assert obs_key in obs and label not in obs
+    finally:
+        sim.destroy()
