@@ -229,6 +229,61 @@ class TestARefusedCallKeepsTheDataset:
             sim.destroy()
 
 
+def _refuse(sim, root: Path, how: str, monkeypatch) -> None:
+    """Make ``start_recording`` at ``root`` fail the way ``how`` names."""
+    cameras = ["arm/wrist"]
+    if how == "unknown camera":
+        cameras = ["arm/wrist", _UNKNOWN]
+    elif how == "camera refusal":
+        monkeypatch.setattr("strands_robots.simulation.mujoco.recording._can_render", lambda: False)
+    else:
+
+        def _boom(**_kwargs):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr("strands_robots.dataset_recorder.DatasetRecorder.create", staticmethod(_boom))
+    refused = sim.start_recording(repo_id="local/never_written", root=str(root), overwrite=True, cameras=cameras)
+    assert refused["status"] == "error", _text(refused)
+    monkeypatch.undo()
+
+
+_REFUSALS = ["unknown camera", "camera refusal", "recorder init failure"]
+
+
+class TestARefusedCallKeepsTheLastDataset:
+    """A refused call does not move where readers look for the last recording.
+
+    ``last_dataset_root`` is what ``verify_dataset_episodes``,
+    ``stop_recording(bucket=...)`` and replay read once the recorder is gone.
+    It was written before the first refusal, so every refused call pointed
+    those readers at a directory that was never created.
+    """
+
+    @pytest.mark.parametrize("how", _REFUSALS)
+    def test_a_fresh_session_still_has_no_dataset(self, tmp_path, how, monkeypatch):
+        sim = _sim(tmp_path)
+        try:
+            _refuse(sim, tmp_path / "never", how, monkeypatch)
+            assert (sim._active_dataset_root(), sim._active_dataset_repo_id()) == (None, None)
+            assert not (tmp_path / "never").exists()
+        finally:
+            sim.destroy()
+
+    @pytest.mark.parametrize("how", _REFUSALS)
+    def test_the_previous_recording_is_still_the_one_verified(self, tmp_path, how, monkeypatch):
+        root = tmp_path / "ds"
+        sim = _sim(tmp_path)
+        try:
+            _record_one_episode(sim, root, cameras=["arm/wrist"])
+            _refuse(sim, tmp_path / "never", how, monkeypatch)
+            assert sim._active_dataset_root() == str(root)
+            assert sim._active_dataset_repo_id() == "local/refused_recording"
+            verified = sim.verify_dataset_episodes(expected=1)
+            assert verified["status"] == "success", _text(verified)
+        finally:
+            sim.destroy()
+
+
 class TestTheDeletionIsDeferredNotDropped:
     """Controls: the four documented outcomes still happen, just later."""
 

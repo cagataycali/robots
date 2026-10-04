@@ -92,8 +92,8 @@ class TestStartRecordingGuards:
         assert result["status"] == "error"
         assert "disk full" in result["content"][0]["text"]
         assert engine._world._backend_state["recording"] is False
-        # The dir was resolved into the HF cache tree from the owner/name id.
-        assert "owner/name" in engine._world._backend_state["last_dataset_root"]
+        # Nothing was written, so no reader is pointed at the resolved dir.
+        assert "last_dataset_root" not in engine._world._backend_state
 
     def test_existing_dataset_resumes_instead_of_recreating(self, monkeypatch, tmp_path):
         # A dataset dir with a meta/ dir on disk must take the resume (append)
