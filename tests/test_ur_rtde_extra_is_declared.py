@@ -90,6 +90,10 @@ _UNDECLARABLE = {
         "a vendor wheel pinned to the robot's firmware, so the installed build's vocabulary is "
         "an input rather than a version this project bounds (strands_robots/drivers/booster.py)"
     ),
+    "hello-robot-stretch-body": (
+        "preinstalled on the robot against its fleet calibration, and it drags in pyrealsense2, "
+        "open3d and jupyter, which no extra this project resolves can carry (strands_robots/drivers/stretch.py)"
+    ),
 }
 
 

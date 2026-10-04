@@ -223,6 +223,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "`stop` cancels control; the next write opens a new stream",
         ),
     },
+    "StretchDriver": {
+        "module": "strands_robots/drivers/stretch.py",
+        "link": "USB through `stretch_body`, on the robot's own computer",
+        "port": "none: the SDK opens the robot's `/dev/hello-*` devices; a `port` is refused",
+        "example": "",
+        "sdk": "`pip install hello-robot-stretch-body` (preinstalled on the robot, imported on connect)",
+        "kwargs": "`control_frequency=15.0`",
+        "units": "`lift`, `arm` in m; wrist and head in rad; the base through `set_twist(vx, wz)`; no gripper",
+        "checks": (
+            "a goal outside the joint's current soft limits is refused, not clipped as `move_to` would",
+            "writes are refused while the runstop is latched or the robot is not homed",
+            "a twist that would clamp a wheel, strafe, or run without the wheels' watchdog is refused",
+        ),
+    },
     "URDriver": {
         "module": "strands_robots/drivers/ur.py",
         "link": "RTDE through `ur_rtde`",
@@ -471,7 +485,8 @@ def _real_fences(name: str, spec: dict, cov) -> list[str]:  # noqa: ANN001
     if cov.native_driver:
         facts = DRIVERS[cov.native_driver]
         pin = "" if cov.default_driver == "strands" else ', driver="strands"'
-        lines.append(f'robot = Robot("{name}", mode="real"{pin}, port={facts["example"]})  # {cov.native_driver}')
+        port = f", port={facts['example']}" if facts["example"] else ""
+        lines.append(f'robot = Robot("{name}", mode="real"{pin}{port})  # {cov.native_driver}')
     if hardware.get("requires_lerobot_from_source"):
         lines.append("# this lerobot type is on lerobot main, not on PyPI: install lerobot from source")
     return lines
