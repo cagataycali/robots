@@ -98,7 +98,8 @@ def list_aliases() -> dict[str, str]:
       (:class:`~strands_robots.policies.persistent.PersistentPolicy`) resolves
       but cannot be built here: its first parameter is named ``provider``,
       which :func:`create_policy` has already bound, so it is constructed
-      directly.
+      directly. :func:`create_policy` refuses it with a ``TypeError`` that
+      says so.
 
     Covers both registries, matching the union :func:`list_providers`
     reports: aliases declared in ``policies.json`` and aliases passed to
@@ -425,7 +426,7 @@ def _spell_model_path_as_the_provider_does(provider: str, kwargs: Mapping[str, A
     return out
 
 
-def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:
+def _resolve_policy_class(provider: str, /, **kwargs) -> tuple[str, type[Policy], dict]:
     """Resolve ``provider`` to its policy class WITHOUT instantiating it.
 
     Imports the class and computes the effective constructor kwargs using the
@@ -687,6 +688,8 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
     accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
     if not accepted:
         return None
+    if (collision := _provider_collision_error(provider, PolicyClass)) is not None:
+        return collision
     # A provider may know a name that its sink would otherwise swallow: a field
     # that belongs on another object (lerobot_local's ``state_units`` is an
     # embodiment field, #4164). Its ``misplaced_kwargs_error`` says where the
@@ -726,10 +729,46 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
             owner,
             sorted(unknown),
         )
+    if missing := [name for name in _required_keywords(PolicyClass) if name not in kwargs]:
+        return f"{owner} requires {', '.join(repr(n) for n in missing)}. It accepts: {', '.join(accepted)}."
     return None
 
 
-def create_policy(provider: str, **kwargs) -> Policy:
+def _required_keywords(PolicyClass: type) -> tuple[str, ...]:
+    """The constructor parameters a caller must pass by keyword (no default)."""
+    try:
+        params = inspect.signature(PolicyClass).parameters
+    except (TypeError, ValueError):
+        return ()
+    return tuple(
+        name
+        for name, p in params.items()
+        if p.default is p.empty and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    )
+
+
+def _provider_collision_error(provider: str, PolicyClass: type) -> str | None:
+    """Why ``create_policy`` can never build ``PolicyClass``, or ``None``.
+
+    ``create_policy`` binds its own first parameter, ``provider``, to the name
+    being resolved. A constructor that requires a parameter of that name
+    (:class:`~strands_robots.policies.persistent.PersistentPolicy` wraps an
+    inner provider) can therefore receive no value for it from any keyword: the
+    call fails as ``missing 1 required positional argument`` without one and
+    ``got multiple values for argument 'provider'`` with one, and neither names
+    the provider asked for or the way to build it.
+    """
+    if "provider" not in _required_keywords(PolicyClass):
+        return None
+    name = PolicyClass.__name__
+    return (
+        f"policy provider {provider!r} cannot be built by create_policy: {name} requires its own 'provider' "
+        "argument, and create_policy has already bound that name to the provider being resolved. Construct "
+        f"it directly: from {PolicyClass.__module__} import {name}; {name}(provider='mock', **config)."
+    )
+
+
+def create_policy(provider: str, /, **kwargs) -> Policy:
     """Create a policy instance.
 
     Accepts either a provider name or a smart string:
@@ -747,7 +786,9 @@ def create_policy(provider: str, **kwargs) -> Policy:
     All provider definitions live in ``registry/policies.json``.
 
     Args:
-        provider: Provider name, HF model ID, or server URL.
+        provider: Provider name, HF model ID, or server URL. Positional-only,
+            so a provider keyword named ``provider`` reaches the policy's
+            constructor (and its refusal) instead of colliding with this one.
         **kwargs: Provider-specific parameters.
 
     Returns:
@@ -759,7 +800,9 @@ def create_policy(provider: str, **kwargs) -> Policy:
 
     Raises:
         TypeError: If a keyword misspells one the provider's constructor
-            binds, or names one it cannot bind at all (no ``**kwargs``) - see
+            binds, names one it cannot bind at all (no ``**kwargs``), omits one
+            it requires, or the provider needs its own ``provider`` argument
+            (``persistent``, which is constructed directly) - see
             :func:`policy_kwargs_error`. Raised before construction and before
             the trust-remote-code gate, so no model is downloaded, no server
             dialled and no opt-in asked for on a typo.
@@ -929,7 +972,7 @@ def policy_overrides_preflight(provider: str, **kwargs) -> bool:
     return _overrides_preflight(PolicyClass)
 
 
-def policy_provider_error(provider: str, **kwargs) -> str | None:
+def policy_provider_error(provider: str, /, **kwargs) -> str | None:
     """Return why ``provider`` cannot be resolved to a policy class, or ``None``.
 
     Probes the SAME resolution path :func:`create_policy` uses, without
@@ -975,10 +1018,12 @@ def policy_provider_error(provider: str, **kwargs) -> str | None:
             "model ID, or a server URL."
         )
     try:
-        _resolve_policy_class(provider, **kwargs)
+        canonical, PolicyClass, _ = _resolve_policy_class(provider, **kwargs)
     except ValueError as e:
         # ValueError is the unresolvable-NAME verdict. A missing optional
         # dependency (ImportError) and the trust-remote-code gate are separate
         # concerns with their own reporting, and are deliberately not caught.
         return str(e)
-    return None
+    # No keyword can satisfy this one, so it is a property of the provider, not
+    # of the config: report it on the same channel as an unknown name.
+    return _provider_collision_error(canonical, PolicyClass)
