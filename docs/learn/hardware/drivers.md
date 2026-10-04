@@ -4,7 +4,7 @@ description: How Robot(name, mode="real") picks its driver, the native drivers t
 
 # Drivers
 
-At the end of this page you know how `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship and over which wire, and what a driver must implement for the agent, the mesh and the teleop loop.
+How `Robot(name, mode="real")` picks the code that talks to your robot, which of the {{n:native_drivers}} native drivers ship over which wire, and what a driver implements.
 
 ```python
 from strands_robots.drivers import list_native_drivers, list_driver_coverage
@@ -25,7 +25,7 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; every other robot in the table below needs no declaration: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver` with no lerobot extra, loading the arm's lerobot calibration file when one exists. `omx`, `openarm` and `reachy2` have no native driver and fall back to lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for its documented teleop reads. `driver="strands"` on a robot with no native driver is refused by name.
 
-`port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. Each driver documents what it reads. A keyword the driver does not declare is refused (`Robot(..., prot="/dev/ttyACM0")` does not build an arm that auto-detects a port).
+`port=` is polymorphic: a serial path for a Feetech bus, an IP for a controller, a `radio://` URI for a Crazyflie, `host:port` for a daemon. A keyword the driver does not declare is refused.
 
 ## Shipped native drivers
 
@@ -35,7 +35,7 @@ Generated from `_SHIPPED_DRIVERS` and each module's `SUPPORTED_ROBOTS`:
 
 {{driver_facts}}
 
-Every native driver imports its SDK inside `connect_eagerly()`, never at module import, so the package imports on a machine without the SDK and a missing SDK is a named refusal with the install line in it.
+Every native driver imports its SDK inside `connect_eagerly()`, so the package imports without it and a missing SDK is a named refusal carrying the install line.
 
 ## The contract
 
@@ -51,7 +51,7 @@ A native driver is anything with these members (`HardwareDriver` is a `runtime_c
 
 Constructor: `driver_cls(tool_name=..., cameras=..., data_config=..., **kwargs)`. A driver that wants a `cameras=` dict sets `reads_cameras = True`; otherwise a non-empty `cameras=` is refused rather than silently dropped.
 
-Deliberately absent: `get_observation` and the sensor attributes (`_pose`, `_imu`, `_battery`, `_lidar_state`). The mesh reads them with `getattr(robot, name, None)`, so a driver without an IMU publishes no IMU topic and is otherwise complete. Joint telemetry reaches the mesh when a driver exposes either a `bus` with `sync_read` or a `get_observation`, plus `is_connected`.
+Deliberately absent: `get_observation` and the sensor attributes (`_pose`, `_imu`, `_battery`, `_lidar_state`). The mesh reads them with `getattr`, so a driver without an IMU publishes no IMU topic. Joint telemetry reaches the mesh when a driver exposes either a `bus` with `sync_read` or a `get_observation`, plus `is_connected`.
 
 Every refusal returns the same envelope shape as a success:
 
@@ -66,7 +66,7 @@ print(arm.send_action({"shoulder_pan": 10.0}))
 arm.cleanup()
 ```
 
-That is the real `FeetechDriver` with the arm's MuJoCo model at the far end of the bus (`transport="twin"`): a native driver's verbs, units and refusals without a serial port.
+The real `FeetechDriver`, with the arm's MuJoCo model at the far end of the bus: its verbs, units and refusals without a serial port.
 
 ## Register your own
 
@@ -77,10 +77,10 @@ register_native_driver("koch_follower", MyKochDriver)   # refuses a class missin
 robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0")
 ```
 
-`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration is refused unless `overwrite=True`, and registering makes the driver the robot's default. For an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first. A package outside this repo registers at import time.
+`register_native_driver` binds a driver class to a registry robot name after `missing_driver_members(cls)` passes; double registration needs `overwrite=True`, and the driver becomes the robot's default. For an unregistered robot, call `register_robot("my_arm", model_xml=..., hardware={"driver": "strands"})` first.
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
+A driver refuses before it writes: the Feetech bus refuses a target outside the servo's travel, the G1 refuses outside its FSM handshake states or under 15 percent battery, the Go2 refuses until sport mode is released, the Booster T1 refuses until upper-body control is enabled, the Robotiq refuses until activation completes, the UR refuses in `PROTECTIVE_STOP`, the Stretch refuses what its SDK would clip. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).
