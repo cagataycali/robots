@@ -22,7 +22,7 @@ import types
 
 import pytest
 
-from strands_robots.simulation.models import SimObject
+from strands_robots.simulation.models import SimObject, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
 
@@ -193,3 +193,17 @@ def test_each_primitive_routes_to_its_builder_method(shape, expected):
     size = [0.1, 0.1, 0.1] if shape == "box" else [0.05, 0.1]
     builder = _add(SimObject(name="p", shape=shape, size=size, mass=1.0))
     assert any(c[0] == expected for c in builder.calls)
+
+
+@pytest.mark.parametrize(
+    ("shape", "hint"),
+    [("sfere", " Did you mean 'sphere'?"), ("cilinder", " Did you mean 'cylinder'?"), ("cuboid", "")],
+)
+def test_add_object_names_the_closest_newton_shape(shape, hint):
+    engine = NewtonSimEngine.__new__(NewtonSimEngine)
+    engine._world = SimWorld()
+    result = engine.add_object(name="obj", shape=shape)
+    assert result["status"] == "error"
+    assert result["content"][0]["text"] == (
+        f"Unsupported shape {shape!r} for Newton backend.{hint} Supported: box, sphere, capsule, cylinder, mesh."
+    )
