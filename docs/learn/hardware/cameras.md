@@ -62,7 +62,7 @@ Actions: `discover`, `list`, `capture`, `capture_batch`, `record`, `preview`, `t
 
 ## Simulation cameras
 
-In `mode="sim"` cameras are not a constructor argument; add them afterwards with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera, `start_cameras_recording` writes them into a dataset ([record](../data/record.md)). The `default` camera always exists.
+In `mode="sim"` cameras are not a constructor argument; add them afterwards with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera, `start_cameras_recording` writes each to an MP4 ([record](../data/record.md)). The `default` camera always exists.
 
 A sim camera named `front` produces `observation.images.front`, the same column a real `front` camera does, which is what lets one policy checkpoint run in both modes.
 
