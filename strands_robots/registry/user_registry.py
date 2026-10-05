@@ -40,6 +40,7 @@ Usage::
     unregister_robot("my_arm")
 """
 
+import difflib
 import json
 import logging
 import os
@@ -53,6 +54,18 @@ from .loader import _REGISTRY_DIR, _refuse_unfolded_user_keys, _validate_robots,
 from .robots import get_robot
 
 logger = logging.getLogger(__name__)
+
+#: Categories the package registry and the docs filter row already share.
+#: Keyed off the eight ``data-family`` attributes in ``docs/robots/index.md``,
+#: which the ``robots.json`` entries declare one of; also the eight non-
+#: ``"other"`` groups in :data:`~strands_robots.registry.robots._CATEGORY_DISPLAY_ORDER`.
+#: Not an allow-list - a user may deliberately open a new group (``"quadruped"``,
+#: ``"roomba"``) and :func:`list_robots_by_category` still groups them. The set
+#: is just the pool :func:`_warn_unknown_category` fuzzy-matches a typo against,
+#: so a close miss (``"arms"`` vs ``"arm"``, ``"mobile-manip"`` vs ``"mobile_manip"``)
+#: is quoted back to the caller instead of silently opening a one-robot silo
+#: beside the group it meant.
+_KNOWN_CATEGORIES = ("arm", "bimanual", "hand", "humanoid", "expressive", "mobile", "mobile_manip", "aerial")
 
 
 def _load_user_registry() -> dict[str, Any]:
@@ -173,6 +186,51 @@ def _asset_relative(resolved_dir: Path, param: str, value: str) -> Path:
         ) from exc
 
 
+def _warn_unknown_category(name: str, category: str) -> None:
+    """Warn about a category that is close to - but not in - :data:`_KNOWN_CATEGORIES`.
+
+    Not a refusal: :func:`register_robot` lets a caller open a new group
+    deliberately (a quadruped house that spells itself ``"quadruped"``, a
+    service-robot deployment that spells itself ``"roomba"``), and
+    :func:`list_robots_by_category` keeps grouping it. The warning fires only
+    when the caller's spelling is close to a known group under
+    :func:`difflib.get_close_matches` - the same cutoff ``create_policy()`` and
+    ``_unknown_robot_msg`` use for their own "Did you mean" hints - so a typo
+    like ``"arms"`` or ``"mobile-manip"`` surfaces the sibling vocabulary
+    instead of silently opening a one-robot silo beside the group it meant,
+    while a deliberately new category is accepted without noise. An empty or
+    whitespace-only category is :data:`~strands_robots.registry.robots._UNCATEGORIZED`'s
+    reserved input and goes through unwarned - :func:`list_robots_by_category`
+    groups it under ``"other"``.
+
+    The analog of :func:`~strands_robots.registry.loader._validate_robots`,
+    which refuses an unknown ``hardware.driver`` outright. Driver names are a
+    closed vocabulary a reader switches on; a category is a group name a user
+    may extend, so one refuses and this one warns.
+
+    Args:
+        name: Normalized robot name, quoted in the warning so the caller can
+            find the entry whose category was flagged.
+        category: The caller's ``category`` argument, verbatim.
+    """
+    stripped = category.strip() if isinstance(category, str) else ""
+    if not stripped or stripped in _KNOWN_CATEGORIES:
+        return
+    suggestions = difflib.get_close_matches(stripped, _KNOWN_CATEGORIES, n=3, cutoff=0.6)
+    hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+    logger.warning(
+        "Robot '%s' declares category=%r, which is not one of the %d groups the registry and the "
+        "docs filter row already share (%s).%s It will still be registered and surfaced under its own "
+        "group by list_robots_by_category(); pass one of the known categories to join an existing "
+        "group instead.",
+        name,
+        category,
+        len(_KNOWN_CATEGORIES),
+        ", ".join(_KNOWN_CATEGORIES),
+        hint,
+    )
+
+
 def register_robot(
     name: str,
     *,
@@ -280,6 +338,12 @@ def register_robot(
 
     # Normalize name
     name = normalize_robot_name(name)
+
+    # A typo close to a known category opens a one-robot silo beside the group
+    # it meant - warn with a "Did you mean" hint, same difflib cutoff
+    # ``create_policy()`` uses, before any overlay I/O. Not a refusal: the
+    # caller may deliberately open a new group.
+    _warn_unknown_category(name, category)
 
     # Load existing
     data = _load_user_registry()
