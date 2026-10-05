@@ -1,12 +1,15 @@
-"""Native CycloneDDS driver for the Unitree robots on the ``unitree_go`` wire: Go2 and H1.
+"""Native CycloneDDS driver for the Unitree robots gated by the motion-switcher release: Go2, H1 and H1-2.
 
 ``Robot("go2", mode="real", driver="strands", port=<ip>, network_interface="eth0")``
-builds one of these, and so does ``Robot("h1", mode="real", ...)``. The two
-robots speak the same low-level protocol - the ``unitree_go`` ``LowCmd_``, the
-same header, CRC and motion-switcher release - and differ only in which joint
-sits in which ``motor_cmd`` slot and how each slot is driven. That difference is
-one :class:`WireProfile` per robot (:data:`WIRE_PROFILES`); everything below
-reads the profile and nothing else is per-robot. The instance satisfies
+builds one of these, and so do ``Robot("h1", mode="real", ...)`` and
+``Robot("h1_2", mode="real", ...)``. The three robots share one low-level
+contract - release the onboard motion mode, then stream CRC-sealed ``LowCmd_``
+frames on ``rt/lowcmd`` - and differ in which joint sits in which
+``motor_cmd`` slot, how each slot is driven, and which IDL package the frame is
+(the Go2 and H1 speak ``unitree_go``; the H1-2 speaks the G1's ``unitree_hg``,
+whose frame echoes ``mode_machine``). That difference is one
+:class:`WireProfile` per robot (:data:`WIRE_PROFILES`); everything below reads
+the profile and nothing else is per-robot. The instance satisfies
 :class:`~strands_robots.drivers.base.HardwareDriver`, so
 :func:`~strands_robots.robot.Robot` returns it and the mesh, teleop rail and
 agent tool surface consume it exactly like the lerobot driver they replace -
@@ -48,6 +51,16 @@ driver gates on the one key the SDK evidences and needs no wire guess:
 ``rt/lowcmd`` while sport mode still holds the robot means the onboard
 controller and the caller fight over the same motors, which is why this is a
 refusal and not a warning.
+
+The H1-2 is the exception that proves the split is by *gate*, not by IDL. Its
+frame is the G1's ``unitree_hg`` ``LowCmd_``, yet the SDK's
+``h1_2_low_level_example.py`` drives it the Go2's way: loop ``ReleaseMode()``
+until ``CheckMode()`` reports no mode, then stream full-body frames. The G1
+driver's FSM gate answers a different question (may an arm-SDK write ride on a
+running locomotion controller?) that the H1-2's low-level path never asks, so
+the H1-2 is a profile here with ``idl="unitree_hg"``: its frames carry
+``mode_pr`` and echo ``mode_machine`` from ``rt/lowstate``, its battery comes
+from ``rt/lf/bmsstate``, and a write refuses until ``mode_machine`` is known.
 
 What the driver does:
 
@@ -107,10 +120,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: The robots this driver registers for, read by
-#: :data:`strands_robots.drivers._SHIPPED_DRIVERS`. The ``go2`` and ``h1``
-#: aliases resolve through :func:`~strands_robots.registry.resolve_name`, so only
+#: :data:`strands_robots.drivers._SHIPPED_DRIVERS`. The ``go2``, ``h1`` and
+#: ``h1_2`` aliases resolve through :func:`~strands_robots.registry.resolve_name`, so only
 #: the canonical names are listed. Each has a :data:`WIRE_PROFILES` entry.
-SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2", "unitree_h1")
+SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2", "unitree_h1", "unitree_h1_2")
 
 #: Percentage below which the write gate refuses. Same floor as the G1 driver:
 #: a quadruped that browns out mid-step falls onto its own hardware.
@@ -128,6 +141,8 @@ _CONTROL_LOOP_DT: float = 1.0 / _CONTROL_LOOP_HZ
 # The topics the driver reads.
 _TOPIC_LOWSTATE = "rt/lowstate"
 _TOPIC_SPORTMODE = "rt/sportmodestate"
+#: Battery on a ``unitree_hg`` robot, which has no ``bms_state`` in ``LowState_``.
+_TOPIC_BMS = "rt/lf/bmsstate"
 
 #: The topic the driver writes. A full ``LowCmd_`` shaped for the Go2's leg
 #: actuator set; motion cannot go anywhere else without also crossing the
@@ -139,6 +154,15 @@ _TOPIC_LOWCMD = "rt/lowcmd"
 #: their zero default, which is ``mode = 0`` (Disable) and therefore commands
 #: nothing.
 _GO2_MOTOR_SLOTS: int = 20
+
+#: ``LowCmd_.motor_cmd`` width per IDL package. ``unitree_hg`` (G1, H1-2) is a
+#: 35-array; the H1-2 drives 27 of them.
+_MOTOR_SLOTS: dict[str, int] = {"unitree_go": _GO2_MOTOR_SLOTS, "unitree_hg": 35}
+
+#: ``unitree_hg`` ``LowCmd_.mode_pr`` selecting series (pitch/roll) ankle
+#: control - ``Mode.PR`` in the SDK's ``h1_2_low_level_example.py``, so the
+#: ankle slots take the pitch and roll the joint names say.
+_MODE_PR_SERIES: int = 0
 
 #: The low-level frame header the ``unitree_go`` protocol requires. The SDK's
 #: Go2 low-level example sets both bytes explicitly on every frame rather than
@@ -245,6 +269,48 @@ _H1_WEAK_SLOTS: frozenset[int] = frozenset({10, 11, 12, 13, 14, 15, 16, 17, 18, 
 _H1_MODE_WEAK: int = 0x01
 _H1_MODE_STRONG: int = 0x0A
 
+#: Joint name -> ``LowCmd_.motor_cmd`` slot for the H1-2.
+#:
+#: The slots are the SDK's ``H1_2_JointIndex`` (``example/h1_2/low_level`` in
+#: ``unitree_sdk2_python``); the names are the ones ``h1_2_mj_description``
+#: declares. The model also carries 24 hand joints the wire does not (the hands
+#: are separate devices), and the left hand's 12 sit between the two arms, so a
+#: caller zipping the description's joint list onto the slots would put the right
+#: arm's targets on the left hand's fingers from slot 20 on - another reason the
+#: action is keyed by name.
+H1_2_JOINT_INDEX: dict[str, int] = {
+    name: slot
+    for slot, name in enumerate(
+        [
+            f"{side}_{j}_joint"
+            for side in ("left", "right")
+            for j in ("hip_yaw", "hip_pitch", "hip_roll", "knee", "ankle_pitch", "ankle_roll")
+        ]
+        + ["torso_joint"]
+        + [
+            f"{side}_{j}_joint"
+            for side in ("left", "right")
+            for j in (
+                "shoulder_pitch",
+                "shoulder_roll",
+                "shoulder_yaw",
+                "elbow",
+                "wrist_roll",
+                "wrist_pitch",
+                "wrist_yaw",
+            )
+        ]
+    )
+}
+
+#: ``MotorCmd_.mode`` on ``unitree_hg`` is the enable byte (``1`` = Enable),
+#: which the SDK's H1-2 example writes on every driven slot.
+_HG_MOTOR_ENABLE: int = 0x01
+
+#: The H1-2 example's reference gains: ``kp = 100`` on the legs and torso
+#: (slots 0-12), ``kp = 50`` on the arms, ``kd = 1`` everywhere.
+_H1_2_ARM_FIRST_SLOT: int = 13
+
 
 @dataclass(frozen=True)
 class WireProfile:
@@ -260,8 +326,14 @@ class WireProfile:
         onboard_mode: What the refusals call the motion-switcher mode that
             holds the motors until :meth:`Go2Driver.release_sport_mode`
             releases it. The release is the same ``CheckMode()`` /
-            ``ReleaseMode()`` loop on both robots (the SDK's
-            ``h1_low_level_example.py`` runs it too); only the name differs.
+            ``ReleaseMode()`` loop on every robot (the SDK's H1 and H1-2
+            low-level examples run it too); only the name differs.
+        idl: The ``unitree_sdk2py.idl`` package the robot's ``LowCmd_`` and
+            ``LowState_`` come from: ``"unitree_go"`` (header, ``level_flag``,
+            battery inside ``LowState_``) or ``"unitree_hg"`` (``mode_pr``,
+            ``mode_machine`` echoed from ``rt/lowstate``, battery on
+            ``rt/lf/bmsstate``). A frame of the wrong package fails CRC on the
+            robot and is dropped without a word.
     """
 
     model: str
@@ -270,6 +342,7 @@ class WireProfile:
     kp: dict[int, float]
     kd: dict[int, float]
     onboard_mode: str
+    idl: str = "unitree_go"
 
 
 #: One profile per supported robot, keyed by canonical name.
@@ -289,6 +362,15 @@ WIRE_PROFILES: dict[str, WireProfile] = {
         kp={s: 60.0 if s in _H1_WEAK_SLOTS else 200.0 for s in H1_JOINT_INDEX.values()},
         kd={s: 1.5 if s in _H1_WEAK_SLOTS else 5.0 for s in H1_JOINT_INDEX.values()},
         onboard_mode="the H1's onboard motion mode",
+    ),
+    "unitree_h1_2": WireProfile(
+        model="unitree_h1_2",
+        joint_index=H1_2_JOINT_INDEX,
+        mode=dict.fromkeys(H1_2_JOINT_INDEX.values(), _HG_MOTOR_ENABLE),
+        kp={s: 100.0 if s < _H1_2_ARM_FIRST_SLOT else 50.0 for s in H1_2_JOINT_INDEX.values()},
+        kd=dict.fromkeys(H1_2_JOINT_INDEX.values(), 1.0),
+        onboard_mode="the H1-2's onboard motion mode",
+        idl="unitree_hg",
     ),
 }
 _GO2 = WIRE_PROFILES["unitree_go2"]
@@ -363,34 +445,53 @@ def decode_mode_name(check_mode_return: Any) -> tuple[str | None, str | None]:
     return mode_name, None
 
 
-def _new_lowcmd() -> tuple[Any, str | None]:
-    """Build an empty Go2 ``LowCmd_`` with the protocol header already set.
+def _new_lowcmd(profile: WireProfile, mode_machine: int | None) -> tuple[Any, str | None]:
+    """Build an empty ``LowCmd_`` of the profile's IDL with its header already set.
 
     Both write paths - :func:`build_lowcmd_from_action` and
     :func:`build_zero_torque_lowcmd` - start here, so the header contract is
-    written once. The SDK's default constructor does not set ``head`` or
-    ``level_flag``, and the SDK's own Go2 example sets both on every frame; a
-    frame without them is dropped before CRC is considered, which looks exactly
-    like a driver that is publishing to the wrong topic.
+    written once. On ``unitree_go`` the SDK's default constructor does not set
+    ``head`` or ``level_flag``, and the SDK's own Go2 example sets both on every
+    frame; a frame without them is dropped before CRC is considered, which looks
+    exactly like a driver that is publishing to the wrong topic. On
+    ``unitree_hg`` the frame instead carries ``mode_pr`` and the
+    ``mode_machine`` the robot last reported, which the firmware checks.
+
+    Args:
+        profile: The robot the frame is for.
+        mode_machine: ``LowState_.mode_machine`` as last read; required on
+            ``unitree_hg``, ignored on ``unitree_go``.
 
     Returns:
-        ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent.
+        ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent or
+        a ``unitree_hg`` frame has no ``mode_machine`` to echo.
     """
+    if profile.idl == "unitree_hg" and mode_machine is None:
+        return None, "mode_machine unknown - rt/lowstate has not delivered yet"
     try:
-        from unitree_sdk2py.idl.default import unitree_go_msg_dds__LowCmd_ as _default_lowcmd
+        import importlib
+
+        defaults = importlib.import_module("unitree_sdk2py.idl.default")
+        cmd = getattr(defaults, f"{profile.idl}_msg_dds__LowCmd_")()
     except ImportError as exc:  # pragma: no cover - exercised on hardware
         return None, sdk_missing(exc)
-    cmd = _default_lowcmd()
+    except AttributeError:
+        return None, f"unitree_sdk2py.idl.default has no {profile.idl}_msg_dds__LowCmd_; the installed SDK is too old"
+    expected = _MOTOR_SLOTS[profile.idl]
     # The array length is part of the wire contract, so it is checked rather
     # than assumed: an SDK whose ``motor_cmd`` is shorter than the slots this
     # driver addresses would otherwise raise IndexError from inside the frame
     # builder, several frames into a rollout, instead of naming the mismatch.
     slots = len(cmd.motor_cmd)
-    if slots != _GO2_MOTOR_SLOTS:
+    if slots != expected:
         return None, (
-            f"unitree_go LowCmd_.motor_cmd has {slots} slots, expected {_GO2_MOTOR_SLOTS}; "
-            "the installed unitree_sdk2py IDL does not match the Go2 wire format this driver writes"
+            f"{profile.idl} LowCmd_.motor_cmd has {slots} slots, expected {expected}; "
+            f"the installed unitree_sdk2py IDL does not match the {profile.model} wire format this driver writes"
         )
+    if profile.idl == "unitree_hg":
+        cmd.mode_pr = _MODE_PR_SERIES
+        cmd.mode_machine = mode_machine
+        return cmd, None
     cmd.head[0], cmd.head[1] = _LOWCMD_HEAD
     cmd.level_flag = _LEVEL_FLAG_LOW
     cmd.gpio = 0
@@ -417,7 +518,12 @@ def _seal(cmd: Any) -> str | None:
     return None
 
 
-def _soft_frame(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+def _lowcmd_class(profile: WireProfile) -> Any:
+    """Return the profile's ``LowCmd_`` class, or a reason string when it cannot load."""
+    return _resolve_message_class((f"unitree_sdk2py.idl.{profile.idl}.msg.dds_", "LowCmd_"))
+
+
+def _soft_frame(profile: WireProfile = _GO2, mode_machine: int | None = None) -> tuple[Any, str | None]:
     """Return an unsealed ``LowCmd_`` with every driven slot enabled at zero gain.
 
     The shape both write paths build on: ``mode`` is the profile's byte for the
@@ -427,11 +533,12 @@ def _soft_frame(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
 
     Args:
         profile: The robot whose slots are enabled.
+        mode_machine: Echoed on a ``unitree_hg`` frame; see :func:`_new_lowcmd`.
 
     Returns:
-        ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent.
+        ``(cmd, None)`` on success, ``(None, reason)`` when the frame cannot be built.
     """
-    cmd, err = _new_lowcmd()
+    cmd, err = _new_lowcmd(profile, mode_machine)
     if err is not None:
         return None, err
     for slot in profile.joint_index.values():
@@ -445,7 +552,9 @@ def _soft_frame(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
     return cmd, None
 
 
-def build_lowcmd_from_action(action: dict[str, Any], profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+def build_lowcmd_from_action(
+    action: dict[str, Any], profile: WireProfile = _GO2, mode_machine: int | None = None
+) -> tuple[Any, str | None]:
     """Build a ``LowCmd_`` from a caller's :meth:`Go2Driver.send_action` dict.
 
     A free function so a test can walk the mapping without a driver instance,
@@ -483,6 +592,7 @@ def build_lowcmd_from_action(action: dict[str, Any], profile: WireProfile = _GO2
     Args:
         action: Joint-name-keyed targets.
         profile: The robot the frame is for.
+        mode_machine: Echoed on a ``unitree_hg`` frame; see :func:`_new_lowcmd`.
 
     Returns:
         ``(cmd, None)`` on success, ``(None, reason)`` when the action dict is
@@ -492,7 +602,7 @@ def build_lowcmd_from_action(action: dict[str, Any], profile: WireProfile = _GO2
         return None, f"action must be a dict, got {type(action).__name__}"
     if not action:
         return None, "action is empty; nothing to command"
-    cmd, err = _soft_frame(profile)
+    cmd, err = _soft_frame(profile, mode_machine)
     if err is not None:
         return None, err
     known_inner = set(_WIRE_FIELDS)
@@ -537,7 +647,7 @@ def build_lowcmd_from_action(action: dict[str, Any], profile: WireProfile = _GO2
     return cmd, None
 
 
-def build_zero_torque_lowcmd(profile: WireProfile = _GO2) -> tuple[Any, str | None]:
+def build_zero_torque_lowcmd(profile: WireProfile = _GO2, mode_machine: int | None = None) -> tuple[Any, str | None]:
     """Return a ``LowCmd_`` with every gain and effort zeroed.
 
     A zero-kp/kd/tau motor holds no position and applies no torque - the softest
@@ -548,11 +658,12 @@ def build_zero_torque_lowcmd(profile: WireProfile = _GO2) -> tuple[Any, str | No
 
     Args:
         profile: The robot the frame is for.
+        mode_machine: Echoed on a ``unitree_hg`` frame; see :func:`_new_lowcmd`.
 
     Returns:
-        ``(cmd, None)`` on success, ``(None, reason)`` when the SDK is absent.
+        ``(cmd, None)`` on success, ``(None, reason)`` when the frame cannot be built.
     """
-    cmd, err = _soft_frame(profile)
+    cmd, err = _soft_frame(profile, mode_machine)
     if err is not None:
         return None, err
     if (err := _seal(cmd)) is not None:
@@ -652,6 +763,9 @@ class Go2Driver:
         self._battery: dict[str, Any] | None = None
         self._joints: dict[str, Any] | None = None
         self._sport: dict[str, Any] | None = None
+        # ``LowState_.mode_machine`` on a ``unitree_hg`` robot: the hardware
+        # layout id every ``LowCmd_`` must echo. ``None`` until lowstate lands.
+        self._mode_machine: int | None = None
 
         # Sport-mode release state. ``None`` means "never asked".
         self._sport_mode_released: bool = False
@@ -784,11 +898,15 @@ class Go2Driver:
         """Return ``(topic, (idl_module, idl_class), decoder)`` for every topic.
 
         A method rather than a constant so a test can read the plan without
-        constructing DDS, and so the IDL package this driver uses -
-        ``unitree_go``, not the G1's ``unitree_hg`` - is stated in exactly one
-        place.
+        constructing DDS, and so the IDL package each profile reads - and the
+        battery topic that comes with it - is stated in exactly one place.
         """
-        idl = "unitree_sdk2py.idl.unitree_go.msg.dds_"
+        idl = f"unitree_sdk2py.idl.{self._profile.idl}.msg.dds_"
+        if self._profile.idl == "unitree_hg":
+            return [
+                (_TOPIC_LOWSTATE, (idl, "LowState_"), self._on_lowstate),
+                (_TOPIC_BMS, (idl, "BmsState_"), self._on_bms),
+            ]
         return [
             (_TOPIC_LOWSTATE, (idl, "LowState_"), self._on_lowstate),
             (_TOPIC_SPORTMODE, (idl, "SportModeState_"), self._on_sportmode),
@@ -1142,6 +1260,8 @@ class Go2Driver:
                 + " - call release_sport_mode() first, or the onboard controller and this "
                 "driver fight over the same motors"
             )
+        if self._profile.idl == "unitree_hg" and self._mode_machine is None:
+            return refuse(f"{scope} refused: mode_machine unknown - rt/lowstate has not delivered yet")
         battery_pct = (self._battery or {}).get("pct")
         if battery_pct is not None and battery_pct < self._battery_floor_pct:
             return refuse(f"{scope} refused: battery {battery_pct:.1f}% is under floor {self._battery_floor_pct:.1f}%")
@@ -1185,14 +1305,13 @@ class Go2Driver:
             return refusal
         if self._pubs is None:
             return refuse("publisher not initialised - call connect_eagerly() first")
-        cmd, err = build_lowcmd_from_action(action, self._profile)
+        cmd, err = build_lowcmd_from_action(action, self._profile, self._mode_machine)
         if err is not None:
             return refuse(err)
-        try:
-            from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
-        except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return refuse(sdk_missing(exc))
-        pub_err = self._pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+        lowcmd = _lowcmd_class(self._profile)
+        if isinstance(lowcmd, str):
+            return refuse(lowcmd)
+        pub_err = self._pubs.publish(_TOPIC_LOWCMD, lowcmd, cmd)
         if pub_err is not None:
             return refuse(pub_err)
         return {
@@ -1452,8 +1571,31 @@ class Go2Driver:
             joints = decode_motor_state(getattr(msg, "motor_state", None), self._profile.joint_index)
             if joints is not None:
                 self._joints = joints
+            if self._profile.idl == "unitree_hg":
+                mode_machine = telemetry_int(getattr(msg, "mode_machine", None))
+                if mode_machine is not None:
+                    self._mode_machine = mode_machine
         except Exception as exc:  # noqa: BLE001 - IDL message can be anything
             logger.debug("%s: lowstate decode failed: %s", self._tool_name, exc)
+
+    def _on_bms(self, msg: Any) -> None:
+        """Cache the battery from ``rt/lf/bmsstate`` on a ``unitree_hg`` robot.
+
+        The ``unitree_hg`` ``LowState_`` carries no ``bms_state``, so the
+        battery floor's input arrives on its own topic, as it does on the G1.
+        Never raises, for the reason :meth:`_on_lowstate` states.
+
+        Args:
+            msg: The decoded ``unitree_hg`` ``BmsState_``.
+        """
+        try:
+            self._battery = {
+                "pct": telemetry_float(getattr(msg, "soc", None)),
+                "current": telemetry_float(getattr(msg, "current", None)),
+                "cycle": telemetry_int(getattr(msg, "cycle", None)),
+            }
+        except Exception as exc:  # noqa: BLE001 - IDL message can be anything
+            logger.debug("%s: bmsstate decode failed: %s", self._tool_name, exc)
 
     def _on_sportmode(self, msg: Any) -> None:
         """Cache body pose, velocity and gait from ``rt/sportmodestate``.
@@ -1644,16 +1786,15 @@ class _ControlLoop:
         if pubs is None:
             logger.warning("go2 control loop: no publisher at shutdown; no zero-torque frame sent")
             return
-        cmd, err = build_zero_torque_lowcmd(self._driver._profile)
+        cmd, err = build_zero_torque_lowcmd(self._driver._profile, self._driver._mode_machine)
         if err is not None:
             logger.error("go2 control loop: cannot build the zero-torque frame: %s", err)
             return
-        try:
-            from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
-        except ImportError as exc:  # pragma: no cover - exercised on hardware
-            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", sdk_missing(exc))
+        lowcmd = _lowcmd_class(self._driver._profile)
+        if isinstance(lowcmd, str):
+            logger.error("go2 control loop: cannot publish the zero-torque frame: %s", lowcmd)
             return
-        pub_err = pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+        pub_err = pubs.publish(_TOPIC_LOWCMD, lowcmd, cmd)
         if pub_err is not None:
             logger.error("go2 control loop: zero-torque frame did not publish: %s", pub_err)
 
@@ -1687,7 +1828,7 @@ class _ControlLoop:
                     if self._stop_event.is_set():
                         break
                     cmd, err = build_lowcmd_from_action(
-                        action if isinstance(action, dict) else {}, self._driver._profile
+                        action if isinstance(action, dict) else {}, self._driver._profile, self._driver._mode_machine
                     )
                     if err is not None:
                         with self._lock:
@@ -1729,11 +1870,10 @@ class _ControlLoop:
         pubs = self._driver._pubs
         if pubs is None:
             return "publisher was released while the loop was running"
-        try:
-            from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowCmd_
-        except ImportError as exc:  # pragma: no cover - exercised on hardware
-            return sdk_missing(exc)
-        return pubs.publish(_TOPIC_LOWCMD, LowCmd_, cmd)
+        lowcmd = _lowcmd_class(self._driver._profile)
+        if isinstance(lowcmd, str):
+            return lowcmd
+        return pubs.publish(_TOPIC_LOWCMD, lowcmd, cmd)
 
 
 def _refusal_text(refusal: dict[str, Any]) -> str:
