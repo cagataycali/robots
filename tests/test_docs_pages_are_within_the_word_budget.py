@@ -93,7 +93,10 @@ _BUDGET: int = _hook().LIMIT
 #: Raised for the mjlab backend page (learn/simulation/mjlab.md) and its cross-links, carried in by merge.
 #: Lowered by 11 to 69,284 when the See it page was rewritten for a first-time reader. Banked to the exact total.
 #: Lowered by 9 to 69,275 when four hardware-page calls were corrected to the ones that run. Banked to the exact total.
-_SITE_BUDGET = 69_275
+#: Raised by 242 to 69,517 when URDriver began serving nine more UR arms: each of their generated
+#: robot pages gained the real-mode fence and Hardware line every driven robot page carries; the
+#: hand-written UR page stayed net -1. Banked to the exact total.
+_SITE_BUDGET = 69_517
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

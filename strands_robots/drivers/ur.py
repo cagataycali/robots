@@ -1,4 +1,4 @@
-"""Native RTDE driver for the Universal Robots e-Series (UR5e, UR10e).
+"""Native RTDE driver for the Universal Robots e-Series and UR-Series arms.
 
 ``Robot("ur5e", mode="real", driver="strands", port="192.168.1.10")`` builds one
 of these. The instance satisfies
@@ -89,11 +89,10 @@ logger = logging.getLogger(__name__)
 #: The robots this driver serves, read by
 #: :data:`strands_robots.drivers._SHIPPED_DRIVERS` so the family is declared
 #: once, here, rather than restated in the registration table.
-SUPPORTED_ROBOTS: tuple[str, ...] = ("ur5e", "ur10e")
 
 #: Joint order for every vector crossing the RTDE wire, base to wrist. This is
 #: the order ``getActualQ`` returns and ``servoJ`` expects, and it is also the
-#: order the MuJoCo assets for both arms declare their joints in - so an action
+#: order the MuJoCo assets for every served arm declare their joints in - so an action
 #: dict recorded in simulation indexes onto the wire without a remap, and
 #: :func:`targets_from_action` needs no per-robot key table.
 JOINT_NAMES: tuple[str, ...] = (
@@ -105,26 +104,60 @@ JOINT_NAMES: tuple[str, ...] = (
     "wrist_3_joint",
 )
 
-#: Per-joint position limit, radians. Every e-Series joint travels +/-360
-#: degrees, so one number covers all six and both arms.
+#: Per-joint position limit, radians. Every served joint travels +/-360
+#: degrees (the UR3e's wrist 3 without limit), so one number covers them all.
 JOINT_LIMIT_RAD: float = 2.0 * math.pi
 
 #: Maximum joint speed per model, radians/second, in :data:`JOINT_NAMES` order.
-#: From the datasheets: every UR5e joint runs to 180 deg/s, where the UR10e's
-#: three proximal joints are held to 120 deg/s by its longer reach. The
-#: distinction is why one driver serving both arms still needs a table: sizing a
-#: step budget with the UR5e's number on a UR10e would ask the controller for a
-#: motion it will not perform.
+#: Copied from ``config/<model>/joint_limits.yaml`` in
+#: UniversalRobots/Universal_Robots_ROS2_Description, which cites each arm's
+#: user manual and is the description the MuJoCo assets compile from. The
+#: models differ by joint, not by arm: a UR10e's base and shoulder run to
+#: 120 deg/s while its elbow runs to 180, and a UR20's elbow is held to 150.
+#: Sizing a step budget with another model's row would ask the controller for
+#: a motion it will not perform.
 MAX_JOINT_SPEED_RAD_S: dict[str, tuple[float, ...]] = {
-    "ur5e": (math.pi,) * 6,
-    "ur10e": (2.0 * math.pi / 3.0,) * 3 + (math.pi,) * 3,
+    model: tuple(math.radians(deg) for deg in row)
+    for model, row in {
+        "ur3e": (180, 180, 180, 360, 360, 360),
+        "ur5e": (180, 180, 180, 180, 180, 180),
+        "ur7e": (180, 180, 180, 180, 180, 180),
+        "ur10e": (120, 120, 180, 180, 180, 180),
+        "ur12e": (120, 120, 180, 180, 180, 180),
+        "ur16e": (120, 120, 180, 180, 180, 180),
+        "ur8long": (180, 180, 240, 300, 300, 300),
+        "ur15": (180, 180, 240, 300, 300, 300),
+        "ur18": (180, 180, 240, 300, 300, 300),
+        "ur20": (120, 120, 150, 210, 210, 210),
+        "ur30": (120, 120, 150, 210, 210, 210),
+    }.items()
 }
 
-#: Model whose limits an unrecognised UR name is held to. The slower arm on
-#: purpose: an unknown model given the faster budget would have its steps
-#: accepted here and dropped by the controller, which is the failure this gate
-#: exists to prevent.
-FALLBACK_MODEL: str = "ur10e"
+#: The robots this driver serves, read by
+#: :data:`strands_robots.drivers._SHIPPED_DRIVERS` so the family is declared
+#: once, here, rather than restated in the registration table. Every arm on a
+#: 500 Hz e-Series or UR-Series controller with the six joints above; the CB3
+#: arms (``ur3``, ``ur5``, ``ur10``) run a different controller generation and
+#: are not served. A literal, because the docs hook reads it with ``ast``.
+SUPPORTED_ROBOTS: tuple[str, ...] = (
+    "ur3e",
+    "ur5e",
+    "ur7e",
+    "ur10e",
+    "ur12e",
+    "ur16e",
+    "ur8long",
+    "ur15",
+    "ur18",
+    "ur20",
+    "ur30",
+)
+
+#: Ceilings an unrecognised UR name is held to: per joint, the slowest any
+#: served model allows. An unknown model given a faster budget would have its
+#: steps accepted here and dropped by the controller, which is the failure this
+#: gate exists to prevent.
+FALLBACK_SPEED_RAD_S: tuple[float, ...] = tuple(map(min, zip(*MAX_JOINT_SPEED_RAD_S.values(), strict=True)))
 
 #: The controller's own RTDE port. Fixed by the protocol; carried as a constant
 #: so a caller passing ``port="10.0.0.2:30004"`` is answered rather than having
@@ -228,7 +261,7 @@ def _axis_count_refusal(values: list[float], quantity: str) -> str | None:
         return None
     return (
         f"the controller reported {len(values)} {quantity}, expected {len(JOINT_NAMES)}. "
-        "This driver serves six-axis e-Series arms only."
+        "This driver serves six-axis e-Series and UR-Series arms only."
     )
 
 
@@ -268,10 +301,10 @@ def speed_limits(model: str) -> tuple[float, ...]:
 
     Returns:
         Six ceilings in :data:`JOINT_NAMES` order - the model's own row of
-        :data:`MAX_JOINT_SPEED_RAD_S`, or :data:`FALLBACK_MODEL`'s row for a
+        :data:`MAX_JOINT_SPEED_RAD_S`, or :data:`FALLBACK_SPEED_RAD_S` for a
         name the table does not carry.
     """
-    return MAX_JOINT_SPEED_RAD_S.get(resolve_name(model), MAX_JOINT_SPEED_RAD_S[FALLBACK_MODEL])
+    return MAX_JOINT_SPEED_RAD_S.get(resolve_name(model), FALLBACK_SPEED_RAD_S)
 
 
 def targets_from_action(
@@ -364,7 +397,7 @@ def targets_from_action(
 
 
 class URDriver:
-    """Native RTDE driver for a Universal Robots e-Series arm.
+    """Native RTDE driver for a Universal Robots e-Series or UR-Series arm.
 
     Satisfies :class:`~strands_robots.drivers.base.HardwareDriver` structurally,
     so no import from that module is needed; the surface check
@@ -526,7 +559,7 @@ class URDriver:
             {
                 "name": self._tool_name,
                 "description": (
-                    "Universal Robots e-Series native RTDE driver. Reads joints, TCP pose and TCP "
+                    "Universal Robots e-Series / UR-Series native RTDE driver. Reads joints, TCP pose and TCP "
                     "wrench from the controller, reports connection and safety state, and stops "
                     "motion. Joint targets go through send_action; a rollout through run_policy."
                 ),
