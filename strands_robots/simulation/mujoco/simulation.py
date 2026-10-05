@@ -2515,8 +2515,9 @@ class MuJoCoSimEngine(
                 "content": [
                     {
                         "text": (
-                            f"Robot '{name}' already exists. Pick a different "
-                            f"name, or omit name= to auto-number. Existing: {taken}."
+                            f"add_robot: robot '{name}' already exists. Pick a different name, "
+                            f"omit name= to auto-number, or remove it first (remove_robot). "
+                            f"Existing: {taken}."
                         )
                     }
                 ],
@@ -5659,7 +5660,7 @@ class MuJoCoSimEngine(
         if name in self._world.cameras:
             return {
                 "status": "error",
-                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
+                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first (remove_camera)."}],
             }
 
         # Validate the mount target up front so the user gets a clear,

@@ -744,26 +744,48 @@ class TestEveryClaimingOpRoutesThroughTheDomain:
 # --------------------------------------------------------------------------- #
 # A taken name                                                                #
 # --------------------------------------------------------------------------- #
-_TAKEN = "add_object: object 'cube' already exists. Remove it first (remove_object)."
+_REMEDY = {
+    "object": "add_object: object 'x' already exists. Remove it first (remove_object).",
+    "camera": "add_camera: camera 'x' already exists. Remove it first (remove_camera).",
+    "robot": "add_robot: robot 'x' already exists. Pick a different name, or remove it first (remove_robot).",
+}
+# MuJoCo lists the robots it has (and can auto-number), so its add_robot line
+# says more; it still starts with the verb and names the remover.
+_MUJOCO_ROBOT = (
+    "add_robot: robot 'x' already exists. Pick a different name, omit name= to "
+    "auto-number, or remove it first (remove_robot). Existing: x."
+)
 
 
+def _add_twice_on_mujoco(sim, kind: str, arm_path: str) -> dict:
+    add = {
+        "object": lambda: sim.add_object("x", shape="box"),
+        "camera": lambda: sim.add_camera("x"),
+        "robot": lambda: sim.add_robot(name="x", urdf_path=arm_path),
+    }[kind]
+    assert add()["status"] == "success"
+    return add()
+
+
+@pytest.mark.parametrize("kind", tuple(_REMEDY))
 @pytest.mark.parametrize("backend", ("mujoco", "newton", "isaac"))
-def test_a_taken_object_name_is_refused_with_the_same_remedy_on_every_backend(backend, sim):
-    """An addressable name that is taken gets its own refusal, worded alike everywhere.
+def test_a_taken_name_is_refused_with_the_verb_and_its_remover_on_every_backend(backend, kind, sim, arm_path):
+    """Adding a second object, camera or robot under a taken name names the way out.
 
-    MuJoCo used to answer ``Object 'cube' exists.`` while Newton and Isaac said
-    ``already exists`` - and none named the way out that ``add_camera`` does.
+    ``add_object`` learned to answer with its verb and ``remove_object``; its
+    siblings still said ``Camera 'x' already exists.`` or ``Robot 'x' already
+    exists.`` with no verb and no remover, differently on each backend.
     """
     if backend == "mujoco":
-        assert sim.add_object("cube", shape="box")["status"] == "success"
-        result = sim.add_object("cube", shape="box")
+        result = _add_twice_on_mujoco(sim, kind, arm_path)
     elif backend == "newton":
         stub = _newton_stub()
-        stub._world.objects["cube"] = object()
-        result = NewtonSimEngine.add_object(stub, "cube")  # type: ignore[arg-type]
+        getattr(stub._world, f"{kind}s")["x"] = object()
+        result = getattr(NewtonSimEngine, f"add_{kind}")(stub, "x")
     else:
         isaac = _isaac_stub()
-        isaac._objects["cube"] = object()
-        result = IsaacSimulation.add_object(isaac, "cube")  # type: ignore[arg-type]
+        getattr(isaac, f"_{kind}s")["x"] = object()
+        result = getattr(IsaacSimulation, f"add_{kind}")(isaac, "x")
+    expected = _MUJOCO_ROBOT if (backend, kind) == ("mujoco", "robot") else _REMEDY[kind]
     assert result["status"] == "error", result
-    assert result["content"][0]["text"] == _TAKEN
+    assert result["content"][0]["text"] == expected
