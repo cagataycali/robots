@@ -192,6 +192,11 @@ class TeleopMixin:
             apply_fn=apply_fn,
         )
         receiver.start()
+        if receiver.start_refusal is not None:
+            # The stream did not open (the leader has no bound session), so
+            # nothing follows anyone: say so rather than report a session that
+            # does not exist.
+            return {"status": "error", "content": [{"text": receiver.start_refusal}]}
         self._input_receivers[key] = receiver
 
         return {

@@ -46,6 +46,7 @@ from strands_robots.mesh.session import (
     session_alive,
     update_peer,
 )
+from tests._wire_source import bound_source
 
 # ===========================================================================
 # Fixtures
@@ -828,6 +829,7 @@ class TestInputPublisherReceiver:
 
         m = Mesh(FakeRobot(), peer_id="recv-test")
         m.start()
+        bound_source(m, "leader-1")
 
         recv = InputReceiver(m, robot, source_peer_id="leader-1", device_name="leader")
         recv.start()
@@ -863,6 +865,7 @@ class TestInputPublisherReceiver:
 
         m = Mesh(FakeRobot(), peer_id="recv-drop")
         m.start()
+        bound_source(m, "src")
 
         recv = InputReceiver(m, robot, source_peer_id="src", device_name="arm")
         recv.start()

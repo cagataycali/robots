@@ -37,7 +37,7 @@ _LOGGER = "strands_robots.mesh.input"
 
 #: The causes this path refuses for, and the per-cause log budget, stated here as
 #: well as in the module so a rename cannot quietly narrow what this file grades.
-_CAUSES = ("lockout", "freshness", "invalid")
+_CAUSES = ("source", "lockout", "expired", "freshness", "invalid")
 _BUDGET = 5
 
 
@@ -99,7 +99,7 @@ class TestARefusalNamesTheGuardThatRefusedIt:
         missing = [f"rejected_{c}" for c in _CAUSES if f"rejected_{c}" not in stats]
         assert missing == [], f"the total is reported with no breakdown behind it: {missing}"
         breakdown = {c: stats[f"rejected_{c}"] for c in _CAUSES}
-        assert breakdown == {"lockout": 0, "freshness": 3, "invalid": 2}
+        assert breakdown == {"source": 0, "lockout": 0, "expired": 0, "freshness": 3, "invalid": 2}
         assert stats["rejected"] == sum(breakdown.values()) == 5
 
 
@@ -195,16 +195,19 @@ class TestTheAccountingHasOneOwner:
             assert "self._rejected" not in gate, f"the log budget is measured against the shared total again: {gate!r}"
 
     def test_every_refusal_site_names_a_declared_cause(self):
-        src = textwrap.dedent(inspect.getsource(InputReceiver._on_input))
-        fn = ast.parse(src).body[0]
-        causes = [
-            node.args[0].value
-            for node in ast.walk(fn)
-            if isinstance(node, ast.Call)
-            and ast.unparse(node.func) == "self._refuse"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-        ]
+        # The receive path is two methods: ``_on_frame`` admits a frame from the
+        # bound publisher session, ``_on_input`` grades what it carries.
+        causes = []
+        for method in (InputReceiver._on_frame, InputReceiver._on_input):
+            fn = ast.parse(textwrap.dedent(inspect.getsource(method))).body[0]
+            causes += [
+                node.args[0].value
+                for node in ast.walk(fn)
+                if isinstance(node, ast.Call)
+                and ast.unparse(node.func) == "self._refuse"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+            ]
         assert len(causes) >= 4, f"the scan found no refusal sites to grade: {causes}"
         unknown = sorted(set(causes) - set(mesh_input._REJECTION_CAUSES))
         assert unknown == [], f"refusal sites name causes no report enumerates: {unknown}"

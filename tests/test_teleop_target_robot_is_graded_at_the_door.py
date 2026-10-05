@@ -92,6 +92,9 @@ class _Mesh:
     def __init__(self) -> None:
         self._estop_lockout = None
 
+    def peer_wire_zid(self, peer_id: str) -> str | None:
+        return "a1b2c3d4e5f60718"
+
     def subscribe(self, *a: Any, **k: Any) -> str:
         return "sub"
 

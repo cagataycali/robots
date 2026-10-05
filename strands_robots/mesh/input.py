@@ -45,6 +45,7 @@ from strands_robots.mesh.session import hz_from_env
 from strands_robots.utils import (
     partial_construction_repr,
     positive_finite_number_error,
+    refusal_str,
     teleoperator_contract_error,
 )
 
@@ -90,11 +91,31 @@ INPUT_MAX_HZ_DEFAULT = 100.0
 #: place a refusal states which value it refused and against which bound.
 _REFUSAL_LOG_BUDGET = 5
 
-#: The refusal causes that share the ``rejected`` total, in the order
-#: :meth:`InputReceiver._on_input` checks them. Each is reported as
+#: The refusal causes that share the ``rejected`` total, in the order the
+#: receive path checks them: ``source`` in :meth:`InputReceiver._on_frame`
+#: (the frame's publisher session is not the one the stream is bound to), then
+#: :meth:`InputReceiver._on_input` for the rest. Each is reported as
 #: ``rejected_<cause>`` in :attr:`InputReceiver.stats` and spends its own share of
 #: :data:`_REFUSAL_LOG_BUDGET`.
-_REJECTION_CAUSES: tuple[str, ...] = ("lockout", "freshness", "invalid")
+_REJECTION_CAUSES: tuple[str, ...] = ("source", "lockout", "expired", "freshness", "invalid")
+
+#: How long an approved teleop stream may follow its leader before it ends on
+#: its own, in seconds. An operator's yes to ``teleop_receive`` is a yes to a
+#: session, not to a standing grant: without a lifetime the stream drove the
+#: follower until someone remembered to stop it. Operator-tunable via
+#: ``STRANDS_MESH_INPUT_STREAM_TTL_S``; an unusable value (missing, not a
+#: number, non-finite, zero or negative) falls back to this default rather than
+#: disabling the limit, because a knob that can be mis-set to "forever" is not
+#: a limit.
+_INPUT_STREAM_TTL_DEFAULT_S = 900.0
+
+
+def _input_stream_ttl_s() -> float:
+    """Resolve ``STRANDS_MESH_INPUT_STREAM_TTL_S`` (lazy, read when a stream opens)."""
+    ttl, reason = hz_from_env("STRANDS_MESH_INPUT_STREAM_TTL_S")
+    if ttl is None or reason is not None or ttl <= 0:
+        return _INPUT_STREAM_TTL_DEFAULT_S
+    return ttl
 
 
 def _input_max_hz() -> float:
@@ -534,6 +555,18 @@ class InputReceiver:
         self._apply_fn = apply_fn or self._default_apply
         self._running = False
         self._sub_name: str | None = None
+        # The TLS-bound session the leader announced its presence from, read
+        # from the mesh when the stream opens; a frame whose sample came from
+        # any other session is refused (``_on_frame``). ``None`` until
+        # :meth:`start` binds it, and :meth:`start` refuses to open a stream it
+        # cannot bind.
+        self._bound_zid: str | None = None
+        #: Why :meth:`start` refused to open the stream, or ``None``.
+        self.start_refusal: str | None = None
+        # When the stream ends on its own (monotonic clock); set by :meth:`start`
+        # from ``STRANDS_MESH_INPUT_STREAM_TTL_S`` and checked per frame.
+        self._expires_mono = float("inf")
+        self._lifetime_s = 0.0
         self._frame_count = 0
         self._error_count = 0
         self._last_seq = -1
@@ -605,7 +638,10 @@ class InputReceiver:
 
         ``rejected`` is the total of a breakdown that names which guard refused
         the frame, so a report does not have to recover the reason from the
-        log: ``rejected_lockout`` (arrived during an E-stop lockout),
+        log: ``rejected_source`` (the sample's publisher session is not the
+        one the stream was bound to when it opened), ``rejected_lockout``
+        (arrived during an E-stop lockout), ``rejected_expired`` (the stream's
+        lifetime passed; the stream is stopped on that frame),
         ``rejected_freshness`` (the frame's ``t`` is missing, non-numeric, stale
         or too far in the future - the replay defence), and ``rejected_invalid``
         (``validate_input_frame`` refused the frame's shape or a value: too many
@@ -630,27 +666,63 @@ class InputReceiver:
         }
 
     def start(self) -> None:
-        """Start receiving input actions from the remote peer."""
+        """Start receiving input actions from the remote peer.
+
+        The stream is bound to the session the leader announced its presence
+        from and refused when there is none: the key expression scopes the
+        stream to the leader's NAME, which any admitted peer can publish under,
+        so without the binding an approval for one leader followed whoever
+        reached the topic. The opening, its lifetime and the bound session are
+        written to the safety log; :attr:`start_refusal` says why a stream did
+        not open.
+        """
         if self._running:
             return
+        self.start_refusal = None
+        bound = self.mesh.peer_wire_zid(self.source_peer_id)
+        if bound is None:
+            self.start_refusal = (
+                f"teleop stream from {refusal_str(self.source_peer_id)} refused: that leader has not announced "
+                "its presence from any session, so its frames cannot be told from another peer's. "
+                "Stopping is never gated."
+            )
+            logger.warning("[mesh] %s", self.start_refusal)
+            self._safety_event("input_stream_refused", {"reason": "leader has no bound session"})
+            return
+        self._bound_zid = bound
+        self._lifetime_s = _input_stream_ttl_s()
         self._running = True
         # Stamped together - see ``_achieved_hz``.
         self._start_mono = time.monotonic()
+        self._expires_mono = self._start_mono + self._lifetime_s
         self._window_start_frames = self._frame_count
         self._sub_name = self.mesh.subscribe(
             self.topic,
-            callback=self._on_input,
+            on_sample=self._on_frame,
             name=f"input:{self.source_peer_id}/{self.device_name}",
         )
         if self._sub_name:
             logger.info(
-                "[mesh] input receiver started: %s from %s",
+                "[mesh] input receiver started: %s from %s (session %s, ends in %.0f s)",
                 self.device_name,
                 self.source_peer_id,
+                bound[:8],
+                self._lifetime_s,
             )
+            self._safety_event("input_stream_opened", {"wire_zid": bound, "lifetime_s": self._lifetime_s})
         else:
             logger.warning("[mesh] input receiver failed to subscribe: %s", self.topic)
             self._running = False
+
+    def _safety_event(self, event: str, extra: dict[str, Any]) -> None:
+        """Write one stream lifecycle row to the local safety log, never raising."""
+        audit = getattr(self.mesh, "_audit_local", None)
+        if not callable(audit):
+            return
+        try:
+            audit(event, {"source": self.source_peer_id, "device": self.device_name, **extra})
+        except (TypeError, ValueError, OSError) as audit_exc:
+            logger.debug("[mesh] input audit unavailable: %s", audit_exc)
 
     def stop(self) -> dict[str, Any]:
         """Stop receiving and return stats."""
@@ -689,8 +761,46 @@ class InputReceiver:
         if seen <= _REFUSAL_LOG_BUDGET:
             logger.warning(message, *args)
 
+    def _on_frame(self, topic: str, data: dict[str, Any], wire_zid: str | None) -> None:
+        """The subscription callback: admit a frame only from the bound session.
+
+        ``wire_zid`` is the publisher session id the transport attached to the
+        sample (``None`` when it attached none). A started stream always has a
+        bound session, so a frame that carries none, or another one, is refused
+        and counted under ``source`` before any other check reads it.
+        """
+        if not self._running:
+            return
+        if self._bound_zid is None or wire_zid != self._bound_zid:
+            self._refuse(
+                "source",
+                "[mesh] input frame rejected from %s: publisher session %s is not the one the stream is bound to",
+                self.source_peer_id,
+                (wire_zid or "none")[:8],
+            )
+            return
+        self._on_input(topic, data)
+
+    def _expire(self) -> None:
+        """End a stream whose lifetime has passed, once, and write it to the safety log."""
+        logger.warning(
+            "[mesh] input stream from %s ended: its %.0f s lifetime passed (approve teleop_receive again to continue)",
+            self.source_peer_id,
+            self._lifetime_s,
+        )
+        self._safety_event("input_stream_expired", {"lifetime_s": self._lifetime_s, "frames": self._frame_count})
+        self.stop()
+
     def _on_input(self, topic: str, data: dict[str, Any]) -> None:
         if not self._running:
+            return
+        if time.monotonic() >= self._expires_mono:
+            self._refuse(
+                "expired",
+                "[mesh] input frame rejected from %s: the stream's lifetime has passed",
+                self.source_peer_id,
+            )
+            self._expire()
             return
         # E-stop lockout MUST gate the teleop input path the
         # same way it gates the command path (see Mesh._dispatch). Without

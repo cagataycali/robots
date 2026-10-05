@@ -199,7 +199,7 @@ class TestH3CmdReplay:
         m._estop_lockout = threading.Event()
         m.dispatched = []
 
-        def _fake_dispatch(cmd):
+        def _fake_dispatch(cmd, source=None):
             m.dispatched.append(cmd)
             return {"ok": True}
 
@@ -260,7 +260,7 @@ class TestM5SuccessAudit:
         m._cmd_replay_cache = {}
         m._cmd_replay_lock = threading.Lock()
         m._estop_lockout = threading.Event()
-        m._dispatch = lambda cmd: {"ok": True}
+        m._dispatch = lambda cmd, source=None: {"ok": True}
         m.publish = lambda *a, **k: None
 
         m._exec_cmd(
@@ -283,7 +283,7 @@ class TestM5SuccessAudit:
         m._cmd_replay_cache = {}
         m._cmd_replay_lock = threading.Lock()
         m._estop_lockout = threading.Event()
-        m._dispatch = lambda cmd: {"status": "idle"}
+        m._dispatch = lambda cmd, source=None: {"status": "idle"}
         m.publish = lambda *a, **k: None
 
         m._exec_cmd({"sender_id": "op", "turn_id": "t2", "command": {"action": "status"}})

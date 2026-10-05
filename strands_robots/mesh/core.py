@@ -4701,9 +4701,21 @@ class Mesh(SensorLoopsMixin):
 
     # Subscribe / publish_step / on_stream
     def subscribe(
-        self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None
+        self,
+        topic: str,
+        callback: Callable[[str, dict[str, Any]], None] | None = None,
+        name: str | None = None,
+        *,
+        on_sample: Callable[[str, dict[str, Any], str | None], None] | None = None,
     ) -> str | None:
         """Subscribe to any Zenoh topic and receive parsed JSON dicts.
+
+        ``callback(key, data)`` receives the decoded payload. ``on_sample(key,
+        data, wire_zid)`` receives it together with the publisher's TLS-bound
+        session id read off the sample (:func:`_extract_sample_source_zid`,
+        ``None`` when the sample carried none), for a subscriber that must
+        bind what it applies to who published it; the teleop input receiver is
+        one. The two are exclusive.
 
         Returns:
             The subscription name (``name`` when given, else *topic*) once the
@@ -4732,6 +4744,8 @@ class Mesh(SensorLoopsMixin):
                 f"subscribe: callback must be callable, got {callback!r} - the signature is "
                 "subscribe(topic, callback=None, name=None); did you pass the name first?"
             )
+        if on_sample is not None and (callback is not None or not callable(on_sample)):
+            raise TypeError("subscribe: on_sample must be callable and is exclusive with callback")
         if name is not None and not isinstance(name, str):
             raise TypeError(
                 f"subscribe: name must be a string, got {type(name).__name__} - the signature is "
@@ -4768,7 +4782,9 @@ class Mesh(SensorLoopsMixin):
                     data = json.loads(raw)
                 except json.JSONDecodeError:
                     data = {"raw": raw}
-                if callback is not None:
+                if on_sample is not None:
+                    on_sample(key, data, _extract_sample_source_zid(sample))
+                elif callback is not None:
                     callback(key, data)
                 else:
                     with self._inbox_lock:

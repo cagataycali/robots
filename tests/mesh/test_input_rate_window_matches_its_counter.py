@@ -82,6 +82,9 @@ class _StubTransport:
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
 
+    def peer_wire_zid(self, peer_id: str) -> str | None:
+        return "a1b2c3d4e5f60718"
+
     def subscribe(self, topic: str, **_kwargs: Any) -> str:
         self.subscribed.append(topic)
         return f"sub-{len(self.subscribed)}"
