@@ -393,10 +393,13 @@ def import_policy_class(provider: str) -> type:
                 return attr
 
     # Offer the nearest registered spellings, the way Robot() does for a robot
-    # name: case and dash are folded, and 0.6 is Robot()'s cutoff, which is
-    # what lets NVIDIA's own spelling ``gr00t`` find ``groot``.
+    # name: case and dash are folded, and 0.6 is Robot()'s cutoff. Aliases are
+    # searched but each match is named by the provider it routes to, once, so
+    # ``text2motion`` is offered as ``kimodo`` and ``gtp``/``gtp_g1`` as one
+    # ``protomotions``.
     folded = provider.lower().replace("-", "_")
-    close = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
+    matches = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
+    close = list(dict.fromkeys(map(_canonical_provider_name, matches)))
     hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
     raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")
 
