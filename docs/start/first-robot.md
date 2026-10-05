@@ -83,7 +83,7 @@ What each call did:
 | `render()` | a PNG from the free camera in the same envelope an agent tool returns |
 | `cleanup()` | frees the world and the renderer |
 
-Every call but `get_observation()`, `cleanup()` (`None`) and the listers `list_robots()`, `robot_joint_names()`, `list_cameras()` (a `list`) returns the same envelope: `status` and a `content` list of `text`, `json` or `image` blocks. An agent mounting the robot as a tool reads that envelope, so you print what the model sees.
+Every call but `get_observation()`, `cleanup()` (`None`) and listers `list_robots()`, `robot_joint_names()`, `list_cameras()` (a `list`) returns the same envelope: `status` and a `content` list of `text`, `json` or `image` blocks. An agent mounting the robot as a tool reads that envelope, so you print what the model sees.
 
 A label works as a key: `send_action({"shoulder_pan": 0.5})` writes joint `1`. A key the robot does not have is not silently dropped: it returns `status="error"` naming the valid keys and labels.
 
