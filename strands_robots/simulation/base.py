@@ -1974,7 +1974,16 @@ class SimEngine(ABC):
 
         Returns:
             Observation dict per schema above. Returns ``{}`` if the world
-            is not yet created or ``robot_name`` is unknown.
+            is not yet created, torn down (post-:meth:`destroy`), has no
+            robots, or ``robot_name`` is unknown. Backends emit a WARNING
+            (``get_observation(...)``) before returning the empty dict so a
+            caller reading an empty observation as a heartbeat (``while obs:
+            step()``) does not loop silently - the dict shape is kept so
+            multi-engine rollouts need no type-narrowing per backend, but
+            the log is what makes the degraded mode visible. Siblings on
+            the same engine (``send_action``, ``step``, ``get_robot_state``)
+            route through :data:`_NO_WORLD_MSG` and return
+            ``status="error"`` on the same condition.
         """
         ...
 

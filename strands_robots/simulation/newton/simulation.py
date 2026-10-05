@@ -1188,16 +1188,39 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             (orientation, w,x,y,z), ``base_lin_vel`` (m/s, WORLD frame) and
             ``base_ang_vel`` (rad/s, BODY frame - matching the MuJoCo backend and
             the IMU-gyro frame WBC / locomotion controllers consume) for
-            locomotion controllers. Empty when no world exists or the robot is
-            unknown.
+            locomotion controllers. Degraded modes (no world, ambiguous
+            ``robot_name``, unknown robot) return an empty dict with a
+            WARNING naming the remedy, matching the Isaac backend's
+            convention at :mod:`strands_robots.simulation.isaac.simulation`
+            :5639-5667 - the log is what keeps "empty" from being silent on
+            a rollout that reads this as its heartbeat.
         """
         if self._world is None or self._model is None:
+            logger.warning(
+                "get_observation(robot_name=%r): returning no observation because "
+                "there is no world. Call create_world() (or load_scene / "
+                "Robot(<name>)) first.",
+                robot_name,
+            )
             return {}
         try:
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError:
+            logger.warning(
+                "get_observation(robot_name=%r): returning no observation because "
+                "the robot could not be resolved (empty roster, or ambiguous "
+                "robot_name=None with multiple robots present). Known: %s.",
+                robot_name,
+                sorted(self._world.robots) if self._world is not None else [],
+            )
             return {}
         if not registered(self._world.robots, robot_name):
+            logger.warning(
+                "get_observation(robot_name=%r): unknown robot. Known: %s. "
+                "Returning empty observation.",
+                robot_name,
+                sorted(self._world.robots),
+            )
             return {}
         if skip_images and self._world._backend_state.get("recording"):
             # T26: dataset recording needs every frame's image obs. Override
