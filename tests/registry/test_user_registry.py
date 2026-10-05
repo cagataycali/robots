@@ -14,7 +14,7 @@ from unittest import mock
 
 import pytest
 
-from strands_robots.registry import get_robot, list_robots, resolve_name
+from strands_robots.registry import get_robot, list_robots, list_urdf_only, resolve_name
 from strands_robots.registry._overlay import user_registry_path
 from strands_robots.registry.user_registry import (
     _load_user_registry,
@@ -144,6 +144,36 @@ class TestRegisterRobotDuplicates:
         assert get_robot("panda")["description"] == "Custom"
         unregister_robot("panda")
         assert get_robot("panda")["description"] == curated
+
+    @pytest.mark.parametrize(
+        ("pick", "says", "never_says"),
+        [
+            (lambda: "so101", ["is a built-in robot", "6 joints", "pick another name"], []),
+            (
+                lambda: next(n for n in list_urdf_only() if (get_robot(n) or {}).get("joints") is not None),
+                ["is an auto-discovered robot_descriptions URDF", " joints"],
+                ["built-in robot"],
+            ),
+            (
+                lambda: next(n for n in list_urdf_only() if (get_robot(n) or {}).get("refusal")),
+                ["is an auto-discovered robot_descriptions URDF", "does not build: ", "to supply a working model"],
+                ["built-in robot", "0 joints", "aliases []", "shadow"],
+            ),
+        ],
+        ids=["curated", "discovered_urdf", "discovered_urdf_that_does_not_build"],
+    )
+    def test_a_taken_name_is_refused_with_what_actually_holds_it(self, tmp_path, pick, says, never_says):
+        """The refusal names a curated or discovered entry for what it is and invents no joint count."""
+        name = pick()
+        robot_dir = _make_robot(tmp_path / "assets", name=name, xml_name="m.xml")
+        kwargs = {"name": name, "model_xml": "m.xml", "asset_dir": str(robot_dir), "description": "mine"}
+        with pytest.raises(ValueError) as refused:
+            register_robot(**kwargs)
+        message = str(refused.value)
+        assert [s for s in says if s not in message] == [], message
+        assert [s for s in never_says if s in message] == [], message
+        register_robot(**kwargs, overwrite=True)
+        assert get_robot(name)["description"] == "mine"
 
 
 class TestRegisterRobotValidation:

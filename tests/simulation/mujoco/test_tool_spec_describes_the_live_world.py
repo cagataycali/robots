@@ -60,6 +60,16 @@ def test_description_follows_the_world_when_it_is_destroyed(ready_arm) -> None:
     assert "starting with create_world" in ready_arm.tool_spec["description"]
 
 
+def test_description_names_the_objects_and_cameras_the_user_added(ready_arm) -> None:
+    """The README quickstart scene is in the description before the first call; the free camera is not."""
+    assert "scene also holds" not in ready_arm.tool_spec["description"]
+    ready_arm.add_object(name="red_cube", shape="box", size=[0.05, 0.05, 0.05], position=[0.0, -0.2, 0.025])
+    ready_arm.add_camera(name="front", position=[0.3, -0.7, 0.45], target=[0.0, -0.2, 0.03])
+    head = ready_arm.tool_spec["description"].split("Scene mutations")[0]
+    assert "holds 1 object(s) 'red_cube' and 1 camera(s) 'front';" in head
+    assert "'default'" not in head
+
+
 def test_long_joint_lists_are_truncated_not_dumped() -> None:
     sim = Robot("unitree_g1", mode="sim")
     try:

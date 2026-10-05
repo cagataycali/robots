@@ -14,7 +14,7 @@ description: "Wonik Allegro Hand (16-DOF dexterous)"
 ```python
 from strands_robots import Robot
 
-robot = Robot("allegro_hand")
+robot = Robot("allegro_hand", position=[0.0, 0.0, 0.0442])
 print(robot.robot_action_keys("allegro_hand"))
 robot.cleanup()
 ```

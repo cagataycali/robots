@@ -326,6 +326,11 @@
       "description": "Universal Robots UR10e (6-DOF industrial)",
       "category": "arm",
       "joints": 6,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.027
+      ],
       "asset": {
         "dir": "universal_robots_ur10e",
         "model_xml": "ur10e.xml",
@@ -529,6 +534,11 @@
       "description": "Tetheria Aero Hand Open (16-DOF dexterous)",
       "category": "hand",
       "joints": 16,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.1083
+      ],
       "asset": {
         "dir": "tetheria_aero_hand_open",
         "model_xml": "left_hand.xml",
@@ -544,6 +554,11 @@
       "description": "Wonik Allegro Hand (16-DOF dexterous)",
       "category": "hand",
       "joints": 16,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0442
+      ],
       "asset": {
         "dir": "wonik_allegro",
         "model_xml": "left_hand.xml",
@@ -611,6 +626,11 @@
       "description": "Shadow Dexterous Hand (24-DOF)",
       "category": "hand",
       "joints": 24,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.005
+      ],
       "asset": {
         "dir": "shadow_hand",
         "model_xml": "left_hand.xml",
@@ -650,6 +670,11 @@
       "description": "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)",
       "category": "humanoid",
       "joints": 14,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0047
+      ],
       "asset": {
         "dir": "asimov_v0",
         "model_xml": "xmls/asimov.xml",
@@ -794,6 +819,11 @@
       "description": "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)",
       "category": "humanoid",
       "joints": 16,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0262
+      ],
       "asset": {
         "dir": "open_duck_mini_v2",
         "model_xml": "robot_motors.xml",
@@ -816,6 +846,11 @@
       "description": "Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)",
       "category": "humanoid",
       "joints": 31,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0026
+      ],
       "asset": {
         "dir": "mujoco",
         "model_xml": "model.xml",
@@ -928,6 +963,11 @@
       "description": "Unitree Aliengo Quadruped (12-DOF)",
       "category": "mobile",
       "joints": 12,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.1265
+      ],
       "asset": {
         "dir": "aliengo",
         "model_xml": "xml/aliengo.xml",
@@ -956,6 +996,11 @@
       "description": "ANYbotics ANYmal C Quadruped (12-DOF)",
       "category": "mobile",
       "joints": 12,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0105
+      ],
       "asset": {
         "dir": "anybotics_anymal_c",
         "model_xml": "anymal_c.xml",
@@ -983,6 +1028,11 @@
       "description": "Unitree Go1 Quadruped (12-DOF)",
       "category": "mobile",
       "joints": 12,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.004
+      ],
       "asset": {
         "dir": "unitree_go1",
         "model_xml": "go1.xml",
@@ -997,6 +1047,11 @@
       "description": "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)",
       "category": "mobile_manip",
       "joints": 9,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.0346
+      ],
       "asset": {
         "dir": "lekiwi",
         "model_xml": "lekiwi/lekiwi.xml",
@@ -1122,6 +1177,11 @@
       "description": "Unitree A1 Quadruped",
       "category": "mobile",
       "joints": 12,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.12
+      ],
       "asset": {
         "dir": "unitree_a1",
         "model_xml": "xml/a1.xml",
@@ -1136,6 +1196,11 @@
       "description": "Unitree Go2 Quadruped",
       "category": "mobile",
       "joints": 12,
+      "spawn_position": [
+        0.0,
+        0.0,
+        0.003
+      ],
       "asset": {
         "dir": "unitree_go2",
         "model_xml": "go2.xml",

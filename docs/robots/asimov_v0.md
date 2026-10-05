@@ -14,7 +14,7 @@ description: "Asimov V0 Bipedal Legs (12-DOF + 2 passive toes)"
 ```python
 from strands_robots import Robot
 
-robot = Robot("asimov_v0")
+robot = Robot("asimov_v0", position=[0.0, 0.0, 0.0047])
 print(robot.robot_action_keys("asimov_v0"))
 robot.cleanup()
 ```

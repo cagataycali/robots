@@ -4209,7 +4209,9 @@ class IsaacSimulation(
             if name in self._objects:
                 return {
                     "status": "error",
-                    "content": [{"text": f"Object '{name}' already exists."}],
+                    "content": [
+                        {"text": f"add_object: object '{name}' already exists. Remove it first (remove_object)."}
+                    ],
                 }
 
             # ``is_static`` selects a posture, so it is checked rather than read by

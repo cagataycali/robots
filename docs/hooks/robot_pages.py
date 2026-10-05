@@ -71,7 +71,7 @@ FAMILIES: dict[str, tuple[str, str]] = {
 #: Family -> the sentence a simulated robot page ends its fence with: what to do
 #: next with this kind of body, pointing at the guide that shows it.
 NEXT_STEPS: dict[str, str] = {
-    "arm": "Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).",
+    "arm": "Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.",
     "bimanual": "One action dict drives both arms; [composition](../learn/policies/index.md) runs a policy per arm.",
     "hand": "`robot_action_keys` lists the actuators a policy drives; command them by name with `send_action` or from a [policy](../learn/policies/index.md).",
     "humanoid": "Walk it with a whole-body controller ([wbc](../learn/policies/wbc.md)) or a trained gait ([rl](../learn/policies/rl.md)).",
@@ -277,6 +277,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "a controller holding an error code is refused before it is energised",
             "`send_action` is `set_servo_angle_j`, refused past the reported joint speed limit",
             "`stop` halts and re-arms servo mode",
+        ),
+    },
+    "KinovaDriver": {
+        "module": "strands_robots/drivers/kinova.py",
+        "link": "Kortex TCP through `kortex_api`",
+        "port": "base IP; `username=`/`password=` for the session",
+        "example": '"192.168.1.10"',
+        "sdk": "Kinova's `kortex_api` wheel, `pip install --no-deps`, run with `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python`",
+        "kwargs": "`control_frequency=40.0`",
+        "units": "radians, `joint_1 .. joint_7`; no gripper",
+        "checks": (
+            "a base in fault, or not `ARMSTATE_SERVOING_READY`, is refused at connect and on every write",
+            "`send_action` becomes joint speeds, refused past 0.8727 rad/s in one period",
+            "a stream quiet for three periods is stopped: Kortex joint speeds never expire",
         ),
     },
     "CrazyflieDriver": {
@@ -668,11 +682,17 @@ def robot_page(name: str) -> str:
                 "",
             ]
         else:
+            # A model authored below the plane (LeKiwi's wheels, a quadruped's
+            # straight-legged zero pose) makes ``add_robot`` warn and name the
+            # ``position=`` that spawns it clear; the registry carries that
+            # position so the first run of the page is a clean one.
+            spawn = spec.get("spawn_position")
+            at = f", position={[float(v) for v in spawn]}" if spawn else ""
             lines += [
                 "```python",
                 "from strands_robots import Robot",
                 "",
-                f'robot = Robot("{name}")',
+                f'robot = Robot("{name}"{at})',
                 f'print(robot.robot_action_keys("{name}"))',
                 "robot.cleanup()",
                 "```",

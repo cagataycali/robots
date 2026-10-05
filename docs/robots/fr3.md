@@ -19,7 +19,7 @@ print(robot.robot_action_keys("fr3"))
 robot.cleanup()
 ```
 
-Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
 
 ```python title="sketch"
 robot = Robot("fr3", mode="real", port="172.16.0.2")  # FrankaDriver

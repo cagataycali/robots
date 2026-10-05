@@ -19,9 +19,17 @@ print(robot.robot_action_keys("kinova_gen3"))
 robot.cleanup()
 ```
 
-Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
+
+```python title="sketch"
+robot = Robot("kinova_gen3", mode="real", port="192.168.1.10")  # KinovaDriver
+```
 
 Aliases: `gen3`.
+
+## Hardware
+
+**`KinovaDriver`** (the default for this robot) speaks Kortex TCP through `kortex_api`: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#kinovadriver).
 
 ## Policies verified on this robot
 

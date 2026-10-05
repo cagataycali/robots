@@ -994,7 +994,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ],
             }
         if name in self._world.objects:
-            return {"status": "error", "content": [{"text": f"Object '{name}' already exists."}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"add_object: object '{name}' already exists. Remove it first (remove_object)."}],
+            }
         newton_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
         if shape not in newton_shapes:
             close = difflib.get_close_matches(str(shape).lower(), newton_shapes, n=1, cutoff=0.6)
