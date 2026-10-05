@@ -8,8 +8,12 @@ Provides:
     - ``list_robots()``  → what's available
 
 Environment Variables:
-    STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
-        Case-insensitive; surrounding whitespace ignored.
+    STRANDS_ROBOT_MODE: Mode override consulted ONLY on the ``mode="auto"``
+        branch of :func:`Robot`. The factory's hardcoded default is
+        ``mode="sim"`` and takes effect first for a bare ``Robot("so100")``,
+        so this env var cannot flip the default-sim path to real. Accepts
+        "sim", "real", "auto" (case-insensitive; surrounding whitespace
+        ignored). Any other value is logged at WARNING and ignored.
     STRANDS_MESH: Opt a bare ``Robot()`` into the Zenoh mesh. Mesh is OFF
         unless asked for: only "true"/"1"/"yes" turns it ON, and unset or
         "false" leaves it OFF. An explicit ``mesh=True``/``mesh=False``
@@ -89,8 +93,13 @@ def _normalize_mode(mode: Any) -> str:
 def _auto_detect_mode(canonical: str) -> str:
     """Auto-detect sim vs real mode.
 
+    Reached only when the caller explicitly passes ``mode="auto"``; a bare
+    ``Robot("so100")`` lands on the factory default ``mode="sim"`` and never
+    gets here, so this priority ladder cannot flip the default-sim path.
+
     Priority:
-        1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
+        1. ``STRANDS_ROBOT_MODE`` env var ("sim" or "real") - explicit override
+           inside the ``mode="auto"`` request.
         2. For a robot that declares hardware, its native driver's own
            ``probe_hardware()`` - a robot reached over the network rather than a
            serial bus answers for itself (a Reachy Mini's daemon answers ``GET
