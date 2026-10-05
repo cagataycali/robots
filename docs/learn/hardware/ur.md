@@ -1,10 +1,10 @@
 ---
-description: "A UR5e or UR10e streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs."
+description: "A UR arm streams joint setpoints over RTDE: the two gates every write passes, how a rollout runs."
 ---
 
-# Universal Robots e-Series
+# Universal Robots e-Series and UR-Series
 
-At the end of this page a UR5e or UR10e streams joint setpoints from `Robot("ur5e", mode="real")` over RTDE, you know the two gates every write passes, and you know how a policy rollout runs on it.
+Here a UR arm streams joint setpoints from `Robot("ur5e", mode="real")` over RTDE; you learn the two gates every write passes and how a policy rollout runs on it.
 
 This needs the arm's controller reachable on the network, Remote Control enabled on the pendant, and the `[ur]` extra:
 
@@ -23,14 +23,14 @@ arm.send_action({"shoulder_pan_joint": 0.0, "wrist_3_joint": 1.57})   # radians,
 
 ## Joint names and units
 
-Radians, in the order the wire and the MuJoCo assets share: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire unchanged. Every e-Series joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
+Radians, in the order the wire and the MuJoCo assets share: `shoulder_pan_joint`, `shoulder_lift_joint`, `elbow_joint`, `wrist_1_joint`, `wrist_2_joint`, `wrist_3_joint`. A recorded sim action indexes onto the wire unchanged. Every joint travels plus or minus 2 pi (`JOINT_LIMIT_RAD`).
 
 ## Two gates on every write
 
 A UR controller does not refuse the way a servo bus does: it accepts the register write and does nothing. So the driver checks before it writes:
 
 1. **Controller mode.** `connect_eagerly` opens the receive interface first because it answers whether commanding is possible. A controller in `PROTECTIVE_STOP` accepts an RTDE connection and moves nothing, so the driver refuses there and names the mode.
-2. **Step size.** The commanded step is checked against the model's per-joint maximum speed at `control_frequency` (default 125 Hz). A step the arm cannot make in one period is refused, not queued.
+2. **Step size.** The commanded step is checked against the model's own per-joint maximum speed at `control_frequency` (default 125 Hz). A step the arm cannot make in one period is refused, not queued.
 
 `send_action` uses `servoJ` (speed `0.5`, acceleration `0.5`, lookahead `0.1` s, gain `300`) rather than `moveJ`, because a policy streams setpoints and a stream of planned trajectories fights itself.
 
@@ -48,4 +48,4 @@ A UR controller does not refuse the way a servo bus does: it accepts the registe
 
 ## Simulation
 
-`Robot("ur5e")` and `Robot("ur10e")` build the MuJoCo twins with the same joint names. Develop the action dicts there; the driver page [drivers](drivers.md) explains the shared contract.
+The driver serves `ur3e`, `ur5e`, `ur7e`, `ur10e`, `ur12e`, `ur16e`, `ur8long`, `ur15`, `ur18`, `ur20`, `ur30` (not CB3), each with a same-named MuJoCo twin. Develop action dicts there; [drivers](drivers.md) explains the shared contract.

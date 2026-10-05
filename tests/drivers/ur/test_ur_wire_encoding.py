@@ -20,7 +20,7 @@ import math
 import pytest
 
 from strands_robots.drivers.ur import (
-    FALLBACK_MODEL,
+    FALLBACK_SPEED_RAD_S,
     JOINT_LIMIT_RAD,
     JOINT_NAMES,
     MAX_JOINT_SPEED_RAD_S,
@@ -166,17 +166,38 @@ class TestTheModelDecidesTheCeiling:
             assert len(limits) == len(JOINT_NAMES), model
             assert all(limit > 0 for limit in limits), model
 
-    def test_the_ceilings_are_the_datasheet_numbers(self) -> None:
-        """Degrees per second is how the datasheets state them; radians is the wire."""
-        assert speed_limits("ur5e") == pytest.approx([math.radians(180)] * 6)
-        assert speed_limits("ur10e") == pytest.approx([math.radians(120)] * 3 + [math.radians(180)] * 3)
+    @pytest.mark.parametrize(
+        ("model", "degrees_per_second"),
+        [
+            ("ur3e", (180, 180, 180, 360, 360, 360)),
+            ("ur5e", (180,) * 6),
+            ("ur7e", (180,) * 6),
+            ("ur10e", (120, 120, 180, 180, 180, 180)),
+            ("ur12e", (120, 120, 180, 180, 180, 180)),
+            ("ur16e", (120, 120, 180, 180, 180, 180)),
+            ("ur8long", (180, 180, 240, 300, 300, 300)),
+            ("ur15", (180, 180, 240, 300, 300, 300)),
+            ("ur18", (180, 180, 240, 300, 300, 300)),
+            ("ur20", (120, 120, 150, 210, 210, 210)),
+            ("ur30", (120, 120, 150, 210, 210, 210)),
+        ],
+    )
+    def test_the_ceilings_are_the_vendor_numbers(self, model: str, degrees_per_second: tuple[int, ...]) -> None:
+        """Each row is ``config/<model>/joint_limits.yaml`` of the UR ROS 2 description.
 
-    def test_an_unknown_model_gets_the_slower_arms_ceilings(self) -> None:
+        Degrees per second is how the vendor states them; radians is the wire.
+        The UR10e row is the one that matters most: its elbow runs to 180, not
+        the 120 its base and shoulder are held to.
+        """
+        assert speed_limits(model) == pytest.approx([math.radians(d) for d in degrees_per_second])
+
+    def test_an_unknown_model_gets_the_slowest_ceiling_per_joint(self) -> None:
         """A name off the table is held to the tighter limits, never the looser.
 
         A renamed mesh peer given the faster budget would have its steps admitted
         here and dropped by the controller, which is the failure the gate exists
         to prevent - so the fallback errs toward refusing.
         """
-        assert speed_limits("not_a_ur_model") == MAX_JOINT_SPEED_RAD_S[FALLBACK_MODEL]
-        assert MAX_JOINT_SPEED_RAD_S[FALLBACK_MODEL][0] < MAX_JOINT_SPEED_RAD_S["ur5e"][0]
+        assert speed_limits("not_a_ur_model") == FALLBACK_SPEED_RAD_S
+        for limits in MAX_JOINT_SPEED_RAD_S.values():
+            assert all(fallback <= limit for fallback, limit in zip(FALLBACK_SPEED_RAD_S, limits, strict=True))
