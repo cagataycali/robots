@@ -96,7 +96,7 @@ export default function CameraGallery(
               </span>
             </div>
             {c.name_hint && (
-              <div className="camname-hint" title="from the OS listing — the order is not OpenCV's, so treat it as a hint">
+              <div className="camname-hint" title="matched to the index by OpenCV's own device order, not by opening the camera">
                 probably <b>{c.name_hint}</b>{c.name_is_guess ? ' · snap a preview to be sure' : ''}
               </div>
             )}
@@ -149,14 +149,14 @@ export default function CameraGallery(
         <>
           <div className="camnames">
             {names.map(n => (
-              <span key={n.listing_index} className="chip" title="position in the OS device listing">
-                {n.name}
+              <span key={n.listing_index} className="chip" title={`index ${n.listing_index}`}>
+                {n.listing_index}: {n.name}
               </span>
             ))}
           </div>
           <p className="hint">
-            Attached cameras by name, in OS listing order — which is <em>not</em> OpenCV index
-            order. The snapshot is the identity: if you're unsure which index is which, look.
+            Attached cameras by name, numbered the way OpenCV numbers them. The snapshot is the
+            identity: if you're unsure which index is which, look.
           </p>
         </>
       )}
