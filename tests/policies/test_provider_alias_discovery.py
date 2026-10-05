@@ -489,11 +489,21 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
 
 @pytest.mark.parametrize(
     ("spelled", "meant"),
-    [("WBC", "wbc"), ("cosmos", "cosmos3"), ("lerobot-local", "lerobot_local")],
+    [
+        ("WBC", "'wbc'"),
+        ("cosmos", "'cosmos3'"),
+        ("lerobot-local", "'lerobot_local'"),
+        # An alias match is named by the provider it routes to, once each.
+        ("GTP", "'protomotions'"),
+        ("cumoton", "'curobo'"),
+        ("moveit3", "'moveit2'"),
+        ("kimod0", "'kimodo'"),
+        ("protomotion", "'protomotions', 'kimodo'"),
+    ],
 )
 def test_an_unknown_provider_names_the_close_spelling(spelled: str, meant: str) -> None:
-    """A near-miss provider is refused naming the one meant, as ``Robot()`` does for a robot."""
-    with pytest.raises(ValueError, match=rf"Unknown policy provider: '{spelled}'\. Did you mean: '{meant}'"):
+    """A near-miss provider is refused naming each provider meant once, as ``Robot()`` does for a robot."""
+    with pytest.raises(ValueError, match=rf"Unknown policy provider: '{spelled}'\. Did you mean: {meant}\? "):
         create_policy(spelled)
 
 
