@@ -249,13 +249,6 @@ class TestMujocoAddObject:
         assert "cube" in sim._world.objects
         assert sim.get_body_state(body_name="cube")["status"] == "success"
 
-    def test_the_duplicate_name_error_is_unchanged(self, sim):
-        """A name that IS addressable and taken keeps its own error, not this one."""
-        sim.add_object("cube", shape="box")
-        result = sim.add_object("cube", shape="box")
-        assert result["status"] == "error"
-        assert "exists" in result["content"][0]["text"]
-
 
 class TestMujocoAddCamera:
     @pytest.mark.parametrize("name", (*_NON_STRING_NAMES, "", *_NUL_NAMES))
@@ -746,3 +739,31 @@ class TestEveryClaimingOpRoutesThroughTheDomain:
     @pytest.mark.parametrize("kind", _LOOKUP_OPS)
     def test_a_lookup_op_does_not(self, kind):
         assert "entity_name_error" not in _op_branch_source(kind), kind
+
+
+# --------------------------------------------------------------------------- #
+# A taken name                                                                #
+# --------------------------------------------------------------------------- #
+_TAKEN = "add_object: object 'cube' already exists. Remove it first (remove_object)."
+
+
+@pytest.mark.parametrize("backend", ("mujoco", "newton", "isaac"))
+def test_a_taken_object_name_is_refused_with_the_same_remedy_on_every_backend(backend, sim):
+    """An addressable name that is taken gets its own refusal, worded alike everywhere.
+
+    MuJoCo used to answer ``Object 'cube' exists.`` while Newton and Isaac said
+    ``already exists`` - and none named the way out that ``add_camera`` does.
+    """
+    if backend == "mujoco":
+        assert sim.add_object("cube", shape="box")["status"] == "success"
+        result = sim.add_object("cube", shape="box")
+    elif backend == "newton":
+        stub = _newton_stub()
+        stub._world.objects["cube"] = object()
+        result = NewtonSimEngine.add_object(stub, "cube")  # type: ignore[arg-type]
+    else:
+        isaac = _isaac_stub()
+        isaac._objects["cube"] = object()
+        result = IsaacSimulation.add_object(isaac, "cube")  # type: ignore[arg-type]
+    assert result["status"] == "error", result
+    assert result["content"][0]["text"] == _TAKEN

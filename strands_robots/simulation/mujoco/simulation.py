@@ -4981,7 +4981,10 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": name_err}]}
 
         if name in self._world.objects:
-            return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"add_object: object '{name}' already exists. Remove it first (remove_object)."}],
+            }
 
         # A robot's label is not one of its body names (those are
         # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
