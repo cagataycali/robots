@@ -1025,7 +1025,7 @@ class RenderingMixin:
                 # a joint is silently dropped today. Silent gripper drops are
                 # exactly the failure mode #318 was filed to fix, so surface it
                 # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
-                self._warn_unresolved_action_key(robot_name, pfx, key, reason)
+                self._warn_unresolved_action_key(robot_name, pfx, key, reason, batch_refused=False)
                 unresolved.append(key)
                 continue
             self._write_ctrl(model, data, ai, pfx, key, value, mj)
@@ -1111,8 +1111,16 @@ class RenderingMixin:
             self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
         data.ctrl[act_id] = ctrl_value
 
-    def _warn_unresolved_action_key(self, robot_name: str, pfx: str, key: str, reason: str) -> None:
+    def _warn_unresolved_action_key(
+        self, robot_name: str, pfx: str, key: str, reason: str, *, batch_refused: bool
+    ) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
+
+        ``batch_refused`` says what happened to the rest of the batch, so the
+        log agrees with the envelope the caller returns: ``True`` when
+        ``send_action`` refused the whole batch before writing anything,
+        ``False`` when the name-lookup loop wrote the other keys and dropped
+        only this one.
 
         #367: replaces the prior silent ``continue`` on unresolved action keys.
         De-duplicated via a per-world set so a 50Hz control loop does not spam
@@ -1137,12 +1145,9 @@ class RenderingMixin:
         # users can self-correct without inspecting the MJCF by hand.
         valid_names = self._get_valid_action_keys(robot_name)
         hint = f" Valid keys for this robot: {valid_names}" if valid_names else ""
+        outcome = "The whole batch was refused and nothing was written." if batch_refused else "The value was dropped."
         logger.warning(
-            "[sim] action key %r (prefix=%r) could not be applied: %s. The value was dropped.%s",
-            key,
-            pfx,
-            reason,
-            hint,
+            "[sim] action key %r (prefix=%r) could not be applied: %s. %s%s", key, pfx, reason, outcome, hint
         )
 
     def _exceeded_ctrl_bounds(

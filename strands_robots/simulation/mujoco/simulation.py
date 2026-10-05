@@ -1343,7 +1343,7 @@ class MuJoCoSimEngine(
                 for key in action_map:
                     actuator, reason = self._action_key_actuator(model, key, pfx, mj, robot_name)
                     if actuator < 0:
-                        self._warn_unresolved_action_key(robot_name, pfx, key, reason)
+                        self._warn_unresolved_action_key(robot_name, pfx, key, reason, batch_refused=True)
                         refused.append(key)
                 if refused:
                     return self._unresolved_action_refusal(robot_name, refused, applied=[])
