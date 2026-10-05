@@ -7206,6 +7206,10 @@ class MuJoCoSimEngine(
         # applies no action and then reports nothing running.
         if err := self._validate_policy_object(policy_object, "start_policy"):
             return err
+        if err := self._validate_policy_object_mutex(
+            policy_object, policy_provider, policy_config, "start_policy"
+        ):
+            return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "start_policy"):

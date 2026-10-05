@@ -3243,6 +3243,69 @@ class SimEngine(ABC):
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
     @staticmethod
+    def _validate_policy_object_mutex(
+        policy_object: Any,
+        policy_provider: Any,
+        policy_config: Any,
+        method: str,
+    ) -> dict[str, Any] | None:
+        """Refuse a mutually-exclusive mix of ``policy_object`` and provider kwargs.
+
+        ``policy_object`` BYPASSES provider resolution (base.py's
+        ``if policy_object is None:`` branch), so a caller who passes it ALSO
+        passing ``policy_provider`` and/or ``policy_config`` has their
+        provider/config silently discarded - no warning, no field in the result
+        json. A user who edits a prior ``run_policy(policy_provider=...,
+        policy_config=...)`` call by inserting ``policy_object=`` is handed a
+        ``status="success"`` rollout for a configuration that was never
+        exercised, and a bogus provider (``###NOT_A_REAL_PROVIDER###``) that
+        would have been loud on the provider-only path lands in a successful
+        rollout. The partner methods ``start_policy`` and ``eval_policy`` share
+        the exact same silent-wrong - ``start_policy``'s own contract pins its
+        refusals to ``run_policy``.
+
+        Only the explicit shapes are refused: a bare ``policy_object=p``
+        (both kwargs default) remains the primary way to drive a pre-built
+        policy and must not be refused, so the two provider-kwarg defaults
+        (``policy_provider="mock"`` and ``policy_config=None``) are the only
+        case this guard accepts. Any OTHER value for either is a conflict
+        with ``policy_object`` and refused up front.
+
+        Args:
+            policy_object: The caller-supplied ``policy_object``, or ``None``.
+            policy_provider: The caller-supplied ``policy_provider``.
+            policy_config: The caller-supplied ``policy_config``.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict naming both the
+            offending kwarg(s) and the remedy, or ``None`` when the
+            combination is unambiguous.
+        """
+        if policy_object is None:
+            return None
+        conflicts: list[str] = []
+        # ``policy_provider`` default is the sentinel ``"mock"`` string - only an
+        # explicit non-default value is a conflict. A caller who explicitly
+        # typed ``policy_provider="mock"`` beside ``policy_object=p`` is still
+        # in the misread-the-contract state the message calls out, but refusing
+        # a value identical to the default would break every caller who leaves
+        # it as-is, so the default is the exemption.
+        if policy_provider != "mock":
+            conflicts.append(f"policy_provider={policy_provider!r}")
+        if policy_config is not None:
+            conflicts.append(f"policy_config={policy_config!r}")
+        if not conflicts:
+            return None
+        joined = " and ".join(conflicts)
+        message = (
+            f"'policy_object' bypasses provider resolution, so {joined} would be silently "
+            "discarded (a bogus provider is NOT reported). Pass EITHER "
+            "policy_object=<prebuilt Policy> OR policy_provider=/policy_config= - not both."
+        )
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
+    @staticmethod
     def _validate_rollout_target(robot_name: Any, instruction: Any, method: str) -> dict[str, Any] | None:
         """Reject a ``robot_name`` or ``instruction`` that is not a string.
 
@@ -3790,6 +3853,10 @@ class SimEngine(ABC):
         if err := self._validate_video_config(video, "run_policy"):
             return err
         if err := self._validate_policy_object(policy_object, "run_policy"):
+            return err
+        if err := self._validate_policy_object_mutex(
+            policy_object, policy_provider, policy_config, "run_policy"
+        ):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "run_policy"):
             return err
@@ -5847,6 +5914,10 @@ class SimEngine(ABC):
             return err
         if err := self._validate_policy_object(policy_object, "eval_policy"):
             return err
+        if err := self._validate_policy_object_mutex(
+            policy_object, policy_provider, policy_config, "eval_policy"
+        ):
+            return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "eval_policy"):
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "eval_policy"):
@@ -6198,6 +6269,10 @@ class SimEngine(ABC):
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
         if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
+            return err
+        if err := self._validate_policy_object_mutex(
+            policy_object, policy_provider, policy_config, "evaluate_benchmark"
+        ):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
             return err
