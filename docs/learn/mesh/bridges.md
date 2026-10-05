@@ -32,7 +32,7 @@ The bridge degrades rather than fails: Zenoh down means pure IoT, IoT down pure 
 
 ## What the bridge forwards
 
-The MQTT side is filtered by topic suffix. Default to both wires: `presence`, `health`, `cmd`, `response`, `broadcast`, `safety/event`, `safety/estop`, `safety/resume`. LAN-only: `state`, `pose`, `imu`, `odom`, `camera`, `input`, `hand`, `stream`. `STRANDS_MESH_BRIDGE_TOPICS`, a comma-separated suffix list, replaces the default. Inbound duplicates (a presence that arrived on both wires) are dropped by `sender_id` and `turn_id`; `STRANDS_MESH_BRIDGE_DEDUP_STRICT` tightens that.
+The MQTT side is filtered by topic suffix. Default to both wires: `presence`, `health`, `cmd`, `response`, `broadcast`, `safety/event`, `safety/estop`, `safety/resume`. LAN-only: `state`, `pose`, `imu`, `odom`, `camera`, `input`, `hand`, `stream`, `lidar`, `map`. `STRANDS_MESH_BRIDGE_TOPICS`, a comma-separated suffix list, replaces the default. Inbound duplicates (a presence that arrived on both wires) are dropped by `sender_id` and `turn_id`; `STRANDS_MESH_BRIDGE_DEDUP_STRICT` tightens that.
 
 Keys are unchanged on MQTT (`strands/<peer>/cmd` is a valid MQTT topic); wildcards map `*` to `+` and `**` to `#`.
 

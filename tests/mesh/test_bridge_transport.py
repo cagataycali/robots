@@ -7,7 +7,9 @@ either side fails.
 
 from __future__ import annotations
 
+import re
 import time
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -429,50 +431,29 @@ class TestSubHandleIdempotence:
         a.undeclare.assert_called_once()
 
 
-class TestDefaultBridgeSuffixesPinned:
-    def test_default_bridge_suffixes_pinned_to_documented_set(self):
-        """Pin DEFAULT_BRIDGE_SUFFIXES against the documented bridge-by-default set.
+class TestBridgesPageMatchesTheFilter:
+    def test_the_page_names_the_default_and_every_lan_only_suffix_the_mesh_publishes(self):
+        """docs/learn/mesh/bridges.md is the spec of what reaches AWS IoT Core.
 
-        These suffixes are documented in the module header and the mesh env-var
-        matrix as the unset-default for STRANDS_MESH_BRIDGE_TOPICS. A future edit
-        that adds or removes a suffix here must update that documentation in the
-        same diff or this test fails.
+        Its "Default to both wires" list must equal DEFAULT_BRIDGE_SUFFIXES, and
+        every topic suffix the mesh package publishes must be on one of the two
+        lists, so a new topic cannot ship undocumented on either side.
         """
-        assert DEFAULT_BRIDGE_SUFFIXES == frozenset(
-            {
-                "presence",
-                "health",
-                "safety/event",
-                "safety/estop",
-                "safety/resume",
-                "cmd",
-                "response",
-                "broadcast",
-            }
-        )
+        root = Path(__file__).resolve().parents[2]
+        page = (root / "docs/learn/mesh/bridges.md").read_text()
+        both = re.search(r"Default to both wires: (.*?)\. LAN-only: (.*?)\. ", page)
+        assert both, "bridges.md lost its 'Default to both wires ... LAN-only' sentence"
+        bridged, lan_only = (set(re.findall(r"`([a-z/]+)`", g)) for g in both.groups())
+        assert bridged == DEFAULT_BRIDGE_SUFFIXES
+        assert not bridged & lan_only
 
-    def test_high_volume_telemetry_not_bridged_by_default(self):
-        """Pin the documented high-volume-telemetry not-bridged list.
-
-        state/pose/imu/odom/lidar are high volume and camera/input/hand are
-        LAN-only by definition. All are documented as not bridged by default;
-        if one leaks into DEFAULT_BRIDGE_SUFFIXES the documentation regresses.
-        """
-        not_bridged = (
-            "state",
-            "pose",
-            "imu",
-            "odom",
-            "lidar",
-            "camera",
-            "input",
-            "hand",
-        )
-        for suffix in not_bridged:
-            assert suffix not in DEFAULT_BRIDGE_SUFFIXES, (
-                f"{suffix!r} is documented as not bridged by default but is in "
-                f"DEFAULT_BRIDGE_SUFFIXES; remove it or update the documentation."
-            )
+        published = {
+            m
+            for src in (root / "strands_robots/mesh").rglob("*.py")
+            for m in re.findall(r"strands/\{[^}]+\}/([a-z_]+(?:/[a-z_]+)?)", src.read_text())
+        }
+        undocumented = {s for s in published if s not in bridged and s.split("/")[0] not in bridged | lan_only}
+        assert not undocumented, f"published but on neither list in bridges.md: {sorted(undocumented)}"
 
 
 class TestSubHandleTeardownFailSoft:
