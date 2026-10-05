@@ -150,12 +150,12 @@ class TestRegisterRobotDuplicates:
         [
             (lambda: "so101", ["is a built-in robot", "6 joints", "pick another name"], []),
             (
-                lambda: next(n for n in list_urdf_only() if get_robot(n).get("joints") is not None),
+                lambda: next(n for n in list_urdf_only() if (get_robot(n) or {}).get("joints") is not None),
                 ["is an auto-discovered robot_descriptions URDF", " joints"],
                 ["built-in robot"],
             ),
             (
-                lambda: next(n for n in list_urdf_only() if get_robot(n).get("refusal")),
+                lambda: next(n for n in list_urdf_only() if (get_robot(n) or {}).get("refusal")),
                 ["is an auto-discovered robot_descriptions URDF", "does not build: ", "to supply a working model"],
                 ["built-in robot", "0 joints", "aliases []", "shadow"],
             ),
