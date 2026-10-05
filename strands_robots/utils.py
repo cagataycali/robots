@@ -534,6 +534,42 @@ def did_you_mean(unknown: Sequence[object], accepted: Sequence[str]) -> str:
     return f" Did you mean: {', '.join(pairs)}?" if pairs else ""
 
 
+def refuse_dropped_connection_kwargs(
+    kwargs: Mapping[str, Any], valid_fields: set[str], connection_fields: Sequence[str], *, owner: str
+) -> None:
+    """Refuse an address the resolved lerobot config would drop for its own default.
+
+    The cross-device allowlist drops a known keyword the config lacks, so one
+    fleet-wide call can carry ``kp=`` or ``robot_ip=`` to an arm that has
+    neither. That is safe while the caller also names the address the config
+    does take. When it does not, the dropped keyword was the caller's only
+    address and the config connects to its default instead:
+    ``Robot("unitree_g1", driver="lerobot", port="10.0.0.5")`` reached the
+    stock ``robot_ip`` of ``UnitreeG1Config``.
+
+    Args:
+        kwargs: The keywords the caller passed.
+        valid_fields: The field names of the resolved config dataclass.
+        connection_fields: The keywords that name where a device is reached.
+        owner: The config, as the refusal names it (``UnitreeG1Config for
+            robot_type='unitree_g1'``).
+
+    Raises:
+        ValueError: The caller named an address only through fields the config
+            does not declare, while it declares one of its own.
+    """
+    given = [k for k in connection_fields if kwargs.get(k) is not None]
+    dropped = [k for k in given if k not in valid_fields]
+    reached = sorted(set(connection_fields) & valid_fields)
+    if not dropped or not reached or len(dropped) < len(given):
+        return
+    named = ", ".join(f"{k}={refusal_repr(kwargs[k])}" for k in dropped)
+    raise ValueError(
+        f"{owner} does not declare {dropped}, so {named} would be ignored and the device "
+        f"reached at its default address instead; it is reached through {reached}."
+    )
+
+
 def refusal_str(value: Any) -> str:
     """``str(value)`` for a refusal message, or a description when it cannot be built.
 
