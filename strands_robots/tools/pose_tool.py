@@ -43,7 +43,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_motion
-from strands_robots._motion_grants import consume_grant
+from strands_robots._motion_grants import consume_grant, gated_view
 from strands_robots._path_validation import resolve_output_path, validate_save_path
 from strands_robots.drivers.feetech.bus import (
     SO_ARM_MOTORS,
@@ -1084,20 +1084,30 @@ def _motion_input_error(
     return None
 
 
-def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
+def _gate_motion(
+    action: str,
+    tool_input: dict[str, Any],
+    tool_context: ToolContext | None,
+    records: Mapping[str, MotorCalibration] | None,
+) -> str | None:
     """Operator approval for one arm motion, before the controller is built.
 
     Args:
         action: One of :data:`MOTION_ACTIONS`.
-        tool_input: The call's own fields (port, motor_name, position, delta,
-            positions, pose_name), unset ones omitted; shown to the operator
-            and used to match a dashboard grant.
+        tool_input: The call's own fields (port, calibration, robot_id,
+            motor_name, position, delta, positions, pose_name and the speed
+            profile), unset ones omitted; shown to the operator and used to
+            match a dashboard grant.
         tool_context: The agent tool context supplying ``interrupt()``.
+        records: The calibration the controller will be built from, or
+            ``None`` for none. A dashboard grant is matched against these
+            records rather than a second read of the file, so what was
+            approved is what the controller is given.
 
     Returns:
         A refusal message, or None to let the motion proceed.
     """
-    if consume_grant("pose_tool", tool_input):
+    if consume_grant("pose_tool", tool_input, calibration_records=records):
         return None
     port = str(tool_input.get("port") or "")
     detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))
@@ -1369,28 +1379,33 @@ def pose_tool(
             return {"status": "error", "content": [{"text": "port required for motor operations"}]}
 
         if action in MOTION_ACTIONS:
-            tool_input = {
-                key: value
-                for key, value in (
-                    ("action", action),
-                    ("port", port),
-                    # The calibration decides where a degree target puts the
-                    # joint, so the same number under a different file is a
-                    # different pose: the operator approves both together.
-                    ("calibration", calibration),
-                    ("pose_name", pose_name),
-                    ("motor_name", motor_name),
-                    ("position", position),
-                    ("delta", delta),
-                    ("positions", positions),
-                    # The dashboard hook keys its grant on the fields the model
-                    # supplied; ``steps`` has a default here, so it is carried
-                    # only when it differs from it. A model that spelled out the
-                    # default is asked twice, which errs on the side of asking.
-                    ("steps", steps if steps != 20 else None),
-                )
-                if value is not None and value != ""
-            }
+            # Every field that decides where the arm goes and how fast, read
+            # through ``gated_view`` exactly as the dashboard hook reads the
+            # model's call, so an omitted default and the value used here are
+            # one grant. The calibration decides where a degree target puts the
+            # joint; ``robot_id`` which library a pose name is read from;
+            # ``smooth`` / ``steps`` / ``step_delay`` how fast the arm gets there.
+            tool_input = gated_view(
+                "pose_tool",
+                {
+                    key: value
+                    for key, value in (
+                        ("action", action),
+                        ("port", port),
+                        ("calibration", calibration),
+                        ("robot_id", robot_id),
+                        ("pose_name", pose_name),
+                        ("motor_name", motor_name),
+                        ("position", position),
+                        ("delta", delta),
+                        ("positions", positions),
+                        ("smooth", smooth),
+                        ("steps", steps),
+                        ("step_delay", step_delay),
+                    )
+                    if value is not None and value != ""
+                },
+            )
             # A motion the action's own branch would refuse on its inputs is
             # refused here, before the operator is asked to approve it.
             if input_error := _motion_input_error(
@@ -1403,8 +1418,12 @@ def pose_tool(
                 delta=delta,
                 positions=positions,
             ):
+                # A yes the dashboard already gave this call is spent with it:
+                # the motion it approved will not happen, and a grant left
+                # behind would outlive the library or pose it was given for.
+                consume_grant("pose_tool", tool_input, calibration_records=records)
                 return {"status": "error", "content": [{"text": input_error}]}
-            if refusal := _gate_motion(action, tool_input, tool_context):
+            if refusal := _gate_motion(action, tool_input, tool_context, records):
                 # The controller does not exist yet: a refused motion is exactly
                 # as inert as a call that never happened.
                 return {"status": "error", "content": [{"text": f"pose_tool: {refusal}"}]}

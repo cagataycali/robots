@@ -13,15 +13,13 @@ calibration either.
 Now the grant key carries the calibration identity: the content hash of the file (so two spellings
 of one file share a grant), the hash of an inline record, or the explicit word ``none`` when the
 call has no calibration. ``calibration`` is on the detail roster too, and a call without one tells
-the operator so. A structural guard keeps every field ``pose_tool`` and ``serial_tool`` hand the
-gate on the roster or among the fixed key parts, so the next field cannot drift the same way.
+the operator so. The structural guard over every gated tool parameter lives with the library,
+speed-profile and policy pins in ``test_motion_grant_binds_the_library_speed_and_policy_it_was_given_for``.
 """
 
 from __future__ import annotations
 
-import ast
 import hashlib
-import inspect
 import json
 from pathlib import Path
 from typing import Any
@@ -91,8 +89,10 @@ def test_no_calibration_is_an_explicit_identity_not_an_absent_field() -> None:
 
 
 def test_a_file_is_identified_by_its_content(cal_a: Path, tmp_path: Path) -> None:
-    digest = hashlib.sha256(cal_a.read_bytes()).hexdigest()[:16]
+    canonical = json.dumps(RECORD, sort_keys=True).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()[:16]
     assert calibration_identity(str(cal_a)) == f"sha256:{digest}"
+    assert calibration_identity(RECORD) == calibration_identity(str(cal_a)), "a file and its records are one frame"
     link = tmp_path / "link.json"
     link.symlink_to(cal_a)
     relative = Path(str(cal_a)).parent / "." / cal_a.name
@@ -165,39 +165,3 @@ def test_grants_for_tools_without_a_calibration_are_unchanged_in_shape() -> None
     call = {"action": "task", "target": "arm-1", "instruction": "wave"}
     deposit_grant("fleet", call)
     assert consume_grant("fleet", call) is True
-
-
-# --- the structural guard -----------------------------------------------------------------------
-
-FIXED_KEY_PARTS = frozenset({"action", "port", "target", "instruction", "message", "calibration"})
-
-
-def _gate_payload_keys(module: Any) -> set[str]:
-    """The literal keys of the ``tool_input = {... for key, value in ((k, v), ...)}`` the tool hands the gate."""
-    tree = ast.parse(inspect.getsource(module))
-    keys: set[str] = set()
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "tool_input" for t in node.targets)
-        ):
-            continue
-        comp = node.value
-        if not isinstance(comp, ast.DictComp):
-            continue
-        source = comp.generators[0].iter
-        if not isinstance(source, ast.Tuple):
-            continue
-        for pair in source.elts:
-            if isinstance(pair, ast.Tuple) and pair.elts and isinstance(pair.elts[0], ast.Constant):
-                keys.add(str(pair.elts[0].value))
-    return keys
-
-
-@pytest.mark.parametrize("module_name", ["strands_robots.tools.pose_tool", "strands_robots.tools.serial_tool"])
-def test_every_field_a_tool_hands_the_gate_is_part_of_the_grant_identity(module_name: str) -> None:
-    import importlib
-
-    keys = _gate_payload_keys(importlib.import_module(module_name))
-    assert keys, f"{module_name}: the gate payload was not found; the guard needs updating with the tool"
-    drift = keys - FIXED_KEY_PARTS - set(DETAIL_FIELDS)
-    assert not drift, f"{module_name} hands the gate {sorted(drift)}, which neither the key nor the operator line reads"

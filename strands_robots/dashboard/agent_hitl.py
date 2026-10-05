@@ -18,7 +18,14 @@ from typing import Any
 
 from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
 
-from strands_robots._motion_grants import DIRECT_SERIAL_TOOLS, deposit_grant, motion_fields, resolve_target
+from strands_robots._motion_grants import (
+    DIRECT_SERIAL_TOOLS,
+    POLICY_FIELDS,
+    deposit_grant,
+    gated_view,
+    motion_fields,
+    resolve_target,
+)
 from strands_robots.dashboard.agent_motion import MOTION_ENV, peer_is_physical
 
 logger = logging.getLogger(__name__)
@@ -57,8 +64,13 @@ def _direct_serial_detail(tool_name: str, action: str, tool_input: Mapping[str, 
     full rotation rather than the arm's measured travel, which is where its
     numbers land, so the line says so instead of leaving the field out: the
     operator is approving that frame of reference along with the numbers.
+
+    The fields are read through :func:`~strands_robots._motion_grants.gated_view`,
+    as the grant key reads them, so the line names the pose library and the
+    speed profile the tool will use even when the model left them at their
+    defaults: the operator reads exactly what their yes is filed under.
     """
-    fields = motion_fields(tool_input)
+    fields = motion_fields(gated_view(tool_name, tool_input))
     if tool_name == "pose_tool" and not any(f.startswith("calibration=") for f in fields):
         fields = ("calibration=none (servo full rotation)", *fields)
     return " ".join((action, *fields)) if fields else ""
@@ -118,6 +130,12 @@ def motion_intent(
         "instruction": instruction,
         "why_physical": why,
     }
+    if action in ("execute", "start"):
+        # Which policy drives the robot is part of what a yes covers (it is in
+        # the grant key), so it is part of what the operator reads.
+        policy = motion_fields({k: tool_input[k] for k in POLICY_FIELDS if k in tool_input})
+        if policy:
+            reason["policy"] = " ".join(policy)
     if tool_input.get("duration") is not None:
         try:
             reason["duration"] = float(tool_input["duration"])

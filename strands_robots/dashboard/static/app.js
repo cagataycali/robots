@@ -6183,6 +6183,7 @@ function parseInterruptEvent(ev) {
     func: str$1(r.function),
     command,
     duration: dur,
+    policy: str$1(r.policy),
     whyPhysical: str$1(r.why_physical),
     warning: str$1(r.warning)
   };
@@ -6214,7 +6215,8 @@ function confirmQuestion(c) {
   const stopping = c.action === "stop" || c.action === "emergency_stop";
   const sim = c.target.startsWith("sim session");
   const tail = stopping || sim ? "" : " - real motion";
-  return `The agent wants ${c.target} to ${deed(c)}${span}${tail}.`;
+  const by = c.policy ? ` with ${c.policy}` : "";
+  return `The agent wants ${c.target} to ${deed(c)}${by}${span}${tail}.`;
 }
 function confirmDetail(c) {
   if (c.whyPhysical) return `${c.target}: ${c.whyPhysical}.`;

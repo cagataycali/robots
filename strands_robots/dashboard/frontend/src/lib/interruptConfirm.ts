@@ -7,7 +7,7 @@
  *
  * Two gates raise these interrupts and their reason dicts differ:
  *  - the fleet MotionInterruptHook (a task on a real robot):
- *      {tool, action, target, instruction, duration, why_physical}
+ *      {tool, action, target, instruction, policy, duration, why_physical}
  *  - the SDK's robot_mesh tool (tell/send/stop/broadcast/emergency_stop/rpc):
  *      {action, target, function, command, instruction, warning}
  * All are rendered; the ANSWER is the console's resume frame
@@ -26,6 +26,8 @@ export interface MotionConfirm {
   /** the validated command body, already stringified for display. */
   command: string
   duration: number | null
+  /** execute/start: the policy that will drive the robot, as `field=value` pairs. */
+  policy: string
   whyPhysical: string
   /** the gate's own scope warning, verbatim. */
   warning: string
@@ -56,6 +58,7 @@ export function parseInterruptEvent(ev: any): MotionConfirm | null {
     func: str(r.function),
     command,
     duration: dur,
+    policy: str(r.policy),
     whyPhysical: str(r.why_physical),
     warning: str(r.warning),
   }
@@ -96,7 +99,8 @@ export function confirmQuestion(c: MotionConfirm): string {
   // be dressed up as motion - the honest phrase is the opposite.
   const sim = c.target.startsWith('sim session')
   const tail = stopping || sim ? '' : ' - real motion'
-  return `The agent wants ${c.target} to ${deed(c)}${span}${tail}.`
+  const by = c.policy ? ` with ${c.policy}` : ''
+  return `The agent wants ${c.target} to ${deed(c)}${by}${span}${tail}.`
 }
 
 /** Why this counts as real hardware / the gate's scope warning — never invented. */
