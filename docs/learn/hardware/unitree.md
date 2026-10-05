@@ -4,7 +4,7 @@ description: Install the Unitree SDK, reach a G1, Go2, H1 or H1-2 over CycloneDD
 
 # Unitree G1, Go2, H1 and H1-2
 
-This page installs the vendor SDK; then `Robot("g1", mode="real")` (or `"unitree_go2"`, `"h1"`, `"h1_2"`) reaches the robot over CycloneDDS, and you know each driver's safety gate and agent verbs.
+This page installs the vendor SDK; then `Robot("g1", mode="real")` (or `"unitree_go2"`, `"b2"`, `"h1"`, `"h1_2"`) reaches the robot over CycloneDDS, and you know each driver's safety gate and verbs.
 
 The robot must share your Ethernet segment. Nothing imports `unitree_sdk2py` at module load; a missing SDK is a refusal carrying this recipe.
 
@@ -42,7 +42,7 @@ A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed
 
 ## Two drivers, two gates
 
-| | `G1Driver` | `Go2Driver` (Go2, H1, H1-2) |
+| | `G1Driver` | `Go2Driver` (Go2, B2, H1, H1-2) |
 |---|---|---|
 | IDL | `unitree_hg.msg.dds_.LowCmd_` | `unitree_go.msg.dds_.LowCmd_`; H1-2 `unitree_hg`, echoing `mode_machine` |
 | reads | `rt/lowstate`, `rt/lf/bmsstate`, `rt/utlidar/lidar_state`, `rt/utlidar/cloud_livox_mid360`, `rt/mainboardstate`, `rt/pressuresensorstate` | `rt/lowstate`, `rt/lf/bmsstate` |
