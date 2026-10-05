@@ -1025,7 +1025,10 @@ class RenderingMixin:
                 # a joint is silently dropped today. Silent gripper drops are
                 # exactly the failure mode #318 was filed to fix, so surface it
                 # -- once per (prefix, key) to avoid per-step log spam at 50Hz.
-                self._warn_unresolved_action_key(robot_name, pfx, key, reason)
+                # This fallback writes keys one-by-one, so a single unresolved
+                # key really is dropped while sibling valid keys land; the
+                # envelope that follows carries ``applied`` naming the writes.
+                self._warn_unresolved_action_key(robot_name, pfx, key, reason, batch_refused=False)
                 unresolved.append(key)
                 continue
             self._write_ctrl(model, data, ai, pfx, key, value, mj)
@@ -1111,7 +1114,15 @@ class RenderingMixin:
             self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
         data.ctrl[act_id] = ctrl_value
 
-    def _warn_unresolved_action_key(self, robot_name: str, pfx: str, key: str, reason: str) -> None:
+    def _warn_unresolved_action_key(
+        self,
+        robot_name: str,
+        pfx: str,
+        key: str,
+        reason: str,
+        *,
+        batch_refused: bool = True,
+    ) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
 
         #367: replaces the prior silent ``continue`` on unresolved action keys.
@@ -1120,6 +1131,22 @@ class RenderingMixin:
 
         Includes the actual actuator/joint names from the model so the user
         knows exactly which keys the scene accepts.
+
+        ``batch_refused`` tracks the two call sites' opposite outcomes:
+
+        * ``True`` (``send_action``'s pre-write resolver at
+          :file:`simulation.py`): a batch naming this key is refused whole, so
+          nothing is written and the world does not advance. The warning says
+          so, matching the return envelope's ``"Nothing was applied and the
+          world did not advance."``. Pre-#4486 (b0fb474) this path wrote the
+          valid keys and advanced the world first, so the historical
+          ``"The value was dropped."`` wording described a partial write; it
+          contradicts the current whole-batch semantics and misled operators
+          into believing the valid keys in the batch had landed.
+        * ``False`` (:meth:`_apply_action_dict`'s action-controller fallback):
+          valid keys are written key-by-key, so a single key that fails to
+          resolve really is dropped while the others apply. The envelope that
+          follows carries ``applied`` naming the ones that landed.
         """
         warned = getattr(self, "_warned_unresolved_keys", None)
         if warned is None:
@@ -1137,11 +1164,17 @@ class RenderingMixin:
         # users can self-correct without inspecting the MJCF by hand.
         valid_names = self._get_valid_action_keys(robot_name)
         hint = f" Valid keys for this robot: {valid_names}" if valid_names else ""
+        outcome = (
+            "the whole batch was refused and nothing was written"
+            if batch_refused
+            else "the value was dropped"
+        )
         logger.warning(
-            "[sim] action key %r (prefix=%r) could not be applied: %s. The value was dropped.%s",
+            "[sim] action key %r (prefix=%r) could not be applied: %s. %s.%s",
             key,
             pfx,
             reason,
+            outcome,
             hint,
         )
 
