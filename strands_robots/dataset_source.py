@@ -102,6 +102,32 @@ def local_dataset_dir(repo_id: str) -> Path | None:
 HUB_ID_OUTSIDE_HOME = "The dataset id does not name a directory under the LeRobot dataset home."
 
 
+#: The one sentence a writer refuses a dataset directory with when replacing it
+#: would delete the caller's own files: the filesystem root, the working
+#: directory, the home directory, or a directory that holds one of them. An
+#: unset id (``""``, ``"."``) reads as a local path and lands exactly there.
+DATASET_DIR_HOLDS_CALLER_FILES = (
+    "The dataset directory would be the working directory, the home directory, "
+    "or a directory that contains one of them; name a dataset (owner/name) or a "
+    "directory of its own."
+)
+
+
+def _holds_caller_files(directory: Path) -> bool:
+    """Whether ``directory`` is, or contains, the working or home directory.
+
+    Every writer replaces its target on ``overwrite=True`` with
+    ``shutil.rmtree``, so a target that is, or contains, the working directory
+    or the home directory is a request to delete the caller's files.
+    """
+    target = os.path.normpath(os.path.abspath(os.path.expanduser(str(directory))))
+    for held in (os.getcwd(), os.path.expanduser("~")):
+        held = os.path.normpath(os.path.abspath(held))
+        if held == target or held.startswith(target.rstrip(os.sep) + os.sep):
+            return True
+    return False
+
+
 def hub_dataset_dir(repo_id: str) -> Path:
     """``$HF_LEROBOT_HOME/{repo_id}`` for an ``owner/name`` Hub id, contained to the home.
 
@@ -157,14 +183,23 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
         The resolved dataset directory as a :class:`~pathlib.Path`.
 
     Raises:
-        ValueError: An ``owner/name`` id whose segments would leave the dataset
-            home (:data:`HUB_ID_OUTSIDE_HOME`).
+        ValueError: An empty or non-string ``repo_id``; an ``owner/name`` id
+            whose segments would leave the dataset home
+            (:data:`HUB_ID_OUTSIDE_HOME`); or a directory that is, or contains,
+            the working or home directory (:data:`DATASET_DIR_HOLDS_CALLER_FILES`)
+            - a writer replaces its target, so that would delete the caller's files.
     """
+    if not isinstance(repo_id, str) or not repo_id.strip():
+        raise ValueError(f"The dataset id must be a non-empty string (got {repo_id!r}).")
     if root:
-        return Path(root)
-    if (local := local_dataset_dir(repo_id)) is not None:
-        return local
-    return hub_dataset_dir(repo_id)
+        directory = Path(root)
+    elif (local := local_dataset_dir(repo_id)) is not None:
+        directory = local
+    else:
+        directory = hub_dataset_dir(repo_id)
+    if _holds_caller_files(directory):
+        raise ValueError(DATASET_DIR_HOLDS_CALLER_FILES)
+    return directory
 
 
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None) -> tuple[Any, int, int]:

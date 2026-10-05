@@ -705,6 +705,32 @@ def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots
     assert not stale.exists()
 
 
+@pytest.mark.parametrize(
+    ("repo_id", "root"),
+    [("", None), ("   ", None), (".", None), (None, None), ("local/ok", "."), ("local/ok", "..")],
+)
+def test_start_recording_refuses_a_target_that_holds_the_working_directory(
+    sim_with_two_robots, monkeypatch, tmp_path, repo_id, root
+):
+    """An unset id or a root that is (or holds) the CWD is refused before the
+    session arms - ``overwrite=True`` used to ``rmtree`` the caller's CWD."""
+    import strands_robots.dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
+    monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(lambda cls, **kw: object()))
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    (cwd / "my_code.py").write_text("keep")
+    monkeypatch.chdir(cwd)
+
+    r = sim_with_two_robots.start_recording(repo_id=repo_id, root=root, overwrite=True)
+
+    assert r["status"] == "error"
+    assert f"repo_id={repo_id!r}" in r["content"][0]["text"]
+    assert (cwd / "my_code.py").read_text() == "keep"
+    assert not sim_with_two_robots._world._backend_state.get("recording")
+
+
 def test_start_recording_recorder_init_failure_clears_recording_flag(sim_with_two_robots, monkeypatch, tmp_path):
     """If the dataset recorder constructor raises, start_recording reports an
     error AND resets the recording flag so the sim is not left wedged in a

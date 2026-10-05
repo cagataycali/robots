@@ -1329,6 +1329,15 @@ class DatasetRecordingMixin:
 
         from strands_robots.dataset_source import resolve_dataset_dir
 
+        # Resolved before any session state is armed: an unusable id (``""``,
+        # ``"."``, an id that leaves the dataset home) is refused here, not
+        # handed to ``overwrite=True``'s rmtree or raised out of an armed session.
+        try:
+            dataset_dir = resolve_dataset_dir(repo_id, root)
+        except ValueError as exc:
+            named = f"repo_id={repo_id!r}" + (f", root={root!r}" if root else "")
+            return {"status": "error", "content": [{"text": f"start_recording: {named}: {exc}"}]}
+
         probe = self._probe_recording_scene()
         with self._recording_start_lock():
             state["recording"] = True
@@ -1339,7 +1348,6 @@ class DatasetRecordingMixin:
             state["recording_fps"] = fps
             state["recording_task"] = task
             state.pop("step_recording_due", None)
-            dataset_dir = resolve_dataset_dir(repo_id, root)
 
             try:
                 schema = self._collect_recording_schema(probe)
