@@ -288,13 +288,26 @@ def register_robot(
     if name in data.get("robots", {}):
         if not overwrite:
             raise ValueError(f"Robot '{name}' already in user registry. Use overwrite=True to replace.")
-    elif (built_in := get_robot(name)) is not None:
+    elif (taken := get_robot(name)) is not None:
         if not overwrite:
+            # get_robot() also synthesizes entries for the robot_descriptions URDF long tail
+            # (source="urdf"); name what the entry is and cite only the facts it records.
+            facts = [taken.get("description") or "no description"]
+            if taken.get("joints") is not None:
+                facts.append(f"{taken['joints']} joints")
+            if taken.get("aliases"):
+                facts.append(f"aliases {taken['aliases']}")
+            if taken.get("refusal"):
+                facts.append(f"does not build: {taken['refusal']}")
+            kind = "an auto-discovered robot_descriptions URDF" if taken.get("source") == "urdf" else "a built-in robot"
+            advice = (
+                "pass overwrite=True to supply a working model for this name"
+                if taken.get("refusal")
+                else "pick another name, or pass overwrite=True to shadow it"
+            )
             raise ValueError(
-                f"Robot '{name}' is a built-in robot ({built_in.get('description') or 'no description'}; "
-                f"{built_in.get('joints', 0)} joints, aliases {built_in.get('aliases', [])}). Registering it "
-                "would hide that entry; pick another name, or pass overwrite=True to shadow it "
-                "(unregister_robot() restores the built-in)."
+                f"Robot '{name}' is {kind} ({'; '.join(facts)}). Registering it would hide that entry; "
+                f"{advice} (unregister_robot() restores the entry)."
             )
         logger.info("Robot '%s' exists in package registry - user registration will override it.", name)
 
