@@ -357,12 +357,16 @@ class TestBinding:
         reason = driver.connect_eagerly()
         assert reason is not None and "no actuator drives joint '5' (motor 'wrist_roll')" in reason
 
-    def test_a_robot_whose_registry_entry_has_no_labels_is_refused_at_connect(self) -> None:
+    def test_a_robot_whose_registry_entry_has_no_labels_is_refused_at_connect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import strands_robots.registry as registry
+
+        monkeypatch.setattr(registry, "joint_labels", lambda name: {})
         engine = _FakeEngine("so101")
-        engine.robot = "lekiwi"
-        driver = FeetechDriver(tool_name="lekiwi", transport="twin", sim=engine)
+        driver = FeetechDriver(tool_name="so101", transport="twin", sim=engine)
         reason = driver.connect_eagerly()
-        assert reason is not None and "declares no joint_labels" in reason and "'lekiwi'" in reason
+        assert reason is not None and "declares no joint_labels" in reason and "'so101'" in reason
 
     def test_a_motor_the_labels_do_not_name_is_refused_at_connect(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.registry as registry

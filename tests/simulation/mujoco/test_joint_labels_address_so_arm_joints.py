@@ -65,10 +65,12 @@ class TestRegistry:
     def test_so101_labels_follow_the_servo_ids(self):
         assert joint_labels("so101") == dict(zip([str(i) for i in range(1, 7)], SO_LABELS, strict=True))
 
-    def test_so100_labels_cover_the_cad_names(self):
-        labels = joint_labels("so100")
-        assert list(labels.values()) == SO_LABELS
-        assert "Rotation" in labels and "Jaw" in labels
+    @pytest.mark.parametrize("robot", ["so100", "lekiwi"])
+    def test_every_so_arm100_arm_labels_its_cad_names_the_same(self, robot):
+        """LeKiwi carries the SO-100 arm, so the arm's labels are the SO-100's."""
+        arm = {jnt: lbl for jnt, lbl in joint_labels(robot).items() if lbl in SO_LABELS}
+        assert arm == joint_labels("so100")
+        assert "Rotation" in arm and "Jaw" in arm
 
     def test_an_alias_resolves_too(self):
         assert joint_labels("so101_follower") == joint_labels("so101")
@@ -76,6 +78,22 @@ class TestRegistry:
     def test_no_labels_is_an_empty_dict(self):
         assert joint_labels("panda") == {}
         assert joint_labels("no-such-robot") == {}
+
+
+def test_lekiwi_takes_the_so_arm_labels_in_send_action():
+    """The dict an SO-100 accepts drives LeKiwi's arm too, wheels by actuator name."""
+    _asset_file("lekiwi", "lekiwi/lekiwi.xml")
+    sim = Simulation()
+    sim.create_world()
+    try:
+        assert sim.add_robot(name="lekiwi", data_config="lekiwi")["status"] == "success"
+        action = dict.fromkeys(SO_LABELS, 0.1) | dict.fromkeys(
+            ["base_back_wheel", "base_left_wheel", "base_right_wheel"], 0.0
+        )
+        result = sim.send_action(action, robot_name="lekiwi")
+        assert result["status"] == "success", _text(result)
+    finally:
+        sim.destroy()
 
 
 class TestGetRobotState:
