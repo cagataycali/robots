@@ -38,6 +38,8 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 
+from strands_robots.utils import did_you_mean
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["urdf_joint_names", "demangle_usd_joint_names"]
@@ -314,7 +316,8 @@ def mjcf_keyframe_joint_positions(mjcf_path: str, keyframe: str | int) -> tuple[
         return None, f"{mjcf_path} declares no <keyframe>"
     index = keyframe if isinstance(keyframe, int) else (names.index(keyframe) if keyframe in names else -1)
     if not 0 <= index < model.nkey:
-        return None, f"keyframe {keyframe!r} is not in {mjcf_path}; it declares {names}"
+        hint = did_you_mean([keyframe], names) if isinstance(keyframe, str) else ""
+        return None, f"keyframe {keyframe!r} is not in {mjcf_path}; it declares {names}.{hint}"
     data = mujoco.MjData(model)
     mujoco.mj_resetDataKeyframe(model, data, index)
     movable = {int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)}
