@@ -1,5 +1,5 @@
 ---
-description: "What Robot() returns, why it is a factory, what the two modes give you, and why every method returns the same envelope an agent reads."
+description: "What Robot() returns, why it is a factory, what the two modes give you, and why nearly every method returns the same envelope an agent reads."
 ---
 
 # Robots
@@ -23,7 +23,7 @@ The simulation object is the engine, not a wrapper around one robot. It holds on
 
 ## The envelope
 
-Every action returns `{"status": "success" | "error", "content": [...]}` where each block is `{"text": ...}`, `{"json": ...}` or `{"image": ...}`. Two consequences follow. What you print in a script is exactly what the model reads when the same object is a tool, so a fence's output on these pages is also a transcript. And an error is an answer, not an exception: an unknown joint name returns `status="error"` with the valid names, and the model can recover in the next turn.
+Every action but four — `get_observation()` (raw obs dict), `cleanup()` (`None`), and the two name-only listers `list_robots()` / `list_cameras()` (bare `list[str]`) — returns `{"status": "success" | "error", "content": [...]}` where each block is `{"text": ...}`, `{"json": ...}` or `{"image": ...}`. Two consequences follow. What you print in a script is exactly what the model reads when the same object is a tool, so a fence's output on these pages is also a transcript. And an error is an answer, not an exception: an unknown joint name returns `status="error"` with the valid names, and the model can recover in the next turn.
 
 ## Robot, embodiment, registry entry
 
