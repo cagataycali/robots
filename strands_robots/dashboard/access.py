@@ -44,13 +44,19 @@ WebSockets are exempt from CORS, the cross-origin write middleware never sees a
 the port, so a page on ``http://localhost:3000`` opens a socket here with the
 operator's cookie attached. The ``Origin`` check used to live only inside the
 open posture, so that cookie was admitted with the header never read (f022).
-Every socket route calls :func:`admit_socket`, which owns both rules.
+Every socket route calls :func:`admit_socket`, which owns both rules, and then
+serves its frames through :func:`serve_while_admitted`, which re-checks the
+credential while the socket lives: a passkey removed or signed out closes its
+open sockets with 4401 within :data:`SOCKET_RECHECK_SECONDS`.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hmac
 import time
+from collections.abc import Awaitable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -167,7 +173,19 @@ def bootstrap_token_matches(request: Request) -> bool:
     beside the credential store. A request that presents nothing is refused
     before the file is consulted, so an anonymous probe never mints it.
     """
-    presented = presented_token(request)
+    return bootstrap_proof_matches(presented_token(request))
+
+
+def bootstrap_proof_matches(presented: str) -> bool:
+    """Whether *presented* is the bootstrap proof (constant time); an empty value never is.
+
+    The proof is presence at the machine: the configured token, or the ``0600``
+    file the server writes beside the credential store (re-minted on demand
+    once the first enrollment retired it). Routes that need more than a
+    session - adding a passkey, removing the last one - take it in the JSON
+    body as ``bootstrap``, so it travels beside the session cookie rather than
+    in place of it.
+    """
     if not presented:
         return False
     _source, expected = auth._first_enrollment_proof()
@@ -277,6 +295,65 @@ async def refuse_socket(ws: WebSocket, code: int) -> None:
     if origin_is_self(ws):  # type: ignore[arg-type]  # WebSocket answers headers like a Request
         await ws.accept()
     await ws.close(code=code)
+
+
+#: How often a live socket re-checks the credential it was admitted with, in
+#: seconds. A passkey removed or signed out ends its sockets within this long.
+SOCKET_RECHECK_SECONDS = 2.0
+
+
+def still_admitted(ws: WebSocket, who: dict[str, Any]) -> bool:
+    """Whether the caller :func:`admit_socket` returned for *ws* would still be admitted now.
+
+    A passkey session is re-checked on the claims it was admitted with
+    (``auth.session_revocation``: passkey still enrolled, epoch not advanced by
+    a sign-out); the static token and the open posture are re-read from the
+    handshake. ``exp`` is not re-checked: the page renews its cookie over HTTP,
+    and a socket is not a second session to expire. Anything that cannot be
+    checked is a no.
+    """
+    try:
+        via = who.get("via")
+        if via == "token":
+            return static_token_matches(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
+        if via == "loopback":
+            return open_posture(ws)  # type: ignore[arg-type]  # WebSocket answers headers like a Request
+        # A passkey session; its own ``via`` claim (a handoff) overrides the marker.
+        return auth.session_revocation(who) is None
+    except Exception:  # noqa: BLE001 - a check that cannot be made admits nobody
+        return False
+
+
+async def serve_while_admitted(ws: WebSocket, who: dict[str, Any], work: Awaitable[None]) -> None:
+    """Run a socket's *work* while its caller stays admitted; close it 4401 the moment it is not.
+
+    The handshake is checked once by :func:`admit_socket`, but a socket lives
+    for as long as the page stays open, and a passkey can be removed or sign
+    out in the meantime. Every :data:`SOCKET_RECHECK_SECONDS` the caller is
+    re-checked (:func:`still_admitted`); on a no, *work* is cancelled and the
+    socket closed with 4401, the code the page reads as "sign in again".
+
+    Args:
+        ws: The accepted socket.
+        who: What :func:`admit_socket` returned for it.
+        work: The route's frame loop.
+    """
+    task = asyncio.ensure_future(work)
+    try:
+        while not task.done():
+            await asyncio.wait({task}, timeout=SOCKET_RECHECK_SECONDS)
+            if task.done() or still_admitted(ws, who):
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            with contextlib.suppress(Exception):  # the peer may already be gone
+                await ws.close(code=4401)
+            return
+        task.result()
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 async def require_session(request: Request) -> dict[str, Any]:

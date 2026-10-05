@@ -921,11 +921,6 @@ async def frame(request: Request, peer_id: str, cam: str, _: dict = Depends(acce
 # ----------------------------------------------------------------------
 
 
-async def _admit(ws: WebSocket) -> bool:
-    """Same admission as every socket: Origin first, then the credential; a refused handshake returns False."""
-    return await access.admit_socket(ws) is not None
-
-
 async def _client_gone(ws: WebSocket) -> None:
     """Park on the socket's inbound channel until the client actually leaves."""
     try:
@@ -971,10 +966,20 @@ def wire_json(doc: Any) -> str:
 
 @ws_router.websocket("/ws/mesh")
 async def ws_mesh(ws: WebSocket) -> None:
-    """Fan the bridge's events out to one page: a snapshot first, then every event as it lands."""
-    if not await _admit(ws):
+    """Fan the bridge's events out to one page: a snapshot first, then every event as it lands.
+
+    Same admission as every socket, and re-checked while the feed runs: a
+    revoked session is closed with 4401 (``access.serve_while_admitted``).
+    """
+    who = await access.admit_socket(ws)
+    if who is None:
         return
     await ws.accept()
+    await access.serve_while_admitted(ws, who, _mesh_feed(ws))
+
+
+async def _mesh_feed(ws: WebSocket) -> None:
+    """The ``/ws/mesh`` fan-out for one accepted socket, until the page leaves."""
     bridge = _bridge(ws)
     q = bridge.attach_queue()
     gone = asyncio.create_task(_client_gone(ws))
@@ -1012,10 +1017,19 @@ def _churn_verdict(ws: WebSocket, peer_id: str, cam: str) -> Any | None:
 
 @ws_router.websocket("/ws/camera/{peer_id}/{cam}")
 async def ws_camera(ws: WebSocket, peer_id: str, cam: str) -> None:
-    """Push binary JPEG frames for one tile: only when a newer frame exists, paced at ~15 fps at most."""
-    if not await _admit(ws):
+    """Push binary JPEG frames for one tile: only when a newer frame exists, paced at ~15 fps at most.
+
+    Admission is re-checked while frames flow, like every socket's.
+    """
+    who = await access.admit_socket(ws)
+    if who is None:
         return
     await ws.accept()
+    await access.serve_while_admitted(ws, who, _camera_feed(ws, peer_id, cam))
+
+
+async def _camera_feed(ws: WebSocket, peer_id: str, cam: str) -> None:
+    """The ``/ws/camera`` frame pump for one accepted socket, until the page leaves."""
     bridge = _bridge(ws)
     last_t: Any = None
     reported: str | None = None

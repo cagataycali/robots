@@ -33,8 +33,13 @@ async def _voice_error(ws: WebSocket, text: str, *, code: int) -> None:
 
 @router.websocket("/ws/voice")
 async def voice_socket(ws: WebSocket) -> None:
-    """One spoken conversation; strangers are closed with 4401, a missing provider with 4503."""
-    if await access.admit_socket(ws) is None:
+    """One spoken conversation; strangers are closed with 4401, a missing provider with 4503.
+
+    The credential is re-checked while the conversation runs, so a passkey that
+    signs out or is removed ends the conversation with 4401 too.
+    """
+    who = await access.admit_socket(ws)
+    if who is None:
         return
     await ws.accept()
     try:
@@ -48,7 +53,7 @@ async def voice_socket(ws: WebSocket) -> None:
         return
     bridge: Any = getattr(ws.app.state, "bridge", None)
     try:
-        await run_voice_session(ws, bridge=bridge)
+        await access.serve_while_admitted(ws, who, run_voice_session(ws, bridge=bridge))
     except (WebSocketDisconnect, RuntimeError):
         pass  # best effort: the browser closed the socket, there is nobody left to tell
     except ImportError as exc:  # a provider package missing behind the SDK surface

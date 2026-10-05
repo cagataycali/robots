@@ -228,7 +228,7 @@ def test_redacted_settings_keeps_shape_and_hides_only_secrets():
 
 
 class TestAuthRoutes:
-    def test_second_enrolment_needs_a_session(self, client, monkeypatch):
+    def test_a_later_enrolment_needs_the_bootstrap_proof(self, client, monkeypatch):
         monkeypatch.setattr(auth, "has_credentials", lambda: True)
         assert client.post("/api/auth/register/begin", json={"bootstrap": "x"}).status_code == 401
 

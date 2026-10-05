@@ -7022,7 +7022,7 @@ function PasskeyList({ authRequired }) {
       ] }, r.id))
     ] }),
     msg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: msg.startsWith("✗") ? "warn small" : "hint small", children: msg }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Removing a passkey takes effect immediately; a browser already signed in keeps its session until it reloads." })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Removing a passkey signs that device out at once, pages it already has open included." })
   ] });
 }
 const APPLY_LABEL = {

@@ -338,14 +338,16 @@ async def mesh(request: Request, session_id: str, index: int, _: dict = Depends(
 
 @router.websocket("/ws/telemetry/{session_id}")
 async def telemetry(ws: WebSocket, session_id: str, poses: bool = False) -> None:
-    """Snapshots at ~15 Hz. Same admission as every other route; a stranger is closed with 4401.
+    """Snapshots at ~15 Hz. Same admission as every other route; a stranger is closed with 4401, and so
+    is a session revoked while the stream runs.
 
     With ``?poses=1`` every JSON snapshot is followed by one binary frame: the
     geom world poses as ``ngeom`` rows of 12 little-endian float32 (see
     :mod:`strands_robots.dashboard.scene`). The joint strip never asks; the
     twin always does.
     """
-    if await access.admit_socket(ws) is None:
+    who = await access.admit_socket(ws)
+    if who is None:
         return
     store: SessionStore = ws.app.state.safety.store
     session = store.get(session_id)
@@ -353,6 +355,11 @@ async def telemetry(ws: WebSocket, session_id: str, poses: bool = False) -> None
         await access.refuse_socket(ws, 4404)
         return
     await ws.accept()
+    await access.serve_while_admitted(ws, who, _telemetry_feed(ws, session, poses))
+
+
+async def _telemetry_feed(ws: WebSocket, session: SimSession, poses: bool) -> None:
+    """The ``/ws/telemetry`` snapshot stream for one accepted socket, until the session stops or the page leaves."""
     try:
         while True:
             snap = session.snapshot.as_dict()
