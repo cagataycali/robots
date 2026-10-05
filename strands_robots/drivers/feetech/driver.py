@@ -191,6 +191,9 @@ class FeetechDriver(TeleopMixin):
     #: in the tool spec. Every verb, unit and refusal below is shared.
     SUPPORTED_ROBOTS: tuple[str, ...] = SUPPORTED_ROBOTS
     TRANSPORTS: tuple[str, ...] = TRANSPORTS
+    #: ``port=`` is a serial device on this machine - see
+    #: :func:`~strands_robots.drivers.port_kind`.
+    PORT_KIND: str = "serial"
     MOTORS: dict[str, MotorSpec] = SO_ARM_MOTORS
     BUS: type[FeetechBus] = FeetechBus
     WIRE: str = "Feetech-native driver for {name} (STS/SMS series)"

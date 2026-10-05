@@ -29,6 +29,7 @@ from strands_robots.drivers.registry import (
     get_native_driver_class,
     list_driver_coverage,
     list_native_drivers,
+    port_kind,
     register_native_driver,
     resolve_driver,
 )
@@ -146,6 +147,7 @@ __all__ = [
     "list_driver_coverage",
     "list_native_drivers",
     "missing_driver_members",
+    "port_kind",
     "register_native_driver",
     "resolve_driver",
     "shipped_robot_names",

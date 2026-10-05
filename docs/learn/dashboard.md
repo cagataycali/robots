@@ -20,7 +20,7 @@ The process joins the Zenoh mesh as a robot-less gateway, under the same posture
 | tab | shows |
 |---|---|
 | Fleet | every live mesh robot (joints, cameras, task, lockout; a host process folds into its `__` robots) and every registry robot; teleop pairing, a task form |
-| Devices | this machine's serial ports and cameras; spawn a robot process per port (a managed mesh child), assign cameras, read its log, despawn |
+| Devices | local serial ports and cameras; spawn a robot process per port or network address (a mesh child), assign cameras, read logs, despawn |
 | Calibrate | the LeRobot calibration wizard, with a confirm before the arm moves |
 | Agent | a Strands Agent whose tools are the fleet's peers; anything that moves a real robot pauses on a consent card; a microphone opens voice |
 | Settings | agent model and prompt, mesh endpoints, voice provider, editable `.env` keys (a closed set; gates read-only), static token shown only as set / unset |

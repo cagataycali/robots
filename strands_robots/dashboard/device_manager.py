@@ -567,6 +567,8 @@ if cfg["mode"] == "real":
                 kwargs["calibration"] = found
         else:
             kwargs["id"] = cfg["robot_id"]
+    if cfg.get("network_interface"):
+        kwargs["network_interface"] = cfg["network_interface"]
     robot = Robot(
         cfg["robot_name"], mode="real", port=cfg["port"],
         cameras=cfg.get("cameras") or None,
@@ -1285,13 +1287,39 @@ _MOTOR_MODEL_RE = re.compile(r"^[a-z0-9_-]{1,32}\Z")
 _CAMERA_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}\Z")
 
 
-def validate_port(port: Any) -> str | None:
-    """Refusal reason for a caller-supplied serial port path, or None if it is one."""
+#: Where a networked robot is: an IP (``192.168.123.161``, ``[fe80::1]``), a ``host[:port]``, a
+#: URI (``radio://0/80/2M``, ``ssh://pi@duck.local``) or a socket path. It reaches the child only
+#: inside its JSON config, never a shell or ``lsof``; the closed charset and the leading
+#: character keep it from ever reading as an option or a traversal.
+_ADDRESS_RE = re.compile(r"^[A-Za-z0-9\[/][A-Za-z0-9._:/@\[\]%-]{0,252}\Z")
+
+#: A Linux NIC name (IFNAMSIZ is 16 with the NUL), as CycloneDDS binds to it.
+_NIC_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,14}\Z")
+
+
+def validate_port(port: Any, kind: str = "serial") -> str | None:
+    """Refusal reason for a caller-supplied ``port``, or None if it is one.
+
+    Args:
+        port: What the caller typed.
+        kind: :func:`~strands_robots.drivers.port_kind` for the robot it is for. A
+            ``"serial"`` port must be a device path under ``/dev/``; an ``"address"`` port
+            is where the robot is on the network. A ``/dev/`` path is always held to the
+            serial rule, whichever robot it is for.
+    """
     if not isinstance(port, str):
         return f"port must be a string, got {type(port).__name__}"
     text = port.strip()
     if not text or text != port or any(c.isspace() for c in text):
         return f"port {refusal_repr(port)} refused: a serial device path has no whitespace"
+    if kind == "address" and not text.startswith("/dev/"):
+        if not _ADDRESS_RE.match(text) or ".." in text:
+            return (
+                f"port {refusal_repr(port)} refused: this robot is reached over the network, so port "
+                f"is its address - an IP, host[:port] or URI (letters, digits, . _ : / @ [ ] % -), "
+                f"like 192.168.123.161 or ur5e.local:30004"
+            )
+        return None
     if not _PORT_RE.match(text) or "/../" in text or text.endswith("/..") or text.startswith("/dev/-"):
         return (
             f"port {refusal_repr(port)} refused: it names the device a robot process opens and writes to, "
@@ -1299,6 +1327,34 @@ def validate_port(port: Any) -> str | None:
             f"/dev/serial/by-id/usb-..."
         )
     return None
+
+
+def validate_network_interface(nic: Any) -> str | None:
+    """Refusal reason for a caller-supplied ``network_interface``, or None if acceptable."""
+    if nic is None:
+        return None
+    if not isinstance(nic, str) or not _NIC_RE.match(nic):
+        return (
+            f"network_interface {refusal_repr(nic)} refused: it is the NIC the robot's DDS "
+            f"traffic binds to on this machine, so it must be an interface name like eth0 or enp3s0"
+        )
+    return None
+
+
+def real_transport(robot_name: str) -> dict[str, Any]:
+    """What a ``mode="real"`` spawn of ``robot_name`` needs, for the form and the refusals.
+
+    Returns:
+        ``{"port_kind": "serial" | "address", "network_interface": bool}`` - whether ``port``
+        is a servo bus on this machine or the robot's network address, and whether the driver
+        takes the NIC its traffic binds to.
+    """
+    from strands_robots.drivers import constructor_keywords, get_native_driver_class, port_kind
+
+    kind = port_kind(robot_name)
+    driver_cls = get_native_driver_class(robot_name) if kind == "address" else None
+    nic = driver_cls is not None and "network_interface" in constructor_keywords(driver_cls)
+    return {"port_kind": kind, "network_interface": nic}
 
 
 def validate_robot_id(robot_id: Any) -> str | None:
@@ -2088,8 +2144,14 @@ class DeviceManager:
         cameras: dict[str, Any] | None = None,
         robot_id: str | None = None,
         remember: bool = True,
+        network_interface: str | None = None,
     ) -> dict[str, Any]:
-        """Start a robot child process for ``robot_name`` and register it as a managed peer."""
+        """Start a robot child process for ``robot_name`` and register it as a managed peer.
+
+        ``port`` is what :func:`real_transport` says it is for this robot: a servo bus on this
+        machine (required) or the robot's network address (optional - several network drivers
+        discover the robot). ``network_interface`` is accepted only by a driver that takes one.
+        """
         import json as _json
 
         # Refuse before a process exists: a pid reported for a child that is already raising is worse
@@ -2110,8 +2172,16 @@ class DeviceManager:
         if bad_cams:
             return bad_cams
 
-        if mode == "real" and not port:
-            return {"error": "port required for mode=real"}
+        transport = real_transport(robot_name) if mode == "real" else {"port_kind": "serial"}
+        kind = transport["port_kind"]
+        if mode == "real" and not port and kind == "serial":
+            return {"error": f"port required for mode=real: {robot_name} is driven over a servo bus on this machine"}
+        if network_interface is not None and not transport.get("network_interface"):
+            return {"error": f"network_interface refused: the {robot_name} driver takes no network interface"}
+        if (bad_nic := validate_network_interface(network_interface)) is not None:
+            return {"error": bad_nic}
+        # Only a device path is a bus: the claim check and the board profile are about one.
+        serial_port = port if isinstance(port, str) and port.startswith("/dev/") else None
         # A real arm inherits the dashboard's mesh posture; when that posture has no wire auth the
         # spawn is refused here, before a process owns the serial bus, unless the operator said yes.
         if mode == "real" and (bad_posture := real_spawn_posture_refusal()) is not None:
@@ -2119,7 +2189,7 @@ class DeviceManager:
         # The port reaches lsof argv (bus_claim) and is the path the child opens and writes
         # handshake bytes to; robot_id is a file name in the child. Both are shape-checked
         # here, before any subprocess, the way calibration_run.cli_args already does.
-        if port is not None and (bad_port := validate_port(port)) is not None:
+        if port is not None and (bad_port := validate_port(port, kind)) is not None:
             return {"error": bad_port}
         if (bad_rid := validate_robot_id(robot_id)) is not None:
             return {"error": bad_rid}
@@ -2127,11 +2197,11 @@ class DeviceManager:
         with self._lock:
             if (_live := registry_entry(self.robots, peer_id)) is not None and _live.alive():
                 return {"error": f"peer {peer_id} already running"}
-            if mode == "real" and port:
+            if mode == "real" and serial_port:
                 tracked = {
                     r.process.pid: pid_key for pid_key, r in self.robots.items() if r.process is not None and r.alive()
                 }
-                conflict = bus_claim.bus_conflict(port, bus_claim.bus_holders(port), tracked)
+                conflict = bus_claim.bus_conflict(serial_port, bus_claim.bus_holders(serial_port), tracked)
                 if conflict:
                     return {"error": conflict}
             # Stamp each numeric camera index with the device that answers it RIGHT NOW, while the
@@ -2148,6 +2218,8 @@ class DeviceManager:
                 "cameras": cameras,
                 "robot_id": robot_id,
             }
+            if network_interface:
+                cfg["network_interface"] = network_interface
             proc = subprocess.Popen(
                 # The child gets the camera config with the dashboard's own notes REMOVED:
                 # _build_camera_config refuses any key OpenCVCameraConfig does not declare, so a forwarded
@@ -2181,7 +2253,7 @@ class DeviceManager:
                 daemon=True,
             ).start()
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
-        if remember and mode == "real" and port:
+        if remember and mode == "real" and serial_port:
             self.remember_profile(cfg)
         out = {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
         if mode == "real":

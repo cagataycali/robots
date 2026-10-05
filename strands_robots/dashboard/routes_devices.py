@@ -231,6 +231,7 @@ async def _spawn(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         body.get("port"),
         body.get("cameras"),
         body.get("robot_id"),
+        network_interface=body.get("network_interface"),
     )
     # A pid is not a running robot.
     peer_id = result.get("peer_id")

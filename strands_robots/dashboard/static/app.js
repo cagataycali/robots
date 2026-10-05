@@ -8811,6 +8811,12 @@ function CameraGallery({ cameras: cameras2, names, problem, scanned = true, erro
     ] })
   ] });
 }
+function realTransportOf(v) {
+  if (!v || typeof v !== "object") return void 0;
+  const o = v;
+  if (o.port_kind !== "serial" && o.port_kind !== "address") return void 0;
+  return { portKind: o.port_kind, networkInterface: o.network_interface === true };
+}
 function entryToRobot(value, keyName) {
   if (typeof value === "string") {
     const text = value.trim();
@@ -8828,8 +8834,11 @@ function entryToRobot(value, keyName) {
   if (keyName && inner && inner !== keyName) bits.push(inner);
   if (typeof o.category === "string" && o.category) bits.push(o.category);
   if (typeof o.joints === "number" && Number.isFinite(o.joints)) bits.push(`${o.joints} joints`);
-  if (o.has_real === false && o.has_sim === true) bits.push("sim only");
-  return { name, label: bits.length ? `${name} — ${bits.join(", ")}` : name };
+  const realTransport = realTransportOf(o.real_transport);
+  if (o.has_real === false && o.has_sim === true && !realTransport) bits.push("sim only");
+  if ((realTransport == null ? void 0 : realTransport.portKind) === "address") bits.push("networked");
+  const label2 = bits.length ? `${name} — ${bits.join(", ")}` : name;
+  return realTransport ? { name, label: label2, realTransport } : { name, label: label2 };
 }
 function dedupe(rows) {
   const seen = /* @__PURE__ */ new Set();
@@ -9485,7 +9494,7 @@ function cleanHubHost(input) {
   return { host, why: "" };
 }
 function DevicePanel({ open, onClose }) {
-  var _a;
+  var _a, _b;
   const [doc, setDoc] = reactExports.useState(null);
   const sheetRef = reactExports.useRef(null);
   useDialogFocus(sheetRef, open);
@@ -9502,6 +9511,7 @@ function DevicePanel({ open, onClose }) {
   const [robotName, setRobotName] = reactExports.useState("");
   const [mode, setMode] = reactExports.useState("sim");
   const [port, setPort] = reactExports.useState("");
+  const [nic, setNic] = reactExports.useState("");
   const [camRows, setCamRows] = reactExports.useState([{ name: "main", index: "" }]);
   const [camFps, setCamFps] = reactExports.useState("");
   const [camW, setCamW] = reactExports.useState("");
@@ -9644,16 +9654,20 @@ function DevicePanel({ open, onClose }) {
     robotName,
     mode
   });
+  const transport = (_b = robots.find((r) => r.name === robotName)) == null ? void 0 : _b.realTransport;
+  const networked = (transport == null ? void 0 : transport.portKind) === "address";
+  const peerCommand = "Robot(" + JSON.stringify(robotName) + ', mode="real", port=' + JSON.stringify(port.trim() || "<robot ip>") + ((transport == null ? void 0 : transport.networkInterface) ? ", network_interface=" + JSON.stringify(nic.trim() || "eth0") : "") + ", mesh=True)";
   const spawn = () => act(() => (forgetJointFailure(nameVerdict.value), post("/api/devices/spawn", {
     robot_name: robotName,
     peer_id: nameVerdict.value,
     mode,
-    port: mode === "real" ? port || null : null,
+    port: mode === "real" ? port.trim() || null : null,
+    ...mode === "real" && networked && (transport == null ? void 0 : transport.networkInterface) && nic.trim() ? { network_interface: nic.trim() } : {},
     // The camera config must be a MAPPING per entry ({index_or_path: N, ...}); a bare int here is
     // the exact ValueError an operator once hit live: "Camera 'main' config must be a mapping ...
     // got int: 3". camerasField owns that shape (and every name/index collision) in one place.
     cameras: camField.problem ? null : camField.value,
-    robot_id: robotId || null
+    robot_id: networked ? null : robotId || null
   })), "spawned");
   const showLogs = async (peer) => {
     try {
@@ -9881,7 +9895,40 @@ function DevicePanel({ open, onClose }) {
             ] })
           ] })
         ] }),
-        mode === "real" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        mode === "real" && networked && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Address" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  value: port,
+                  placeholder: "robot IP or host (optional)",
+                  onChange: (e) => setPort(e.target.value)
+                }
+              )
+            ] }),
+            (transport == null ? void 0 : transport.networkInterface) && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Network interface" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  value: nic,
+                  placeholder: "eth0",
+                  onChange: (e) => setNic(e.target.value)
+                }
+              )
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
+            robotName,
+            " is reached over the network, not a servo bus, so it needs no port scan and no calibration. Spawning here works only when this machine is on the robot's network",
+            (transport == null ? void 0 : transport.networkInterface) ? " (the interface above is the one wired to it)" : "",
+            ". Otherwise run the peer on a computer that is, and pair it from Settings → mesh connect:"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "logtail", children: peerCommand })
+        ] }),
+        mode === "real" && !networked && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Servo bus" }),
@@ -10067,7 +10114,7 @@ function DevicePanel({ open, onClose }) {
           "button",
           {
             className: "btn go",
-            disabled: busy || !robotName || mode === "real" && !port || !!camProblem || !!nameVerdict.problem || mode === "real" && blocksSpawn(portVerdict),
+            disabled: busy || !robotName || mode === "real" && !networked && !port || !!camProblem || !!nameVerdict.problem || mode === "real" && !networked && blocksSpawn(portVerdict),
             onClick: spawn,
             children: "spawn"
           }
@@ -10145,7 +10192,7 @@ function DevicePanel({ open, onClose }) {
                 )
               ] }),
               p.remembered && (() => {
-                var _a2, _b;
+                var _a2, _b2;
                 const mem = rememberedLine(p.remembered, { ...p, calibrations: calibIds });
                 return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row between remembered", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "muted small", children: [
@@ -10164,7 +10211,7 @@ function DevicePanel({ open, onClose }) {
                       " ⚠ ",
                       p.remembered.camera_health.text
                     ] }),
-                    (((_b = p.remembered.camera_health) == null ? void 0 : _b.cameras) ?? []).filter((c) => c.remedy && c.state !== "ready" && c.state !== "unchecked").map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "hint small", children: [
+                    (((_b2 = p.remembered.camera_health) == null ? void 0 : _b2.cameras) ?? []).filter((c) => c.remedy && c.state !== "ready" && c.state !== "unchecked").map((c) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "hint small", children: [
                       " ",
                       c.name,
                       ": ",
