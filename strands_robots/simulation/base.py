@@ -252,6 +252,62 @@ def reject_misspelled_kwargs(kwargs: Mapping[str, Any], accepted: Sequence[str],
         )
 
 
+# CPython's own refusal line for an unknown keyword on a non-``**kwargs``
+# signature. Format is stable from 3.7+: ``<qualname>() got an unexpected
+# keyword argument '<name>'``. The parameter name is single-quoted, so a
+# re-raise can lift it out without parsing the ``<qualname>`` prefix - which
+# differs between methods (``MuJoCoSimEngine.add_robot``) and functions.
+_UNEXPECTED_KW_RE = re.compile(r"got an unexpected keyword argument '([^']+)'")
+
+
+def reshape_signature_typo(
+    exc: TypeError,
+    accepted: Sequence[str],
+    *,
+    owner: str,
+) -> TypeError:
+    """Reshape CPython's bare "unexpected keyword" refusal into the sibling guard.
+
+    A non-``**kwargs`` signature on a *world-mutator* (``add_robot``,
+    ``add_camera``, ``remove_robot``) hands the caller a raw CPython TypeError
+    that names the backend class instead of the method, offers no close-match
+    hint, and does not round-trip into the ``{"status": "error", ...}`` tool
+    envelope its sibling world-mutators return. ``reject_misspelled_kwargs``
+    already carries the shared cutoff (:data:`_MISSPELLING_RATIO`) and the
+    sentence template every ``__init__``-sinked caller gets; this reshape
+    applies that same message to a method whose declaration is explicit
+    enough that Python's own guard fired first.
+
+    Returns the ORIGINAL exception when the pattern does not match (foreign
+    message / nested TypeError from inside the method body), so a signature
+    refusal is reshaped and every other TypeError propagates unchanged.
+
+    Args:
+        exc: The ``TypeError`` CPython raised at call time.
+        accepted: The keyword names the method binds, normally
+            :func:`own_keyword_names` of its own signature.
+        owner: Qualified method name to quote in the message (e.g.
+            ``"sim.add_robot"``), replacing the ``<Class>.<method>`` prefix
+            CPython uses - the backend class is an implementation detail.
+
+    Returns:
+        A new ``TypeError`` with the sibling guard's message when ``exc``
+        matches CPython's unknown-kw pattern; the original ``exc`` otherwise.
+    """
+    match = _UNEXPECTED_KW_RE.search(str(exc))
+    if not match:
+        return exc
+    name = match.group(1)
+    close = difflib.get_close_matches(name, list(accepted), n=1, cutoff=_MISSPELLING_RATIO)
+    hint = f" (did you mean {close[0]!r}?)" if close else ""
+    return TypeError(
+        f"{owner} does not accept {name!r}{hint}. The method's declaration "
+        "lists its keywords explicitly, so a name it does not bind is a typo "
+        f"rather than a cross-backend option. Fix the spelling, or drop the "
+        f"argument. {owner} accepts: {', '.join(map(repr, accepted))}."
+    )
+
+
 def _registry_name(name: str) -> str:
     """Canonical registry name for ``name``, or ``name`` itself when it has none."""
     try:
@@ -1098,6 +1154,35 @@ class SimEngine(ABC):
             refusals = [vars(_caps.ManipulationOptional)[m] for m in _MIXIN_REFUSALS.get(name, ())]
             if any(_underlying(inspect.getattr_static(cls, m.__name__, None)) is m for m in refusals):
                 raise TypeError(f"{cls.__name__}.CAPABILITIES claims {name!r} but keeps a ManipulationOptional refusal")
+
+        # Reshape CPython's bare "unexpected keyword argument" refusal on
+        # ``add_robot`` into the did-you-mean message its sibling world-mutators
+        # (``Robot()`` and each backend's ``__init__``) already give for the
+        # SAME typo. ``add_robot``'s signature lists its keywords explicitly, so
+        # Python's own guard fires first and names the backend class rather
+        # than the method - and offers no close match. The wrapper applied
+        # here routes the refusal through :func:`reshape_signature_typo` and
+        # leaves every other TypeError untouched. Mirrors
+        # :func:`reject_misspelled_kwargs`, which already covers the
+        # ``**kwargs``-sinked siblings.
+        own = cls.__dict__.get("add_robot")
+        if callable(own) and not getattr(own, "__isabstractmethod__", False):
+            if not getattr(own, "_add_robot_typo_wrapped", False):
+                accepted = own_keyword_names(own)
+                owner = "sim.add_robot"
+
+                @functools.wraps(own)
+                def _add_robot_with_reshape(self: Any, *args: Any, **kw: Any) -> Any:
+                    try:
+                        return own(self, *args, **kw)
+                    except TypeError as exc:
+                        reshaped = reshape_signature_typo(exc, accepted, owner=owner)
+                        if reshaped is exc:
+                            raise
+                        raise reshaped from None
+
+                _add_robot_with_reshape._add_robot_typo_wrapped = True  # type: ignore[attr-defined]
+                cls.add_robot = _add_robot_with_reshape  # type: ignore[assignment]
 
     def capabilities(self) -> frozenset[str]:
         """Return ``CAPABILITIES``, or derive it: the default set plus each overridden optional method.
