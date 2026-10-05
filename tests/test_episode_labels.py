@@ -483,6 +483,30 @@ class TestAnUnreadableRecordIsOnlyAVerdictField:
             f"measure_agreement: human_labels[0] must be a dict with 'quality' in {QUALITY_GRADES}."
         )
 
+    @pytest.mark.parametrize(
+        ("call", "hint"),
+        [
+            (lambda root: annotate_episode(root, 0, quality="Medium"), "'Medium' -> 'medium'"),
+            (
+                lambda root: annotate_episode(root, 0, quality="high", failure_mode="near-miss"),
+                "'near-miss' -> 'near_miss'",
+            ),
+            (lambda root: filter_episodes(root, min_quality="Medium"), "'Medium' -> 'medium'"),
+            (lambda root: measure_agreement(root, {0: {"quality": "Medium"}}), "'Medium' -> 'medium'"),
+            (
+                lambda root: measure_agreement(root, {0: {"quality": "high", "failure_mode": "occlusion"}}),
+                "'occlusion' -> 'camera_occlusion'",
+            ),
+        ],
+        ids=["annotate-quality", "annotate-failure-mode", "filter-min-quality", "agreement-quality", "agreement-mode"],
+    )
+    def test_a_near_miss_vocabulary_value_is_pointed_at_the_word_it_missed(self, dataset_root, call, hint):
+        """Every vocabulary refusal names the closest grade or tag, as the keyword refusals do."""
+        record_deterministic_verdicts(dataset_root, [{"episode": 0, "success": True}], benchmark="reach")
+        with pytest.raises(ValueError) as refusal:
+            call(dataset_root)
+        assert str(refusal.value).endswith(f" Did you mean: {hint}?")
+
 
 class TestFilterEpisodes:
     @pytest.fixture

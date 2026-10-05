@@ -82,7 +82,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import boolean_flag_error, non_negative_whole_number_error
+from strands_robots.utils import boolean_flag_error, did_you_mean, non_negative_whole_number_error
 
 # Bump when the sidecar layout changes shape. Read paths refuse a version
 # they do not know rather than guessing at its meaning.
@@ -543,10 +543,14 @@ def annotate_episode(
         raise ValueError(msg)
     episode = int(episode)
     if quality not in QUALITY_GRADES:
-        raise ValueError(f"annotate_episode: quality must be one of {QUALITY_GRADES}, got {quality!r}.")
+        raise ValueError(
+            f"annotate_episode: quality must be one of {QUALITY_GRADES}, got {quality!r}."
+            + did_you_mean([quality], QUALITY_GRADES)
+        )
     if failure_mode is not None and failure_mode not in FAILURE_MODES:
         raise ValueError(
             f"annotate_episode: failure_mode must be None or one of {FAILURE_MODES}, got {failure_mode!r}."
+            + did_you_mean([failure_mode], FAILURE_MODES)
         )
     if not isinstance(note, str):
         raise ValueError(f"annotate_episode: note must be a string, got {type(note).__name__}.")
@@ -621,7 +625,10 @@ def filter_episodes(
         if msg := boolean_flag_error(value, flag, "filter_episodes"):
             raise ValueError(msg)
     if min_quality not in QUALITY_GRADES:
-        raise ValueError(f"filter_episodes: min_quality must be one of {QUALITY_GRADES}, got {min_quality!r}.")
+        raise ValueError(
+            f"filter_episodes: min_quality must be one of {QUALITY_GRADES}, got {min_quality!r}."
+            + did_you_mean([min_quality], QUALITY_GRADES)
+        )
 
     minimum_rank = QUALITY_GRADES.index(min_quality)
     document = read_labels(root)
@@ -715,6 +722,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
         if not isinstance(human, dict) or human.get("quality") not in QUALITY_GRADES:
             raise ValueError(
                 f"measure_agreement: human_labels[{index}] must be a dict with 'quality' in {QUALITY_GRADES}."
+                + (did_you_mean([human.get("quality")], QUALITY_GRADES) if isinstance(human, dict) else "")
             )
         # The holdout is the third spelling of the failure-mode vocabulary, and it
         # is checked like the other two (annotate_episode on the way in,
@@ -732,6 +740,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
                 f"measure_agreement: human_labels[{index}]['failure_mode'] must be None or one of "
                 f"{FAILURE_MODES}, got {human_mode!r}. A tag outside the vocabulary never equals the "
                 "judge's, so counting it as a disagreement would understate the calibration."
+                + did_you_mean([human_mode], FAILURE_MODES)
             )
         record = document["episodes"].get(str(int(index)), {})
         judge = record.get("judge")
