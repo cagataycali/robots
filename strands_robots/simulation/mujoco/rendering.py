@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
+from strands_robots.simulation.base import close_match_hint
 from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
@@ -1497,10 +1498,27 @@ class RenderingMixin:
             else:
                 cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
+                    # Parity with remove_camera / remove_object / move_object:
+                    # a one-character typo on the LLM side gets a close-match
+                    # suggestion and the discovery pointer, not a stone wall.
+                    # close_match_hint is the same helper the sibling methods
+                    # use (base.py:304); the `action='list_cameras'` tail is
+                    # the wording scene_ops uses on remove_camera. The other
+                    # single-camera lookup sites in this file (render_depth
+                    # L1623, numpy renders L1829/L2066, batch-form "Camera(s)
+                    # not found" L2516/L2765/L3406) follow the same pattern.
+                    hint = close_match_hint(camera_name, self._list_camera_names())
+                    tail = ". Use action='list_cameras' to see all." if hint else ""
                     return {
                         "status": "error",
                         "content": [
-                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
+                            {
+                                "text": (
+                                    f"Camera '{camera_name}' not found."
+                                    f"{hint} Available: {self._list_camera_names()}"
+                                    f"{tail}"
+                                )
+                            }
                         ],
                     }
                 label = camera_name
@@ -1617,10 +1635,27 @@ class RenderingMixin:
             else:
                 cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
+                    # Parity with remove_camera / remove_object / move_object:
+                    # a one-character typo on the LLM side gets a close-match
+                    # suggestion and the discovery pointer, not a stone wall.
+                    # close_match_hint is the same helper the sibling methods
+                    # use (base.py:304); the `action='list_cameras'` tail is
+                    # the wording scene_ops uses on remove_camera. The other
+                    # single-camera lookup sites in this file (render_depth
+                    # L1623, numpy renders L1829/L2066, batch-form "Camera(s)
+                    # not found" L2516/L2765/L3406) follow the same pattern.
+                    hint = close_match_hint(camera_name, self._list_camera_names())
+                    tail = ". Use action='list_cameras' to see all." if hint else ""
                     return {
                         "status": "error",
                         "content": [
-                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
+                            {
+                                "text": (
+                                    f"Camera '{camera_name}' not found."
+                                    f"{hint} Available: {self._list_camera_names()}"
+                                    f"{tail}"
+                                )
+                            }
                         ],
                     }
                 label = camera_name
