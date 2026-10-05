@@ -7204,7 +7204,7 @@ class MuJoCoSimEngine(
         # for a method on it, which happens on the worker - so without this
         # guard the caller is handed "Policy started" for a rollout that
         # applies no action and then reports nothing running.
-        if err := self._validate_policy_object(policy_object, "start_policy"):
+        if err := self._validate_policy_object(policy_object, "start_policy", policy_provider, policy_config):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
             return err
@@ -7519,7 +7519,7 @@ class MuJoCoSimEngine(
         # Same reason as the observer domain above: a policy_object that cannot
         # be driven is configuration, not a rollout, so it must be refused
         # before the robot is claimed.
-        if err := self._validate_policy_object(policy_object, "run_policy"):
+        if err := self._validate_policy_object(policy_object, "run_policy", policy_provider, policy_config):
             return err
         if err := self._validate_rollout_target(robot_name, instruction, "run_policy"):
             return err

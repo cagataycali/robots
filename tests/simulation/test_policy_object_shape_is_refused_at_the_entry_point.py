@@ -110,17 +110,17 @@ FACADE_NAMES = ("eval_policy", "evaluate_benchmark", "run_policy", "start_policy
 def _facades(engine: Simulation) -> dict[str, Any]:
     """Every rollout facade that takes ``policy_object``, called the same way."""
     return {
-        "run_policy": lambda value: engine.run_policy(
-            robot_name="arm", policy_object=value, n_steps=3, control_frequency=30.0, fast_mode=True
+        "run_policy": lambda value, **kw: engine.run_policy(
+            robot_name="arm", policy_object=value, n_steps=3, control_frequency=30.0, fast_mode=True, **kw
         ),
-        "start_policy": lambda value: engine.start_policy(
-            robot_name="arm", policy_object=value, n_steps=3, control_frequency=30.0, fast_mode=True
+        "start_policy": lambda value, **kw: engine.start_policy(
+            robot_name="arm", policy_object=value, n_steps=3, control_frequency=30.0, fast_mode=True, **kw
         ),
-        "eval_policy": lambda value: engine.eval_policy(
-            robot_name="arm", policy_object=value, n_episodes=1, max_steps=3, control_frequency=30.0
+        "eval_policy": lambda value, **kw: engine.eval_policy(
+            robot_name="arm", policy_object=value, n_episodes=1, max_steps=3, control_frequency=30.0, **kw
         ),
-        "evaluate_benchmark": lambda value: engine.evaluate_benchmark(
-            "__no_such_benchmark__", robot_name="arm", policy_object=value, n_episodes=1
+        "evaluate_benchmark": lambda value, **kw: engine.evaluate_benchmark(
+            "__no_such_benchmark__", robot_name="arm", policy_object=value, n_episodes=1, **kw
         ),
     }
 
@@ -165,6 +165,48 @@ class TestEveryRolloutFacadeRefusesIt:
         # A refusal that let the rollout start would still be a rollout the
         # caller did not get: no action may reach the sim.
         assert applied == []
+
+
+# What a caller keeps when they add ``policy_object=`` to a provider call: the
+# object wins, so each of these used to be dropped without a word.
+IGNORED_BESIDE_AN_OBJECT: list[tuple[str, dict[str, Any], list[str]]] = [
+    ("bogus-provider", {"policy_provider": "###NOT_A_REAL_PROVIDER###"}, ["policy_provider="]),
+    ("config", {"policy_config": {"pretrained_name_or_path": "x"}}, ["policy_config="]),
+    (
+        "both",
+        {"policy_provider": "lerobot_local", "policy_config": {}},
+        ["policy_provider=", "policy_config="],
+    ),
+]
+
+
+class TestAnObjectBesideTheProviderPairIsRefused:
+    """``policy_object`` replaces ``policy_provider``/``policy_config``; passing both is one too many."""
+
+    @pytest.mark.parametrize("facade", FACADE_NAMES)
+    @pytest.mark.parametrize(
+        ("label", "extra", "named"), IGNORED_BESIDE_AN_OBJECT, ids=[i for i, *_ in IGNORED_BESIDE_AN_OBJECT]
+    )
+    def test_the_refusal_names_what_would_be_ignored_and_drives_nothing(self, sim, facade, label, extra, named):
+        applied: list[Any] = []
+        real_send = sim.send_action
+        sim.send_action = lambda *a, **k: (applied.append(a), real_send(*a, **k))[1]
+        try:
+            result = _facades(sim)[facade](MockPolicy(), **extra)
+        finally:
+            sim.send_action = real_send
+        _wait_until_idle(sim)
+
+        assert result["status"] == "error", result
+        assert _text(result).startswith(f"{facade}: policy_object"), result
+        assert all(n in _text(result) for n in named), result
+        assert applied == []
+
+    @pytest.mark.parametrize("facade", ["run_policy", "start_policy"])
+    def test_the_default_provider_spelled_out_still_runs(self, sim, facade):
+        result = _facades(sim)[facade](MockPolicy(), policy_provider="mock", policy_config=None)
+        _wait_until_idle(sim)
+        assert result["status"] == "success", result
 
 
 class TestBothSurfacesGiveOneVerdict:

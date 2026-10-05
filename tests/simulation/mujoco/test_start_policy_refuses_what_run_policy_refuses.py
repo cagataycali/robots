@@ -137,18 +137,6 @@ class TestBothSurfacesGiveOneVerdict:
         assert started["status"] == "success", started
         _wait_until_idle(sim)
 
-    def test_a_prebuilt_policy_skips_the_check_the_provider_is_unused_for(self, sim):
-        """``run_policy`` skips the pre-flight for a ``policy_object``; so does this."""
-        started = sim.start_policy(
-            robot_name="arm",
-            policy_provider="a-name-no-spelling-resolves",
-            policy_object=MockPolicy(),
-            n_steps=2,
-        )
-
-        assert started["status"] == "success", started
-        _wait_until_idle(sim)
-
 
 class TestTheCheckCostsNothingWithoutAHook:
     def test_a_provider_with_no_hook_has_no_frame_rendered_for_it(self, sim, monkeypatch):
