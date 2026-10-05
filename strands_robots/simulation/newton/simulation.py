@@ -1382,6 +1382,29 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 self._targets[(robot_name, jname)] = float(action_map[jname])
             self._write_targets()
             self._advance(n_substeps)
+        if not action_map:
+            # Empty-mapping path (silent-wrong message fix; mirrors the
+            # MuJoCo backend): send_action({}) is the pinned "step without
+            # commanding" idiom (see tests/simulation/isaac/
+            # test_delta_eef_controller.py and the MuJoCo diverged-world
+            # probe), so the behaviour stays as it was - but the one-sentence
+            # success text used to read "Action applied to '<robot>' (0
+            # keys)." , which an LLM reading the envelope treats as the no-op
+            # the words describe when the world has in fact advanced. Named
+            # here instead so the two readings are separated.
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"No actuators commanded on '{robot_name}' (action mapping is empty); "
+                            f"advanced {n_substeps} physics substep(s). "
+                            f"Use step(n_steps=...) to advance without commanding, or pass a "
+                            f"{{name: value}} mapping that names at least one actuator."
+                        )
+                    }
+                ],
+            }
         return {
             "status": "success",
             "content": [{"text": f"Action applied to '{robot_name}' ({len(action_map)} keys)."}],

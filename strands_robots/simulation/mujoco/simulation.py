@@ -1371,6 +1371,35 @@ class MuJoCoSimEngine(
             # Reached only when an installed action controller raised and the
             # name-lookup fallback ran after it: the resolved keys were written.
             return self._unresolved_action_refusal(robot_name, unresolved, applied=applied)
+        # Empty-mapping path (silent-wrong message fix): send_action({}) is a
+        # pinned "clean settle" idiom (one shape under an installed action
+        # controller for a zero-delta no-command, one shape without it for a
+        # step without commanding, driving the diverged-world probe in
+        # tests/simulation/mujoco/test_a_diverged_world_is_reported_not_stepped_through.py).
+        # Both DO advance physics ``n_substeps`` times. The success message
+        # used to be ``Action applied to '<robot>' (0 keys)."`` on both -
+        # "applied" and "0 keys" in one sentence, which an LLM reads as the
+        # no-op the words describe when the world has in fact advanced. Named
+        # here instead, with the two readings separated so a caller logging
+        # the result sees what actually happened. The behavioural question
+        # (refuse empty mapping instead of silently stepping) is a bigger
+        # architectural choice that would overturn the two pinned invariants,
+        # so it is left as a B-tier follow-up for the maintainers; this
+        # message rewrite is just the honest answer the current shape owes.
+        if not applied:
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"No actuators commanded on '{robot_name}' (action mapping is empty); "
+                            f"advanced {n_substeps} physics substep(s). "
+                            f"Use step(n_steps=...) to advance without commanding, or pass a "
+                            f"{{name: value}} mapping that names at least one actuator."
+                        )
+                    }
+                ],
+            }
         return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
 
     def _unresolved_action_refusal(self, robot_name: str, unresolved: list[str], applied: list[str]) -> dict[str, Any]:
