@@ -59,6 +59,7 @@ from strands_robots.utils import (
     is_boolean,
     non_negative_count_error,
     optional_callable_error,
+    partial_construction_repr,
     positive_count_error,
     positive_finite_number_error,
     process_rss_mb,
@@ -1461,6 +1462,28 @@ class SimEngine(ABC):
         default robot when the caller omits ``robot_name``.
         """
         ...
+
+    @property
+    def robot_name(self) -> str | None:
+        """The name of the one robot in this world, as its methods accept it.
+
+        ``Robot("so100").robot_name`` is ``"so100"`` - the string passed to
+        ``Robot()``, not the agent tool name (``"so100_sim"``) - and matches
+        ``robot_name`` on the real-hardware return. ``None`` when the world
+        holds no robot or several, since then no single name answers it.
+        """
+        names = self.list_robots()
+        return names[0] if len(names) == 1 else None
+
+    def __repr__(self) -> str:
+        """Name the engine class, its robot(s) and, when it is an agent tool, its tool name."""
+        try:
+            names = self.list_robots()
+        except AttributeError:
+            return partial_construction_repr(self)
+        robots = f"robot={names[0]!r}" if len(names) == 1 else f"robots={names!r}"
+        tool = getattr(self, "tool_name_str", None)
+        return f"<{type(self).__name__} {robots}" + (f" tool={tool!r}>" if tool else ">")
 
     @abstractmethod
     def robot_joint_names(self, robot_name: str) -> list[str]:

@@ -82,6 +82,7 @@ EXPECTED_REPR_CLASSES = frozenset(
         "mesh/session::PeerInfo",
         "policies/flux3_action/policy::Flux3ActionPolicy",
         "policies/lerobot_local/processor::ProcessorBridge",
+        "simulation/base::SimEngine",
         "simulation/isaac/simulation::IsaacSimulation",
     }
 )
@@ -131,6 +132,14 @@ def _renders_a_half_built_instance(cls: type) -> str | None:
     verdict about the class under survey.
     """
     factory: Any = cls
+    if inspect.isabstract(cls):
+        # An abstract base cannot be allocated, so render it through a same-named
+        # subclass whose methods, like a real backend's, read state that a
+        # half-built instance never assigned.
+        def _unassigned(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return self._never_assigned
+
+        factory = type(cls.__name__, (cls,), dict.fromkeys(factory.__abstractmethods__, _unassigned))
     obj = factory.__new__(factory)
     try:
         rendered = repr(obj)

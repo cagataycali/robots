@@ -105,16 +105,37 @@ def test_an_invalid_tool_name_is_refused_before_the_backend_builds(bad, monkeypa
         Robot("so101", mode="sim", tool_name=bad)
 
 
-def test_a_native_driver_carries_the_tool_name():
-    # driver="strands" builds the native driver instead of routing through
-    # lerobot - the third dispatch path, and the one with no other cell.
-    # Construction opens no link, so it reaches the tool-name plumbing.
-    driver = Robot("panda", mode="real", driver="strands", tool_name="native_left")
-    assert driver.tool_name == "native_left"
+# Every dispatch path names the robot it built by the string the caller passed,
+# whatever the tool name. Native and lerobot construction open no link and no
+# port (the bus is touched on first connect), so a bogus path is enough.
+@pytest.mark.parametrize(
+    ("name", "kwargs"),
+    [
+        ("so100", {"mode": "sim"}),
+        ("panda", {"mode": "real", "driver": "strands"}),
+        ("so101", {"mode": "real", "port": "/dev/does-not-exist"}),
+        ("so101", {"mode": "real", "driver": "lerobot", "port": "/dev/does-not-exist"}),
+    ],
+    ids=["sim", "native-driver", "auto-driver", "lerobot-driver"],
+)
+def test_every_robot_names_itself_apart_from_its_tool_name(name, kwargs):
+    robot = Robot(name, tool_name="left", **kwargs)
+    try:
+        assert robot.tool_name == "left"
+        assert robot.robot_name == name
+    finally:
+        if kwargs["mode"] == "sim":
+            robot.destroy()
 
 
-def test_real_mode_hardware_robot_carries_the_tool_name():
-    # Construction opens no port (the bus is touched on first connect), so a
-    # bogus path is enough to reach the tool-name plumbing.
-    arm = Robot("so101", mode="real", port="/dev/does-not-exist", tool_name="real_left")
-    assert arm.tool_name == "real_left"
+def test_a_sim_names_its_robot_in_repr_and_its_methods_take_that_name():
+    sim = Robot("so100")
+    try:
+        assert repr(sim) == "<MuJoCoSimEngine robot='so100' tool='so100_sim'>"
+        assert sim.robot_joint_names(sim.robot_name)
+        sim.add_robot(name="so101")
+        # Two robots, so no single name answers - the repr lists both.
+        assert sim.robot_name is None
+        assert "robots=['so100', 'so101']" in repr(sim)
+    finally:
+        sim.destroy()
