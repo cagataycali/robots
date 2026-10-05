@@ -106,6 +106,11 @@ export interface Peer {
    *  U15: this is the ONLY thing that may differ. It says nothing about the
    *  robot's health and gates no control. */
   origin?: 'managed' | 'external' | string | null
+  /** Where the server filed `presence` from: 'wire' = a heartbeat heard on the mesh. */
+  presence_source?: string
+  /** True only when THIS dashboard launched the peer as a sim. A wire sim claim without it
+   *  cannot be checked, so lib/runRisk treats the peer as real hardware. */
+  sim_corroborated?: boolean
   /** Which transport leg carried this peer's presence inside the TTL: 'lan' (Zenoh only),
    *  'iot' (AWS IoT Core only) or 'both' (a bridge peer heard on both). Absent or null =
    *  the server does not know; render nothing rather than guess. */
