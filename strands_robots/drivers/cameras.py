@@ -25,6 +25,7 @@ with the line that repairs it rather than as a bare ``ModuleNotFoundError``.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -108,7 +109,9 @@ def camera_entry_error(name: object, config: object) -> str | None:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             return f"camera {name!r}: {key} must be a positive integer, got {refusal_repr(value)}"
     fps = config.get("fps")
-    if fps is not None and (isinstance(fps, bool) or not isinstance(fps, int | float) or not fps > 0 or fps != fps):
+    if fps is not None and (
+        isinstance(fps, bool) or not isinstance(fps, int | float) or math.isnan(fps) or not fps > 0
+    ):
         return f"camera {name!r}: fps must be a positive number, got {refusal_repr(fps)}"
     return None
 
