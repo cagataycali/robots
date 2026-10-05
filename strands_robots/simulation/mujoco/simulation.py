@@ -173,6 +173,7 @@ from strands_robots.utils import (
     camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
+    did_you_mean,
     entity_name_error,
     finite_vector_error,
     mounted_camera_pose_error,
@@ -2979,7 +2980,7 @@ class MuJoCoSimEngine(
                     "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
                 },
             )
-        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) for i in range(src.nkey)]
+        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) or str(i) for i in range(src.nkey)]
         if src.nkey == 0:
             return (
                 None,
@@ -3017,7 +3018,14 @@ class MuJoCoSimEngine(
                     None,
                     {
                         "status": "error",
-                        "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
+                        "content": [
+                            {
+                                "text": (
+                                    f"Keyframe {keyframe!r} not found in '{fname}'."
+                                    f"{did_you_mean([keyframe], names)} Available: {avail}."
+                                )
+                            }
+                        ],
                     },
                 )
             idx = names.index(keyframe)

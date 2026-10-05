@@ -51,6 +51,7 @@ from strands_robots.utils import (
     coerce_orientation_quaternion,
     coerce_pose_vector,
     coerce_rgba,
+    did_you_mean,
     entity_name_error,
     positive_count_error,
     step_aborted_msg,
@@ -1208,4 +1209,4 @@ def _resolve_key(model: Any, keyframe: str | int | None) -> int | None:
     # exists; it never silently falls back to the zero pose (F10 was exactly
     # that failure discovered from a robot toppling).
     avail = ", ".join(repr(n) for n in names) or "none"
-    raise KeyError(f"Keyframe {keyframe!r} not found. Available: {avail}.")
+    raise KeyError(f"Keyframe {keyframe!r} not found.{did_you_mean([keyframe], names)} Available: {avail}.")

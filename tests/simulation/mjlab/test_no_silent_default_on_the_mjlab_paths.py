@@ -63,7 +63,7 @@ class TestAnUnknownKeyframeIsRefusedByName:
 
     def test_an_unknown_name_names_the_available_keyframes(self) -> None:
         model = mujoco.MjModel.from_xml_string(_MJCF_WITH_KEYS)
-        with pytest.raises(KeyError, match=r"'hoem' not found\. Available: 'home', 'rest'"):
+        with pytest.raises(KeyError, match=r"'hoem' not found\..* Available: 'home', 'rest'"):
             mjlab_sim._resolve_key(model, "hoem")
 
     def test_an_index_out_of_range_is_refused(self) -> None:
