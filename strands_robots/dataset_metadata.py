@@ -73,8 +73,10 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
 
     Raises:
         ImportError: If ``pyarrow`` is not installed.
-        FileNotFoundError: If no ``meta/episodes`` parquet exists under ``root``
-            (no episode was ever flushed - the dataset is empty/unfinalized).
+        FileNotFoundError: If ``root`` does not exist (a typo or a dangling
+            symlink), or if no ``meta/episodes`` parquet exists under it (no
+            episode was ever flushed - the dataset is empty/unfinalized).
+        NotADirectoryError: If ``root`` is a file rather than the dataset folder.
         ValueError: If every ``meta/episodes`` parquet is unreadable, so there
             is no episode ground truth at all. The message lists each file and
             its read error.
@@ -85,6 +87,15 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
         raise ImportError("read_dataset_episode_indices requires pyarrow (installed with the lerobot extra).") from e
 
     root_path = Path(root)
+    # A wrong path must not reach the "never finalized" message below: that
+    # advice sends the caller to a recorder that was never broken.
+    # ``exists()`` follows symlinks, so a dangling link reads as missing.
+    if not root_path.exists():
+        raise FileNotFoundError(f"Dataset root {root_path} does not exist. Check the path for a typo.")
+    if not root_path.is_dir():
+        raise NotADirectoryError(
+            f"Dataset root {root_path} is not a directory. Pass the dataset folder, not a file inside it."
+        )
     parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(

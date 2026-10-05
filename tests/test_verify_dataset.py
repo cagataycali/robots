@@ -114,11 +114,30 @@ class TestMegaEpisodeCorruption:
 class TestEdgeCases:
     """Empty datasets, zero-length episodes, and bad arguments."""
 
-    def test_missing_dataset_reports_filenotfound(self, tmp_path: Path) -> None:
-        report = verify_dataset(tmp_path / "does_not_exist")
+    @pytest.mark.parametrize(
+        ("shape", "message"),
+        [
+            ("missing", "does not exist"),
+            ("dangling_symlink", "does not exist"),
+            ("file", "is not a directory"),
+            ("empty_dir", "never finalized"),
+        ],
+    )
+    def test_each_wrong_root_names_its_own_fix(self, tmp_path: Path, shape: str, message: str) -> None:
+        """Only an empty dataset folder is told to finish recording; a wrong path is told so."""
+        root = tmp_path / shape
+        if shape == "dangling_symlink":
+            root.symlink_to(tmp_path / "nowhere")
+        elif shape == "file":
+            root.write_text("{}")
+        elif shape == "empty_dir":
+            root.mkdir()
+        report = verify_dataset(root, expected=5)
         assert report["status"] == "error"
         assert report["total_episodes"] == 0
-        assert report["problems"]
+        [problem] = report["problems"]
+        assert message in problem
+        assert ("never finalized" in problem) == (shape == "empty_dir")
 
     def test_zero_length_episode_flagged(self, tmp_path: Path) -> None:
         _write_dataset(tmp_path, episode_indices=[0, 1], frames_per_episode=[5, 0])
