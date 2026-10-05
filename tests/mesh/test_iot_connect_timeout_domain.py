@@ -329,6 +329,7 @@ class TestEverySurfaceTakingAConnectTimeoutRoutesThroughTheDomain:
 
     #: Every shipped surface taking the parameter, as of this change.
     EXPECTED = {
+        "drivers/kuka.py::KukaDriver.__init__",
         "drivers/microduck.py::ssh_forward_argv",
         "inference/client.py::RemotePolicy.__init__",
         "mesh/transport/iot_transport.py::IotMqttTransport.__init__",
