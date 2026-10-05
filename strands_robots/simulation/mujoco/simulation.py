@@ -90,6 +90,7 @@ from strands_robots.simulation.base import (
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
+    scene_contents_sentence,
     unknown_model_msg,
     unknown_parameter_error,
 )
@@ -6921,8 +6922,9 @@ class MuJoCoSimEngine(
         on six embodiments, that refusal was the first tool result in all
         eight. With a world present this names the robots it holds and the
         joints an agent can address, and points at the actions that build on
-        it; with no world it keeps the state-machine sentence, which is then
-        true.
+        it, and names the objects and cameras already added
+        (:func:`~strands_robots.simulation.base.scene_contents_sentence`); with
+        no world it keeps the state-machine sentence, which is then true.
 
         The offered actions are chosen from each robot's resolved actuator
         ownership (:attr:`SimRobot.actuator_ids`) -- the same value
@@ -6964,7 +6966,7 @@ class MuJoCoSimEngine(
         return (
             "One world per instance. The world is ALREADY CREATED and holds robot(s) "
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
-            f"{next_steps}"
+            f"{next_steps}{scene_contents_sentence(world.objects, world.cameras)}"
         )
 
     def wire_tool_spec(self) -> dict[str, Any]:
@@ -7204,7 +7206,7 @@ class MuJoCoSimEngine(
         # for a method on it, which happens on the worker - so without this
         # guard the caller is handed "Policy started" for a rollout that
         # applies no action and then reports nothing running.
-        if err := self._validate_policy_object(policy_object, "start_policy"):
+        if err := self._validate_policy_object(policy_object, "start_policy", policy_provider, policy_config):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
             return err
@@ -7519,7 +7521,7 @@ class MuJoCoSimEngine(
         # Same reason as the observer domain above: a policy_object that cannot
         # be driven is configuration, not a rollout, so it must be refused
         # before the robot is claimed.
-        if err := self._validate_policy_object(policy_object, "run_policy"):
+        if err := self._validate_policy_object(policy_object, "run_policy", policy_provider, policy_config):
             return err
         if err := self._validate_rollout_target(robot_name, instruction, "run_policy"):
             return err

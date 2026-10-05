@@ -63,6 +63,7 @@ from strands_robots._path_validation import resolve_output_path, validate_save_p
 from strands_robots.drivers.base import refuse, undeclared_verb_error
 from strands_robots.utils import (
     boolean_flag_error,
+    did_you_mean,
     finite_number_error,
     positive_count_error,
     positive_finite_number_error,
@@ -227,6 +228,24 @@ _M_TOF_FRAME = "tof.frame"
 #: robot.
 SKILLS: tuple[str, ...] = ("ground_pick", "kick_left", "kick_right", "sit_toggle", "roulade")
 
+
+def _unknown_skill_hint(raw: object, known: tuple[str, ...] | list[str]) -> str:
+    """The clause an ``unknown skill`` refusal ends with.
+
+    A near-match from ``known`` when one exists (``ball_kick_left`` ->
+    ``kick_left``); otherwise a pointer to the other surface that says
+    "skill": the ONNX actors on the policies page (``alpha_walking`` ...) are
+    policy weights run through ``create_policy``, not ``robot.do`` names.
+    """
+    near = did_you_mean([str(raw).strip().lower()], known)
+    if near:
+        return near
+    return (
+        ' An ONNX actor such as "alpha_walking" is a policy weight, not a robot.do skill: '
+        'run it with create_policy("microduck", onnx_path="alpha_walking.onnx").'
+    )
+
+
 #: Action keys this driver knows how to turn into an intent. An action key
 #: outside this tuple is refused, so it is also the vocabulary the two refusal
 #: messages name - the one for an action naming none of them, and the one for an
@@ -372,7 +391,10 @@ def action_to_wire(
     if "skill" in action:
         skill = str(action["skill"]).strip().lower()
         if skill not in known_skills:
-            return f"unknown skill {action['skill']!r}; expected one of {list(known_skills)}"
+            return (
+                f"unknown skill {action['skill']!r}; expected one of {list(known_skills)}."
+                f"{_unknown_skill_hint(action['skill'], known_skills)}"
+            )
         commands.append((_M_DO, {"skill": skill}, False))
 
     return commands
@@ -1846,7 +1868,10 @@ def _act_do(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
         # The robot's list may have changed since connect; ask once before refusing.
         _refresh_policies(driver)
         if skill not in driver.known_skills:
-            return refuse(f"do: unknown skill {raw!r}; this robot lists {list(driver.known_skills)}")
+            return refuse(
+                f"do: unknown skill {raw!r}; this robot lists {list(driver.known_skills)}."
+                f"{_unknown_skill_hint(raw, driver.known_skills)}"
+            )
     driver._cancel_move()
     return _intent(driver, _M_DO, {"skill": skill}, "do")
 
