@@ -8204,7 +8204,7 @@ class IsaacSimulation(
             if name in self._cameras:
                 return {
                     "status": "error",
-                    "content": [{"text": f"Camera '{name}' already exists."}],
+                    "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first (remove_camera)."}],
                 }
 
             w = self._config.camera_width if width is None else width
