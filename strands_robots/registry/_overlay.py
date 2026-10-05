@@ -70,3 +70,28 @@ def parse_user_robots(source: bytes | None) -> dict[str, Any]:
         return {}
     robots = data.get("robots") if isinstance(data, dict) else None
     return robots if isinstance(robots, dict) else {}
+
+
+def user_overlay_parse_error() -> str | None:
+    """Why the user-local robot overlay on disk is not valid JSON, if it is not.
+
+    :func:`parse_user_robots` answers a corrupt overlay with ``{}`` and a log
+    line, so a lookup never raises on a file a crashed writer left behind. The
+    cost is that one stray comma in a hand-edited ``user_robots.json`` hides
+    every ``register_robot`` entry without a word at the call that fails. A
+    refusal for an unknown name calls this to say so. It re-reads the file
+    rather than remembering the last parse, so the answer always describes the
+    overlay under the current base directory.
+
+    Returns:
+        The decoder's message (it names the line and column), or ``None`` when
+        the overlay is absent or parses.
+    """
+    source = user_registry_source()
+    if source is None:
+        return None
+    try:
+        json.loads(source)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return str(exc)
+    return None
