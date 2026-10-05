@@ -4156,8 +4156,10 @@ class SimEngine(ABC):
         drive, so an empty mapping is a caller error: a loop over zero robots
         would run zero steps and still report ``status="success"`` (the same
         degenerate-success shape :meth:`_validate_positive_int` exists to
-        refuse). Shared by every backend's ``run_multi_policy`` so the refusal
-        text is identical everywhere.
+        refuse). Each value is driven directly, so it gets the same shape check
+        as ``policy_object`` (:func:`policy_object_error`) instead of failing on
+        the first ``get_actions`` call. Shared by every backend's
+        ``run_multi_policy`` so the refusal text is identical everywhere.
 
         Args:
             policies: The caller-supplied ``{robot_name: Policy}`` mapping.
@@ -4165,10 +4167,20 @@ class SimEngine(ABC):
 
         Returns:
             A structured ``{"status": "error", ...}`` dict, or ``None`` when
-            at least one robot is named.
+            at least one robot is named and every value is a ``Policy``.
         """
         if not policies:
             return {"status": "error", "content": [{"text": f"{method}: 'policies' is empty."}]}
+        from strands_robots.policies import policy_object_error
+
+        for rname, pol in policies.items():
+            param = f"policies[{rname!r}]"
+            if pol is None:  # policy_object_error accepts None; here the key already named a robot
+                message: str | None = f"{param} must be a Policy instance; got None. Pass one, or drop the entry."
+            else:
+                message = policy_object_error(pol, param=param)
+            if message is not None:
+                return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
         return None
 
     @staticmethod

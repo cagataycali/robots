@@ -41,7 +41,7 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
-_TWO_ROBOTS: dict[str, Any] = {"alpha": object(), "beta": object()}
+_TWO_ROBOTS: dict[str, Any] = {"alpha": MockPolicy(), "beta": MockPolicy()}
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -122,6 +122,24 @@ class TestEmptyPoliciesRejection:
 
     def test_a_populated_mapping_passes(self) -> None:
         assert SimEngine._validate_multi_policies(_TWO_ROBOTS, "run_multi_policy") is None
+
+    @pytest.mark.parametrize(
+        ("bad", "says"),
+        [
+            ("mock", "got str ('mock')"),
+            (42, "got int (42)"),
+            ({"provider": "mock"}, "got dict"),
+            (None, "got None"),
+            (MockPolicy, "got the class MockPolicy itself"),
+        ],
+        ids=["provider-name", "scalar", "config-dict", "none", "the-class"],
+    )
+    def test_a_value_that_is_not_a_policy_is_refused_naming_its_key(self, bad: Any, says: str) -> None:
+        """Each value is driven directly; a wrong shape is refused before the first ``get_actions``."""
+        result = SimEngine._validate_multi_policies({"alpha": MockPolicy(), "beta": bad}, "run_multi_policy")
+        assert result is not None and result["status"] == "error"
+        assert _text(result).startswith("run_multi_policy: policies['beta'] must be a Policy instance; ")
+        assert says in _text(result)
 
     def test_the_method_name_prefixes_the_refusal(self) -> None:
         """A future backend entry point reports the refusal under its own name."""
