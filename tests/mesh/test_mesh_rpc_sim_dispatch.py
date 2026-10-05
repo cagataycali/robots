@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from strands_robots.mesh import Mesh
+from tests._wire_source import bound_source
 
 
 class _FakeSim:
@@ -391,7 +392,8 @@ def test_hardware_path_unchanged_when_run_policy_absent(monkeypatch: pytest.Monk
             # Sim-only kwargs that should be inert on the hardware path.
             "target_pose": [0.0] * 7,
             "robot_name": "ignored",
-        }
+        },
+        source=bound_source(m),
     )
     assert out == {"executed": "go"}
     assert len(hw.calls) == 1

@@ -21,6 +21,7 @@ from strands_robots import mesh as mesh_mod
 from strands_robots.mesh import Mesh
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
+from tests._wire_source import bound_source
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -159,15 +160,17 @@ def test_dispatch_features() -> None:
     assert out == {"foo": "bar"}
 
 
-def test_dispatch_step() -> None:
+def test_dispatch_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "step")
     m = Mesh(_FakeRobot(), peer_id="p")
-    out = m._dispatch({"action": "step", "steps": 5})
+    out = m._dispatch({"action": "step", "steps": 5}, source=bound_source(m))
     assert out == {"stepped": 5}
 
 
-def test_dispatch_reset() -> None:
+def test_dispatch_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset")
     m = Mesh(_FakeRobot(), peer_id="p")
-    out = m._dispatch({"action": "reset"})
+    out = m._dispatch({"action": "reset"}, source=bound_source(m))
     assert out == {"ok": True}
 
 
@@ -177,7 +180,9 @@ def test_dispatch_execute_calls_execute_task_sync(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
-    out = m._dispatch({"action": "execute", "instruction": "go", "duration": 5.0, "policy_provider": "mock"})
+    out = m._dispatch(
+        {"action": "execute", "instruction": "go", "duration": 5.0, "policy_provider": "mock"}, source=bound_source(m)
+    )
     assert out == {"executed": "go"}
     assert ("execute", {"instruction": "go", "provider": "mock", "duration": 5.0}) in r.calls
 
@@ -188,7 +193,7 @@ def test_dispatch_start_calls_start_task(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _FakeRobot()
     m = Mesh(r, peer_id="p")
-    out = m._dispatch({"action": "start", "instruction": "go", "policy_provider": "mock"})
+    out = m._dispatch({"action": "start", "instruction": "go", "policy_provider": "mock"}, source=bound_source(m))
     assert out == {"started": "go"}
 
 
@@ -670,11 +675,11 @@ def _spy_exec(m: Mesh) -> tuple[list[dict[str, Any]], list[threading.Thread], th
     done = threading.Event()
     real = m._exec_cmd
 
-    def _wrapped(data: dict[str, Any], reply_to: str | None = None) -> None:
+    def _wrapped(data: dict[str, Any], reply_to: str | None = None, **source: Any) -> None:
         seen.append(data)
         threads.append(threading.current_thread())
         try:
-            real(data, reply_to=reply_to)
+            real(data, reply_to=reply_to, **source)
         finally:
             done.set()
 

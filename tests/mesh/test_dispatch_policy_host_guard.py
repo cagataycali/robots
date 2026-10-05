@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from strands_robots.mesh import Mesh
+from tests._wire_source import bound_source
 
 
 class _RecordingRobot:
@@ -72,7 +73,8 @@ def test_dispatch_rejects_off_allowlist_policy_host_execute(monkeypatch: pytest.
             "instruction": "go",
             "policy_provider": "mock",
             "policy_host": "evil.example.com",
-        }
+        },
+        source=bound_source(m),
     )
     assert "error" in out
     assert "allowlist" in out["error"]
@@ -91,7 +93,8 @@ def test_dispatch_rejects_off_allowlist_policy_host_start(monkeypatch: pytest.Mo
             "instruction": "go",
             "policy_provider": "mock",
             "policy_host": "10.13.37.7",
-        }
+        },
+        source=bound_source(m),
     )
     assert "error" in out
     assert r.started is False
@@ -110,7 +113,8 @@ def test_dispatch_allows_loopback_policy_host(monkeypatch: pytest.MonkeyPatch) -
             "instruction": "go",
             "policy_provider": "mock",
             "policy_host": "localhost",
-        }
+        },
+        source=bound_source(m),
     )
     assert r.executed is True
     assert out.get("executed") == "go"
@@ -123,7 +127,7 @@ def test_dispatch_default_policy_host_is_loopback(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
     r = _RecordingRobot()
     m = Mesh(r, peer_id="p")
-    out = m._dispatch({"action": "execute", "instruction": "go", "policy_provider": "mock"})
+    out = m._dispatch({"action": "execute", "instruction": "go", "policy_provider": "mock"}, source=bound_source(m))
     assert r.executed is True
     assert out.get("executed") == "go"
 
@@ -147,7 +151,8 @@ def test_dispatch_honors_policy_host_allow_env(monkeypatch) -> None:
                 "instruction": "go",
                 "policy_provider": "mock",
                 "policy_host": "vla.internal",
-            }
+            },
+            source=bound_source(m),
         )
         assert r.executed is True
         assert out.get("executed") == "go"

@@ -28,6 +28,7 @@ import pytest
 
 from strands_robots.mesh import Mesh
 from strands_robots.mesh import security as _security
+from tests._wire_source import bound_source
 
 
 class _TeleopRobot:
@@ -76,7 +77,9 @@ def test_dispatch_teleop_receive_forwards_source_and_device(monkeypatch: pytest.
     robot = _TeleopRobot()
     m = Mesh(robot, peer_id="p")
 
-    out = m._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1", "device_name": "leader"})
+    out = m._dispatch(
+        {"action": "teleop_receive", "source_peer_id": "leader-1", "device_name": "leader"}, source=bound_source(m)
+    )
 
     assert out == {"receiving_from": "leader-1", "device": "leader"}
     assert robot.received == ("leader-1", "leader")
@@ -90,7 +93,7 @@ def test_dispatch_teleop_receive_device_defaults_to_leader(monkeypatch: pytest.M
     m = Mesh(robot, peer_id="p")
 
     # ``device_name`` omitted -> the dispatch table defaults it to "leader".
-    out = m._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"})
+    out = m._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"}, source=bound_source(m))
 
     assert out == {"receiving_from": "leader-1", "device": "leader"}
     assert robot.received == ("leader-1", "leader")
