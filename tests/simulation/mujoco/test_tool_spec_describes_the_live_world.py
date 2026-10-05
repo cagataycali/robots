@@ -60,6 +60,39 @@ def test_description_follows_the_world_when_it_is_destroyed(ready_arm) -> None:
     assert "starting with create_world" in ready_arm.tool_spec["description"]
 
 
+def test_description_names_the_objects_and_cameras_the_user_added(ready_arm) -> None:
+    """The README quickstart adds red_cube and 'front' before the first agent call.
+
+    The scene lives on the same world the readiness sentence reads for robots;
+    an agent asked to 'pick up the red cube' used to spend one list_objects
+    round-trip to discover a scene the tool already knew about. See the method
+    docstring: the sentence exists precisely to prevent that first-call waste.
+    """
+    base = ready_arm.tool_spec["description"]
+    assert "'red_cube'" not in base and "'front'" not in base
+
+    ready_arm(action="add_object", name="red_cube", shape="box",
+              size=[0.05, 0.05, 0.05], position=[0.0, -0.2, 0.025], color=[1.0, 0.0, 0.0])
+    ready_arm(action="add_camera", name="front",
+              position=[0.3, -0.7, 0.45], target=[0.0, -0.2, 0.03])
+
+    live = ready_arm.tool_spec["description"]
+    assert "Scene also holds" in live
+    assert "'red_cube'" in live
+    assert "'front'" in live
+    # The 'default' free camera is always present and must not be counted here;
+    # otherwise an empty-of-user-additions session would still get a sentence.
+    assert "1 camera(s)" in live
+    # Head stays short on the hot path -- the budget pinned by the sibling test.
+    assert len(live.split("Scene mutations")[0]) < 900
+
+
+def test_description_omits_the_scene_sentence_when_nothing_was_added(ready_arm) -> None:
+    """No objects + only the free 'default' camera: readiness sentence stays silent."""
+    description = ready_arm.tool_spec["description"]
+    assert "Scene also holds" not in description
+
+
 def test_long_joint_lists_are_truncated_not_dumped() -> None:
     sim = Robot("unitree_g1", mode="sim")
     try:

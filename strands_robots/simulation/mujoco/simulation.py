@@ -6961,10 +6961,29 @@ class MuJoCoSimEngine(
                 "the robot(s) yet, so add a position servo per joint with actuate_robot before "
                 "move_to (which refuses a robot with no actuator) or run_policy. "
             )
+        # Also name the objects and cameras the user added through this same tool.
+        # The LLM reads this sentence before its first call and the quickstart
+        # scene (red_cube + front camera) was previously invisible until the
+        # agent spent a round-trip on list_objects/list_cameras.
+        scene_bits: list[str] = []
+        objects = getattr(world, "objects", None) or {}
+        if objects:
+            obj_names = list(objects.keys())
+            shown = ", ".join(f"'{n}'" for n in obj_names[:6]) + ("..." if len(obj_names) > 6 else "")
+            scene_bits.append(f"{len(obj_names)} object(s): {shown}")
+        cameras = getattr(world, "cameras", None) or {}
+        # The 'default'/free camera is always present; only mention user-added ones.
+        # (The free-camera tokens are frozen at strands_robots.utils.FREE_CAMERA_TOKENS;
+        # inlined here to keep the readiness sentence allocation-free.)
+        user_cams = [n for n in cameras if n not in (None, "", "default", "free")]
+        if user_cams:
+            shown = ", ".join(f"'{n}'" for n in user_cams[:6]) + ("..." if len(user_cams) > 6 else "")
+            scene_bits.append(f"{len(user_cams)} camera(s): {shown}")
+        scene_sentence = f"Scene also holds {' and '.join(scene_bits)}; use list_objects / list_cameras for details. " if scene_bits else ""
         return (
             "One world per instance. The world is ALREADY CREATED and holds robot(s) "
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
-            f"{next_steps}"
+            f"{next_steps}{scene_sentence}"
         )
 
     def wire_tool_spec(self) -> dict[str, Any]:
