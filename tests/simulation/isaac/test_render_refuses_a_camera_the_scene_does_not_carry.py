@@ -294,7 +294,15 @@ class TestEveryBackendGivesTheSameVerdict:
 
         owner = getattr(importlib.import_module(module), cls)
         source = inspect.getsource(getattr(owner, func))
-        assert "not found. Available" in source, (
+        # A backend may build the sentence in one shared helper (MuJoCo adds a
+        # close-match hint between its halves); the scan follows that call.
+        helper = getattr(owner, "_unknown_camera_msg", None)
+        if helper is not None and "self._unknown_camera_msg(" in source:
+            source = inspect.getsource(helper)
+            refuses = "not found." in source and "Available:" in source
+        else:
+            refuses = "not found. Available" in source
+        assert refuses, (
             f"the {label} backend's render name resolver ({cls}.{func}) carries no "
             "refusal for a camera name the scene does not carry"
         )
