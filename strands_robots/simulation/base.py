@@ -365,19 +365,21 @@ def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence
     and the nearest of them is suggested through :func:`close_match_hint`.
 
     Args:
-        unknown: The refused keys; the first is the one the sentence names.
+        unknown: The refused keys, each named; the first is the one a match is
+            suggested for.
         action: The action the keys were sent with.
         valid: The keys this action does take, already sorted by the caller.
 
     Returns:
         A ``{"status": "error", "content": [{"text": ...}]}`` tool result.
     """
-    reported = unknown[0]
     valid_sorted = list(valid)
-    hint = close_match_hint(reported, valid_sorted)
+    noun = "parameter" if len(unknown) == 1 else "parameters"
+    named = ", ".join(f"'{key}'" for key in unknown)
+    hint = close_match_hint(unknown[0], valid_sorted)
     return {
         "status": "error",
-        "content": [{"text": f"Unknown parameter '{reported}' for action '{action}'.{hint} Valid: {valid_sorted}"}],
+        "content": [{"text": f"Unknown {noun} {named} for action '{action}'.{hint} Valid: {valid_sorted}"}],
     }
 
 
@@ -559,18 +561,16 @@ def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Seque
             Also listed as the "Valid:" hint.
 
     Returns:
-        ``None`` when every key in ``kwargs`` is accepted, otherwise a
-        ``status="error"`` result dict naming the unusable keys. An error dict
-        rather than a raised exception because these methods are dispatched as
-        agent tool actions, which must not raise past dispatch.
+        ``None`` when every key in ``kwargs`` is accepted, otherwise the
+        :func:`unknown_parameter_error` result naming the unusable keys and the
+        nearest valid one. An error dict rather than a raised exception because
+        these methods are dispatched as agent tool actions, which must not raise
+        past dispatch.
     """
     unexpected = sorted(k for k in kwargs if k not in accepted)
     if not unexpected:
         return None
-    return {
-        "status": "error",
-        "content": [{"text": (f"Unknown parameter(s) {unexpected} for action '{method}'. Valid: {sorted(accepted)}")}],
-    }
+    return unknown_parameter_error(unexpected, method, sorted(accepted))
 
 
 _BOOLEAN_WORLD_REASON = (

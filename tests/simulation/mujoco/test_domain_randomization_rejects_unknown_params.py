@@ -114,11 +114,25 @@ class TestUnknownKwargsErrorHelper:
         # with a dedicated unsupported-axis error; it must not be called unknown.
         assert unknown_kwargs_error("randomize", {"randomize_positions": True}, ("randomize_positions",)) is None
 
-    def test_message_names_every_unexpected_key_and_the_valid_set(self):
-        result = unknown_kwargs_error("randomize", {"b": 1, "a": 2}, ("seed", "color_range"))
+    @pytest.mark.parametrize(
+        ("kwargs", "accepted", "text"),
+        [
+            (
+                {"randomize_colours": True},
+                ("randomize_colors", "seed"),
+                "Unknown parameter 'randomize_colours' for action 'randomize'. "
+                "Did you mean: randomize_colors? Valid: ['randomize_colors', 'seed']",
+            ),
+            (
+                {"b": 1, "a": 2},
+                ("seed", "color_range"),
+                "Unknown parameters 'a', 'b' for action 'randomize'. Valid: ['color_range', 'seed']",
+            ),
+        ],
+    )
+    def test_message_is_the_dispatcher_sentence_with_its_suggestion(self, kwargs, accepted, text):
+        # The same sentence the dispatcher gives a method without **kwargs, so a
+        # misspelling gets its suggestion whichever kind of method it reached.
+        result = unknown_kwargs_error("randomize", kwargs, accepted)
 
-        assert result is not None and result["status"] == "error"
-        text = result["content"][0]["text"]
-        assert "['a', 'b']" in text  # deterministic order, all keys reported
-        assert "['color_range', 'seed']" in text
-        assert "'randomize'" in text
+        assert result == {"status": "error", "content": [{"text": text}]}
