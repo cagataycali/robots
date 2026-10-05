@@ -1052,6 +1052,17 @@
         0.0,
         0.0346
       ],
+      "joint_labels": {
+        "base_back_wheel_joint": "base_back_wheel",
+        "base_right_wheel_joint": "base_right_wheel",
+        "base_left_wheel_joint": "base_left_wheel",
+        "Rotation": "shoulder_pan",
+        "Pitch": "shoulder_lift",
+        "Elbow": "elbow_flex",
+        "Wrist_Pitch": "wrist_flex",
+        "Wrist_Roll": "wrist_roll",
+        "Jaw": "gripper"
+      },
       "asset": {
         "dir": "lekiwi",
         "model_xml": "lekiwi/lekiwi.xml",

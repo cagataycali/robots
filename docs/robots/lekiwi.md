@@ -26,6 +26,18 @@ robot = Robot("lekiwi", mode="real", driver="lerobot", port="/dev/ttyACM0")  # l
 robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # FeetechDriver
 ```
 
+| Observation key | `send_action` label |
+|---|---|
+| `base_back_wheel_joint` | `base_back_wheel` |
+| `base_right_wheel_joint` | `base_right_wheel` |
+| `base_left_wheel_joint` | `base_left_wheel` |
+| `Rotation` | `shoulder_pan` |
+| `Pitch` | `shoulder_lift` |
+| `Elbow` | `elbow_flex` |
+| `Wrist_Pitch` | `wrist_flex` |
+| `Wrist_Roll` | `wrist_roll` |
+| `Jaw` | `gripper` |
+
 ## Hardware
 
 **lerobot.** `Robot("lekiwi", mode="real", driver="lerobot")` builds lerobot's `lekiwi` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
