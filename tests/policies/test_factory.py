@@ -77,6 +77,26 @@ class TestCreatePolicy:
         assert policy.uri == "ws://localhost:8080"
 
 
+@pytest.mark.parametrize(
+    ("provider", "points_at_policy_object"),
+    [
+        (None, False),
+        (42, False),
+        (b"mock", False),
+        ({"x": 1}, False),
+        ([], False),
+        (MockPolicy, True),
+        (MockPolicy(), True),
+    ],
+)
+def test_a_non_string_provider_is_a_type_error_naming_the_parameter(provider, points_at_policy_object):
+    """Every non-string is refused by name, not as a raw .strip()/unhashable error."""
+    with pytest.raises(TypeError, match=r"^provider must be a string, got ") as raised:
+        create_policy(provider)
+    assert ("policy_object=" in str(raised.value)) is points_at_policy_object
+    assert provider_can_be_created(provider) is False
+
+
 class TestRemovedGrootProviderIsRefused:
     """``groot`` was removed in 1.0: every spelling is refused with one sentence.
 
