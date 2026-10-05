@@ -15,7 +15,7 @@ description: "Unitree H1 Humanoid (19-DOF)"
 from strands_robots import Robot
 
 robot = Robot("unitree_h1")
-print(robot.robot_joint_names("unitree_h1"))
+print(robot.robot_action_keys("unitree_h1"))
 robot.cleanup()
 ```
 

@@ -17,7 +17,7 @@ URDF from [robot-descriptions/jaxon_description@4a0cb7a](https://github.com/robo
 from strands_robots import Robot
 
 robot = Robot("jaxon")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("jaxon"))
+print(robot.robot_action_keys("jaxon"))
 robot.cleanup()
 ```
 

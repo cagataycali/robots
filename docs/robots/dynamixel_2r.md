@@ -15,7 +15,7 @@ description: "Dynamixel 2R Educational Arm (2-DOF)"
 from strands_robots import Robot
 
 robot = Robot("dynamixel_2r")
-print(robot.robot_joint_names("dynamixel_2r"))
+print(robot.robot_action_keys("dynamixel_2r"))
 robot.cleanup()
 ```
 

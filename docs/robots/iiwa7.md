@@ -17,7 +17,7 @@ URDF from [facebookresearch/differentiable-robot-model@d7bd1b3](https://github.c
 from strands_robots import Robot
 
 robot = Robot("iiwa7")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("iiwa7"))
+print(robot.robot_action_keys("iiwa7"))
 robot.cleanup()
 ```
 

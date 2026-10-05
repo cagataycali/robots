@@ -15,7 +15,7 @@ description: "BXI Elf2 Humanoid (25-DOF)"
 from strands_robots import Robot
 
 robot = Robot("elf2")
-print(robot.robot_joint_names("elf2"))
+print(robot.robot_action_keys("elf2"))
 robot.cleanup()
 ```
 

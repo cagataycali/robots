@@ -15,7 +15,7 @@ The model has no public source to stream, so this page has no 3D view; the thumb
 from strands_robots import Robot
 
 robot = Robot("rby1")
-print(robot.robot_joint_names("rby1"))
+print(robot.robot_action_keys("rby1"))
 robot.cleanup()
 ```
 

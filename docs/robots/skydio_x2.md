@@ -15,7 +15,7 @@ description: "Skydio X2 Autonomous Drone"
 from strands_robots import Robot
 
 robot = Robot("skydio_x2")
-print(robot.robot_joint_names("skydio_x2"))
+print(robot.robot_action_keys("skydio_x2"))
 robot.cleanup()
 ```
 

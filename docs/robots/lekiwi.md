@@ -15,7 +15,7 @@ description: "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuat
 from strands_robots import Robot
 
 robot = Robot("lekiwi")
-print(robot.robot_joint_names("lekiwi"))
+print(robot.robot_action_keys("lekiwi"))
 robot.cleanup()
 ```
 

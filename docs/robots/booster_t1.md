@@ -15,7 +15,7 @@ description: "Booster T1 Humanoid (24-DOF)"
 from strands_robots import Robot
 
 robot = Robot("booster_t1")
-print(robot.robot_joint_names("booster_t1"))
+print(robot.robot_action_keys("booster_t1"))
 robot.cleanup()
 ```
 

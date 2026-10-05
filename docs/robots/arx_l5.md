@@ -15,7 +15,7 @@ description: "ARX L5 (6-DOF lightweight arm)"
 from strands_robots import Robot
 
 robot = Robot("arx_l5")
-print(robot.robot_joint_names("arx_l5"))
+print(robot.robot_action_keys("arx_l5"))
 robot.cleanup()
 ```
 

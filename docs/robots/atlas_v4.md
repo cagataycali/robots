@@ -17,7 +17,7 @@ URDF from [openai/roboschool@1.0.49](https://github.com/openai/roboschool/tree/1
 from strands_robots import Robot
 
 robot = Robot("atlas_v4")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("atlas_v4"))
+print(robot.robot_action_keys("atlas_v4"))
 robot.cleanup()
 ```
 

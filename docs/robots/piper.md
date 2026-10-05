@@ -15,7 +15,7 @@ description: "AgileX Piper (6-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("piper")
-print(robot.robot_joint_names("piper"))
+print(robot.robot_action_keys("piper"))
 robot.cleanup()
 ```
 

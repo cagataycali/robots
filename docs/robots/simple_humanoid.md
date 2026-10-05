@@ -17,7 +17,7 @@ URDF from [laas/simple_humanoid_description@4e859ae](https://github.com/laas/sim
 from strands_robots import Robot
 
 robot = Robot("simple_humanoid")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("simple_humanoid"))
+print(robot.robot_action_keys("simple_humanoid"))
 robot.cleanup()
 ```
 

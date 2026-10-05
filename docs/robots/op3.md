@@ -15,7 +15,7 @@ description: "ROBOTIS OP3 Humanoid (20-DOF)"
 from strands_robots import Robot
 
 robot = Robot("op3")
-print(robot.robot_joint_names("op3"))
+print(robot.robot_action_keys("op3"))
 robot.cleanup()
 ```
 

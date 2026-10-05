@@ -15,7 +15,7 @@ description: "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("tiago_dual")
-print(robot.robot_joint_names("tiago_dual"))
+print(robot.robot_action_keys("tiago_dual"))
 robot.cleanup()
 ```
 

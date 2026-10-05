@@ -15,11 +15,11 @@ description: "LEAP Hand (16-DOF dexterous)"
 from strands_robots import Robot
 
 robot = Robot("leap_hand")
-print(robot.robot_joint_names("leap_hand"))
+print(robot.robot_action_keys("leap_hand"))
 robot.cleanup()
 ```
 
-`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
+`robot_action_keys` lists the actuators a policy drives; command them by name with `send_action` or from a [policy](../learn/policies/index.md).
 
 ## Policies verified on this robot
 

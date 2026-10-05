@@ -15,7 +15,7 @@ description: "MuJoCo Humanoid (21-DOF reference model)"
 from strands_robots import Robot
 
 robot = Robot("mujoco_humanoid")
-print(robot.robot_joint_names("mujoco_humanoid"))
+print(robot.robot_action_keys("mujoco_humanoid"))
 robot.cleanup()
 ```
 

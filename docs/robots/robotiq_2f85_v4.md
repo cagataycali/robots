@@ -15,11 +15,11 @@ description: "Robotiq 2F-85 v4 Gripper (updated model)"
 from strands_robots import Robot
 
 robot = Robot("robotiq_2f85_v4")
-print(robot.robot_joint_names("robotiq_2f85_v4"))
+print(robot.robot_action_keys("robotiq_2f85_v4"))
 robot.cleanup()
 ```
 
-`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
+`robot_action_keys` lists the actuators a policy drives; command them by name with `send_action` or from a [policy](../learn/policies/index.md).
 
 ```python title="sketch"
 robot = Robot("robotiq_2f85_v4", mode="real", port="192.168.1.11")  # RobotiqDriver

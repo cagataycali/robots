@@ -17,7 +17,7 @@ URDF from [limxdynamics/robot-description@a097533](https://github.com/limxdynami
 from strands_robots import Robot
 
 robot = Robot("wl_p311d")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("wl_p311d"))
+print(robot.robot_action_keys("wl_p311d"))
 robot.cleanup()
 ```
 

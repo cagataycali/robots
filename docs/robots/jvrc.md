@@ -15,7 +15,7 @@ description: "JVRC-1 Humanoid (HRP-based, 45-DOF)"
 from strands_robots import Robot
 
 robot = Robot("jvrc")
-print(robot.robot_joint_names("jvrc"))
+print(robot.robot_action_keys("jvrc"))
 robot.cleanup()
 ```
 

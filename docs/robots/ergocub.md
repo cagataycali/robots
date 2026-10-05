@@ -17,7 +17,7 @@ URDF from [icub-tech-iit/ergocub-software@v0.7.7](https://github.com/icub-tech-i
 from strands_robots import Robot
 
 robot = Robot("ergocub")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("ergocub"))
+print(robot.robot_action_keys("ergocub"))
 robot.cleanup()
 ```
 
