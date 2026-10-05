@@ -2265,21 +2265,6 @@ class MuJoCoSimEngine(
             msg += f" Available: {known}. Use action='list_cameras' to see all."
         return msg
 
-    def _unknown_robot_msg(self, requested: object) -> str:
-        """Actionable 'robot not found' message: name it, offer a close-match,
-        and list the robots in the world - consistent with ``_unknown_object_msg`` /
-        ``_unknown_camera_msg`` / ``_unknown_model_msg`` (#1299/#1303) rather than a
-        dead-end "Robot 'X' not found." that forces an agent driving the API blind
-        into a discovery round-trip on every typo."""
-        known = list(self._world.robots.keys()) if self._world is not None else []
-        msg = f"Robot '{requested}' not found."
-        if known:
-            msg += close_match_hint(requested, known)
-            msg += f" Available robots: {known}. Use action='list_robots' to see all."
-        else:
-            msg += " No robots in the scene; add one with action='add_robot'."
-        return msg
-
     def _teleop_target_error(self, robot_name: str | None) -> str | None:
         """Refuse a teleop ``robot_name`` that is not a robot in this world.
 

@@ -286,7 +286,6 @@ _EXPECTED_HELPERS = {
     "mujoco/simulation.py::_unknown_camera_msg",
     "mujoco/simulation.py::_unknown_model_msg",
     "mujoco/simulation.py::_unknown_object_msg",
-    "mujoco/simulation.py::_unknown_robot_msg",
 }
 
 
