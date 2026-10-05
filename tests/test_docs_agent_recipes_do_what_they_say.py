@@ -26,6 +26,7 @@ measures the compiled geom, so it grades the recipe and not the string.
 from __future__ import annotations
 
 import ast
+import importlib
 import inspect
 import re
 from pathlib import Path
@@ -207,3 +208,28 @@ def test_each_documented_size_row_builds_the_extent_it_states(shape: str):
         f"{shape}: size={size} compiles geom_size={stored}; the row says {SIZE_ROWS[shape]!r}, "
         "which predicts {expected}"
     )
+
+
+AGENTS_PAGE = REPO_ROOT / "docs" / "learn" / "agents.md"
+
+
+def _tool_table_rows() -> list[tuple[str, str]]:
+    """``(tool, module)`` per name in the agents page tool table; a row without ``from`` means the parent."""
+    section = AGENTS_PAGE.read_text(encoding="utf-8").split("## The tools around the robot", 1)[1].split("\n## ", 1)[0]
+    rows = []
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cell = line.split("|")[1]
+        names, _, module = cell.partition(" from ")
+        target = module.strip(" `") or "strands_robots.tools"
+        rows += [(name, target) for name in re.findall(r"`([a-z0-9_]+\*?)`", names)]
+    return rows
+
+
+@pytest.mark.parametrize(("tool", "module"), _tool_table_rows())
+def test_each_tool_in_the_agents_table_imports_from_the_module_its_row_names(tool: str, module: str):
+    """``from <module> import <tool>`` is what a reader types after reading the row; ``g1_*`` needs one match."""
+    lazy = importlib.import_module(module)._LAZY_IMPORTS
+    found = any(name.startswith(tool[:-1]) for name in lazy) if tool.endswith("*") else tool in lazy
+    assert found, f"agents.md says `{tool}` imports from {module}; it does not"

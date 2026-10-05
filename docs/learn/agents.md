@@ -31,7 +31,7 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 
 ## The tools around the robot
 
-`strands_robots.tools` lazy-loads every tool; the ones mounted most:
+`strands_robots.tools` lazy-loads shared tools; the ones mounted most:
 
 | tool | what it does | gated? |
 |---|---|---|
@@ -41,8 +41,8 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 | `serial_tool` | raw servo bus reads and writes | writes |
 | `robot_mesh` | the fleet ([fleet](mesh/fleet.md)): read with `peers`, `status`, `inbox`; act with the six verbs in the gate table | those six |
 | `use_ros`, `use_rosbridge`, `use_rtps` | a ROS 2 graph, three transports ([ROS 2](ros2.md)) | blocklisted surfaces |
-| `use_unitree`, `g1_*` | Unitree G1 locomotion and arm verbs ([unitree](hardware/unitree.md)) | motion RPCs |
-| `reachy_*` | Reachy Mini head, antennas, sound ([reachy](hardware/reachy-mini.md)) | no |
+| `use_unitree`, `g1_*` from `strands_robots.tools.g1` | Unitree G1 locomotion and arm verbs ([unitree](hardware/unitree.md)) | motion RPCs |
+| `reachy_*` from `strands_robots.tools.reachy` | Reachy Mini head, antennas, sound ([reachy](hardware/reachy-mini.md)) | no |
 | `load_episode`, `sample_frames`, `write_label` | judge episodes ([label and judge](data/label-and-judge.md)) | no |
 
 ## The operator gate
