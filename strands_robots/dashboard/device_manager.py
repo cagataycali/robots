@@ -382,42 +382,48 @@ def modes_from_readbacks(
     return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
 
 
+def opencv_ordered_camera_names(listing: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Pair macOS camera names with OpenCV indices the way OpenCV itself numbers them.
+
+    OpenCV's AVFoundation backend sorts the capture devices by ``uniqueID`` before
+    indexing them, so index 0 is the smallest id - not the first device the OS (or
+    ffmpeg's ``-list_devices``) lists. A built-in camera listed first can therefore be
+    index 1. Without an id for every camera the order is unknowable, and no names are
+    returned rather than names next to the wrong index.
+
+    Args:
+        listing: ``SPCameraDataType`` entries from ``system_profiler -json``.
+
+    Returns:
+        ``{"listing_index": <OpenCV index>, "name": ...}`` per camera.
+    """
+    rows = [(str(c.get("spcamera_unique-id") or ""), str(c.get("_name") or "").strip()) for c in listing]
+    if not rows or any(not uid or not name for uid, name in rows):
+        return []
+    return [{"listing_index": i, "name": name} for i, (_, name) in enumerate(sorted(rows))]
+
+
 def scan_camera_names() -> list[dict[str, Any]]:
-    """Human names of the attached cameras, best effort per platform. macOS: parsed from ffmpeg's
-    AVFoundation device listing (if ffmpeg is installed).
+    """Human names of the attached cameras, keyed by the index OpenCV opens them at.
+
+    macOS: from ``system_profiler SPCameraDataType``, put in OpenCV's order (see
+    :func:`opencv_ordered_camera_names`). Linux: ``/sys/class/video4linux/videoN/name``,
+    whose ``N`` is the ``/dev/videoN`` OpenCV opens for index ``N``.
     """
     names: list[dict[str, Any]] = []
     if sys.platform == "darwin":
-        import shutil
-
-        ffmpeg = shutil.which("ffmpeg") or next(
-            (p for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg") if os.path.exists(p)),
-            None,
-        )
-        if not ffmpeg:
-            return names
         try:
             out = subprocess.run(
-                [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                ["/usr/sbin/system_profiler", "SPCameraDataType", "-json"],
                 capture_output=True,
                 text=True,
                 errors="replace",
                 timeout=10,
-            ).stderr
+            ).stdout
+            return opencv_ordered_camera_names(json.loads(out).get("SPCameraDataType") or [])
         except Exception as e:  # noqa: BLE001 - enumeration is decoration, never fatal
             logger.debug("camera name scan failed: %r", e)
             return names
-        in_video = False
-        for line in out.splitlines():
-            if "AVFoundation video devices" in line:
-                in_video = True
-                continue
-            if "AVFoundation audio devices" in line:
-                break
-            if in_video:
-                m = re.search(r"\[(\d+)\]\s+(.+)\Z", line)
-                if m:
-                    names.append({"listing_index": int(m.group(1)), "name": m.group(2).strip()})
     elif sys.platform.startswith("linux"):
         import glob
 

@@ -8737,7 +8737,7 @@ function CameraGallery({ cameras: cameras2, names, problem, scanned = true, erro
             c.geometry_from === "remembered" && c.width ? " (last seen)" : ""
           ] })
         ] }),
-        c.name_hint && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "camname-hint", title: "from the OS listing — the order is not OpenCV's, so treat it as a hint", children: [
+        c.name_hint && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "camname-hint", title: "matched to the index by OpenCV's own device order, not by opening the camera", children: [
           "probably ",
           /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: c.name_hint }),
           c.name_is_guess ? " · snap a preview to be sure" : ""
@@ -8802,12 +8802,12 @@ function CameraGallery({ cameras: cameras2, names, problem, scanned = true, erro
       ] }, c.index))
     ] }),
     names.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "camnames", children: names.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chip", title: "position in the OS device listing", children: n.name }, n.listing_index)) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
-        "Attached cameras by name, in OS listing order — which is ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "not" }),
-        " OpenCV index order. The snapshot is the identity: if you're unsure which index is which, look."
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "camnames", children: names.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chip", title: `index ${n.listing_index}`, children: [
+        n.listing_index,
+        ": ",
+        n.name
+      ] }, n.listing_index)) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Attached cameras by name, numbered the way OpenCV numbers them. The snapshot is the identity: if you're unsure which index is which, look." })
     ] })
   ] });
 }
