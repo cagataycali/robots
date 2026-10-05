@@ -252,7 +252,17 @@ def reject_misspelled_kwargs(kwargs: Mapping[str, Any], accepted: Sequence[str],
         )
 
 
-def close_match_hint(requested: object, known: Sequence[str]) -> str:
+def _registry_name(name: str) -> str:
+    """Canonical registry name for ``name``, or ``name`` itself when it has none."""
+    try:
+        from strands_robots.registry import resolve_name
+
+        return resolve_name(name)
+    except Exception:  # noqa: BLE001 - a suggestion must never raise
+        return name
+
+
+def close_match_hint(requested: object, known: Sequence[str], same: Callable[[str], str] | None = None) -> str:
     """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
 
     Returns ``""`` when there is no usable suggestion, so a caller can append
@@ -285,6 +295,9 @@ def close_match_hint(requested: object, known: Sequence[str]) -> str:
     Args:
         requested: Caller-supplied entity name, of any type.
         known: Entity names that are registered.
+        same: Optional canonicaliser. A known name that it maps to the same
+            value as ``requested`` (a registry alias, say) is suggested first,
+            however far apart the two spellings are.
 
     Returns:
         A leading-space ``" Did you mean: ...?"`` fragment naming up to three
@@ -298,7 +311,10 @@ def close_match_hint(requested: object, known: Sequence[str]) -> str:
     # the next-best candidate instead of shortening the list. difflib returns
     # matches best-first, so the rendered three are unchanged for a caller
     # whose known set cannot contain ``requested``.
-    matches = [m for m in difflib.get_close_matches(requested, list(known), n=4, cutoff=0.4) if m != requested][:3]
+    target = same(requested) if same is not None else None
+    aliases = [k for k in known if same is not None and k != requested and same(k) == target]
+    close = difflib.get_close_matches(requested, list(known), n=4, cutoff=0.4)
+    matches = list(dict.fromkeys(m for m in aliases + close if m != requested))[:3]
     if not matches:
         return ""
     return " Did you mean: " + ", ".join(matches) + "?"
@@ -1267,8 +1283,7 @@ class SimEngine(ABC):
         appends a difflib close-match, the robots currently in the world, and the
         discovery action so an agent driving the API by name can recover a typo in
         zero extra calls instead of hitting a dead-end string. Uses the abstract
-        :meth:`list_robots` primitive, so every backend inherits it; the MuJoCo
-        engine overrides with a ``self._world.robots``-backed variant. Mirrors the
+        :meth:`list_robots` primitive, so every backend inherits it. Mirrors the
         ``_unknown_object_msg`` / ``_unknown_camera_msg`` pattern (#1299/#1303/#1306).
 
         ``requested`` is typed ``object`` because a name of any type reaches here:
@@ -1278,11 +1293,15 @@ class SimEngine(ABC):
         :func:`close_match_hint`); what is registered is a fact about the world,
         so it is listed for every name type instead of being replaced by an
         "empty scene" claim that would be false.
+
+        A registry alias is suggested even when its spelling is far from the
+        world's name: ``"g1"`` scores 0.33 against ``"unitree_g1"``, under
+        difflib's cutoff, yet both resolve to the same registry robot.
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
         if known:
-            msg += close_match_hint(requested, known)
+            msg += close_match_hint(requested, known, same=_registry_name)
             msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."
