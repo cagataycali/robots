@@ -14,12 +14,12 @@ description: "Universal Robots UR10e (6-DOF industrial)"
 ```python
 from strands_robots import Robot
 
-robot = Robot("ur10e")
+robot = Robot("ur10e", position=[0.0, 0.0, 0.027])
 print(robot.robot_action_keys("ur10e"))
 robot.cleanup()
 ```
 
-Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
 
 ```python title="sketch"
 robot = Robot("ur10e", mode="real", port="192.168.1.10")  # URDriver

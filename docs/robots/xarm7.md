@@ -19,7 +19,7 @@ print(robot.robot_action_keys("xarm7"))
 robot.cleanup()
 ```
 
-Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
 
 ```python title="sketch"
 robot = Robot("xarm7", mode="real", port="192.168.1.185")  # XArmDriver

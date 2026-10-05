@@ -14,7 +14,7 @@ description: "Tetheria Aero Hand Open (16-DOF dexterous)"
 ```python
 from strands_robots import Robot
 
-robot = Robot("aero_hand")
+robot = Robot("aero_hand", position=[0.0, 0.0, 0.1083])
 print(robot.robot_action_keys("aero_hand"))
 robot.cleanup()
 ```
