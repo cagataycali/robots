@@ -72,7 +72,7 @@ Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `strands
 
 ### The ball scene places the ball, not the kick geometry
 
-`scene_ball.xml` declares the ball 0.3 m straight ahead; training placed it 0.09 m ahead and 0.042 m to the side of the kicking foot, so from the shipped position `ball_kick_left` reports success and misses. Teleport the ball before the rollout: write the free joint's `qpos` to that offset in the trunk's yaw frame and zero its `qvel`. The file names the joint `ball_free`, but `add_robot(name=...)` prefixes every joint, so resolve the name.
+`scene_ball.xml` declares the ball 0.3 m straight ahead; training placed it 0.09 m ahead and 0.042 m to the side of the kicking foot, so from the shipped position `ball_kick_left` reports success and misses. Teleport the ball before the rollout: `set_joint_positions` takes the free joint's seven-value `qpos` at that offset in the trunk's yaw frame; `set_joint_velocities` zeroes its six `qvel`. The file names the joint `ball_free`; `add_robot(name=...)` prefixes it; resolve the name.
 
 ### The stance every weight was trained in
 
