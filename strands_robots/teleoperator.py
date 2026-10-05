@@ -30,7 +30,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import did_you_mean, ensure_lerobot_family_registered
+from strands_robots.utils import did_you_mean, ensure_lerobot_family_registered, refuse_dropped_connection_kwargs
 
 if TYPE_CHECKING:
     from lerobot.teleoperators.teleoperator import Teleoperator as LeRobotTeleoperator
@@ -180,6 +180,9 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
         config_data["id"] = kwargs["id"]
 
     forwardable = _FORWARDABLE_TELEOP_KWARGS
+    refuse_dropped_connection_kwargs(
+        kwargs, valid_fields, ("port", "ip_address"), owner=f"{ConfigClass.__name__} for teleop_type={teleop_type!r}"
+    )
     for key in forwardable:
         if key in kwargs and key in valid_fields:
             config_data[key] = kwargs[key]
