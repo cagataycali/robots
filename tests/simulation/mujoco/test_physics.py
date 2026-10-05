@@ -1327,9 +1327,12 @@ class TestDirectJointControlListForm:
     def test_list_form_namespace_fallback(self, sim):
         # Robot with no explicit joint_names falls back to enumerating model
         # joints under its namespace ("" matches all joints in the scene).
+        # The scene's free joint takes its whole [x, y, z, qw, qx, qy, qz] entry.
         self._add_robot(sim, "arm", [], namespace="")
-        njnt = sim._world._model.njnt
-        result = sim.set_joint_positions(positions=[0.0] * njnt, robot_name="arm")
+        model = sim._world._model
+        free = int(mj.mjtJoint.mjJNT_FREE)
+        pose = [[0.0, 0.0, 0.1, 1.0, 0.0, 0.0, 0.0] if int(t) == free else 0.0 for t in model.jnt_type]
+        result = sim.set_joint_positions(positions=pose, robot_name="arm")
         assert result["status"] == "success"
 
     def test_velocities_list_form_success(self, sim):
@@ -1369,20 +1372,25 @@ class TestDirectJointControlListForm:
         # (empty namespace matches every joint in the scene). This mirrors the
         # positions fallback (``test_list_form_namespace_fallback``) and pins the
         # velocity write contract: the list is one entry *per joint* (not per
-        # DOF, even when a free joint is present), and each scalar lands on that
-        # joint's first qvel slot, in model joint id order.
+        # DOF), in model joint id order, and a free joint's entry is its whole
+        # six-slot twist.
         self._add_robot(sim, "arm", [], namespace="")
         model, data = sim._world._model, sim._world._data
 
         joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid) for jid in range(model.njnt)]
+        free = int(mj.mjtJoint.mjJNT_FREE)
         # One distinct velocity per joint so a mis-ordered write is caught.
-        velocities = [0.1 * (i + 1) for i in range(model.njnt)]
+        velocities = [
+            [0.1 * (i + 1)] * 6 if int(model.jnt_type[i]) == free else 0.1 * (i + 1) for i in range(model.njnt)
+        ]
 
         result = sim.set_joint_velocities(velocities=velocities, robot_name="arm")
         assert result["status"] == "success"
 
         for jid, expected in enumerate(velocities):
-            assert data.qvel[model.jnt_dofadr[jid]] == pytest.approx(expected), joint_names[jid]
+            adr = model.jnt_dofadr[jid]
+            written = data.qvel[adr : adr + 6].tolist() if isinstance(expected, list) else data.qvel[adr]
+            assert written == pytest.approx(expected), joint_names[jid]
 
 
 class TestMultiRaycast:
