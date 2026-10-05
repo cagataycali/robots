@@ -210,8 +210,22 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         names = [r["name"] for r in list_robots()]
         close = difflib.get_close_matches(canonical.lower(), names, n=3, cutoff=0.6)
         hint = f" Did you mean: {', '.join(close)}?" if close else ""
+        # A hand-edit that broke ``user_robots.json`` makes every custom robot
+        # vanish silently - the overlay parser catches ``JSONDecodeError`` to
+        # keep ``get_robot()`` from raising on a crashed writer. Surface the
+        # swallowed parse error here, where the user is already being told
+        # their name is unknown, so they are pointed at the file they can fix.
+        from .registry._overlay import last_parse_error as _overlay_last_error
+
+        overlay_err = _overlay_last_error()
+        overlay_hint = (
+            f" The user robot overlay {overlay_err[0]} failed to parse ({overlay_err[1]}), "
+            f"so every ``register_robot`` entry is invisible until the file is fixed."
+            if overlay_err is not None
+            else ""
+        )
         raise ValueError(
-            f"Unknown robot {original!r}{resolved}.{hint} "
+            f"Unknown robot {original!r}{resolved}.{hint}{overlay_hint} "
             "Pass a registered name (see ``strands_robots.list_robots()``), one of the "
             "``robot_descriptions`` robots (see ``strands_robots.list_discoverable()`` and "
             "``strands_robots.list_urdf_only()``), or supply ``urdf_path=``."

@@ -66,7 +66,34 @@ def parse_user_robots(source: bytes | None) -> dict[str, Any]:
     try:
         data = json.loads(source)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # The getter must not raise: ``get_robot()`` reads the overlay on every
+        # lookup and a crashed writer could leave the file corrupt. The
+        # ``Robot(...)`` 404 reads :func:`last_parse_error` and names the file
+        # + exact problem, so the user who hand-edited the overlay is not left
+        # with "Unknown robot" and a WARNING log line most runs don't surface.
+        _last_parse_error[0] = (str(user_registry_path()), str(exc))
         logger.warning("Failed to load user registry %s: %s", user_registry_path(), exc)
         return {}
+    _last_parse_error[0] = None
     robots = data.get("robots") if isinstance(data, dict) else None
     return robots if isinstance(robots, dict) else {}
+
+
+# Mutable one-slot container so :func:`last_parse_error` reads the latest
+# parse state without exposing a module-level variable readers would stomp.
+# Written here, read by ``strands_robots/robot.py::_validate_known_robot``.
+_last_parse_error: list[tuple[str, str] | None] = [None]
+
+
+def last_parse_error() -> tuple[str, str] | None:
+    """The most recent user-overlay parse failure, or ``None``.
+
+    Returns:
+        ``(path, reason)`` for the last call to :func:`parse_user_robots` that
+        raised ``JSONDecodeError`` / ``UnicodeDecodeError`` and was swallowed,
+        or ``None`` if the latest parse succeeded (or no overlay exists). The
+        ``Robot(...)`` 404 reads this so a user whose hand-edit broke the
+        overlay is told what to fix - the parse error itself is otherwise only
+        in a WARNING log line.
+    """
+    return _last_parse_error[0]
