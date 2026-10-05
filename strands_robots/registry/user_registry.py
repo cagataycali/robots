@@ -290,11 +290,30 @@ def register_robot(
             raise ValueError(f"Robot '{name}' already in user registry. Use overwrite=True to replace.")
     elif (built_in := get_robot(name)) is not None:
         if not overwrite:
+            # get_robot() synthesises entries for ``robot_descriptions`` URDF-only
+            # robots too (source='urdf', discovered=True). Those are NOT in
+            # robots.json - call them what they are, and only cite joints when
+            # the sweep recorded a count. If the URDF description refused to
+            # build, overwrite=True is the intended rescue - say so.
+            discovered = built_in.get("discovered") is True and built_in.get("source") == "urdf"
+            kind = "an auto-discovered robot_descriptions URDF" if discovered else "a built-in robot"
+            restore = "" if discovered else " (unregister_robot() restores the built-in)"
+            joint_bits = []
+            if built_in.get("joints") is not None:
+                joint_bits.append(f"{built_in['joints']} joints")
+            if built_in.get("aliases"):
+                joint_bits.append(f"aliases {built_in['aliases']}")
+            if built_in.get("refusal"):
+                joint_bits.append(f"will not build: {built_in['refusal']}")
+            trailer = f"; {', '.join(joint_bits)}" if joint_bits else ""
+            rescue = (
+                " Pass overwrite=True to supply a working model for this name"
+                if built_in.get("refusal")
+                else " Pick another name, or pass overwrite=True to shadow it"
+            )
             raise ValueError(
-                f"Robot '{name}' is a built-in robot ({built_in.get('description') or 'no description'}; "
-                f"{built_in.get('joints', 0)} joints, aliases {built_in.get('aliases', [])}). Registering it "
-                "would hide that entry; pick another name, or pass overwrite=True to shadow it "
-                "(unregister_robot() restores the built-in)."
+                f"Robot '{name}' is {kind} ({built_in.get('description') or 'no description'}{trailer})."
+                f" Registering it would hide that entry.{rescue}{restore}."
             )
         logger.info("Robot '%s' exists in package registry - user registration will override it.", name)
 
