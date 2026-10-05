@@ -2250,6 +2250,26 @@ class SimEngine(ABC):
                 try:
                     float(value)
                 except (TypeError, ValueError):
+                    # The refusal names a "scalar number" rule, but
+                    # ``_unwrap_single_element_action_value`` above deliberately
+                    # unwraps a length-1 str/bytes/list/tuple/ndarray into its
+                    # one scalar (see #1538, the GR00T list-form regression).
+                    # A caller reading 'got list' for ``[0.5, 0.6]`` has no way
+                    # to see that ``[0.5]`` would have worked, so disclose the
+                    # length-1 unwrap when the offending value carries a length
+                    # greater than one. ``sequence_length`` returns None for a
+                    # 0-d numpy array or a value whose ``len()`` raises, so the
+                    # hint is scoped to the shapes it actually applies to.
+                    length_hint = ""
+                    seq_len = sequence_length(value)
+                    if seq_len is not None and seq_len > 1 and not isinstance(value, (str, bytes, Mapping)):
+                        length_hint = (
+                            f" This value carries {seq_len} elements; a length-1 "
+                            "sequence (``[v]``, ``(v,)``, ``np.array([v])``) is "
+                            "unwrapped to its one scalar, but a multi-element "
+                            "value cannot bind to a single actuator - send one "
+                            "value per actuator key."
+                        )
                     return None, {
                         "status": "error",
                         "content": [
@@ -2257,7 +2277,7 @@ class SimEngine(ABC):
                                 "text": (
                                     f"send_action: action value for key '{key}' must be a "
                                     "scalar number (one value per actuator/joint), got "
-                                    f"{type(value).__name__}."
+                                    f"{type(value).__name__}.{length_hint}"
                                 )
                             }
                         ],
