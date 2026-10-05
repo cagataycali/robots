@@ -15,7 +15,7 @@ description: "Pollen Reachy Mini (6-DOF Stewart head + antennas, 9 actuators)"
 from strands_robots import Robot
 
 robot = Robot("reachy_mini")
-print(robot.robot_joint_names("reachy_mini"))
+print(robot.robot_action_keys("reachy_mini"))
 robot.cleanup()
 ```
 

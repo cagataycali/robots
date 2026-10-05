@@ -17,7 +17,7 @@ URDF from [ANYbotics/anymal_d_simple_description@6adc147](https://github.com/ANY
 from strands_robots import Robot
 
 robot = Robot("anymal_d")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("anymal_d"))
+print(robot.robot_action_keys("anymal_d"))
 robot.cleanup()
 ```
 

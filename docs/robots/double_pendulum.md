@@ -17,7 +17,7 @@ URDF from [Gepetto/example-robot-data@d0d9098](https://github.com/Gepetto/exampl
 from strands_robots import Robot
 
 robot = Robot("double_pendulum")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("double_pendulum"))
+print(robot.robot_action_keys("double_pendulum"))
 robot.cleanup()
 ```
 

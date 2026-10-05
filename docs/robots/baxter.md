@@ -17,7 +17,7 @@ URDF from [RethinkRobotics/baxter_common@6c4b0f3](https://github.com/RethinkRobo
 from strands_robots import Robot
 
 robot = Robot("baxter")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("baxter"))
+print(robot.robot_action_keys("baxter"))
 robot.cleanup()
 ```
 

@@ -17,7 +17,7 @@ URDF from [ankurhanda/robot-assets@12f1a3c](https://github.com/ankurhanda/robot-
 from strands_robots import Robot
 
 robot = Robot("yumi")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("yumi"))
+print(robot.robot_action_keys("yumi"))
 robot.cleanup()
 ```
 

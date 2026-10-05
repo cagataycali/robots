@@ -15,7 +15,7 @@ description: "ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers)"
 from strands_robots import Robot
 
 robot = Robot("aloha")
-print(robot.robot_joint_names("aloha"))
+print(robot.robot_action_keys("aloha"))
 robot.cleanup()
 ```
 

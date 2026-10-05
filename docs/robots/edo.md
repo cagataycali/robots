@@ -17,7 +17,7 @@ URDF from [ianathompson/eDO_description@17b3f92](https://github.com/ianathompson
 from strands_robots import Robot
 
 robot = Robot("edo")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("edo"))
+print(robot.robot_action_keys("edo"))
 robot.cleanup()
 ```
 

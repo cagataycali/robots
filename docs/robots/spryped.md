@@ -17,7 +17,7 @@ URDF from [bbokser/spryped@f360a6b](https://github.com/bbokser/spryped/tree/f360
 from strands_robots import Robot
 
 robot = Robot("spryped")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("spryped"))
+print(robot.robot_action_keys("spryped"))
 robot.cleanup()
 ```
 

@@ -15,7 +15,7 @@ description: "ANYbotics ANYmal B Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("anymal_b")
-print(robot.robot_joint_names("anymal_b"))
+print(robot.robot_action_keys("anymal_b"))
 robot.cleanup()
 ```
 

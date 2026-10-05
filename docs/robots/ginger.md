@@ -17,7 +17,7 @@ URDF from [Rayckey/GingerURDF@6a1307c](https://github.com/Rayckey/GingerURDF/tre
 from strands_robots import Robot
 
 robot = Robot("ginger")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("ginger"))
+print(robot.robot_action_keys("ginger"))
 robot.cleanup()
 ```
 

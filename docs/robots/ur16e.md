@@ -17,7 +17,7 @@ URDF from [UniversalRobots/Universal_Robots_ROS2_Description@22f055d](https://gi
 from strands_robots import Robot
 
 robot = Robot("ur16e")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("ur16e"))
+print(robot.robot_action_keys("ur16e"))
 robot.cleanup()
 ```
 

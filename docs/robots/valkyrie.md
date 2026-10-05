@@ -17,7 +17,7 @@ URDF from [gkjohnson/nasa-urdf-robots@54cdeb1](https://github.com/gkjohnson/nasa
 from strands_robots import Robot
 
 robot = Robot("valkyrie")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("valkyrie"))
+print(robot.robot_action_keys("valkyrie"))
 robot.cleanup()
 ```
 

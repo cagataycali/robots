@@ -17,7 +17,7 @@ URDF from [bulletphysics/bullet3@7dee343](https://github.com/bulletphysics/bulle
 from strands_robots import Robot
 
 robot = Robot("minitaur")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("minitaur"))
+print(robot.robot_action_keys("minitaur"))
 robot.cleanup()
 ```
 

@@ -15,7 +15,7 @@ description: "PNDbotics Adam Lite Humanoid (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("adam_lite")
-print(robot.robot_joint_names("adam_lite"))
+print(robot.robot_action_keys("adam_lite"))
 robot.cleanup()
 ```
 
