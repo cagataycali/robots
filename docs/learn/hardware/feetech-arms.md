@@ -33,7 +33,7 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")   # nat
 
 Both register for `so100`, `so101`, `lekiwi`, `hope_jr` and `open_duck_mini`. `hope_jr` and `open_duck_mini` share the bus protocol but not the six-servo layout; pass `motor_ids=` to the native driver until a joint map for them lands.
 
-The native driver's six motors, servo ids 1 to 6 in wire order from `shoulder_pan` to `gripper`, are the generated joint table on the [so101 page](../../robots/so101.md); five take degrees, the gripper 0 to 100 percent open.
+The native driver's six motors, servo ids 1 to 6 in wire order from `shoulder_pan` to `gripper`, are the generated joint table on the [so101 page](../../robots/so101.md).
 
 ## Check the bus without moving
 
