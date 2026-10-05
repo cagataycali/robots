@@ -648,6 +648,31 @@ class TestRobotManagement:
         assert sim_with_robot.send_action({"shoulder_pan_act": 0.3}, robot_name="arm1")["status"] == "success"
         assert list(data.ctrl) != list(ctrl_before)
 
+    @pytest.mark.parametrize(
+        ("controller_raises", "envelope_says", "warning_says"),
+        [
+            (False, "Nothing was applied", "The whole batch was refused and nothing was written."),
+            (True, "Action partially applied. Applied: ['shoulder_pan_act']", "The value was dropped."),
+        ],
+        ids=["batch_refused", "controller_fallback_drops_one_key"],
+    )
+    def test_the_unresolved_key_warning_tells_the_same_story_as_the_envelope(
+        self, sim_with_robot, caplog, controller_raises, envelope_says, warning_says
+    ):
+        """The log and the returned error agree on whether the valid keys landed."""
+        if controller_raises:
+
+            class _Raises:
+                def apply(self, *args):
+                    raise RuntimeError("controller down")
+
+            sim_with_robot._world._backend_state["action_controller"] = _Raises()
+        with caplog.at_level("WARNING", logger="strands_robots.simulation.mujoco.rendering"):
+            result = sim_with_robot.send_action({"shoulder_pan_act": 0.3, "nonexistent_joint": 1.0}, robot_name="arm1")
+        assert envelope_says in result["content"][0]["text"]
+        [warning] = [r.getMessage() for r in caplog.records if "'nonexistent_joint'" in r.getMessage()]
+        assert warning_says in warning
+
 
 # Camera Management
 
