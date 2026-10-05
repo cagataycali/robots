@@ -14,7 +14,7 @@ description: "Shadow Dexterous Hand (24-DOF)"
 ```python
 from strands_robots import Robot
 
-robot = Robot("shadow_hand")
+robot = Robot("shadow_hand", position=[0.0, 0.0, 0.005])
 print(robot.robot_joint_names("shadow_hand"))
 robot.cleanup()
 ```

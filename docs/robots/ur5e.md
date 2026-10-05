@@ -19,7 +19,7 @@ print(robot.robot_joint_names("ur5e"))
 robot.cleanup()
 ```
 
-Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run a checkpoint on it ([same checkpoint](../start/first-policy.md)).
+Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
 
 ```python title="sketch"
 robot = Robot("ur5e", mode="real", port="192.168.1.10")  # URDriver

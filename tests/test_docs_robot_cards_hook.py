@@ -62,7 +62,18 @@ def test_every_robot_renders_one_card_and_one_page() -> None:
         assert f'href="robots/{name}/"' in out, f"the {name} card does not link to its page"
         page = _ROBOTS / f"{name}.md"
         assert page.is_file(), f"no generated page for {name}"
-        assert f'Robot("{name}")' in page.read_text(encoding="utf-8"), f"{page.name} never shows the constructor line"
+        assert f'Robot("{name}"' in page.read_text(encoding="utf-8"), f"{page.name} never shows the constructor line"
+
+
+def test_a_robot_authored_below_the_plane_is_constructed_at_its_registry_spawn() -> None:
+    """``add_robot`` warns that LeKiwi starts 34.6 mm inside the ground; its page spawns it where the warning says."""
+    hook = _hook()
+    spawns = {name: spec["spawn_position"] for name, spec in hook.registry().items() if "spawn_position" in spec}
+    assert "lekiwi" in spawns, "lekiwi's page constructs it inside the ground"
+    for name, spawn in spawns.items():
+        x, y, z = (float(v) for v in spawn)
+        assert z > 0, f"{name}.spawn_position lifts nothing: {spawn}"
+        assert f'Robot("{name}", position={[x, y, z]})' in hook.robot_page(name), name
 
 
 def test_family_cards_are_the_family_and_nothing_else() -> None:
