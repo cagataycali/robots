@@ -37,6 +37,8 @@ from typing import Any
 
 from strands.types.tools import ToolSpec, ToolUse
 
+from strands_robots.simulation.base import scene_contents_sentence
+
 logger = logging.getLogger(__name__)
 
 #: The shared agent-facing schema. Published by the MuJoCo backend; this backend
@@ -107,6 +109,7 @@ class IsaacAgentToolMixin:
         )
         world = (
             f"The world is ALREADY CREATED and holds robot(s) {robots}; do not call create_world. "
+            f"{scene_contents_sentence(getattr(self, '_objects', {}), getattr(self, '_cameras', {}))}"
             if getattr(self, "_world_created", False) and registry
             else "Call create_world first, then add_robot. "
         )

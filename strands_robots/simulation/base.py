@@ -86,6 +86,32 @@ logger = logging.getLogger(__name__)
 _SETUP_KWARGS: tuple[str, ...] = ("robot_name", "robot")
 
 
+def scene_contents_sentence(objects: Iterable[str], cameras: Iterable[str]) -> str:
+    """The tool-description sentence naming the objects and cameras a session holds.
+
+    ``Robot("so100")`` followed by ``add_object`` / ``add_camera`` builds the
+    scene before the agent reads the tool description; naming it there saves
+    the agent a ``list_objects`` round-trip to learn what "the red cube" is.
+    The free camera (:data:`~strands_robots.utils.FREE_CAMERA_TOKENS`) is in
+    every session, so it is not named. At most six names per kind are shown.
+
+    Args:
+        objects: Object names in the world.
+        cameras: Camera names in the world, the free camera included or not.
+
+    Returns:
+        The sentence with a trailing space, or ``""`` when nothing is named.
+    """
+    parts = []
+    for kind, names in (("object", list(objects)), ("camera", [c for c in cameras if c not in FREE_CAMERA_TOKENS])):
+        if names:
+            shown = ", ".join(f"'{n}'" for n in names[:6]) + ("..." if len(names) > 6 else "")
+            parts.append(f"{len(names)} {kind}(s) {shown}")
+    if not parts:
+        return ""
+    return f"The scene also holds {' and '.join(parts)}; list_objects / list_cameras give their poses. "
+
+
 def reject_setup_kwargs(kwargs: Mapping[str, Any]) -> None:
     """Reject robot-setup keyword arguments passed to a backend constructor.
 

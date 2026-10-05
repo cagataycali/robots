@@ -64,6 +64,12 @@ class TestItIsATool:
         engine._robots = {"so101": _RobotState(name="so101", prim_path="/World/Robots/so101", joint_names=["1", "2"])}
         assert "'so101' (joints ['1', '2'])" in engine.tool_spec["description"]
 
+    def test_the_description_names_the_objects_and_cameras_already_added(self) -> None:
+        engine = _engine(_world_created=True)
+        engine._robots = {"so101": _RobotState(name="so101", prim_path="/World/Robots/so101", joint_names=["1"])}
+        engine._objects, engine._cameras = {"red_cube": object()}, {"default": object(), "front": object()}
+        assert "holds 1 object(s) 'red_cube' and 1 camera(s) 'front';" in engine.tool_spec["description"]
+
 
 class TestItDispatches:
     def test_an_action_reaches_its_method_with_the_arguments_it_takes(self) -> None:
