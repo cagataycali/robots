@@ -133,6 +133,6 @@ freeze success 0.501
 Note: HoldPolicy does not read the instruction. Its actions - a fixed pose on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The notes come from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done.
+The notes come from `reads_instruction = False`: a policy that never reads the words says so, so an agent cannot relay a test motion as done. A built-in name or alias (`mock`, `sonic`) is refused unless you pass `overwrite=True`.
 
 On hardware, `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(create_policy(...))` a built object; [the operator gate](../agents.md#the-operator-gate) sits in front of both.

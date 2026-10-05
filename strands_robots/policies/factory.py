@@ -44,6 +44,8 @@ def register_policy(
     name: str,
     loader: Callable[[], type[Policy]],
     aliases: list[str] | None = None,
+    *,
+    overwrite: bool = False,
 ):
     """Register a custom policy provider at runtime.
 
@@ -55,7 +57,34 @@ def register_policy(
 
         register_policy("my_provider", lambda: MyPolicy, aliases=["my"])
         policy = create_policy("my_provider", ...)
+
+    Args:
+        name: Provider name :func:`create_policy` will accept.
+        loader: Zero-argument callable returning the :class:`Policy` subclass.
+        aliases: Extra spellings that resolve to ``name``.
+        overwrite: Allow ``name`` or an alias to reuse a spelling a built-in
+            provider in ``policies.json`` already answers to. A runtime entry
+            wins over the built-in for the rest of the process.
+
+    Raises:
+        ValueError: ``name`` or an alias is a built-in provider name or alias
+            and ``overwrite`` is false. Nothing is registered.
     """
+    if not overwrite:
+        builtin_aliases = list_policy_aliases()
+        builtin_names = set(list_policy_providers())
+        taken = [
+            f"'{spelling}' is the built-in provider"
+            if spelling in builtin_names
+            else f"'{spelling}' is an alias of the built-in provider '{builtin_aliases[spelling]}'"
+            for spelling in dict.fromkeys([name, *(aliases or [])])
+            if spelling in builtin_names or spelling in builtin_aliases
+        ]
+        if taken:
+            raise ValueError(
+                f"register_policy({name!r}): {'; '.join(taken)}. Registering would hide it from "
+                "create_policy(); pick another name, or pass overwrite=True to shadow it."
+            )
     _runtime_registry[name] = loader
     if aliases:
         for alias in aliases:

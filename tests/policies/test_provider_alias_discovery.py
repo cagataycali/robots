@@ -317,17 +317,44 @@ def test_a_runtime_alias_is_reported_too() -> None:
     assert list_aliases().get("alias_probe") == "alias_probe_provider"
 
 
-def test_a_runtime_alias_shadows_a_json_alias_as_create_policy_does() -> None:
-    """Reported precedence matches resolution precedence.
+@pytest.mark.parametrize(
+    ("name", "aliases", "named"),
+    [
+        ("wbc", None, "'wbc' is the built-in provider"),
+        ("my_stub", ["random"], "'random' is an alias of the built-in provider 'mock'"),
+        ("sonic", None, "'sonic' is an alias of the built-in provider 'wbc'"),
+        ("my_stub", ["mock"], "'mock' is the built-in provider"),
+    ],
+)
+def test_a_built_in_spelling_is_refused_and_nothing_is_registered(name, aliases, named) -> None:
+    """``register_policy`` refuses a built-in spelling as ``register_robot`` does.
+
+    The runtime registry is consulted before ``policies.json``, so a silent
+    reuse would hide the curated provider for the rest of the process.
+    """
+    from strands_robots.policies import factory
+
+    before = (dict(factory._runtime_registry), dict(factory._runtime_aliases))
+    with pytest.raises(ValueError, match="overwrite=True") as refused:
+        register_policy(name, lambda: type(create_policy("mock")), aliases=aliases)
+    assert named in str(refused.value)
+    assert (factory._runtime_registry, factory._runtime_aliases) == before
+
+
+def test_a_runtime_alias_shadows_a_json_alias_as_create_policy_does(monkeypatch) -> None:
+    """With ``overwrite=True``, reported precedence matches resolution precedence.
 
     ``_resolve_policy_class`` consults the runtime registry before
     ``policies.json``, so a runtime alias reusing a JSON alias name wins.
     """
-    from strands_robots.policies import list_aliases
+    from strands_robots.policies import factory, list_aliases
 
+    monkeypatch.setattr(factory, "_runtime_registry", dict(factory._runtime_registry))
+    monkeypatch.setattr(factory, "_runtime_aliases", dict(factory._runtime_aliases))
     assert list_aliases()["sonic"] == "wbc"
-    register_policy("shadowing_provider", lambda: type(create_policy("mock")), aliases=["sonic"])
+    register_policy("shadowing_provider", lambda: type(create_policy("mock")), aliases=["sonic"], overwrite=True)
     assert list_aliases()["sonic"] == "shadowing_provider"
+    assert type(create_policy("sonic")) is type(create_policy("mock"))
 
 
 def test_list_providers_does_not_absorb_the_registry_aliases() -> None:
