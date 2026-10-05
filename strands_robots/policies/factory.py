@@ -394,10 +394,24 @@ def import_policy_class(provider: str) -> type:
 
     # Offer the nearest registered spellings, the way Robot() does for a robot
     # name: case and dash are folded, and 0.6 is Robot()'s cutoff, which is
-    # what lets NVIDIA's own spelling ``gr00t`` find ``groot``.
+    # what lets NVIDIA's own spelling ``gr00t`` find ``groot``. The search pool
+    # mixes canonical names and their aliases/shorthands so a near miss of a
+    # shorthand lands too; the hint is then collapsed back to canonical names
+    # so a single typo doesn't show two spellings of the same provider (``gtp``
+    # alongside ``protomotions``) and -- the sharper edge -- never leaks a
+    # shorthand that routes to a *different* canonical (``text2motion`` ->
+    # ``kimodo``) into the suggestions for a typo of ``protomotions``.
     folded = provider.lower().replace("-", "_")
     close = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
-    hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for name in close:
+        canonical = _canonical_provider_name(name)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        deduped.append(canonical)
+    hint = f" Did you mean: {', '.join(map(repr, deduped))}?" if deduped else ""
     raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")
 
 
