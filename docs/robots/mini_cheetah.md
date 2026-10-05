@@ -17,7 +17,7 @@ URDF from [Derek-TH-Wang/mini_cheetah_urdf@1988bce](https://github.com/Derek-TH-
 from strands_robots import Robot
 
 robot = Robot("mini_cheetah")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("mini_cheetah"))
+print(robot.robot_action_keys("mini_cheetah"))
 robot.cleanup()
 ```
 

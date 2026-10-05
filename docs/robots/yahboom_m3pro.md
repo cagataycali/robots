@@ -15,7 +15,7 @@ description: "Yahboom ROSMASTER M3 Pro (mecanum base + DOFBOT-Pro 6-DOF arm: 5 s
 from strands_robots import Robot
 
 robot = Robot("yahboom_m3pro")
-print(robot.robot_joint_names("yahboom_m3pro"))
+print(robot.robot_action_keys("yahboom_m3pro"))
 robot.cleanup()
 ```
 

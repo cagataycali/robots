@@ -17,7 +17,7 @@ URDF from [G-Levine/rhea_description@1dc0f1a](https://github.com/G-Levine/rhea_d
 from strands_robots import Robot
 
 robot = Robot("rhea")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("rhea"))
+print(robot.robot_action_keys("rhea"))
 robot.cleanup()
 ```
 

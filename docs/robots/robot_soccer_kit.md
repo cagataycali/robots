@@ -15,7 +15,7 @@ description: "Robot Soccer Kit (multi-robot soccer, 65-DOF total)"
 from strands_robots import Robot
 
 robot = Robot("robot_soccer_kit")
-print(robot.robot_joint_names("robot_soccer_kit"))
+print(robot.robot_action_keys("robot_soccer_kit"))
 robot.cleanup()
 ```
 

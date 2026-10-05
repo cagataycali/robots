@@ -17,11 +17,11 @@ URDF from [leap-hand/LEAP_Hand_Sim@150bc3d](https://github.com/leap-hand/LEAP_Ha
 from strands_robots import Robot
 
 robot = Robot("leap_hand_v1")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("leap_hand_v1"))
+print(robot.robot_action_keys("leap_hand_v1"))
 robot.cleanup()
 ```
 
-`robot_joint_names` lists the finger joints a policy drives; set them by name with `set_joint_positions` or from a [policy](../learn/policies/index.md).
+`robot_action_keys` lists the actuators a policy drives; command them by name with `send_action` or from a [policy](../learn/policies/index.md).
 
 ## Policies verified on this robot
 

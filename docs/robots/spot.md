@@ -15,7 +15,7 @@ description: "Boston Dynamics Spot (with arm)"
 from strands_robots import Robot
 
 robot = Robot("spot")
-print(robot.robot_joint_names("spot"))
+print(robot.robot_action_keys("spot"))
 robot.cleanup()
 ```
 

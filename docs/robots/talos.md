@@ -15,7 +15,7 @@ description: "PAL Robotics TALOS Humanoid (32-DOF)"
 from strands_robots import Robot
 
 robot = Robot("talos")
-print(robot.robot_joint_names("talos"))
+print(robot.robot_action_keys("talos"))
 robot.cleanup()
 ```
 

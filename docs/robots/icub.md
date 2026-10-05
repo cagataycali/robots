@@ -17,7 +17,7 @@ URDF from [robotology/icub-models@v1.25.0](https://github.com/robotology/icub-mo
 from strands_robots import Robot
 
 robot = Robot("icub")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("icub"))
+print(robot.robot_action_keys("icub"))
 robot.cleanup()
 ```
 

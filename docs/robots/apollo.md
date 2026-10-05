@@ -15,7 +15,7 @@ description: "Apptronik Apollo Humanoid (34-DOF)"
 from strands_robots import Robot
 
 robot = Robot("apollo")
-print(robot.robot_joint_names("apollo"))
+print(robot.robot_action_keys("apollo"))
 robot.cleanup()
 ```
 

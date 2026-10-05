@@ -15,7 +15,7 @@ description: "Bitcraze Crazyflie 2 Nano-Quadcopter"
 from strands_robots import Robot
 
 robot = Robot("crazyflie")
-print(robot.robot_joint_names("crazyflie"))
+print(robot.robot_action_keys("crazyflie"))
 robot.cleanup()
 ```
 

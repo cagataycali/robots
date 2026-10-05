@@ -17,7 +17,7 @@ URDF from [RobotLocomotion/drake@7abea05](https://github.com/RobotLocomotion/dra
 from strands_robots import Robot
 
 robot = Robot("atlas_drc")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("atlas_drc"))
+print(robot.robot_action_keys("atlas_drc"))
 robot.cleanup()
 ```
 

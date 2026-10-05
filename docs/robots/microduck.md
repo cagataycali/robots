@@ -15,7 +15,7 @@ description: "Pollen Microduck (14-DOF open-source biped, Dynamixel XL330)"
 from strands_robots import Robot
 
 robot = Robot("microduck")
-print(robot.robot_joint_names("microduck"))
+print(robot.robot_action_keys("microduck"))
 robot.cleanup()
 ```
 

@@ -17,7 +17,7 @@ URDF from [ros-aldebaran/romeo_robot@0.1.5](https://github.com/ros-aldebaran/rom
 from strands_robots import Robot
 
 robot = Robot("romeo")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("romeo"))
+print(robot.robot_action_keys("romeo"))
 robot.cleanup()
 ```
 

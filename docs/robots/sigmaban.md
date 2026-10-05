@@ -17,7 +17,7 @@ URDF from [Rhoban/sigmaban_urdf@d5d023f](https://github.com/Rhoban/sigmaban_urdf
 from strands_robots import Robot
 
 robot = Robot("sigmaban")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("sigmaban"))
+print(robot.robot_action_keys("sigmaban"))
 robot.cleanup()
 ```
 

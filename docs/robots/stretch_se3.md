@@ -17,7 +17,7 @@ URDF from [hello-robot/stretch_urdf@1b7cbbc](https://github.com/hello-robot/stre
 from strands_robots import Robot
 
 robot = Robot("stretch_se3")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("stretch_se3"))
+print(robot.robot_action_keys("stretch_se3"))
 robot.cleanup()
 ```
 

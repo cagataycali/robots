@@ -17,7 +17,7 @@ URDF from [HybridRobotics/berkeley_humanoid_description@d0d13d3](https://github.
 from strands_robots import Robot
 
 robot = Robot("berkeley_humanoid")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("berkeley_humanoid"))
+print(robot.robot_action_keys("berkeley_humanoid"))
 robot.cleanup()
 ```
 

@@ -15,7 +15,7 @@ description: "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)"
 from strands_robots import Robot
 
 robot = Robot("openarm")
-print(robot.robot_joint_names("openarm"))
+print(robot.robot_action_keys("openarm"))
 robot.cleanup()
 ```
 

@@ -17,7 +17,7 @@ URDF from [ROBOTIS-GIT/open_manipulator@bc555a9](https://github.com/ROBOTIS-GIT/
 from strands_robots import Robot
 
 robot = Robot("open_manipulator_x")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("open_manipulator_x"))
+print(robot.robot_action_keys("open_manipulator_x"))
 robot.cleanup()
 ```
 

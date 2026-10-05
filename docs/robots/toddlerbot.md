@@ -17,7 +17,7 @@ URDF from [hshi74/toddlerbot@067f9dc](https://github.com/hshi74/toddlerbot/tree/
 from strands_robots import Robot
 
 robot = Robot("toddlerbot")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("toddlerbot"))
+print(robot.robot_action_keys("toddlerbot"))
 robot.cleanup()
 ```
 

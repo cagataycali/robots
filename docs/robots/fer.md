@@ -17,7 +17,7 @@ URDF from [frankarobotics/franka_description@1aa4fd3](https://github.com/frankar
 from strands_robots import Robot
 
 robot = Robot("fer")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("fer"))
+print(robot.robot_action_keys("fer"))
 robot.cleanup()
 ```
 

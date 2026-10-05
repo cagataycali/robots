@@ -17,7 +17,7 @@ URDF from [xArm-Developer/xarm_ros2@5bb832f](https://github.com/xArm-Developer/x
 from strands_robots import Robot
 
 robot = Robot("xarm6")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("xarm6"))
+print(robot.robot_action_keys("xarm6"))
 robot.cleanup()
 ```
 

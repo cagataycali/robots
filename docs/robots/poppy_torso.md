@@ -17,7 +17,7 @@ URDF from [poppy-project/poppy_torso_description@6beeec3](https://github.com/pop
 from strands_robots import Robot
 
 robot = Robot("poppy_torso")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("poppy_torso"))
+print(robot.robot_action_keys("poppy_torso"))
 robot.cleanup()
 ```
 
