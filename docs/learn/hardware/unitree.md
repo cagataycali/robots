@@ -42,16 +42,16 @@ A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed
 
 ## Two drivers, two gates
 
-| | `G1Driver` | `Go2Driver` |
+| | `G1Driver` | `Go2Driver` (Go2, H1) |
 |---|---|---|
 | IDL | `unitree_hg.msg.dds_.LowCmd_` | `unitree_go.msg.dds_.LowCmd_` |
 | reads | `rt/lowstate`, `rt/lf/bmsstate`, `rt/utlidar/lidar_state`, `rt/utlidar/cloud_livox_mid360`, `rt/mainboardstate`, `rt/pressuresensorstate` | `rt/lowstate`, `rt/lf/bmsstate` |
-| write gate | FSM id in `HANDSHAKE_FSMS` `{500, 501, 801}` and battery at or above 15 percent | sport mode released (`CheckMode()` name is empty) and battery at or above 15 percent |
-| unlock | motion switcher | `go2.release_sport_mode()` |
+| write gate | FSM id in `HANDSHAKE_FSMS` `{500, 501, 801}` and battery at or above 15 percent | motion mode released (`CheckMode()` name empty; Go2: sport mode) and battery at or above 15 percent |
+| unlock | motion switcher | `release_sport_mode()` |
 | control loop | `run_policy` at 500 Hz, per-step FSM re-gate, zero-torque frame on exit | `run_policy` at 500 Hz |
 | joints | 29, by name in `g1.py` | by name: `GO2_JOINT_INDEX` (12), `H1_JOINT_INDEX` (19); never an index, the SDK's motor order is not the model's |
 
-Both refuse rather than warn: publishing `rt/lowcmd` while the onboard controller holds the motors is two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame reaches the motors only after the gate passes.
+Both refuse rather than warn: `rt/lowcmd` beside the onboard controller is two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame reaches the motors only after the gate passes.
 
 ## Agent verbs
 

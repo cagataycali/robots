@@ -257,6 +257,11 @@ class WireProfile:
         mode: Slot -> ``MotorCmd_.mode`` byte written on every driven slot.
         kp: Slot -> reference stiffness for a bare position target.
         kd: Slot -> reference damping for a bare position target.
+        onboard_mode: What the refusals call the motion-switcher mode that
+            holds the motors until :meth:`Go2Driver.release_sport_mode`
+            releases it. The release is the same ``CheckMode()`` /
+            ``ReleaseMode()`` loop on both robots (the SDK's
+            ``h1_low_level_example.py`` runs it too); only the name differs.
     """
 
     model: str
@@ -264,6 +269,7 @@ class WireProfile:
     mode: dict[int, int]
     kp: dict[int, float]
     kd: dict[int, float]
+    onboard_mode: str
 
 
 #: One profile per supported robot, keyed by canonical name.
@@ -274,6 +280,7 @@ WIRE_PROFILES: dict[str, WireProfile] = {
         mode=dict.fromkeys(GO2_JOINT_INDEX.values(), _MOTOR_MODE_SERVO),
         kp={slot: _SDK_KP[slot] for slot in GO2_JOINT_INDEX.values()},
         kd={slot: _SDK_KD[slot] for slot in GO2_JOINT_INDEX.values()},
+        onboard_mode="sport mode",
     ),
     "unitree_h1": WireProfile(
         model="unitree_h1",
@@ -281,6 +288,7 @@ WIRE_PROFILES: dict[str, WireProfile] = {
         mode={s: _H1_MODE_WEAK if s in _H1_WEAK_SLOTS else _H1_MODE_STRONG for s in H1_JOINT_INDEX.values()},
         kp={s: 60.0 if s in _H1_WEAK_SLOTS else 200.0 for s in H1_JOINT_INDEX.values()},
         kd={s: 1.5 if s in _H1_WEAK_SLOTS else 5.0 for s in H1_JOINT_INDEX.values()},
+        onboard_mode="the H1's onboard motion mode",
     ),
 }
 _GO2 = WIRE_PROFILES["unitree_go2"]
@@ -1002,11 +1010,12 @@ class Go2Driver:
         return client
 
     def release_sport_mode(self, attempts: int = 5) -> dict[str, Any]:
-        """Release the onboard sport-mode service so ``rt/lowcmd`` reaches the motors.
+        """Release the onboard motion mode so ``rt/lowcmd`` reaches the motors.
 
-        Until this succeeds the Go2's own controller owns the legs, and a
-        low-level frame published alongside it makes two controllers fight over
-        twelve motors. The SDK's examples release in a loop - ``ReleaseMode()``
+        Until this succeeds the robot's own controller (the Go2's sport mode,
+        the H1's motion mode - one motion-switcher service on both) owns
+        the motors, and a low-level frame published alongside it makes two
+        controllers fight over them. The SDK's examples release in a loop - ``ReleaseMode()``
         then re-read ``CheckMode()`` until the reported mode name is empty -
         because the release is asynchronous, so this polls rather than trusting a
         single call.
@@ -1068,7 +1077,7 @@ class Go2Driver:
                 reason = f"ReleaseMode() failed while releasing {mode_name!r}: {exc}"
                 self._sport_mode_refusal = reason
                 return refuse(reason)
-        reason = f"sport mode {previous!r} still active after {int(attempts)} release attempts"
+        reason = f"{self._profile.onboard_mode} {previous!r} still active after {int(attempts)} release attempts"
         self._sport_mode_refusal = reason
         return refuse(reason)
 
@@ -1127,7 +1136,7 @@ class Go2Driver:
         """
         if not self._sport_mode_released:
             return refuse(
-                f"{scope} refused: sport mode is not released"
+                f"{scope} refused: {self._profile.onboard_mode} is not released"
                 + (f" (active mode {self._sport_mode_name!r})" if self._sport_mode_name else "")
                 + (f"; {self._sport_mode_refusal}" if self._sport_mode_refusal else "")
                 + " - call release_sport_mode() first, or the onboard controller and this "
@@ -1145,8 +1154,9 @@ class Go2Driver:
     def send_action(self, action: dict[str, Any], robot_name: str | None = None) -> dict[str, Any]:
         """Publish one ``LowCmd_`` on ``rt/lowcmd`` for the given joints.
 
-        The action dict is keyed by joint name - see :data:`GO2_JOINT_INDEX` for
-        the exact set, which is the Go2 description's own naming. A caller
+        The action dict is keyed by joint name - the profile's ``joint_index``
+        (:data:`GO2_JOINT_INDEX` or :data:`H1_JOINT_INDEX`) is the exact set,
+        in the robot description's own naming. A caller
         supplies either ``{joint_name: target_position_radians}`` to take the
         reference gains, or ``{joint_name: {"q": ..., "kp": ..., "kd": ...,
         "dq": ..., "tau": ...}}`` for per-joint control; a missing ``q`` refuses

@@ -494,27 +494,41 @@ def test_an_idl_whose_slot_count_disagrees_is_named_not_indexed(monkeypatch: pyt
 # --------------------------------------------------------------------------- #
 
 
-def test_an_unreleased_sport_mode_refuses_every_write_path(stub_unitree_sdk: None) -> None:
-    """Until sport mode is released, no write path reaches the wire.
+@pytest.mark.parametrize(
+    ("tool_name", "joint", "mode_label"),
+    [
+        ("unitree_go2", "FL_hip_joint", "sport mode"),
+        # The H1 has no sport mode; its motion-switcher mode is the same gate under its own name.
+        ("unitree_h1", "left_hip_yaw", "the H1's onboard motion mode"),
+    ],
+)
+def test_an_unreleased_onboard_mode_refuses_every_write_path(
+    stub_unitree_sdk: None, tool_name: str, joint: str, mode_label: str
+) -> None:
+    """Until the onboard mode is released, no write path reaches the wire.
 
     All three write entry points share one gate, so all three are graded here: a
     driver that refused ``send_action`` but let ``run_policy`` spin up a 500 Hz
-    thread would hand the legs to two controllers at once.
+    thread would hand the motors to two controllers at once. The refusal names
+    the robot's own mode, so an H1 is never told about a Go2 service.
     """
     del stub_unitree_sdk
     driver, pub = _released_driver()
+    driver._profile = WIRE_PROFILES[tool_name]
     driver._sport_mode_released = False
     driver._sport_mode_name = "ai"
 
     for label, envelope in (
-        ("send_action", driver.send_action({"FL_hip_joint": 0.0})),
-        ("run_policy", driver.run_policy(lambda _state: {"FL_hip_joint": 0.0})),
+        ("send_action", driver.send_action({joint: 0.0})),
+        ("run_policy", driver.run_policy(lambda _state: {joint: 0.0})),
         ("start_task", driver.start_task("walk")),
     ):
         assert envelope["status"] == "error", label
         reason = _text(envelope)
-        assert "sport mode is not released" in reason, label
+        assert f"{mode_label} is not released" in reason, label
         assert "release_sport_mode" in reason, f"{label} must name the call that opens the gate"
+        if tool_name == "unitree_h1":
+            assert "sport mode" not in reason, label
     assert pub.writes == []
 
 
