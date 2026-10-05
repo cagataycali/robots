@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
+from strands_robots.simulation.base import close_match_hint
 from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
@@ -1499,9 +1500,7 @@ class RenderingMixin:
                 if cam_id < 0:
                     return {
                         "status": "error",
-                        "content": [
-                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
-                        ],
+                        "content": [{"text": self._unknown_camera_msg(camera_name)}],
                     }
                 label = camera_name
 
@@ -1619,9 +1618,7 @@ class RenderingMixin:
                 if cam_id < 0:
                     return {
                         "status": "error",
-                        "content": [
-                            {"text": f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}"}
-                        ],
+                        "content": [{"text": self._unknown_camera_msg(camera_name)}],
                     }
                 label = camera_name
 
@@ -1826,7 +1823,7 @@ class RenderingMixin:
             else:
                 cam_id = self._camera_id(camera_name)
                 if cam_id < 0:
-                    raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+                    raise KeyError(self._unknown_camera_msg(camera_name))
 
             scene_option = self._get_viz_option()
             if cam_id >= 0:
@@ -2063,7 +2060,7 @@ class RenderingMixin:
         """
         cam_id = self._camera_id(camera_name)
         if cam_id < 0:
-            raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+            raise KeyError(self._unknown_camera_msg(camera_name))
         mj.mj_forward(model, data)
         R = data.cam_xmat[cam_id].reshape(3, 3).copy()
         t = data.cam_xpos[cam_id].copy()
@@ -2217,6 +2214,26 @@ class RenderingMixin:
             first_named_by[cam_id] = name
             kept.append(name)
         return kept
+
+    def _unknown_camera_msg(self, *requested: object) -> str:
+        """Actionable 'camera not found' message shared by every camera lookup.
+
+        Names the camera(s), offers a close match per name, lists the renderable
+        cameras and points at the canonical ``list_cameras`` action - the same
+        shape as ``_unknown_object_msg`` / ``_unknown_robot_msg``, so a typo is
+        fixable in place. One name reads ``Camera 'x' not found.``; the batch
+        paths (``render_all``, ``start_cameras_recording``) pass every
+        unresolved name and read ``Camera(s) not found: [...]``.
+        """
+        known = self._list_camera_names()
+        if len(requested) == 1:
+            msg = f"Camera '{requested[0]}' not found."
+        else:
+            msg = f"Camera(s) not found: {list(requested)}."
+        if known:
+            msg += "".join(close_match_hint(name, known) for name in requested)
+            msg += f" Available: {known}. Use action='list_cameras' to see all."
+        return msg
 
     def _list_camera_names(self) -> list[str]:
         """helper to list all camera names (model-defined + SimCamera aliases)
@@ -2513,7 +2530,7 @@ class RenderingMixin:
         if cameras is not None and unresolved:
             return {
                 "status": "error",
-                "content": [{"text": f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}"}],
+                "content": [{"text": self._unknown_camera_msg(*unresolved)}],
             }
         if not names:
             return {"status": "error", "content": [{"text": "No cameras in scene."}]}
@@ -2762,7 +2779,7 @@ class RenderingMixin:
         if cameras is not None and unresolved:
             return {
                 "status": "error",
-                "content": [{"text": (f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}")}],
+                "content": [{"text": self._unknown_camera_msg(*unresolved)}],
             }
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
@@ -3403,7 +3420,7 @@ class RenderingMixin:
         if cameras is not None and unresolved:
             return {
                 "status": "error",
-                "content": [{"text": (f"Camera(s) not found: {unresolved}. Available: {self._list_camera_names()}")}],
+                "content": [{"text": self._unknown_camera_msg(*unresolved)}],
             }
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}

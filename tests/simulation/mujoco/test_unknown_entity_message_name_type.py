@@ -187,6 +187,26 @@ class TestAStringNameIsUnaffected:
             "Robot 'arm0' not found. Did you mean: arm? Available robots: ['arm']. Use action='list_robots' to see all."
         )
 
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda s: s.render(camera_name="lok"), id="render"),
+            pytest.param(lambda s: s.render_depth(camera_name="lok"), id="render_depth"),
+            pytest.param(lambda s: s.render_all(cameras=["lok"]), id="render_all"),
+            pytest.param(lambda s: s.remove_camera("lok"), id="remove_camera"),
+        ],
+    )
+    def test_a_camera_typo_gets_the_same_message_on_every_lookup(self, populated, call):
+        """render / render_depth said only "Available: [...]" while remove_camera offered the fix."""
+        assert _text(call(populated)) == (
+            "Camera 'lok' not found. Did you mean: look? Available: ['default', 'look']. "
+            "Use action='list_cameras' to see all."
+        )
+
+    def test_a_batch_names_every_missing_camera(self, populated):
+        text = _text(populated.render_all(cameras=["lok", "nope"]))
+        assert text.startswith("Camera(s) not found: ['lok', 'nope']. Did you mean: look? Available:"), text
+
 
 class TestTheEmptySceneClaimStillHolds:
     """Non-vacuity: the ``else`` branch is only reached when the scene IS empty."""
@@ -282,8 +302,8 @@ _EXPECTED_HELPERS = {
     "mujoco/motion_primitives.py::_unknown_robot_msg",
     "mujoco/physics.py::_unknown_mj_entity_msg",
     "mujoco/physics.py::_unknown_robot_msg",
+    "mujoco/rendering.py::_unknown_camera_msg",
     "mujoco/simulation.py::_unknown_action_msg",
-    "mujoco/simulation.py::_unknown_camera_msg",
     "mujoco/simulation.py::_unknown_model_msg",
     "mujoco/simulation.py::_unknown_object_msg",
     "mujoco/simulation.py::_unknown_robot_msg",
