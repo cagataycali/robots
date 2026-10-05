@@ -267,9 +267,13 @@ def list_urdf_discoverable() -> list[str]:
     This is the URDF long tail consumable by URDF-native backends (Newton). It
     includes robots with no MJCF model at all (e.g. ``atlas_v4``, ``baxter``,
     ``b1``), which is why it is disjoint from :func:`list_discoverable` for those
-    entries. Cheap: no import, no network.
+    entries. Names the sweep recorded with ``has_sim: false`` (upstream clone
+    failed or ``URDF_PATH`` missing after import; see ``urdf_robots.json``) are
+    omitted so a caller cannot land on a dead end from this list. Cheap: no
+    import, no network.
     """
-    return sorted(_urdf_modules())
+    broken = _urdf_unbuildable_set()
+    return sorted(n for n in _urdf_modules() if n not in broken)
 
 
 def discover_urdf_path(name: str) -> str | None:
@@ -389,21 +393,28 @@ def list_urdf_only() -> list[str]:
 
     The complement of :func:`list_discoverable` inside :func:`list_urdf_discoverable`,
     minus every curated name and alias (curated always wins, and an alias must
-    stay unique). Cheap: static tables and the curated registry, no import.
+    stay unique). Names the sweep recorded with ``has_sim: false`` are omitted
+    for the same reason as :func:`list_urdf_discoverable`: the robot's
+    description does not compile, so the backend does not actually gain it.
+    Membership (:func:`is_urdf_only`) still returns ``True`` for those names so
+    the "URDF that does not compile" refusal path can still fire from
+    :mod:`strands_robots.simulation.base`. Cheap: static tables and the curated
+    registry, no import.
     """
-    reg = _load("robots").get("robots", {})
-    taken = set(reg)
-    for info in reg.values():
-        taken.update(info.get("aliases", ()))
-    mjcf = _mjcf_modules()
-    return sorted(n for n in _urdf_modules() if n not in mjcf and n not in taken)
+    broken = _urdf_unbuildable_set()
+    return sorted(n for n in _urdf_only_set() if n not in broken)
 
 
 def is_urdf_only(name: str) -> bool:
     """Return ``True`` if *name* is a robot the MuJoCo backend serves from a URDF.
 
-    The membership test for :func:`list_urdf_only`: a URDF description, no MJCF
-    description, not a curated name or alias. Cheap: no import, no network.
+    The membership test is for every URDF description that is not curated and
+    has no MJCF model, whether or not the sweep could build it: a name that
+    did not build still routes to :func:`urdf_registry_entry`, which carries
+    the sweep's ``refusal`` and lets
+    :mod:`strands_robots.simulation.base` render the "URDF that does not
+    compile" error. :func:`list_urdf_only` is the subset that *did* build and
+    is safe to advertise. Cheap: no import, no network.
     """
     norm = normalize_robot_name(name)
     return _NAME_RE.match(norm) is not None and norm in _urdf_only_set()
@@ -411,7 +422,36 @@ def is_urdf_only(name: str) -> bool:
 
 @lru_cache(maxsize=1)
 def _urdf_only_set() -> frozenset[str]:
-    return frozenset(list_urdf_only())
+    """Every URDF description that is not curated and has no MJCF model.
+
+    Includes names the sweep marked ``has_sim: false`` so :func:`is_urdf_only`
+    (and :func:`urdf_registry_entry` through it) can route them to the correct
+    refusal. The user-facing listings filter the broken subset out through
+    :func:`_urdf_unbuildable_set`.
+    """
+    reg = _load("robots").get("robots", {})
+    taken = set(reg)
+    for info in reg.values():
+        taken.update(info.get("aliases", ()))
+    mjcf = _mjcf_modules()
+    return frozenset(n for n in _urdf_modules() if n not in mjcf and n not in taken)
+
+
+@lru_cache(maxsize=1)
+def _urdf_unbuildable_set() -> frozenset[str]:
+    """Names the sweep marked ``has_sim: false`` in ``urdf_robots.json``.
+
+    These are description modules the builder could not compile at sweep time
+    (``urdf_robots.json`` records the reason in ``refusal``). The lists keep
+    them out so a caller never sees a name they cannot ``Robot(...)``. Cheap:
+    one JSON table read, cached for the life of the process.
+    """
+    table = _load("urdf_robots").get("robots", {})
+    if not isinstance(table, dict):
+        return frozenset()
+    return frozenset(
+        name for name, info in table.items() if isinstance(info, dict) and info.get("has_sim") is False
+    )
 
 
 def invalidate_cache() -> None:
@@ -420,7 +460,7 @@ def invalidate_cache() -> None:
     # ``_mjcf_modules`` / ``_urdf_modules`` are normally ``lru_cache``-wrapped;
     # guard ``cache_clear`` so a test (or future refactor) that swaps in a plain
     # callable cannot break this.
-    for cached in (_mjcf_modules, _urdf_modules, _urdf_only_set):
+    for cached in (_mjcf_modules, _urdf_modules, _urdf_only_set, _urdf_unbuildable_set):
         clear = getattr(cached, "cache_clear", None)
         if clear is not None:
             clear()
