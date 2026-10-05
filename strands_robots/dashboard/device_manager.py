@@ -262,16 +262,10 @@ def scan_cameras_with_failures(
             if cap.isOpened():
                 ok, frame = cap.read()
                 if ok and frame is not None:
+                    # Size only: the rate an un-configured capture reports is its idle
+                    # rate, not a mode it delivers (probe_modes verifies those).
                     h, w = frame.shape[:2]
-                    fps = cap.get(cv2.CAP_PROP_FPS) or 0
-                    cams.append(
-                        {
-                            "index": i,
-                            "width": w,
-                            "height": h,
-                            "fps": round(fps, 1) if fps and fps > 0 else None,
-                        }
-                    )
+                    cams.append({"index": i, "width": w, "height": h})
                     got = True
         finally:
             cap.release()
@@ -351,34 +345,32 @@ CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
 CAMERA_FPS_CANDIDATES: tuple[int, ...] = (15, 30, 60)
 
 
-def modes_from_readbacks(
-    native: Mapping[str, Any],
-    readbacks: Iterable[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """Distill set/read-back probes into the modes a camera really has."""
+def modes_from_readbacks(readbacks: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Distill set/read-back probes into the modes a camera really has.
+
+    A mode counts only when the device read back what was asked AND a frame
+    arrived after the set: some UVC cameras accept a rate (often the one they
+    idle at) and then never deliver a frame at it.
+    """
     keep: dict[tuple[int, int, int], dict[str, Any]] = {}
-
-    def _add(w: Any, h: Any, fps: Any) -> None:
-        try:
-            w, h, fps = int(w), int(h), int(round(float(fps)))
-        except (TypeError, ValueError):
-            return
-        if w <= 0 or h <= 0 or fps <= 0:
-            return
-        keep.setdefault((w, h, fps), {"width": w, "height": h, "fps": fps})
-
-    _add(native.get("width"), native.get("height"), native.get("fps"))
     for rb in readbacks:
         req, got = rb.get("requested") or {}, rb.get("got") or {}
-        try:
-            if (
-                int(got.get("width", -1)) == int(req.get("width", -2))
-                and int(got.get("height", -1)) == int(req.get("height", -2))
-                and abs(float(got.get("fps", -99)) - float(req.get("fps", -1))) <= 1.0
-            ):
-                _add(req.get("width"), req.get("height"), req.get("fps"))
-        except (TypeError, ValueError):
+        if not rb.get("delivered"):
             continue
+        try:
+            w, h, fps = int(req["width"]), int(req["height"]), int(round(float(req["fps"])))
+            if (
+                w <= 0
+                or h <= 0
+                or fps <= 0
+                or int(got.get("width", -1)) != w
+                or int(got.get("height", -1)) != h
+                or abs(float(got.get("fps", -99)) - float(req["fps"])) > 1.0
+            ):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        keep.setdefault((w, h, fps), {"width": w, "height": h, "fps": fps})
     return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
 
 
@@ -1926,30 +1918,38 @@ class DeviceManager:
             try:
                 if not cap.isOpened():
                     raise self._camera_fault(index)
-                # Native mode first: what the camera does when nobody asks.
+                # Native mode first: what the camera reports when nobody asks. It is
+                # a candidate like the others, not a mode until a frame arrives at it.
                 native = {
                     "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                     "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                     "fps": float(cap.get(cv2.CAP_PROP_FPS)),
                 }
-                for w, h in CAMERA_MODE_CANDIDATES:
+                candidates = [(native["width"], native["height"], round(native["fps"]))]
+                candidates += [(w, h, fps) for w, h in CAMERA_MODE_CANDIDATES for fps in CAMERA_FPS_CANDIDATES]
+                for w, h, fps in candidates:
+                    if w <= 0 or h <= 0 or fps <= 0:
+                        continue
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-                    for fps in CAMERA_FPS_CANDIDATES:
-                        cap.set(cv2.CAP_PROP_FPS, fps)
-                        readbacks.append(
-                            {
-                                "requested": {"width": w, "height": h, "fps": fps},
-                                "got": {
-                                    "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                    "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                                    "fps": float(cap.get(cv2.CAP_PROP_FPS)),
-                                },
-                            }
-                        )
+                    cap.set(cv2.CAP_PROP_FPS, fps)
+                    got = {
+                        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                        "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+                    }
+                    delivered = bool(cap.read()[0])
+                    readbacks.append(
+                        {"requested": {"width": w, "height": h, "fps": fps}, "got": got, "delivered": delivered}
+                    )
+                    if not delivered:
+                        # A refused mode can leave the capture silent; start the next
+                        # candidate from a fresh open so one refusal cannot hide the rest.
+                        cap.release()
+                        cap = cv2.VideoCapture(index)
             finally:
                 cap.release()
-        return {"index": index, "native": native, "modes": modes_from_readbacks(native, readbacks)}
+        return {"index": index, "native": native, "modes": modes_from_readbacks(readbacks)}
 
     def port_owner(self, port: str) -> str | None:
         """peer_id of the LIVE managed child holding this serial port, if any."""
