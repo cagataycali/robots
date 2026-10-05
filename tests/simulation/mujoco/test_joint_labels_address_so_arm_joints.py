@@ -263,19 +263,21 @@ class TestTheShortFormIsLabelledToo:
             sim.destroy()
 
 
-@pytest.mark.parametrize("robot", ["so100", "so101"])
+@pytest.mark.parametrize("robot", ["lekiwi", "so100", "so101"])
 def test_the_robot_page_table_names_what_each_side_of_the_api_speaks(robot):
-    """The page's left column is what ``get_observation`` returns; its right column is what ``send_action`` takes.
+    """The page's left column is what ``get_observation`` returns; its right column is what ``send_action`` also takes.
 
     Observed: a reader of the SO-101 page wrote ``send_action({"shoulder_pan": v})``
     (accepted), then read ``obs["shoulder_pan"]`` back and hit ``KeyError`` - the
     observation keeps the model's joint name, and the table's two columns were
     headed "Model joint" / "Action key", which never said which one a read returns.
+    The fence above the table prints ``robot_action_keys`` (actuator names), so
+    the header says the labels are accepted as well as those, not instead of them.
     """
     from tests._docs_hooks import docs_hook
 
     page = docs_hook("robot_pages").robot_page(robot)
-    header = "| Observation key | `send_action` label |"
+    header = "| Observation key | also accepted by `send_action` |"
     assert header in page, f"the {robot} page does not name the observation side of its joint table"
     rows = page.split(header, 1)[1].split("\n\n", 1)[0].splitlines()[2:]
     table = dict(re.findall(r"\| `([^`]+)` \| `([^`]+)` \|", "\n".join(rows)))
@@ -288,6 +290,8 @@ def test_the_robot_page_table_names_what_each_side_of_the_api_speaks(robot):
         sim.destroy()
         pytest.skip(_text(res))
     try:
+        for key in sim.robot_action_keys(robot):
+            assert sim.send_action({key: 0.0}, robot_name=robot)["status"] == "success", key
         for obs_key, label in table.items():
             result = sim.send_action({label: 0.1}, robot_name=robot)
             assert result["status"] == "success", _text(result)
