@@ -1,10 +1,10 @@
 ---
-description: Install the Unitree SDK the way that works, reach a G1, Go2 or H1 over CycloneDDS, and each driver's safety gate.
+description: Install the Unitree SDK, reach a G1, Go2, H1 or H1-2 over CycloneDDS, and each driver's safety gate.
 ---
 
-# Unitree G1, Go2 and H1
+# Unitree G1, Go2, H1 and H1-2
 
-This page installs the vendor SDK the one way that works; then `Robot("g1", mode="real")`, `Robot("unitree_go2", mode="real")` or `Robot("h1", mode="real")` reaches the robot over CycloneDDS, and you know each driver's safety gate and the agent verbs on top.
+This page installs the vendor SDK; then `Robot("g1", mode="real")` (or `"unitree_go2"`, `"h1"`, `"h1_2"`) reaches the robot over CycloneDDS, and you know each driver's safety gate and agent verbs.
 
 The robot must share your Ethernet segment. Nothing imports `unitree_sdk2py` at module load; a missing SDK is a refusal carrying this recipe.
 
@@ -38,26 +38,26 @@ git clone https://github.com/unitreerobotics/unitree_sdk2_python
 pip install --no-deps -e ./unitree_sdk2_python
 ```
 
-A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed and fails at the motion switcher; the G1 reports `motion_switcher_open_error` in `get_status()`, the Go2 the refusal from `release_sport_mode()`. Point `CYCLONEDDS_URI` at the robot's `cyclonedds.xml` when multicast discovery does not find it.
+A partial install (bindings and IDL, no `comm`) lets `connect_eagerly()` succeed and fails at the motion switcher; the G1 reports `motion_switcher_open_error` in `get_status()`, the Go2 the refusal from `release_sport_mode()`. Point `CYCLONEDDS_URI` at the robot's `cyclonedds.xml` when multicast discovery fails.
 
 ## Two drivers, two gates
 
-| | `G1Driver` | `Go2Driver` (Go2, H1) |
+| | `G1Driver` | `Go2Driver` (Go2, H1, H1-2) |
 |---|---|---|
-| IDL | `unitree_hg.msg.dds_.LowCmd_` | `unitree_go.msg.dds_.LowCmd_` |
+| IDL | `unitree_hg.msg.dds_.LowCmd_` | `unitree_go.msg.dds_.LowCmd_`; H1-2 `unitree_hg`, echoing `mode_machine` |
 | reads | `rt/lowstate`, `rt/lf/bmsstate`, `rt/utlidar/lidar_state`, `rt/utlidar/cloud_livox_mid360`, `rt/mainboardstate`, `rt/pressuresensorstate` | `rt/lowstate`, `rt/lf/bmsstate` |
 | write gate | FSM id in `HANDSHAKE_FSMS` `{500, 501, 801}` and battery at or above 15 percent | motion mode released (`CheckMode()` name empty; Go2: sport mode) and battery at or above 15 percent |
 | unlock | motion switcher | `release_sport_mode()` |
 | control loop | `run_policy` at 500 Hz, per-step FSM re-gate, zero-torque frame on exit | `run_policy` at 500 Hz |
-| joints | 29, by name in `g1.py` | by name: `GO2_JOINT_INDEX` (12), `H1_JOINT_INDEX` (19); never an index, the SDK's motor order is not the model's |
+| joints | 29, by name in `g1.py` | by name: `GO2_JOINT_INDEX` (12), `H1_JOINT_INDEX` (19), `H1_2_JOINT_INDEX` (27); never an index, the SDK's motor order is not the model's |
 
-Both refuse rather than warn: `rt/lowcmd` beside the onboard controller is two controllers fighting over one robot. `send_action` takes joint targets keyed by name; a frame reaches the motors only after the gate passes.
+Both refuse rather than warn: `rt/lowcmd` beside the onboard controller is two controllers fighting; a frame reaches the motors only after the gate passes.
 
 ## Agent verbs
 
 `use_unitree(service_name, operation_name, parameters)` wraps every SDK client (`loco`, `arm`, `audio`, `motion_switcher`, `vui`, `robot_state`) with dynamic discovery: `list_services`, `list_operations`, `describe_operation` work without the SDK by reading its source. Every write, and every `HIGH_DANGER_OPS` entry (`ZeroTorque`, `SetFsmId`, `SetVelocity`, `Move`, `ReleaseMode`), stops for operator approval; `STRANDS_UNITREE_COMMAND_ALLOW` takes `service.operation` entries or `*`. Private SDK names (`_Call`) are refused outright.
 
-The `g1_*` verbs do work beyond one RPC: `g1_get_state` and `g1_sensor` read the driver's caches (battery, imu, lidar_state, lidar_summary, mainboard, pressure); `g1_send_action`, `g1_run_policy`, `g1_task` drive the gated control loop; `g1_set_fsm`, `g1_move_velocity`, `g1_stop_move`, `g1_set_stand_height`, `g1_set_swing_height`, `g1_balance_stand`, the `g1_safe_*` posture transitions and the gestures are the execution verbs; `g1_joints`, `g1_motion_gates`, `g1_arm_actions`, `g1_error_codes` are reference tables (`7401` is "Arm is holding - release first").
+Beyond one RPC: `g1_get_state` and `g1_sensor` read the driver's caches (battery, imu, lidar_state, lidar_summary, mainboard, pressure); `g1_send_action`, `g1_run_policy`, `g1_task` drive the gated control loop; `g1_set_fsm`, `g1_move_velocity`, `g1_stop_move`, `g1_set_stand_height`, `g1_set_swing_height`, `g1_balance_stand`, the `g1_safe_*` postures and gestures execute; `g1_joints`, `g1_motion_gates`, `g1_arm_actions`, `g1_error_codes` are reference tables (`7401` is "Arm is holding - release first").
 
 ```python title="sketch"
 from strands import Agent
@@ -73,4 +73,4 @@ With `STRANDS_MESH=true` the G1 publishes `_imu`, `_battery`, `_lidar_state` and
 
 ## Simulation first
 
-Each robot has a MuJoCo twin (`Robot("g1")`, `Robot("unitree_go2")`, `Robot("h1")`); run a locomotion policy from [policies](../policies/index.md) there before the metal.
+Each robot has a MuJoCo twin (`Robot("h1_2")` and so on); run a locomotion policy from [policies](../policies/index.md) there before the metal.
