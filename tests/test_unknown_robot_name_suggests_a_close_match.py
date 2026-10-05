@@ -43,3 +43,30 @@ def test_no_near_match_still_points_at_the_catalog() -> None:
     msg = str(info.value)
     assert "Did you mean" not in msg
     assert "strands_robots.list_robots()" in msg and "urdf_path=" in msg
+
+
+@pytest.mark.parametrize(
+    ("overlay", "names_the_overlay"),
+    [
+        (None, False),
+        (b'{"robots": {}}', False),
+        (b'{"robots": {"my_scout": {"category": "arm"},,}}', True),
+        (b"\xff\xfe not utf-8", True),
+    ],
+    ids=["absent", "valid", "trailing-comma", "not-utf8"],
+)
+def test_a_broken_user_overlay_is_named_in_the_refusal(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, overlay: bytes | None, names_the_overlay: bool
+) -> None:
+    # A one-character typo in user_robots.json hides every register_robot entry;
+    # the refusal for the now-unknown name must point at the file, not only at
+    # list_robots(). An absent or valid overlay adds nothing to the message.
+    monkeypatch.setenv("STRANDS_BASE_DIR", str(tmp_path))
+    path = tmp_path / "user_robots.json"
+    if overlay is not None:
+        path.write_bytes(overlay)
+    with pytest.raises(ValueError, match="Unknown robot") as info:
+        Robot("my_scout")
+    msg = str(info.value)
+    assert (str(path) in msg and "not valid JSON" in msg) is names_the_overlay
+    assert "strands_robots.list_robots()" in msg

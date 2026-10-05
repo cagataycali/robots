@@ -67,6 +67,7 @@ from strands_robots.registry import (
     list_robots,
     resolve_name,
 )
+from strands_robots.registry._overlay import user_overlay_parse_error, user_registry_path
 from strands_robots.utils import did_you_mean, refusal_repr
 
 if TYPE_CHECKING:
@@ -210,6 +211,14 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         names = [r["name"] for r in list_robots()]
         close = difflib.get_close_matches(canonical.lower(), names, n=3, cutoff=0.6)
         hint = f" Did you mean: {', '.join(close)}?" if close else ""
+        # A broken user overlay drops every register_robot entry from the
+        # lookup above; the name may be fine and the file the actual problem.
+        overlay_error = user_overlay_parse_error()
+        if overlay_error is not None:
+            hint += (
+                f" The user robot overlay {user_registry_path()} is not valid JSON ({overlay_error}), "
+                "so none of its register_robot entries are visible until it is fixed."
+            )
         raise ValueError(
             f"Unknown robot {original!r}{resolved}.{hint} "
             "Pass a registered name (see ``strands_robots.list_robots()``), one of the "
