@@ -8,7 +8,8 @@ Provides:
     - ``list_robots()``  → what's available
 
 Environment Variables:
-    STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
+    STRANDS_ROBOT_MODE: Answer ``mode="auto"`` ("sim", "real", "auto"). Read
+        only on that branch: a bare ``Robot()`` stays in sim whatever it says.
         Case-insensitive; surrounding whitespace ignored.
     STRANDS_MESH: Opt a bare ``Robot()`` into the Zenoh mesh. Mesh is OFF
         unless asked for: only "true"/"1"/"yes" turns it ON, and unset or
@@ -87,10 +88,10 @@ def _normalize_mode(mode: Any) -> str:
 
 
 def _auto_detect_mode(canonical: str) -> str:
-    """Auto-detect sim vs real mode.
+    """Auto-detect sim vs real mode; reached only from ``mode="auto"``.
 
     Priority:
-        1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
+        1. ``STRANDS_ROBOT_MODE`` env var
         2. For a robot that declares hardware, its native driver's own
            ``probe_hardware()`` - a robot reached over the network rather than a
            serial bus answers for itself (a Reachy Mini's daemon answers ``GET
@@ -304,7 +305,9 @@ def _hardware_only_kwargs(canonical: str) -> tuple[str, ...]:
     return tuple(key for key in dict.fromkeys(names) if key not in own)
 
 
-def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, requested_mode: str) -> None:
+def _reject_hardware_kwargs_in_sim(
+    kwargs: Mapping[str, Any], canonical: str, requested_mode: str, driver: str = "auto"
+) -> None:
     """Refuse a hardware-only keyword on a simulated robot, naming the mode.
 
     The sim backend drops any keyword it does not own, by design, so one call
@@ -326,18 +329,22 @@ def _reject_hardware_kwargs_in_sim(kwargs: Mapping[str, Any], canonical: str, re
     asks for a mocked servo bus and ``is_simulation=`` points the lerobot
     driver at a simulator, so neither "describes a physical robot" - but every
     one of them configures a hardware driver that ``mode="sim"`` never builds,
-    and ``mode='real'`` is the remedy for all of them alike.
+    and ``mode='real'`` is the remedy for all of them alike. ``driver=`` is
+    one of this factory's own parameters, so it is passed in apart: any value
+    but ``"auto"`` picks a hardware driver and is refused with the rest.
 
     Args:
         kwargs: The caller's residual keyword arguments.
         canonical: Canonical robot name, for the message.
         requested_mode: The mode as the caller wrote it (``"sim"`` or
             ``"auto"``), so the message says how this became a simulation.
+        driver: The caller's ``driver=`` value.
 
     Raises:
         TypeError: naming every hardware keyword supplied and the remedy.
     """
-    supplied = [key for key in _hardware_only_kwargs(canonical) if key in kwargs]
+    supplied = ["driver"] if driver != "auto" else []
+    supplied += [key for key in _hardware_only_kwargs(canonical) if key in kwargs]
     if not supplied:
         return
     names = ", ".join(f"{key}=" for key in supplied)
@@ -734,7 +741,8 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             :func:`~strands_robots.drivers.register_native_driver`, and is
             refused by name when none is - never quietly served the lerobot one.
             The value is checked in every mode, but only ``mode="real"`` acts on
-            it; ``mode="sim"`` reports it as ignored at debug level.
+            it; ``mode="sim"`` refuses any value but ``"auto"`` with
+            ``TypeError``, as it refuses ``port=``.
         tool_name: The name the agent sees this robot under. Defaults to
             ``"<name>_sim"`` in simulation and to the canonical robot name on
             hardware - which is why two ``Robot("so101")`` in one ``Agent``
@@ -838,14 +846,6 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 "'add_camera' action after creation."
             )
 
-        if driver != "auto":
-            logger.debug(
-                "driver=%r ignored in mode='sim' (a simulated robot is stepped by a physics "
-                "backend, not driven through a device); backend=%r selects the engine",
-                driver,
-                backend,
-            )
-
         from strands_robots.simulation import create_simulation
         from strands_robots.simulation.base import own_keyword_names, reject_misspelled_kwargs
 
@@ -863,7 +863,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # option (``default_timestep``, ``num_envs``) is untouched and the
         # backend screens it against its own names in turn.
         reject_misspelled_kwargs(kwargs, own_keyword_names(Robot), owner="Robot(mode='sim')")
-        _reject_hardware_kwargs_in_sim(kwargs, canonical, requested_mode)
+        _reject_hardware_kwargs_in_sim(kwargs, canonical, requested_mode, driver)
 
         # Resolve the backend through create_simulation - the single source of
         # truth for backend selection (built-in registry + entry-point plugins +
