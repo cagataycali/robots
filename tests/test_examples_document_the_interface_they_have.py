@@ -20,7 +20,7 @@ that interface drifts from the file, the first two measured on ``74136572a``:
    said.
 
 3. ``examples/07_post_tune_any_policy.py`` and
-   ``examples/17_judge_recorded_episodes.py`` documented
+   ``examples/19_judge_recorded_episodes.py`` documented
    ``pip install "strands-robots[sim-mujoco,lerobot]"`` and then trained through
    ``create_trainer("lerobot_local")``. LeRobot's ``train()`` opens with
    ``require_package("accelerate", extra="training")`` - on CPU as well as GPU -
