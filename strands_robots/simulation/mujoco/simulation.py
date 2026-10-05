@@ -2994,7 +2994,7 @@ class MuJoCoSimEngine(
                     "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
                 },
             )
-        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) for i in range(src.nkey)]
+        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) or str(i) for i in range(src.nkey)]
         if src.nkey == 0:
             return (
                 None,

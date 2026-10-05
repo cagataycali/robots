@@ -73,3 +73,12 @@ def test_the_refusal_names_the_close_keyframe(
         assert "Did you mean" not in text, text
     else:
         assert f"Did you mean: {hint}?" in text, text
+
+
+@pytest.mark.parametrize("refusal", [_mujoco, _mjlab, _isaac], ids=["mujoco", "mjlab", "isaac"])
+def test_an_unnamed_keyframe_does_not_break_the_refusal(tmp_path: Path, refusal: Callable[[Path, str], str]) -> None:
+    # An unnamed <key> is legal MJCF (used by index); it is listed by its index.
+    path = tmp_path / "robot.xml"
+    path.write_text(_MJCF.replace('<key name="rest" qpos="0"/>', '<key qpos="0"/>'))
+    text = refusal(path, "hom")
+    assert "Did you mean: 'hom' -> 'home'?" in text and "None" not in text, text
