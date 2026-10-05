@@ -154,6 +154,59 @@ class WireSource:
 #: from :data:`WIRE_MOTION_ACTIONS`, or ``*``.
 WIRE_MOTION_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 
+
+def remote_motion_refusal(action: str, tool_name: str, cmd: Mapping[str, Any]) -> tuple[str, str] | None:
+    """The operator-approval decision for a remote command that moves a REAL robot.
+
+    One copy of the approval path every remote entry point runs once it knows
+    who asked: the mesh receiving side (:meth:`Mesh._wire_motion_refusal`,
+    after it has attributed the command to its sender) and the Device Connect
+    ``execute`` RPC (after the caller passed its authorization check). In
+    order: a dashboard grant for this exact call is spent,
+    ``STRANDS_ROBOT_COMMAND_ALLOW`` on the robot host pre-approves the verb,
+    ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING, and otherwise
+    the command is refused with the remedy, because a remote handler has no
+    operator to interrupt.
+
+    Args:
+        action: One of :data:`WIRE_MOTION_ACTIONS`.
+        tool_name: The robot's tool name; keys the grant and the allowlist.
+        cmd: The command as the operator would be shown it.
+
+    Returns:
+        ``None`` when the command may proceed, else ``(refusal, what)``: the
+        refusal sentence and the one-line description of the motion, for the
+        caller's log line and audit row.
+    """
+    tool_input = {k: v for k, v in cmd.items() if v is not None}
+    if consume_grant(tool_name, tool_input):
+        return None
+    if action == "teleop_receive":
+        what = (
+            f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
+            f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
+        )
+    elif action == "reset":
+        what = f"'reset' drives every joint of the real robot {tool_name!r} to its home pose at once"
+    elif action == "step":
+        what = f"'step' advances the real robot {tool_name!r} by {cmd.get('steps', 1)!r} step(s)"
+    else:
+        what = (
+            f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
+            f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
+        )
+    refusal = gate_motion(
+        "robot",
+        action,
+        tool_name,
+        f"{what}; a command arriving from another machine needs operator approval on this robot host.",
+        None,
+        allow_env=WIRE_MOTION_ALLOW_ENV,
+        allow_match=lambda allowed: "*" in allowed or action in allowed,
+    )
+    return None if refusal is None else (refusal, what)
+
+
 #: Sentinel stored in :attr:`Mesh._expected_responders` for
 #: broadcast turn_ids. Distinct from any real peer_id (no peer_id
 #: contains a NUL byte).
@@ -3340,34 +3393,9 @@ class Mesh(SensorLoopsMixin):
                 },
             )
             return refusal
-        tool_input = {k: v for k, v in cmd.items() if v is not None}
-        if consume_grant(tool_name, tool_input):
+        if (refused := remote_motion_refusal(action, tool_name, cmd)) is None:
             return None
-        if action == "teleop_receive":
-            what = (
-                f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
-                f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
-            )
-        elif action == "reset":
-            what = f"'reset' drives every joint of the real robot {tool_name!r} to its home pose at once"
-        elif action == "step":
-            what = f"'step' advances the real robot {tool_name!r} by {cmd.get('steps', 1)!r} step(s)"
-        else:
-            what = (
-                f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
-                f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
-            )
-        refusal = gate_motion(
-            "robot",
-            action,
-            tool_name,
-            f"{what}; a command arriving over the mesh needs operator approval on this robot host.",
-            None,
-            allow_env=WIRE_MOTION_ALLOW_ENV,
-            allow_match=lambda allowed: "*" in allowed or action in allowed,
-        )
-        if refusal is None:
-            return None
+        refusal, what = refused
         logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, what)
         self._audit_local(
             "wire_motion_refused",

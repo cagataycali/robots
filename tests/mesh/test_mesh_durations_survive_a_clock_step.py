@@ -365,6 +365,9 @@ class _StubMesh:
     def subscribe(self, *_args: Any, **_kwargs: Any) -> str:
         return "sub-1"
 
+    def peer_wire_zid(self, _peer: str) -> str:
+        return "a1b2c3d4e5f60718"  # the leader announced its presence from one session
+
 
 def _publisher(monkeypatch: pytest.MonkeyPatch) -> Any:
     pub = mesh_input.InputPublisher(

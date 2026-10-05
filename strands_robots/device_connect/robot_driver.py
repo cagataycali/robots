@@ -18,8 +18,10 @@ from device_connect_edge.drivers import (
 )
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
+from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints
 from strands_robots.device_connect._authz import attached_runtime, authz_error, is_authorized_caller
+from strands_robots.mesh.core import remote_motion_refusal
 from strands_robots.mesh.security import is_safe_policy_provider
 
 logger = logging.getLogger(__name__)
@@ -186,6 +188,27 @@ class RobotDeviceDriver(DeviceDriver):
         # so a caller cannot steer inference to an arbitrary network endpoint.
         if not is_safe_policy_provider(policy_provider):
             return {"status": "error", "reason": f"policy_provider not allowed: {policy_provider!r}"}
+
+        # An authorized caller is who asked, not a yes: the rollout moves a
+        # real robot, so it needs the same operator approval a mesh
+        # ``execute`` needs (a dashboard grant for this call, or the verb in
+        # STRANDS_ROBOT_COMMAND_ALLOW on this host), and is refused without it.
+        tool_name = str(getattr(self._robot, "tool_name_str", None) or "robot")
+        cmd = {
+            "action": "execute",
+            "instruction": instruction,
+            "policy_provider": policy_provider,
+            "duration": duration,
+        }
+        if (refused := remote_motion_refusal("execute", tool_name, cmd)) is not None:
+            refusal, what = refused
+            logger.warning("[safety] refused Device Connect execute from %r: %s", caller, what)
+            log_safety_event(
+                "device_connect_motion_refused",
+                str(caller),
+                {"action": "execute", "robot": tool_name, "caller": caller, "instruction": instruction},
+            )
+            return {"status": "error", "reason": refusal}
 
         # Call by keyword: HardwareRobot.start_task is
         # (instruction, policy_port, policy_host, policy_provider, duration).

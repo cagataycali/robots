@@ -433,9 +433,9 @@ def _exec_and_wait(m: Mesh, payload: dict[str, Any], response_topic: str | None)
     done = threading.Event()
     real = m._exec_cmd
 
-    def _wrapped(data: dict[str, Any], reply_to: str | None = None) -> None:
+    def _wrapped(data: dict[str, Any], reply_to: str | None = None, **source: Any) -> None:
         try:
-            real(data, reply_to=reply_to)
+            real(data, reply_to=reply_to, **source)
         finally:
             done.set()
 

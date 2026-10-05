@@ -32,7 +32,7 @@ def _mesh(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> tuple[Mesh
     m._cmd_replay_cache = {}
     m._cmd_replay_lock = threading.Lock()
     m._estop_lockout = threading.Event()
-    monkeypatch.setattr(m, "_dispatch", lambda cmd: result)
+    monkeypatch.setattr(m, "_dispatch", lambda cmd, source=None: result)
     monkeypatch.setattr(m, "publish", lambda *a, **k: None)
     return m, events
 

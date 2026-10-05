@@ -65,7 +65,12 @@ def _frame(seq: int = 0) -> dict[str, Any]:
 
 def _receiver(mesh: _BoundMesh) -> tuple[InputReceiver, list[dict[str, float]]]:
     applied: list[dict[str, float]] = []
-    recv = InputReceiver(mesh=mesh, robot=object(), source_peer_id="leader-1", apply_fn=lambda r, a: applied.append(a))
+    recv = InputReceiver(
+        mesh=mesh,  # type: ignore[arg-type]
+        robot=object(),
+        source_peer_id="leader-1",
+        apply_fn=lambda r, a: applied.append(a),
+    )
     return recv, applied
 
 
@@ -156,7 +161,12 @@ class TestMeshSubscribeHandsTheSampleSourceToTheCallback:
     def test_on_sample_receives_the_publisher_session_id(self) -> None:
         sess = MagicMock()
         handlers: list[Any] = []
-        sess.declare_subscriber.side_effect = lambda topic, handler: handlers.append(handler) or MagicMock()
+
+        def _declare(topic: str, handler: Any) -> MagicMock:
+            handlers.append(handler)
+            return MagicMock()
+
+        sess.declare_subscriber.side_effect = _declare
         with (
             patch.object(mesh_session, "current_session", return_value=sess),
             patch.object(mesh_core, "current_session", return_value=sess),
@@ -198,7 +208,7 @@ class TestTheHostReportsARefusedStream:
             def _teleop_target_error(self, robot_name: str | None) -> str | None:
                 return None
 
-            def send_action(self, action: dict[str, float], **kw: Any) -> dict[str, Any]:
+            def send_action(self, action: dict[str, float], robot_name: str | None = None) -> dict[str, Any]:
                 return {"status": "success"}
 
         out = _Host().start_teleop_receive("leader-1", "leader")

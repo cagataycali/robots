@@ -242,9 +242,11 @@ class TestNothingElseChanges:
         published: list[dict[str, Any]] = []
         mesh.publish = lambda key, payload: published.append(payload)  # type: ignore[method-assign]
         mesh._running = True
-        mesh._dispatch = lambda cmd: (_ for _ in ()).throw(  # type: ignore[method-assign]
-            RuntimeError("boom-with-internal-detail")
-        )
+
+        def _boom(cmd: dict[str, Any], source: Any = None) -> dict[str, Any]:
+            raise RuntimeError("boom-with-internal-detail")
+
+        mesh._dispatch = _boom  # type: ignore[method-assign]
 
         mesh._exec_cmd({"sender_id": "operator", "turn_id": "t", "command": {"action": "status"}})
 
