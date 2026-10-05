@@ -2249,23 +2249,6 @@ class MuJoCoSimEngine(
             msg += " No objects in the scene; add one with action='add_object'."
         return msg
 
-    def _unknown_camera_msg(self, requested: object) -> str:
-        """Actionable 'camera not found' message for ``remove_camera`` - lists the
-        renderable cameras (like the render/record error paths already do) plus a
-        close-match, so a typo is fixable in-place without a discovery round-trip.
-
-        The recovery hint names the canonical ``list_cameras`` action (the name
-        in ``tool_spec.json`` and ``describe()``), not the internal
-        ``list_cameras_info`` method the dispatcher aliases it to - so a blind
-        agent following the hint learns the same action the discovery surface
-        teaches, mirroring the ``list_objects`` hint in ``_unknown_object_msg``."""
-        known = self._list_camera_names()
-        msg = f"Camera '{requested}' not found."
-        if known:
-            msg += close_match_hint(requested, known)
-            msg += f" Available: {known}. Use action='list_cameras' to see all."
-        return msg
-
     def _teleop_target_error(self, robot_name: str | None) -> str | None:
         """Refuse a teleop ``robot_name`` that is not a robot in this world.
 
