@@ -810,6 +810,25 @@ def create_policy(provider: str, /, **kwargs) -> Policy:
             ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
             is not set.
     """
+    # Shape guard runs before resolution so the dispatcher cannot promise less
+    # than its own preflight: ``provider_can_be_created(Any)`` on this file
+    # answers False for every non-string input (its docstring: "answer exactly
+    # the question :func:`create_policy` answers"), while the stages the
+    # resolver walks leak three distinct raw CPython errors depending on which
+    # one touches the value first - ``AttributeError`` on ``.strip()`` from
+    # :func:`_is_smart_string`, ``TypeError`` on substring probe for ``bytes``,
+    # ``TypeError: unhashable`` on the alias-table lookup for ``dict``/``list``.
+    # None names ``provider``, ``create_policy``, or the expected type; sibling
+    # :func:`policy_object_error` on this file is the shape of the message a
+    # caller does read.
+    if not isinstance(provider, str):
+        raise TypeError(
+            f"create_policy() provider must be a str naming a registered "
+            f"provider, a server URL, or a checkpoint id; got "
+            f"{type(provider).__name__} ({provider!r}). To build a policy from a "
+            f"pre-constructed object, pass it as policy_object= on run_policy "
+            f"(or start_policy) instead - create_policy() always constructs."
+        )
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     if (replacement := _REMOVED_IN_0_7.get(canonical)) is not None:
         warnings.warn(
