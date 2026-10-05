@@ -11177,7 +11177,7 @@ class IsaacSimulation(
                     "() -> dict  # flush the current rollout as one episode; prefer "
                     "run_policy(n_episodes=N) which flushes a boundary per episode"
                 ),
-                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None) -> dict",
+                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None, private=True) -> dict",
                 "get_recording_status": "() -> dict",
                 "stream_dataset": (
                     "(repo_id: str, **kwargs) -> StreamingDatasetReader  # lazily read a "

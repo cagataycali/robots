@@ -1715,6 +1715,7 @@ class DatasetRecordingMixin:
         push_to_hub: bool = False,
         bucket: str | None = None,
         run_id: str | None = None,
+        private: bool = True,
     ) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset.
 
@@ -1766,6 +1767,10 @@ class DatasetRecordingMixin:
                 place). When no recording is open, syncs the last dataset this
                 sim finalized (errors if there is none).
             run_id: Optional subpath inside the bucket (defaults to dataset name).
+            private: Visibility of the Hub repo ``push_to_hub`` creates. Private
+                by default, like the bucket; ``False`` publishes it
+                world-readable. Must be a boolean, checked before anything is
+                finalized.
 
         Returns:
             The standard agent-tool envelope. Its json block reports the episode
@@ -1785,8 +1790,9 @@ class DatasetRecordingMixin:
         # it is checked before it is read - by the idle path just below and by
         # the upload after the episode is finalized. Read by truthiness a
         # non-boolean opt-out ("false", "no", "off", "0") published the dataset.
-        if error := dataset_recording_posture_error("stop_recording", "push_to_hub", push_to_hub):
-            return error
+        for flag, value in (("push_to_hub", push_to_hub), ("private", private)):
+            if error := dataset_recording_posture_error("stop_recording", flag, value):
+                return error
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
@@ -1973,7 +1979,7 @@ class DatasetRecordingMixin:
                 extra += f"\nBucket sync FAILED: {sync_result.get('message')}"
         # Versioned dataset-repo publish (Phase 4 hand-off).
         if push_to_hub or state.get("push_to_hub", False):
-            push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
+            push_result = recorder.push_to_hub(tags=["strands-robots", "sim"], private=private)
             if push_result and push_result.get("status") == "success":
                 extra += "\nPushed to HuggingFace Hub"
             elif push_result:
