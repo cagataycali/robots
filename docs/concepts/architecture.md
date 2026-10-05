@@ -25,9 +25,9 @@ arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")  # a na
 | `sim` (default) | a `SimEngine` from the backend registry (`mujoco` default, `newton`, plugin `isaac`) | `simulation.factory.create_simulation` |
 | `real`, `driver="lerobot"` (what `auto` resolves to without a registry `hardware.driver`) | `hardware_robot.Robot`, a lerobot `RobotConfig` under a Strands `AgentTool` | `hardware_robot.py` |
 | `real`, `driver="strands"` | a class satisfying the `drivers.base.HardwareDriver` protocol, no lerobot import | `drivers.registry` |
-| `auto` | probes USB for a servo controller, else `sim` | `_auto_detect_mode` |
+| `auto` | `STRANDS_ROBOT_MODE`, else probes USB for a servo controller, else `sim` | `_auto_detect_mode` |
 
-`STRANDS_ROBOT_MODE` overrides `mode` from the environment. Both lanes are `AgentTool`s, so `Agent(tools=[robot])` works the same on each, and both take a `Policy` from `policies.create_policy` for `run_policy`. Sim is the default so a script never moves hardware by accident.
+Both lanes are `AgentTool`s, so `Agent(tools=[robot])` works the same on each, and both take a `Policy` from `policies.create_policy` for `run_policy`. Sim is the default so a script never moves hardware by accident.
 
 The sim lane is the `MuJoCoSimEngine` class: `SimEngine` plus mixins for physics, rendering, recording, randomization, manipulation, motion primitives and teleop, exposed as one tool with an `action` vocabulary. The hardware lane is `hardware_robot.Robot` plus the driver layer; a task runs in a background thread with `TaskStatus` and a stop flag, and a policy dispatch passes the operator gate in `_command_gate.py`.
 
