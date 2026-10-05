@@ -4150,14 +4150,30 @@ class SimEngine(ABC):
 
     @staticmethod
     def _validate_multi_policies(policies: Mapping[str, Any], method: str) -> dict[str, Any] | None:
-        """Reject an empty ``policies`` mapping at a multi-robot entry point.
+        """Reject a ``policies`` mapping that cannot be driven.
 
         ``policies`` names the robots a synchronized multi-robot driver will
         drive, so an empty mapping is a caller error: a loop over zero robots
         would run zero steps and still report ``status="success"`` (the same
         degenerate-success shape :meth:`_validate_positive_int` exists to
-        refuse). Shared by every backend's ``run_multi_policy`` so the refusal
-        text is identical everywhere.
+        refuse). Each VALUE is a pre-built :class:`Policy` driven directly,
+        so it is the multi-policy twin of ``policy_object``: a value of the
+        wrong shape (``None``, a scalar, the provider name, the config dict,
+        or the class instead of an instance) is only detected when the loop
+        reaches ``pol.get_actions(...)`` on the first step - the same bare
+        ``AttributeError`` :meth:`_validate_policy_object` exists to prevent
+        on :meth:`run_policy` / :meth:`eval_policy` / :meth:`evaluate_benchmark`,
+        naming a library internal (``get_actions``) past the tool-envelope
+        contract. The sibling helpers
+        :meth:`_normalize_multi_policy_instructions` and
+        :meth:`_normalize_multi_policy_horizons` already refuse their own
+        wrong-shape values up front (see their own docstrings - "refused
+        up front rather than reaching ``.get()`` and surfacing as a bare
+        ``AttributeError`` past the tool-envelope contract"); this check puts
+        the ``policies`` values on the same contract so every multi-policy
+        entry point refuses a non-``Policy`` the way every single-policy entry
+        point does. Shared by every backend's ``run_multi_policy`` so the
+        refusal text is identical everywhere.
 
         Args:
             policies: The caller-supplied ``{robot_name: Policy}`` mapping.
@@ -4165,10 +4181,41 @@ class SimEngine(ABC):
 
         Returns:
             A structured ``{"status": "error", ...}`` dict, or ``None`` when
-            at least one robot is named.
+            at least one robot is named and every value is a usable policy.
         """
         if not policies:
             return {"status": "error", "content": [{"text": f"{method}: 'policies' is empty."}]}
+        # Every value is the pre-built policy that will be driven on each
+        # robot; validate on the same domain as ``policy_object`` so the
+        # refusal says what IS wrong rather than reaching for an attribute on
+        # the first step. ``policy_object_error`` already parametrizes its
+        # message on the parameter name, which is why it is reused here;
+        # ``None`` is accepted by that helper (the single-policy parameter is
+        # optional and names a provider instead), but a ``None`` VALUE in the
+        # mapping is a caller error - the mapping key already committed to
+        # driving that robot - and is refused with the same text shape so a
+        # caller reading one message does not need to switch on which path
+        # the policy came in on.
+        from strands_robots.policies import Policy, policy_object_error
+
+        for rname, value in policies.items():
+            if value is None:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"{method}: policies[{rname!r}] must be a Policy instance; got None. "
+                                "It is driven directly, so it bypasses provider resolution and nothing "
+                                "downstream can turn this value into a policy. Pass an instance "
+                                "(create_policy(provider, **config) returns one), or drop the mapping entry."
+                            )
+                        }
+                    ],
+                }
+            message = policy_object_error(value, param=f"policies[{rname!r}]")
+            if message is not None:
+                return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
         return None
 
     @staticmethod

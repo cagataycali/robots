@@ -41,7 +41,7 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
-_TWO_ROBOTS: dict[str, Any] = {"alpha": object(), "beta": object()}
+_TWO_ROBOTS: dict[str, Any] = {"alpha": MockPolicy(), "beta": MockPolicy()}
 
 
 def _text(result: dict[str, Any]) -> str:
@@ -128,6 +128,71 @@ class TestEmptyPoliciesRejection:
         result = SimEngine._validate_multi_policies({}, "other_driver")
         assert result is not None
         assert _text(result).startswith("other_driver: ")
+
+
+# --------------------------------------------------------------------------- #
+# _validate_multi_policies: value-shape                                       #
+# --------------------------------------------------------------------------- #
+class TestPoliciesValueShape:
+    """A ``policies`` value that cannot be driven is refused at the entry point.
+
+    Each VALUE is the pre-built policy the loop will call
+    ``.get_actions(obs, instruction)`` on, so a value of the wrong shape used
+    to surface as a bare ``AttributeError: 'X' object has no attribute
+    'get_actions'`` from ``mujoco/simulation.py:7841`` /
+    ``isaac/simulation.py:7207`` - a library internal, past the tool-envelope
+    contract. ``_normalize_multi_policy_instructions`` and
+    ``_normalize_multi_policy_horizons`` already refuse their own wrong-shape
+    values up front "rather than reaching ``.get()`` and surfacing as a bare
+    ``AttributeError`` past the tool-envelope contract" (their own
+    docstrings). This pins ``policies`` on the same contract, so every
+    multi-policy entry point refuses a non-``Policy`` the way every
+    single-policy entry point does
+    (see ``test_policy_object_shape_is_refused_at_the_entry_point.py``).
+    """
+
+    @pytest.mark.parametrize(
+        "bad",
+        [42, "mock", {"provider": "mock"}, MockPolicy, None],
+        ids=["scalar", "provider-name", "config-dict", "the-class", "none"],
+    )
+    def test_a_non_policy_value_is_refused(self, bad: Any) -> None:
+        result = SimEngine._validate_multi_policies({"alpha": bad}, "run_multi_policy")
+        assert result is not None
+        text = _text(result)
+        assert text.startswith("run_multi_policy: policies['alpha'] must be a Policy instance")
+
+    def test_the_refusal_names_the_offending_robot_key(self) -> None:
+        """``policies[<rname>]`` quotes the mapping key, not an opaque index."""
+        result = SimEngine._validate_multi_policies({"alpha": MockPolicy(), "beta": 42}, "run_multi_policy")
+        assert result is not None
+        text = _text(result)
+        assert "policies['beta']" in text
+        # The first invalid key wins; a healthy earlier key does not pollute the message.
+        assert "policies['alpha']" not in text
+
+    def test_the_class_instead_of_an_instance_is_called_out(self) -> None:
+        """The likeliest version of the mistake gets its own message half."""
+        result = SimEngine._validate_multi_policies({"alpha": MockPolicy}, "run_multi_policy")
+        assert result is not None
+        text = _text(result)
+        assert "got the class MockPolicy itself" in text
+        assert "Instantiate it (MockPolicy())" in text
+
+    def test_a_populated_mapping_of_policy_instances_passes(self) -> None:
+        """The guard must not cost a call that was going to work."""
+        assert (
+            SimEngine._validate_multi_policies(
+                {"alpha": MockPolicy(), "beta": MockPolicy()}, "run_multi_policy"
+            )
+            is None
+        )
+
+    def test_the_method_name_prefixes_the_value_refusal(self) -> None:
+        """The method prefix the sibling checks pin applies here too."""
+        result = SimEngine._validate_multi_policies({"alpha": 42}, "other_driver")
+        assert result is not None
+        assert _text(result).startswith("other_driver: policies['alpha'] ")
 
 
 # --------------------------------------------------------------------------- #
