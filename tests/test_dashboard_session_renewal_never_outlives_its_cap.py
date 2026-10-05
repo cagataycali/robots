@@ -39,7 +39,7 @@ import pytest
 from fastapi import HTTPException
 
 import strands_robots.dashboard.auth as auth
-from tests._dashboard_passkeys import enroll
+from tests._dashboard_passkeys import enroll, handed_off
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +261,7 @@ def test_a_session_that_cannot_be_handed_off_is_refused_and_named(claims, reason
     assert auth.handoff_verdict(claims, NOW) == {"ok": False, "reason": reason}
 
     with pytest.raises(HTTPException) as raised:
-        auth.issue_handoff(claims if isinstance(claims, dict) else {}, now=NOW)
+        auth.issue_handoff(None, claims if isinstance(claims, dict) else {}, "challenge", {}, now=NOW)
     assert raised.value.status_code == 401
     assert raised.value.detail
 
@@ -290,7 +290,8 @@ def test_a_handoff_carries_the_session_identity_so_the_cap_survives_the_copy(mon
     t0 = int(time.time())
     session = {"sub": "cred1", "name": "Ada", "iat0": t0 - 5000, "exp": t0 + 10**6}
 
-    minted = auth.issue_handoff(session, now=t0)
+    enroll("cred1")
+    minted = handed_off(session, now=t0)
     claims = auth.verify_token(minted["token"])
 
     assert claims["sub"] == "cred1"

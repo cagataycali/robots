@@ -9,6 +9,8 @@ decisions and live here because they concern which route is open:
   the proof itself and never the enrolled passkeys - a route that answers
   whoever the socket lets through publishes the named fields below, not
   whatever the auth module happens to return.
+* ``/api/auth/handoff/redeem`` is public: the code it spends is the proof, and
+  it is good once.
 * A second enrolment needs a session; the first needs the bootstrap proof the
   auth module checks (``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`` or the ``0600``
   file it minted beside the store).
@@ -185,12 +187,38 @@ async def delete_credential(cred_id: str, who: dict = Depends(access.require_ses
     return auth.delete_credential(cred_id)
 
 
-@router.post("/handoff")
-async def handoff(request: Request, who: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """A short-lived token to open the dashboard on another device of the same owner."""
+@router.post("/handoff/begin")
+async def handoff_begin(request: Request, who: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """The passkey challenge a handoff must answer: a session alone cannot mint one."""
     if who.get("via") != "passkey":
         raise HTTPException(403, "only a passkey session may mint a handoff")
-    return auth.issue_handoff(who)
+    return auth.begin_authentication(request, kind="handoff")
+
+
+@router.post("/handoff")
+async def handoff(request: Request, who: dict = Depends(access.require_session)) -> dict[str, Any]:
+    """A one-time code that opens the dashboard on another device of the same owner.
+
+    Needs a passkey session AND a fresh assertion over a ``/handoff/begin``
+    challenge: a script that rides the cookie cannot produce the second. The
+    answer is a code, never a session token; ``/handoff/redeem`` spends it.
+    """
+    if who.get("via") != "passkey":
+        raise HTTPException(403, "only a passkey session may mint a handoff")
+    body = await _json_body(request)
+    challenge_id = str(body.get("challenge_id") or "")
+    credential = body.get("credential")
+    if not challenge_id or not isinstance(credential, dict):
+        raise HTTPException(400, "a handoff needs a fresh passkey assertion: challenge_id and credential")
+    return auth.issue_handoff(request, who, challenge_id, credential)
+
+
+@router.post("/handoff/redeem")
+async def handoff_redeem(request: Request, response: Response) -> dict[str, Any]:
+    """Spend a handoff code: the device that redeems it gets the session as its cookie, once."""
+    body = await _json_body(request)
+    token = auth.redeem_handoff(str(body.get("code") or ""))
+    return _session_in_the_cookie_only(response, request, {"ok": True, "token": token})
 
 
 @router.post("/renew")

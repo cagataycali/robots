@@ -9,11 +9,11 @@ The policy is a response header, so it covers every document the server
 answers, not only the one shell. It is as tight as the product allows: scripts,
 styles, fonts and workers only from this origin; no plugins, no ``<base>``, no
 framing; images also from ``data:`` and ``blob:`` (camera previews are object
-URLs). ``connect-src`` stays open to http(s) and ws(s) on purpose: the
-dashboard is a mesh peer that legitimately dials a robot on another host (the
-Settings drawer, ``?backend=``), and the token those requests may carry is
-bound to that host by the ``?backend=`` fix (f003); a tighter list is an
-operator knob for a follow-up, named in the PR.
+URLs). ``connect-src`` is this origin plus the origins the operator lists in
+``DASHBOARD_CONNECT_ORIGINS`` (each with its socket twin), nothing else: it was
+``http: https: ws: wss:``, which let any script that reached the page post what
+it found to any host. The list is read from the environment, never from
+settings the page can write.
 """
 
 from __future__ import annotations
@@ -57,9 +57,27 @@ class TestEveryAnswerCarriesThePolicy:
         assert policy["base-uri"] == ["'none'"]
         assert policy["frame-ancestors"] == ["'none'"], "the cockpit for a robot arm is not embeddable"
         assert set(policy["img-src"]) == {"'self'", "data:", "blob:"}
-        assert set(policy["connect-src"]) >= {"'self'", "ws:", "wss:"}
+        assert policy["connect-src"] == ["'self'"], "the page may dial nothing the operator did not name"
         assert "'unsafe-eval'" not in " ".join(sum(policy.values(), []))
         assert response.headers.get("referrer-policy") == "no-referrer", "a token in a URL must not leak in Referer"
+
+
+# DASHBOARD_CONNECT_ORIGINS -> connect-src
+CONNECT_ORIGINS = [
+    ("https://robot.lan:8090", ["'self'", "https://robot.lan:8090", "wss://robot.lan:8090"]),
+    (
+        "http://10.0.0.7:8090/, HTTP://Robot-B.lan",
+        ["'self'", "http://10.0.0.7:8090", "ws://10.0.0.7:8090", "http://robot-b.lan", "ws://robot-b.lan"],
+    ),
+    ("*, https:, https://evil.example/path, ftp://x, https://a.example 'unsafe-inline'", ["'self'"]),
+    ("", ["'self'"]),
+]
+
+
+@pytest.mark.parametrize("raw,expected", CONNECT_ORIGINS)
+def test_connect_src_adds_only_the_origins_the_operator_spelled_out(raw: str, expected: list[str], monkeypatch) -> None:
+    monkeypatch.setenv("DASHBOARD_CONNECT_ORIGINS", raw)
+    assert _policy(TestClient(create_app()).get("/api/health"))["connect-src"] == expected
 
 
 class TestTheShellFitsInsideThePolicy:

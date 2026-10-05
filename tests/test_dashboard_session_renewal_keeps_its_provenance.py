@@ -34,7 +34,7 @@ import jwt
 import pytest
 
 import strands_robots.dashboard.auth as auth
-from tests._dashboard_passkeys import enroll
+from tests._dashboard_passkeys import enroll, handed_off
 
 
 @pytest.fixture(autouse=True)
@@ -49,9 +49,9 @@ def claims_of(token: str) -> dict:
 
 
 def a_handoff_of(session_exp: float, now: float) -> str:
-    """The URL token :func:`auth.issue_handoff` mints for a live session."""
+    """The session a handoff code minted for a live session redeems for."""
     session = {"sub": "cred1", "name": "operator", "iat": now, "iat0": now, "exp": session_exp}
-    return str(auth.issue_handoff(session, now=now)["token"])
+    return str(handed_off(session, now=now)["token"])
 
 
 # --- the marker survives the renewal that erased it ---------------------------

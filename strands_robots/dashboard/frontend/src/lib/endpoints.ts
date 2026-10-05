@@ -7,12 +7,11 @@
 import { routeKnown, staleRouteMessage, unroutedByDetail } from './serverAge'
 import { detailSentence } from './detailSentence'
 import { connectionChange, hostOf, needsConfirm, type ConnectionVerdict } from './connectionChange'
-import { sessionVerdict, tokenClaims, tokenExpiry } from './sessionExpiry'
+import { tokenClaims, tokenExpiry } from './sessionExpiry'
 
 const BASE_KEY = 'strands.backend'
-const TOKEN_KEY = 'strands.token'
-/** The host the stored token was given for: the only host it is ever sent to. */
-const TOKEN_HOST_KEY = 'strands.token.host'
+/** Where an older build kept a bearer. Never read: a copy found there is removed on load. */
+const LEGACY_TOKEN_KEYS = ['strands.token', 'strands.token.host']
 
 /** `robot.lan:8080` -> `http://robot.lan:8080`; trailing slashes trimmed. */
 export function normalize(raw: string): string {
@@ -38,10 +37,21 @@ let absorbedUrl = false
 let urlBase: string | null = null
 /** The question a `?backend=` raised that only the operator can answer; null when none is pending. */
 let urlVerdict: ConnectionVerdict | null = null
-/** `?token=` from the URL, parked here and NOWHERE else until the backend has vouched for it. */
-let offeredToken: string | null = null
-/** A `?token=` was present but dropped unseen (it arrived beside a `?backend=` that moves the page). */
+/** `?handoff=` from the URL: a one-time code, parked here until redeemUrlHandoff() spends it. */
+let offeredCode: string | null = null
+/** A sign-in rode the URL and was dropped unseen (a `?token=`, or a code beside a moving `?backend=`). */
 let offeredDropped = false
+
+/**
+ * A bearer the operator typed (a static access token), in page memory only: a copy in storage
+ * outlived the tab and any script in the origin could read it back. Gone on reload, on expiry and
+ * after any sign-in ceremony (noteCookieSession); the passkey session itself is the HttpOnly cookie.
+ */
+let heldToken = ''
+/** The host the held token was given for: the only host it is ever sent to. */
+let heldTokenHost = ''
+/** Bumped by every setAuthToken, so a new token remounts the app like a new backend does. */
+let tokenEpoch = 0
 
 function pageHost(): string {
   try {
@@ -56,46 +66,58 @@ function hostOfBase(base: string): string {
   return hostOf(base, pageHost())
 }
 
+/** The held bearer, or '' once it has lapsed (an opaque static token has no expiry to lapse). */
 function storedToken(): string {
-  return (localStorage.getItem(TOKEN_KEY) ?? '').trim()
+  const exp = heldToken ? tokenExpiry(heldToken) : null
+  if (exp !== null && exp <= Date.now() / 1000) {
+    heldToken = ''
+    heldTokenHost = ''
+  }
+  return heldToken
 }
 
-/** Record which host the stored token is for; a token with no record is for `base`. */
+/** Record which host the held token is for. */
 function bindToken(base: string): void {
-  if (!storedToken()) {
-    localStorage.removeItem(TOKEN_HOST_KEY)
-    return
-  }
-  localStorage.setItem(TOKEN_HOST_KEY, hostOfBase(base))
+  heldTokenHost = storedToken() ? hostOfBase(base) : ''
+}
+
+function scrubParams(names: string[]): void {
+  try {
+    const params = new URLSearchParams(location.search)
+    if (!names.some(n => params.has(n))) return
+    for (const n of names) params.delete(n)
+    const rest = params.toString()
+    history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
+  } catch { /* no location or history (a test stub): the values are absorbed either way */ }
 }
 
 /**
- * Take the credentials off the URL. A `?token=` is only ever PARKED here: it becomes the sign-in
- * when redeemUrlToken() has asked the backend this page is configured for and been told yes
- * (it used to be written straight into storage on load). A `?backend=` is judged by the rule the
- * Settings drawer applies to a typed address (connectionChange): when the token this browser holds
- * was given for another host, the page dials the new host WITHOUT it and keeps the parameter in the
- * address bar until the operator says yes. A URL is not a more trusting entry point than a field.
+ * Take what the URL offers off it. A `?token=` is never adopted: the server mints no bearer for a
+ * link, so one in the address bar is scrubbed and dropped. A `?handoff=` code is only PARKED here;
+ * redeemUrlHandoff() spends it against this page's own backend, which answers with a cookie. A
+ * `?backend=` is judged by the rule the Settings drawer applies to a typed address
+ * (connectionChange): any move to another host, or to the same host over clear text, waits for the
+ * operator. Until the yes the page keeps talking to the backend it had, nothing is persisted and the
+ * parameter stays in the address bar. A URL is not a more trusting entry point than a field.
  */
 function absorbUrl(): void {
   if (absorbedUrl) return
   absorbedUrl = true
   try {
+    // A bearer an older build left in storage is a copy any script could read: drop it.
+    for (const k of LEGACY_TOKEN_KEYS) localStorage.removeItem(k)
     const params = new URLSearchParams(location.search)
     const fromToken = params.get('token')
+    const fromCode = params.get('handoff')
     const fromBackend = params.get('backend')
     const stored = normalize(localStorage.getItem(BASE_KEY) ?? '')
     const next = fromBackend === null ? null : normalize(fromBackend)
-    // A token already here with no recorded issuer was minted for the backend this browser has
-    // been talking to; decide that BEFORE the URL is allowed to move the page.
-    if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()) bindToken(stored)
-    // One link may not choose both the server and the credential: a `?token=` beside a
-    // `?backend=` that moves the page is dropped unseen. (The hand-off link the AuthGate
-    // advertises names no backend; the page it opens IS the robot.)
+    // One link may not choose both the server and the sign-in: a code beside a `?backend=` that
+    // moves the page is dropped unseen. (The handoff link names no backend; the page it opens IS
+    // the robot.)
     const moves = next !== null && next !== stored
-    // Otherwise the token only waits for the backend's answer (redeemUrlToken); nothing is stored here.
-    offeredToken = fromToken && !moves ? fromToken.trim() || null : null
-    offeredDropped = !!fromToken && moves
+    offeredCode = fromCode && !moves ? fromCode.trim() || null : null
+    offeredDropped = fromToken !== null || (!!fromCode && moves)
     let scrubBackend = fromBackend !== null
     if (next) {
       const token = storedToken()
@@ -106,39 +128,30 @@ function absorbUrl(): void {
         nextToken: token,
         pageHost: pageHost(),
       })
-      // Either confirm-required verdict pends: the token moving to another host, or the same host
-      // reached over clear text (a `?backend=http://` beside a stored https:// origin).
-      const moving = needsConfirm(verdict)
       urlBase = next
-      if (moving) {
+      if (needsConfirm(verdict)) {
         // The evidence stays visible and nothing is persisted: a reload asks the same question.
         urlVerdict = verdict
         scrubBackend = false
       }
     }
-    // Scrub what was absorbed: a ?token= URL outlives its token in history,
-    // share sheets and screenshots, and must not be re-sent on reload.
-    if (fromToken !== null || scrubBackend) {
-      try {
-        params.delete('token')
-        if (scrubBackend) params.delete('backend')
-        const rest = params.toString()
-        history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
-      } catch { /* no history (a test stub): the values are absorbed either way */ }
-    }
+    // Scrub what was absorbed: a sign-in in a URL outlives it in history, share sheets and
+    // screenshots, and must not be re-sent on reload.
+    scrubParams(['token', 'handoff', ...(scrubBackend ? ['backend'] : [])])
   } catch {
     urlBase = null // no location (a test, a worker): the stored values are the whole truth
-    offeredToken = null
+    offeredCode = null
   }
 }
 
 export function backendBase(): string {
   absorbUrl()
   if (cachedBase !== null) return cachedBase
-  // ?backend=... wins once, then persists, unless the token would have to follow it.
-  if (urlBase !== null) {
+  // ?backend=... wins once and persists, but only when it moves nothing the operator must judge;
+  // a pending one is not dialled at all until acceptUrlBackend().
+  if (urlBase !== null && urlVerdict === null) {
     cachedBase = urlBase
-    if (urlVerdict === null) localStorage.setItem(BASE_KEY, cachedBase)
+    localStorage.setItem(BASE_KEY, cachedBase)
     return cachedBase
   }
   cachedBase = normalize(localStorage.getItem(BASE_KEY) ?? '')
@@ -151,22 +164,38 @@ export function urlBackendVerdict(): ConnectionVerdict | null {
   return urlVerdict
 }
 
-/** The operator's yes: the token is now for the URL's backend, which persists like a typed one. */
-export function carryTokenToBackend(): void {
-  const base = backendBase()
+/** The operator's yes: the page now talks to the URL's backend, which persists like a typed one. */
+export function acceptUrlBackend(): void {
+  absorbUrl()
+  if (urlBase === null) return
   urlVerdict = null
-  localStorage.setItem(BASE_KEY, base)
-  bindToken(base)
-  try {
-    const params = new URLSearchParams(location.search)
-    if (params.has('backend')) {
-      params.delete('backend')
-      const rest = params.toString()
-      history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}${location.hash || ''}`)
-    }
-  } catch { /* no location or history: nothing to scrub */ }
+  cachedBase = urlBase
+  localStorage.setItem(BASE_KEY, urlBase)
+  bindToken(urlBase)
+  scrubParams(['backend'])
   forgetLiveRoutes()
   notifyAuth()
+}
+
+/** The operator's no: the URL's backend is forgotten and the page stays where it was. */
+export function declineUrlBackend(): void {
+  absorbUrl()
+  urlBase = null
+  urlVerdict = null
+  scrubParams(['backend'])
+  notifyAuth()
+}
+
+/**
+ * The persistent notice while the page talks to a backend other than the origin that served it,
+ * naming that backend; null when they are the same. A re-pointed page looks exactly like the real
+ * one, so the only tell is the one this sentence gives.
+ */
+export function foreignBackendNotice(): string | null {
+  const host = hostOfBase(backendBase())
+  const page = pageHost()
+  if (!host || host === page) return null
+  return `This page is talking to ${host}, not to ${page || 'the address that served it'}. Sign-ins and commands go to ${host}.`
 }
 
 /** The stored token, when it was given for the host the page is talking to; '' otherwise. */
@@ -178,52 +207,49 @@ export function authToken(): string {
   // While a `?backend=` is waiting on the operator the dial goes out bare whatever the host: the
   // binding below is by host, and an https->http downgrade keeps the host.
   if (urlVerdict !== null) return ''
-  const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? '').trim()
+  const issuer = heldTokenHost
   // A credential for one machine is not handed to another: the request goes out bare and the
   // operator lands on the sign-in for that host instead.
   if (issuer !== hostOfBase(base)) return ''
   return token
 }
 
-/** The server puts exactly one kind of token in a link (auth.issue_handoff), and it is short-lived. */
-const URL_TOKEN_VIA = 'handoff'
-
 export type UrlTokenOutcome = 'none' | 'adopted' | 'refused'
 
 /**
- * Redeem a `?token=` the page arrived with: ONE probe of the public status route on the backend
- * this page is already configured for, carrying the offered token as its bearer. The token is
- * adopted only when that backend answers `authenticated: true`. Refused without a probe when it
- * is not a hand-off token, has lapsed, or this browser already holds a valid bearer; refused
- * after one BARE probe when the backend already knows this browser (the HttpOnly passkey cookie
- * rides that same-origin fetch and no script can read it). A working session is never silently
- * replaced by a link, whichever kind it is. The AuthGate awaits this before it decides.
+ * Redeem a `?handoff=` code the page arrived with, against the backend this page is configured for.
+ * A BARE status probe first: when the backend already knows this browser (the HttpOnly passkey
+ * cookie rides that same-origin fetch and no script can read it) the link loses, so a working
+ * session is never silently replaced by a link. Otherwise the code is posted to the redeem route
+ * once; the session arrives as the cookie and the page keeps only its expiry. A `?token=` the page
+ * arrived with is 'refused' without a request: no link carries a bearer any more. The AuthGate
+ * awaits this before it decides.
  */
-export async function redeemUrlToken(): Promise<UrlTokenOutcome> {
+export async function redeemUrlHandoff(): Promise<UrlTokenOutcome> {
   absorbUrl()
-  const offered = offeredToken
-  offeredToken = null // one attempt, whatever happens
-  if (!offered) {
+  const code = offeredCode
+  offeredCode = null // one attempt, whatever happens
+  if (!code) {
     const dropped = offeredDropped
     offeredDropped = false
     return dropped ? 'refused' : 'none'
   }
-  const nowS = Date.now() / 1000
-  const claims = tokenClaims(offered)
-  const exp = tokenExpiry(offered)
-  if (!claims || claims.via !== URL_TOKEN_VIA || exp === null || exp <= nowS) return 'refused'
-  const held = sessionVerdict(authToken(), nowS)
-  if (held.state === 'valid' || held.state === 'expiring' || held.state === 'opaque') return 'refused'
   try {
-    // The primary sign-in is the passkey cookie, which this module cannot see: the server prefers
-    // a bearer over the cookie, so a link's hand-off would shadow that session for every api()
-    // call. Ask bare first; a yes means someone is already signed in here and the link loses.
-    // An answer that cannot be read is treated the same way: without a no there is no adoption.
     const bare = await fetch(apiUrl('/api/auth/status'), { credentials: 'same-origin' })
     if ((await statusSaysAuthenticated(bare)) !== false) return 'refused'
-    const res = await fetch(apiUrl('/api/auth/status'), { headers: { Authorization: `Bearer ${offered}` } })
-    if ((await statusSaysAuthenticated(res)) === true) {
-      setAuthToken(offered)
+    const res = await fetch(apiUrl('/api/auth/handoff/redeem'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    })
+    if (res.ok) {
+      let exp: number | null = null
+      try {
+        const body = JSON.parse(await res.text())
+        exp = body && typeof body.exp === 'number' ? body.exp : null
+      } catch { /* the cookie is set either way; the expiry is only for the warning */ }
+      noteCookieSession(exp)
       return 'adopted'
     }
   } catch {
@@ -246,8 +272,8 @@ async function statusSaysAuthenticated(res: Response): Promise<boolean | null> {
 }
 
 
-// Auth/backend changes must reach React: localStorage writes emit no event in the
-// writing tab, so components subscribe here (App keys ConfigProvider off backendKey()).
+// Auth/backend changes must reach React: page-memory and localStorage writes emit no event in
+// the writing tab, so components subscribe here (App keys ConfigProvider off backendKey()).
 const authListeners = new Set<() => void>()
 export function subscribeAuth(fn: () => void): () => void {
   authListeners.add(fn)
@@ -265,6 +291,9 @@ let cookieSessionEpoch = 0
 
 /** A ceremony finished on this backend and the cookie is set; `exp` is when it lapses. */
 export function noteCookieSession(exp: number | null): void {
+  // A ceremony replaces whatever bearer was typed before it: the cookie is the sign-in now.
+  heldToken = ''
+  heldTokenHost = ''
   cookieSessionExp = typeof exp === 'number' && Number.isFinite(exp) ? exp : null
   cookieSessionEpoch += 1
   notifyAuth() // backendKey() changed
@@ -275,11 +304,11 @@ export function cookieSessionExpiry(): number | null {
   return cookieSessionExp
 }
 
+/** Hold a typed bearer in page memory, bound to the backend the page is talking to now. */
 export function setAuthToken(token: string): void {
-  const value = token.trim()
-  if (value) localStorage.setItem(TOKEN_KEY, value)
-  else localStorage.removeItem(TOKEN_KEY)
-  bindToken(backendBase()) // a token set now is for the backend the page is talking to now
+  heldToken = token.trim()
+  bindToken(backendBase())
+  tokenEpoch += 1
   notifyAuth()
 }
 
@@ -291,7 +320,7 @@ export function backendLabel(): string {
 
 /** Identity of the current connection. */
 export function backendKey(): string {
-  return `${backendBase()}|${authToken() ? 'auth' : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : 'open'}`
+  return `${backendBase()}|${authToken() ? `auth${tokenEpoch}` : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : 'open'}`
 }
 
 export function setBackendBase(raw: string): void {

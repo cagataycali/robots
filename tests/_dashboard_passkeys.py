@@ -11,6 +11,7 @@ writes; the public key is a placeholder no ceremony will ever verify against.
 from __future__ import annotations
 
 import time
+from unittest import mock
 
 from strands_robots.dashboard import auth
 
@@ -32,3 +33,14 @@ def issue_enrolled(subject: str, *args, **kwargs) -> str:
     """``auth.issue_token`` for a subject that is enrolled first."""
     enroll(subject)
     return auth.issue_token(subject, *args, **kwargs)
+
+
+def handed_off(session: dict, now: float | None = None) -> dict:
+    """What ``auth.issue_handoff`` answers for *session*, plus the ``token`` its code redeems for.
+
+    The passkey assertion a real handoff needs is taken as verified (no
+    authenticator in a test); everything after it is the module's own path.
+    """
+    with mock.patch.object(auth, "_verified_assertion", lambda *a, **k: {"id": session.get("sub")}):
+        minted = auth.issue_handoff(None, session, "challenge", {}, now=now)
+    return {**minted, "token": auth.redeem_handoff(minted["code"], now=now)}

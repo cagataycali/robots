@@ -290,10 +290,20 @@ function connectionChange(c) {
       };
     }
   }
+  const downgrade = /^https:\/\//i.test((c.currentBase ?? "").trim()) && /^http:\/\//i.test(nextRaw);
+  if (from !== to || downgrade) {
+    return {
+      kind: "host_changes",
+      fromHost: from || "(this origin)",
+      toHost: to || "(this origin)",
+      detail: `Every request from this page - a passkey sign-in included - will go to ${to || "this origin"} instead of ${from || "this origin"}. Go ahead only if ${to || "this origin"} is a machine you run.`,
+      alternative: `stay on ${from || "this origin"}`
+    };
+  }
   return { kind: "ok" };
 }
 function needsConfirm(v) {
-  return v.kind === "token_follows_host" || v.kind === "cleartext_token";
+  return v.kind === "token_follows_host" || v.kind === "cleartext_token" || v.kind === "host_changes";
 }
 const EXPIRING_SOON_S = 300;
 function decodeSegment(seg) {
@@ -365,8 +375,7 @@ function sessionVerdictAt(exp, nowS, renewedAtS = 0) {
   return { state: "valid", expiresInS: left, text: null, refusesUntilSignIn: false };
 }
 const BASE_KEY = "strands.backend";
-const TOKEN_KEY = "strands.token";
-const TOKEN_HOST_KEY = "strands.token.host";
+const LEGACY_TOKEN_KEYS = ["strands.token", "strands.token.host"];
 function normalize(raw) {
   const value = (raw ?? "").trim();
   if (!value) return "";
@@ -385,8 +394,11 @@ let cachedBase = null;
 let absorbedUrl = false;
 let urlBase = null;
 let urlVerdict = null;
-let offeredToken = null;
+let offeredCode = null;
 let offeredDropped = false;
+let heldToken = "";
+let heldTokenHost = "";
+let tokenEpoch = 0;
 function pageHost() {
   try {
     return (location.host || "").toLowerCase();
@@ -398,28 +410,40 @@ function hostOfBase(base) {
   return hostOf(base, pageHost());
 }
 function storedToken() {
-  return (localStorage.getItem(TOKEN_KEY) ?? "").trim();
+  const exp = heldToken ? tokenExpiry(heldToken) : null;
+  if (exp !== null && exp <= Date.now() / 1e3) {
+    heldToken = "";
+    heldTokenHost = "";
+  }
+  return heldToken;
 }
 function bindToken(base) {
-  if (!storedToken()) {
-    localStorage.removeItem(TOKEN_HOST_KEY);
-    return;
+  heldTokenHost = storedToken() ? hostOfBase(base) : "";
+}
+function scrubParams(names) {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (!names.some((n) => params.has(n))) return;
+    for (const n of names) params.delete(n);
+    const rest = params.toString();
+    history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
+  } catch {
   }
-  localStorage.setItem(TOKEN_HOST_KEY, hostOfBase(base));
 }
 function absorbUrl() {
   if (absorbedUrl) return;
   absorbedUrl = true;
   try {
+    for (const k of LEGACY_TOKEN_KEYS) localStorage.removeItem(k);
     const params = new URLSearchParams(location.search);
     const fromToken = params.get("token");
+    const fromCode = params.get("handoff");
     const fromBackend = params.get("backend");
     const stored = normalize(localStorage.getItem(BASE_KEY) ?? "");
     const next = fromBackend === null ? null : normalize(fromBackend);
-    if (storedToken() && !(localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim()) bindToken(stored);
     const moves = next !== null && next !== stored;
-    offeredToken = fromToken && !moves ? fromToken.trim() || null : null;
-    offeredDropped = !!fromToken && moves;
+    offeredCode = fromCode && !moves ? fromCode.trim() || null : null;
+    offeredDropped = fromToken !== null || !!fromCode && moves;
     let scrubBackend = fromBackend !== null;
     if (next) {
       const token = storedToken();
@@ -430,33 +454,24 @@ function absorbUrl() {
         nextToken: token,
         pageHost: pageHost()
       });
-      const moving = needsConfirm(verdict2);
       urlBase = next;
-      if (moving) {
+      if (needsConfirm(verdict2)) {
         urlVerdict = verdict2;
         scrubBackend = false;
       }
     }
-    if (fromToken !== null || scrubBackend) {
-      try {
-        params.delete("token");
-        if (scrubBackend) params.delete("backend");
-        const rest = params.toString();
-        history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
-      } catch {
-      }
-    }
+    scrubParams(["token", "handoff", ...scrubBackend ? ["backend"] : []]);
   } catch {
     urlBase = null;
-    offeredToken = null;
+    offeredCode = null;
   }
 }
 function backendBase() {
   absorbUrl();
   if (cachedBase !== null) return cachedBase;
-  if (urlBase !== null) {
+  if (urlBase !== null && urlVerdict === null) {
     cachedBase = urlBase;
-    if (urlVerdict === null) localStorage.setItem(BASE_KEY, cachedBase);
+    localStorage.setItem(BASE_KEY, cachedBase);
     return cachedBase;
   }
   cachedBase = normalize(localStorage.getItem(BASE_KEY) ?? "");
@@ -466,22 +481,29 @@ function urlBackendVerdict() {
   absorbUrl();
   return urlVerdict;
 }
-function carryTokenToBackend() {
-  const base = backendBase();
+function acceptUrlBackend() {
+  absorbUrl();
+  if (urlBase === null) return;
   urlVerdict = null;
-  localStorage.setItem(BASE_KEY, base);
-  bindToken(base);
-  try {
-    const params = new URLSearchParams(location.search);
-    if (params.has("backend")) {
-      params.delete("backend");
-      const rest = params.toString();
-      history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash || ""}`);
-    }
-  } catch {
-  }
+  cachedBase = urlBase;
+  localStorage.setItem(BASE_KEY, urlBase);
+  bindToken(urlBase);
+  scrubParams(["backend"]);
   forgetLiveRoutes();
   notifyAuth();
+}
+function declineUrlBackend() {
+  absorbUrl();
+  urlBase = null;
+  urlVerdict = null;
+  scrubParams(["backend"]);
+  notifyAuth();
+}
+function foreignBackendNotice() {
+  const host = hostOfBase(backendBase());
+  const page = pageHost();
+  if (!host || host === page) return null;
+  return `This page is talking to ${host}, not to ${page || "the address that served it"}. Sign-ins and commands go to ${host}.`;
 }
 function authToken() {
   absorbUrl();
@@ -489,32 +511,36 @@ function authToken() {
   if (!token) return "";
   const base = backendBase();
   if (urlVerdict !== null) return "";
-  const issuer = (localStorage.getItem(TOKEN_HOST_KEY) ?? "").trim();
+  const issuer = heldTokenHost;
   if (issuer !== hostOfBase(base)) return "";
   return token;
 }
-const URL_TOKEN_VIA = "handoff";
-async function redeemUrlToken() {
+async function redeemUrlHandoff() {
   absorbUrl();
-  const offered = offeredToken;
-  offeredToken = null;
-  if (!offered) {
+  const code = offeredCode;
+  offeredCode = null;
+  if (!code) {
     const dropped = offeredDropped;
     offeredDropped = false;
     return dropped ? "refused" : "none";
   }
-  const nowS = Date.now() / 1e3;
-  const claims = tokenClaims(offered);
-  const exp = tokenExpiry(offered);
-  if (!claims || claims.via !== URL_TOKEN_VIA || exp === null || exp <= nowS) return "refused";
-  const held = sessionVerdict(authToken(), nowS);
-  if (held.state === "valid" || held.state === "expiring" || held.state === "opaque") return "refused";
   try {
     const bare = await fetch(apiUrl("/api/auth/status"), { credentials: "same-origin" });
     if (await statusSaysAuthenticated(bare) !== false) return "refused";
-    const res = await fetch(apiUrl("/api/auth/status"), { headers: { Authorization: `Bearer ${offered}` } });
-    if (await statusSaysAuthenticated(res) === true) {
-      setAuthToken(offered);
+    const res = await fetch(apiUrl("/api/auth/handoff/redeem"), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+    if (res.ok) {
+      let exp = null;
+      try {
+        const body = JSON.parse(await res.text());
+        exp = body && typeof body.exp === "number" ? body.exp : null;
+      } catch {
+      }
+      noteCookieSession(exp);
       return "adopted";
     }
   } catch {
@@ -545,6 +571,8 @@ function notifyAuth() {
 let cookieSessionExp = null;
 let cookieSessionEpoch = 0;
 function noteCookieSession(exp) {
+  heldToken = "";
+  heldTokenHost = "";
   cookieSessionExp = typeof exp === "number" && Number.isFinite(exp) ? exp : null;
   cookieSessionEpoch += 1;
   notifyAuth();
@@ -553,10 +581,9 @@ function cookieSessionExpiry() {
   return cookieSessionExp;
 }
 function setAuthToken(token) {
-  const value = token.trim();
-  if (value) localStorage.setItem(TOKEN_KEY, value);
-  else localStorage.removeItem(TOKEN_KEY);
+  heldToken = token.trim();
   bindToken(backendBase());
+  tokenEpoch += 1;
   notifyAuth();
 }
 function backendLabel() {
@@ -564,7 +591,7 @@ function backendLabel() {
   return base ? base.replace(/^https?:\/\//, "") : `${location.host} (this origin)`;
 }
 function backendKey() {
-  return `${backendBase()}|${authToken() ? "auth" : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : "open"}`;
+  return `${backendBase()}|${authToken() ? `auth${tokenEpoch}` : cookieSessionEpoch ? `cookie${cookieSessionEpoch}` : "open"}`;
 }
 function setBackendBase(raw) {
   absorbUrl();
@@ -1094,11 +1121,11 @@ function sameOrigin(a, b) {
   }
 }
 function handoffHref(url, res) {
-  const token = res && typeof res.token === "string" && res.token.trim() ? res.token.trim() : null;
-  if (!token) return url;
+  const code = res && typeof res.code === "string" && res.code.trim() ? res.code.trim() : null;
+  if (!code) return url;
   try {
     const u = new URL(url);
-    u.searchParams.set("token", token);
+    u.searchParams.set("handoff", code);
     return u.toString();
   } catch {
     return url;
@@ -1113,12 +1140,131 @@ function readDismissed(store) {
     return [];
   }
 }
+function b64uToBuf(s) {
+  const norm2 = s.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = norm2.length % 4 ? "=".repeat(4 - norm2.length % 4) : "";
+  const bin = atob(norm2 + pad);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+function bufToB64u(buf) {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function prepCreate(opts) {
+  const out = { ...opts };
+  out.challenge = b64uToBuf(opts.challenge);
+  out.user = { ...opts.user, id: b64uToBuf(opts.user.id) };
+  if (opts.excludeCredentials) {
+    out.excludeCredentials = opts.excludeCredentials.map((c) => ({ ...c, id: b64uToBuf(c.id) }));
+  }
+  return out;
+}
+function prepGet(opts) {
+  const out = { ...opts };
+  out.challenge = b64uToBuf(opts.challenge);
+  delete out.allowCredentials;
+  return out;
+}
+function credToJSON(cred) {
+  const r = cred.response;
+  const out = {
+    id: cred.id,
+    rawId: bufToB64u(cred.rawId),
+    type: cred.type,
+    clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    response: {}
+  };
+  if (r.attestationObject !== void 0) {
+    out.response.attestationObject = bufToB64u(r.attestationObject);
+    out.response.clientDataJSON = bufToB64u(r.clientDataJSON);
+  } else {
+    out.response.authenticatorData = bufToB64u(r.authenticatorData);
+    out.response.clientDataJSON = bufToB64u(r.clientDataJSON);
+    out.response.signature = bufToB64u(r.signature);
+    out.response.userHandle = r.userHandle ? bufToB64u(r.userHandle) : null;
+  }
+  return out;
+}
+function webauthnReady() {
+  return typeof window !== "undefined" && window.isSecureContext === true && typeof navigator !== "undefined" && !!navigator.credentials && typeof navigator.credentials.create === "function" && typeof window.PublicKeyCredential !== "undefined";
+}
+function fetchAuthStatus() {
+  return api("/api/auth/status");
+}
+function grantOf(res) {
+  const exp = res && typeof res.exp === "number" && Number.isFinite(res.exp) ? res.exp : null;
+  return { exp };
+}
+async function enroll(label2, bootstrap = "") {
+  const { challenge_id, options } = await api("/api/auth/register/begin", {
+    method: "POST",
+    body: JSON.stringify({ label: label2, bootstrap })
+  });
+  const cred = await navigator.credentials.create({ publicKey: prepCreate(options) });
+  if (!cred) throw new Error("passkey creation was cancelled");
+  const res = await api("/api/auth/register/finish", {
+    method: "POST",
+    body: JSON.stringify({ challenge_id, credential: credToJSON(cred) })
+  });
+  return grantOf(res);
+}
+function loginFresh(p) {
+  return !!p && Date.now() - p.t < 24e4;
+}
+async function beginLogin() {
+  const { challenge_id, options } = await api("/api/auth/login/begin", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  delete options.allowCredentials;
+  return { challenge_id, options, t: Date.now() };
+}
+async function assertion(p, timeoutMs, action) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  let cred;
+  try {
+    cred = await navigator.credentials.get({ publicKey: prepGet(p.options), signal: ac.signal });
+  } catch (e) {
+    if (ac.signal.aborted) throw new Error(`the authenticator did not answer in time — tap ${action} to try again`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!cred) throw new Error(`passkey ${action} was cancelled`);
+  return credToJSON(cred);
+}
+async function completeLogin(p, timeoutMs = 75e3) {
+  const credential = await assertion(p, timeoutMs, "sign in");
+  const res = await api("/api/auth/login/finish", {
+    method: "POST",
+    body: JSON.stringify({ challenge_id: p.challenge_id, credential })
+  });
+  return grantOf(res);
+}
+async function beginHandoff() {
+  const { challenge_id, options } = await api("/api/auth/handoff/begin", { method: "POST", body: "{}" });
+  delete options.allowCredentials;
+  return { challenge_id, options, t: Date.now() };
+}
+async function completeHandoff(p, timeoutMs = 75e3) {
+  const credential = await assertion(p, timeoutMs, "open the local address");
+  return api("/api/auth/handoff", {
+    method: "POST",
+    body: JSON.stringify({ challenge_id: p.challenge_id, credential })
+  });
+}
 function LanHint() {
   const [body, setBody] = reactExports.useState(null);
   const [dismissed, setDismissed] = reactExports.useState(
     () => readDismissed(typeof localStorage === "undefined" ? null : localStorage)
   );
   const [leaving, setLeaving] = reactExports.useState(false);
+  const prepared = reactExports.useRef(null);
   reactExports.useEffect(() => {
     let alive = true;
     api("/api/network/hint").then((b) => {
@@ -1134,6 +1280,23 @@ function LanHint() {
     origin: typeof location === "undefined" ? "" : location.origin,
     dismissed
   });
+  reactExports.useEffect(() => {
+    if (!verdict2.show || !webauthnReady()) return;
+    let alive = true;
+    const arm = () => {
+      if (loginFresh(prepared.current)) return;
+      beginHandoff().then((p) => {
+        if (alive) prepared.current = p;
+      }).catch(() => {
+      });
+    };
+    arm();
+    const t = setInterval(arm, 2e5);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [verdict2.show]);
   if (!verdict2.show) return null;
   const dismiss = () => {
     const next = [...dismissed, verdict2.url];
@@ -1149,9 +1312,13 @@ function LanHint() {
     if (leaving) return;
     setLeaving(true);
     let href = verdict2.url;
-    try {
-      href = handoffHref(verdict2.url, await post("/api/auth/handoff"));
-    } catch {
+    const p = loginFresh(prepared.current) ? prepared.current : null;
+    prepared.current = null;
+    if (p) {
+      try {
+        href = handoffHref(verdict2.url, await completeHandoff(p));
+      } catch {
+      }
     }
     location.href = href;
   };
@@ -1168,6 +1335,8 @@ const BUNDLE_ROUTES = [
   "/api/auth/credentials",
   "/api/auth/credentials/{p}",
   "/api/auth/handoff",
+  "/api/auth/handoff/begin",
+  "/api/auth/handoff/redeem",
   "/api/auth/login/",
   "/api/auth/login/begin",
   "/api/auth/login/finish",
@@ -7459,7 +7628,6 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
   const goConnect = (tokenToSend) => {
     setBackendBase(base);
     setAuthToken(tokenToSend);
-    location.reload();
   };
   const applyConnection = () => {
     const v = connectionChange({
@@ -7605,9 +7773,19 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
           }, children: "clear" })
         ] }),
         connVerdict && connVerdict.kind !== "ok" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: connVerdict.kind === "unparseable" ? "That address cannot be dialled" : "Send this token there?" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: connVerdict.kind === "unparseable" ? "That address cannot be dialled" : connVerdict.kind === "host_changes" ? `Connect this page to ${connVerdict.toHost}?` : "Send this token there?" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: connVerdict.detail }),
-          needsConfirm(connVerdict) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
+          connVerdict.kind === "host_changes" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", onClick: () => {
+              setConnVerdict(null);
+              goConnect(token);
+            }, children: [
+              "connect to ",
+              connVerdict.toHost
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", onClick: () => setConnVerdict(null), children: connVerdict.alternative })
+          ] }),
+          needsConfirm(connVerdict) && connVerdict.kind !== "host_changes" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost danger", onClick: () => {
               setConnVerdict(null);
               goConnect(token);
@@ -7622,8 +7800,8 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
           "Tip: ",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "?backend=https://robot.lan:8080&token=…" }),
-          " in the URL sets both, so a bookmark or QR code points a phone straight at one robot."
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "?backend=https://robot.lan:8080" }),
+          " in the URL points a bookmark or QR code at one robot; the page asks before it connects, and a token never rides a link."
         ] })
       ] }),
       tab === "agent" && config && /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
@@ -10833,108 +11011,6 @@ class ErrorBoundary extends reactExports.Component {
     ] });
   }
 }
-function b64uToBuf(s) {
-  const norm2 = s.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = norm2.length % 4 ? "=".repeat(4 - norm2.length % 4) : "";
-  const bin = atob(norm2 + pad);
-  const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-  return buf.buffer;
-}
-function bufToB64u(buf) {
-  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function prepCreate(opts) {
-  const out = { ...opts };
-  out.challenge = b64uToBuf(opts.challenge);
-  out.user = { ...opts.user, id: b64uToBuf(opts.user.id) };
-  if (opts.excludeCredentials) {
-    out.excludeCredentials = opts.excludeCredentials.map((c) => ({ ...c, id: b64uToBuf(c.id) }));
-  }
-  return out;
-}
-function prepGet(opts) {
-  const out = { ...opts };
-  out.challenge = b64uToBuf(opts.challenge);
-  delete out.allowCredentials;
-  return out;
-}
-function credToJSON(cred) {
-  const r = cred.response;
-  const out = {
-    id: cred.id,
-    rawId: bufToB64u(cred.rawId),
-    type: cred.type,
-    clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
-    response: {}
-  };
-  if (r.attestationObject !== void 0) {
-    out.response.attestationObject = bufToB64u(r.attestationObject);
-    out.response.clientDataJSON = bufToB64u(r.clientDataJSON);
-  } else {
-    out.response.authenticatorData = bufToB64u(r.authenticatorData);
-    out.response.clientDataJSON = bufToB64u(r.clientDataJSON);
-    out.response.signature = bufToB64u(r.signature);
-    out.response.userHandle = r.userHandle ? bufToB64u(r.userHandle) : null;
-  }
-  return out;
-}
-function webauthnReady() {
-  return typeof window !== "undefined" && window.isSecureContext === true && typeof navigator !== "undefined" && !!navigator.credentials && typeof navigator.credentials.create === "function" && typeof window.PublicKeyCredential !== "undefined";
-}
-function fetchAuthStatus() {
-  return api("/api/auth/status");
-}
-function grantOf(res) {
-  const exp = res && typeof res.exp === "number" && Number.isFinite(res.exp) ? res.exp : null;
-  return { exp };
-}
-async function enroll(label2, bootstrap = "") {
-  const { challenge_id, options } = await api("/api/auth/register/begin", {
-    method: "POST",
-    body: JSON.stringify({ label: label2, bootstrap })
-  });
-  const cred = await navigator.credentials.create({ publicKey: prepCreate(options) });
-  if (!cred) throw new Error("passkey creation was cancelled");
-  const res = await api("/api/auth/register/finish", {
-    method: "POST",
-    body: JSON.stringify({ challenge_id, credential: credToJSON(cred) })
-  });
-  return grantOf(res);
-}
-function loginFresh(p) {
-  return !!p && Date.now() - p.t < 24e4;
-}
-async function beginLogin() {
-  const { challenge_id, options } = await api("/api/auth/login/begin", {
-    method: "POST",
-    body: JSON.stringify({})
-  });
-  delete options.allowCredentials;
-  return { challenge_id, options, t: Date.now() };
-}
-async function completeLogin(p, timeoutMs = 75e3) {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  let cred;
-  try {
-    cred = await navigator.credentials.get({ publicKey: prepGet(p.options), signal: ac.signal });
-  } catch (e) {
-    if (ac.signal.aborted) throw new Error("the authenticator did not answer in time — tap sign in to try again");
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
-  if (!cred) throw new Error("passkey sign-in was cancelled");
-  const res = await api("/api/auth/login/finish", {
-    method: "POST",
-    body: JSON.stringify({ challenge_id: p.challenge_id, credential: credToJSON(cred) })
-  });
-  return grantOf(res);
-}
 const __vite_import_meta_env__ = {};
 const BUILD = (__vite_import_meta_env__ == null ? void 0 : __vite_import_meta_env__.VITE_BUILD) ?? "dev";
 function AuthGate({ children }) {
@@ -11050,7 +11126,7 @@ function AuthGate({ children }) {
     (async () => {
       var _a;
       try {
-        const redeemed = await redeemUrlToken();
+        const redeemed = await redeemUrlHandoff();
         if (!alive) return;
         if (redeemed === "refused") setError("the sign-in carried in that link was not accepted here; sign in below");
         const [st, fleet] = await Promise.allSettled([fetchAuthStatus(), api("/api/fleet")]);
@@ -11097,8 +11173,15 @@ function AuthGate({ children }) {
       setBusy(false);
     }
   }
+  const foreign = foreignBackendNotice();
+  const foreignBanner = foreign && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sessionwarn", role: "status", "aria-live": "polite", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "⚠" }),
+    " ",
+    foreign
+  ] });
   if (mode === "open") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      foreignBanner,
       expiring && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sessionwarn", role: "status", "aria-live": "polite", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "⏳" }),
         " ",
@@ -11114,124 +11197,130 @@ function AuthGate({ children }) {
     ] }) });
   }
   const noWebauthn = (mode === "enroll" || mode === "login") && !webauthnReady();
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "authgate", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "authcard", role: "dialog", "aria-labelledby": "authgate-title", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 26, title: "Strands Agents" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authhost", children: [
-      "strands robots · ",
-      window.location.host
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { id: "authgate-title", children: mode === "unreachable" ? "backend unreachable" : mode === "enroll" ? "create the admin passkey" : "unlock with your passkey" }),
-    mode === "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", children: [
-      "The dashboard API did not answer. ",
-      error && /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: error })
-    ] }),
-    pending && (pending.kind === "token_follows_host" || pending.kind === "cleartext_token") && /* A ?backend= in the address bar asked this page to dial another host, or the same host
-    over clear text. The sign-in this browser holds was NOT sent (finding f003): it goes
-    only if the operator says so, the same question the Settings drawer asks for a typed
-    address. */
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: pending.kind === "cleartext_token" ? `Send this token to ${pending.toHost} in clear text?` : `Send this token to ${pending.toHost}?` }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: pending.detail }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", type: "button", onClick: () => {
-          carryTokenToBackend();
-          location.reload();
-        }, children: [
-          "send it to ",
-          backendLabel()
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "authgate", children: [
+    foreignBanner,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "authcard", role: "dialog", "aria-labelledby": "authgate-title", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(StrandsMark, { height: 26, title: "Strands Agents" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authhost", children: [
+        "strands robots · ",
+        window.location.host
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { id: "authgate-title", children: mode === "unreachable" ? "backend unreachable" : mode === "enroll" ? "create the admin passkey" : "unlock with your passkey" }),
+      mode === "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", children: [
+        "The dashboard API did not answer. ",
+        error && /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: error })
+      ] }),
+      pending && needsConfirm(pending) && "toHost" in pending && /* A ?backend= in the address bar asked this page to talk to another host. Nothing has
+      been sent there: the page keeps its own backend until the operator says yes, the same
+      question the Settings drawer asks for a typed address. */
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
+          "Connect this page to ",
+          pending.toHost,
+          "?"
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "button", onClick: () => setPending(null), children: pending.alternative })
-      ] })
-    ] }),
-    noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authwarn", children: [
-      "Passkeys need a secure context. Open this page over ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "https://" }),
-      " or",
-      " ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "http://localhost" }),
-      " - on a plain LAN address the browser disables WebAuthn.",
-      " ",
-      "Already signed in on the ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "https://" }),
-      " address? Use its",
-      " ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "open the local address" }),
-      " link instead of typing this address — it carries your sign-in here in the URL, so no ceremony is needed."
-    ] }),
-    mode === "enroll" && !noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { onSubmit: (e) => {
-      e.preventDefault();
-      void run(() => enroll(label2.trim() || "admin", bootstrap.trim()));
-    }, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "No passkey is enrolled yet. The first one becomes the admin key and seals the dashboard - every later visit signs in with it." }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-label", children: "key label" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            id: "authgate-label",
-            value: label2,
-            placeholder: "e.g. cagatay-iphone",
-            onChange: (e) => setLabel(e.target.value),
-            autoComplete: "off"
-          }
-        )
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: pending.detail }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet-actions", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "btn ghost danger", type: "button", onClick: () => acceptUrlBackend(), children: [
+            "connect to ",
+            pending.toHost
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "button", onClick: () => {
+            declineUrlBackend();
+            setPending(null);
+          }, children: "fromHost" in pending ? `stay on ${pending.fromHost}` : "stay here" })
+        ] })
       ] }),
-      (status == null ? void 0 : status.bootstrap_required) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-bootstrap", children: "bootstrap token" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            id: "authgate-bootstrap",
-            type: "password",
-            value: bootstrap,
-            placeholder: "from the machine running the dashboard",
-            onChange: (e) => setBootstrap(e.target.value),
-            autoComplete: "off"
-          }
-        )
+      noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "authwarn", children: [
+        "Passkeys need a secure context. Open this page over ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "https://" }),
+        " or",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "http://localhost" }),
+        " - on a plain LAN address the browser disables WebAuthn.",
+        " ",
+        "Already signed in on the ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "https://" }),
+        " address? Use its",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "open the local address" }),
+        " link instead of typing this address — after one passkey tap there it carries a one-time sign-in code here, good for a single use."
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          className: "btn go",
-          type: "submit",
-          disabled: busy || (status == null ? void 0 : status.bootstrap_required) && !bootstrap.trim(),
-          children: busy ? "waiting for the authenticator…" : "create passkey"
-        }
-      )
-    ] }),
-    mode === "login" && !noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "This dashboard is sealed with a passkey." }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", onClick: signIn, disabled: busy, children: busy ? "waiting for the authenticator…" : "sign in" }),
-      !showToken && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn linklike", type: "button", onClick: () => setShowToken(true), children: "passkey not working? sign in with an access token" }),
-      showToken && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { onSubmit: (e) => {
+      mode === "enroll" && !noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { onSubmit: (e) => {
         e.preventDefault();
-        if (tokenValue.trim()) setAuthToken(tokenValue.trim());
+        void run(() => enroll(label2.trim() || "admin", bootstrap.trim()));
       }, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "No passkey is enrolled yet. The first one becomes the admin key and seals the dashboard - every later visit signs in with it." }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-token", children: "access token" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-label", children: "key label" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "input",
             {
-              id: "authgate-token",
-              type: "password",
-              value: tokenValue,
-              placeholder: "from the dashboard machine (tiny can mint one)",
-              onChange: (e) => setTokenValue(e.target.value),
+              id: "authgate-label",
+              value: label2,
+              placeholder: "e.g. cagatay-iphone",
+              onChange: (e) => setLabel(e.target.value),
               autoComplete: "off"
             }
           )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "The escape hatch when the passkey ceremony fails on this device: paste a session token minted on the machine running the dashboard. Wrong or expired tokens simply land back on this screen." }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "submit", disabled: !tokenValue.trim(), children: "unlock" })
+        (status == null ? void 0 : status.bootstrap_required) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-bootstrap", children: "bootstrap token" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              id: "authgate-bootstrap",
+              type: "password",
+              value: bootstrap,
+              placeholder: "from the machine running the dashboard",
+              onChange: (e) => setBootstrap(e.target.value),
+              autoComplete: "off"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            className: "btn go",
+            type: "submit",
+            disabled: busy || (status == null ? void 0 : status.bootstrap_required) && !bootstrap.trim(),
+            children: busy ? "waiting for the authenticator…" : "create passkey"
+          }
+        )
+      ] }),
+      mode === "login" && !noWebauthn && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "This dashboard is sealed with a passkey." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", onClick: signIn, disabled: busy, children: busy ? "waiting for the authenticator…" : "sign in" }),
+        !showToken && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn linklike", type: "button", onClick: () => setShowToken(true), children: "passkey not working? sign in with an access token" }),
+        showToken && /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { onSubmit: (e) => {
+          e.preventDefault();
+          if (tokenValue.trim()) setAuthToken(tokenValue.trim());
+        }, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "field", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "authgate-token", children: "access token" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                id: "authgate-token",
+                type: "password",
+                value: tokenValue,
+                placeholder: "from the dashboard machine (tiny can mint one)",
+                onChange: (e) => setTokenValue(e.target.value),
+                autoComplete: "off"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "dim", children: "The escape hatch when the passkey ceremony fails on this device: paste a session token minted on the machine running the dashboard. Wrong or expired tokens simply land back on this screen." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", type: "submit", disabled: !tokenValue.trim(), children: "unlock" })
+        ] })
+      ] }),
+      error && mode !== "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "autherror", role: "alert", children: error }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", style: { fontSize: 11, opacity: 0.55, marginTop: 12 }, children: [
+        "build ",
+        BUILD
       ] })
-    ] }),
-    error && mode !== "unreachable" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "autherror", role: "alert", children: error }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "dim", style: { fontSize: 11, opacity: 0.55, marginTop: 12 }, children: [
-      "build ",
-      BUILD
     ] })
-  ] }) });
+  ] });
 }
 const PANELS = ["settings", "activity", "devices", "estop", "help"];
 function panelFromHash(hash) {

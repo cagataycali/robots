@@ -29,7 +29,7 @@ Configuration:
     ``STRANDS_DASH_AUTH_TOKEN_TTL`` (default 86400), ``..._SESSION_MAX_AGE``
         (default 2592000) and ``..._HANDOFF_TTL`` (default 300): how long a
         session token lives, the absolute age past which no renewal extends it,
-        and the lifetime of a handoff token. All three are a whole number of
+        and the lifetime of a one-time handoff code. All three are a whole number of
         SECONDS, read through :func:`_duration`, which refuses a value it cannot
         use rather than substituting the default: these are how the window in
         which a session commands hardware gets narrowed, and every direction a
@@ -46,6 +46,7 @@ Configuration:
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import ipaddress
 import json
 import logging
@@ -1180,11 +1181,11 @@ def session_is_valid(token: str) -> bool:
         return False
 
 
-# --- LAN handoff tokens -------------------------------------------------------
+# --- LAN handoff codes --------------------------------------------------------
 
 
 def handoff_ttl() -> int:
-    """Lifetime of a handoff token (default 5 minutes). It rides in a URL, so it must be
+    """Lifetime of a handoff code (default 5 minutes). It rides in a URL, so it must be
     short: URLs land in history, logs and screenshots."""
     return _duration("HANDOFF_TTL")
 
@@ -1194,7 +1195,7 @@ def handoff_verdict(
     now: float,
     ttl: int | None = None,
 ) -> dict[str, Any]:
-    """May this session be copied into a short-lived URL token, and until when?
+    """May this session be handed to another device, and until when?
     The handoff never outlives the session it came from."""
     ttl = handoff_ttl() if ttl is None else ttl
     if not isinstance(claims, Mapping):
@@ -1208,21 +1209,90 @@ def handoff_verdict(
     return {"ok": True, "exp": int(min(now + ttl, exp))}
 
 
-def issue_handoff(claims: Mapping[str, Any], now: float | None = None) -> dict[str, Any]:
-    """Mint the short-lived token handoff_verdict() approved, carrying the session's
-    identity (sub/name/iat0) so renewal caps survive the copy."""
+#: Unspent handoff codes, keyed by the SHA-256 of the code so the table never
+#: holds the secret itself. Process memory on purpose: a restart spends them all.
+_handoff_codes: dict[str, dict[str, Any]] = {}
+_handoff_lock = threading.Lock()
+_HANDOFF_MAX = 32
+
+
+def _code_key(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def issue_handoff(
+    request: Any,
+    claims: Mapping[str, Any],
+    challenge_id: str,
+    credential: dict,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """A one-time code that opens this owner's dashboard on another device.
+
+    Minting needs a fresh passkey assertion on top of the session: the cookie
+    alone proves only that a request rode this browser, which a script in the
+    page can do too. The answer is a code, not a session token. No route
+    accepts it as a credential; the one thing it buys is a single call to
+    :func:`redeem_handoff`, which spends it and sets a cookie on the device
+    that redeemed it.
+
+    Args:
+        request: The request being served, read for the assertion's origin.
+        claims: The session's claims; the code never outlives that session.
+        challenge_id: The id from ``begin_authentication(request, kind="handoff")``.
+        credential: The authenticator's assertion over that challenge.
+        now: Override for the current epoch seconds.
+
+    Returns:
+        ``{"code": ..., "exp": ..., "expires_in": ...}``.
+
+    Raises:
+        HTTPException: 401 when the session cannot be handed off; 400/404 when
+            the assertion does not verify (see :func:`_verified_assertion`).
+    """
     now = time.time() if now is None else now
     verdict = handoff_verdict(claims, now)
     if not verdict.get("ok"):
-        raise HTTPException(401, verdict.get("reason", "cannot mint a handoff token"))
-    token = issue_token(
-        str(claims.get("sub") or ""),
-        str(claims.get("name") or ""),
-        iat0=claims.get("iat0") or claims.get("iat"),
-        exp=verdict["exp"],
-        via="handoff",
-    )
-    return {"token": token, "exp": verdict["exp"], "expires_in": max(0, int(verdict["exp"] - now))}
+        raise HTTPException(401, verdict.get("reason", "cannot hand off this session"))
+    _verified_assertion(request, challenge_id, credential, "handoff")
+    code = secrets.token_urlsafe(32)
+    # The session's identity, not the assertion's: sub/name/iat0 carry over so the absolute
+    # cap in renewal_verdict() counts from the original sign-in, not from the copy.
+    grant = {
+        "sub": str(claims.get("sub") or ""),
+        "name": str(claims.get("name") or ""),
+        "iat0": claims.get("iat0") or claims.get("iat"),
+        "exp": verdict["exp"],
+    }
+    with _handoff_lock:
+        for key in [k for k, v in _handoff_codes.items() if v["exp"] <= now]:
+            _handoff_codes.pop(key, None)
+        while len(_handoff_codes) >= _HANDOFF_MAX:
+            _handoff_codes.pop(min(_handoff_codes, key=lambda k: _handoff_codes[k]["exp"]))
+        _handoff_codes[_code_key(code)] = grant
+    return {"code": code, "exp": verdict["exp"], "expires_in": max(0, int(verdict["exp"] - now))}
+
+
+def redeem_handoff(code: str, now: float | None = None) -> str:
+    """Spend a handoff code and return the session token for the device that redeemed it.
+
+    The code is removed before it is judged, so a second redemption - the
+    same device twice, or whoever else saw the URL - is refused whatever the
+    first one did. The token carries ``via="handoff"``: it is not renewable,
+    cannot mint another handoff or remove a passkey, and is honoured only from
+    the cookie (:func:`strands_robots.dashboard.access.session_claims`).
+
+    Raises:
+        HTTPException: 401 when the code is unknown, spent or expired.
+    """
+    now = time.time() if now is None else now
+    with _handoff_lock:
+        grant = _handoff_codes.pop(_code_key(code), None) if code else None
+    if grant is None or grant["exp"] <= now:
+        raise HTTPException(
+            401, "this handoff link was already used or has expired - open it again from a signed-in page"
+        )
+    return issue_token(grant["sub"], grant["name"], iat0=grant["iat0"], exp=int(grant["exp"]), via="handoff")
 
 
 def client_is_loopback(client_host: str | None) -> bool:
@@ -1386,12 +1456,15 @@ def finish_registration(request: Any, challenge_id: str, credential: dict) -> di
     return {"ok": True, "token": token, "credential_id": cred_id}
 
 
-def begin_authentication(request: Any) -> dict[str, Any]:
+def begin_authentication(request: Any, kind: str = "auth") -> dict[str, Any]:
     """Start a passkey authentication ceremony for this origin.
 
     Args:
         request: The request being served, read for the relying-party id and
             the client address the challenge is bound to.
+        kind: What the assertion will be spent on: ``"auth"`` for a sign-in,
+            ``"handoff"`` for :func:`issue_handoff`. A challenge is only
+            accepted by the finisher of its own kind.
 
     Returns:
         ``{"challenge_id": ..., "options": ...}``, the options being the
@@ -1413,7 +1486,7 @@ def begin_authentication(request: Any) -> dict[str, Any]:
         allow_credentials=allow,
         user_verification=UserVerificationRequirement.PREFERRED,
     )
-    cid = _stash_challenge("auth", opts.challenge, {"rp_id": rp_id}, ip=_client_ip(request))
+    cid = _stash_challenge(kind, opts.challenge, {"rp_id": rp_id}, ip=_client_ip(request))
     return {"challenge_id": cid, "options": json.loads(options_to_json(opts))}
 
 
@@ -1431,7 +1504,19 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
     Raises:
         HTTPException: 404 if the asserted credential is not enrolled.
     """
-    rec = _pop_challenge(challenge_id, "auth")
+    match = _verified_assertion(request, challenge_id, credential, "auth")
+    token = issue_token(cast(str, match["id"]), name=match.get("name", "passkey"))
+    return {"ok": True, "token": token, "credential_id": match["id"]}
+
+
+def _verified_assertion(request: Any, challenge_id: str, credential: dict, kind: str) -> dict[str, Any]:
+    """The enrolled credential a passkey assertion proves, after its sign count is saved.
+
+    Raises:
+        HTTPException: 400 for an unknown, spent or expired challenge of this
+            *kind*; 404 if the asserted credential is not enrolled.
+    """
+    rec = _pop_challenge(challenge_id, kind)
     store = _load()
     cred_id = credential.get("id") or credential.get("rawId")
     match = next((c for c in store.get("credentials", []) if c["id"] == cred_id), None)
@@ -1455,8 +1540,7 @@ def finish_authentication(request: Any, challenge_id: str, credential: dict) -> 
         # store and read back here, so it arrives from outside like any header would.
         logger.info("recorded rp_id %r for credential %s", match["rp_id"], log_redaction.one_line(match.get("name")))
     _save(store)
-    token = issue_token(cast(str, cred_id), name=match.get("name", "passkey"))
-    return {"ok": True, "token": token, "credential_id": cred_id}
+    return cast(dict[str, Any], match)
 
 
 def status(request: Any = None) -> dict[str, Any]:

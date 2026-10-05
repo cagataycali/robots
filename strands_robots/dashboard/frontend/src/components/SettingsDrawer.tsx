@@ -225,9 +225,9 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   const goConnect = (tokenToSend: string) => {
     setBackendBase(base)
     setAuthToken(tokenToSend)
-    // Remounting the app is the point: sockets, peer map and frame buffers all
-    // belong to the backend we were talking to.
-    location.reload()
+    // Remounting the app is the point: sockets, peer map and frame buffers all belong to the
+    // backend we were talking to. Both calls change the app's key, which remounts it; a reload
+    // would also drop the token, which lives in page memory only.
   }
 
   const applyConnection = () => {
@@ -351,9 +351,19 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
               {/* a credential belongs to a host. */}
               {connVerdict && connVerdict.kind !== 'ok' && (
                 <div className="result bad" role="alert">
-                  <b>{connVerdict.kind === 'unparseable' ? 'That address cannot be dialled' : 'Send this token there?'}</b>
+                  <b>{connVerdict.kind === 'unparseable' ? 'That address cannot be dialled'
+                    : connVerdict.kind === 'host_changes' ? `Connect this page to ${connVerdict.toHost}?`
+                    : 'Send this token there?'}</b>
                   <p>{connVerdict.detail}</p>
-                  {needsConfirm(connVerdict) && (
+                  {connVerdict.kind === 'host_changes' && (
+                    <div className="sheet-actions">
+                      <button className="btn ghost danger" onClick={() => { setConnVerdict(null); goConnect(token) }}>
+                        connect to {connVerdict.toHost}
+                      </button>
+                      <button className="btn go" onClick={() => setConnVerdict(null)}>{connVerdict.alternative}</button>
+                    </div>
+                  )}
+                  {needsConfirm(connVerdict) && connVerdict.kind !== 'host_changes' && (
                     <div className="sheet-actions">
                       <button className="btn ghost danger" onClick={() => { setConnVerdict(null); goConnect(token) }}>
                         send it anyway
@@ -368,8 +378,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 </div>
               )}
               <p className="hint">
-                Tip: <code>?backend=https://robot.lan:8080&amp;token=…</code> in the URL sets both,
-                so a bookmark or QR code points a phone straight at one robot.
+                Tip: <code>?backend=https://robot.lan:8080</code> in the URL points a bookmark or QR
+                code at one robot; the page asks before it connects, and a token never rides a link.
               </p>
             </section>
           )}

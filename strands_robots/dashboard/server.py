@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -112,31 +113,67 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.safety.store.shutdown()
 
 
-#: What a browser may load and dial from the dashboard. Scripts, styles, fonts and workers
-#: come from this origin only; no plugins, no ``<base>``, no framing. Images also from
-#: ``data:`` and ``blob:`` (camera previews are object URLs). ``connect-src`` stays open to
-#: http(s) and ws(s): the dashboard is a mesh peer that legitimately dials a robot on another
-#: host, and the token such a request may carry is bound to that host by the page.
-CONTENT_SECURITY_POLICY = "; ".join(
-    [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
-        "font-src 'self'",
-        "connect-src 'self' http: https: ws: wss:",
-        "worker-src 'self'",
-        "object-src 'none'",
-        "base-uri 'none'",
-        "frame-ancestors 'none'",
-        "form-action 'self'",
-    ]
-)
+#: The env var naming the other origins this dashboard's page may dial (a robot on the LAN
+#: the Settings drawer or ``?backend=`` points at). Comma-separated ``scheme://host[:port]``.
+#: Read from the environment only, never from settings.json: the page can write settings,
+#: and a policy the page can widen is no policy.
+CONNECT_ORIGINS_ENV = "DASHBOARD_CONNECT_ORIGINS"
+
+_SOCKET_SCHEME = {"http": "ws", "https": "wss"}
+
+
+def connect_origins(raw: str | None) -> list[str]:
+    """The ``connect-src`` sources for the operator's listed origins, each with its socket twin.
+
+    An entry that is not exactly an http(s) origin (a path, a wildcard, another scheme, a
+    quote that would end the directive) is dropped with a warning: the list only ever adds
+    hosts the operator spelled out, so an entry it cannot read adds none.
+    """
+    out: list[str] = []
+    for entry in settings.as_list(raw or ""):
+        match = re.fullmatch(r"(https?)://([a-z0-9.-]+|\[[0-9a-f:.]+\])(:\d{1,5})?/?", entry.strip().lower())
+        if match is None:
+            logger.warning(
+                "%s: %r is not an http(s) origin; not added", CONNECT_ORIGINS_ENV, log_redaction.one_line(entry)
+            )
+            continue
+        scheme, host, port = match.group(1), match.group(2), match.group(3) or ""
+        for source in (f"{scheme}://{host}{port}", f"{_SOCKET_SCHEME[scheme]}://{host}{port}"):
+            if source not in out:
+                out.append(source)
+    return out
+
+
+def content_security_policy(extra_connect: list[str] | None = None) -> str:
+    """What a browser may load and dial from the dashboard.
+
+    Scripts, styles, fonts and workers come from this origin only; no plugins, no
+    ``<base>``, no framing. Images also from ``data:`` and ``blob:`` (camera previews are
+    object URLs). ``connect-src`` is this origin plus the origins the operator listed in
+    ``DASHBOARD_CONNECT_ORIGINS`` (:func:`connect_origins`), nothing else: a script that
+    reaches the page cannot post what it finds to a host nobody named.
+    """
+    return "; ".join(
+        [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob:",
+            "font-src 'self'",
+            " ".join(["connect-src 'self'", *(extra_connect or [])]),
+            "worker-src 'self'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "frame-ancestors 'none'",
+            "form-action 'self'",
+        ]
+    )
 
 
 def create_app() -> FastAPI:
     """Build the dashboard application. Safe to call more than once (tests do)."""
     log_redaction.install_redaction()
+    policy = content_security_policy(connect_origins(os.environ.get(CONNECT_ORIGINS_ENV)))
     app = FastAPI(
         title="strands-robots dashboard", version=_version(), docs_url=None, redoc_url=None, lifespan=_lifespan
     )
@@ -164,7 +201,7 @@ def create_app() -> FastAPI:
         else:
             response = await call_next(request)
         # Every answer, not only the shell: a header covers documents the page did not expect.
-        response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+        response.headers.setdefault("Content-Security-Policy", policy)
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
 

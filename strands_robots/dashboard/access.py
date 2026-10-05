@@ -3,9 +3,13 @@
 One dependency, ``require_session``, guards every route that is not the login
 screen. Three ways in, in this order, and the first that answers wins:
 
-1. A valid passkey session token (``auth.verify_token``), presented as
-   ``Authorization: Bearer`` or as the ``strands_dash`` cookie the login screen
-   sets. Query-string tokens are not read: they land in access logs.
+1. A valid passkey session token (``auth.verify_token``), presented as the
+   ``strands_dash`` cookie the login screen sets or, when there is no cookie,
+   as ``Authorization: Bearer``. The cookie wins when both are present: a
+   bearer is something a page script can hold, the ``HttpOnly`` cookie is not,
+   so a script-held token never shadows the session the browser keeps. A
+   handoff session (``via="handoff"``) is honoured from the cookie only.
+   Query-string tokens are not read: they land in access logs.
 2. The static ``security.auth_token`` from settings, compared in constant time.
 3. The bootstrap proof - but only while ``auth.auth_enabled()`` is False (no
    passkey enrolled, no env override) and no static token is configured. The
@@ -69,15 +73,24 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
+def _presented(request: Request) -> tuple[str, str]:
+    """``(token, where)``: the cookie when there is one, else the bearer header; ``("", "")`` for neither."""
+    cookie = request.cookies.get(COOKIE, "").strip()
+    if cookie:
+        return cookie, "cookie"
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer ") and header[7:].strip():
+        return header[7:].strip(), "bearer"
+    return "", ""
+
+
 def presented_token(request: Request) -> str:
     """The session token a request carries, or an empty string.
 
-    Bearer header first, then the cookie. Never the query string.
+    The ``HttpOnly`` cookie first; the ``Authorization: Bearer`` header only
+    when there is no cookie. Never the query string.
     """
-    header = request.headers.get("authorization", "")
-    if header.lower().startswith("bearer "):
-        return header[7:].strip()
-    return request.cookies.get(COOKIE, "").strip()
+    return _presented(request)[0]
 
 
 def came_through_a_proxy(request: Request) -> bool:
@@ -141,14 +154,22 @@ def origin_is_self(request: Request) -> bool:
 
 
 def session_claims(request: Request) -> dict[str, Any] | None:
-    """Claims of a valid presented session, or None. Never raises."""
-    token = presented_token(request)
+    """Claims of a valid presented session, or None. Never raises.
+
+    A handoff session presented as a bearer is refused: the redeeming device
+    holds it in its ``HttpOnly`` cookie, so a copy in a header was lifted
+    from somewhere it was never meant to be.
+    """
+    token, where = _presented(request)
     if not token:
         return None
     try:
-        return auth.verify_token(token)
+        claims = auth.verify_token(token)
     except HTTPException:
         return None
+    if where != "cookie" and claims.get("via") == "handoff":
+        return None
+    return claims
 
 
 def static_token_matches(request: Request) -> bool:

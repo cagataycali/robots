@@ -1,4 +1,7 @@
-/** re-pointing the backend used to send the OLD host's token to the NEW host, silently. */
+/**
+ * Re-pointing the backend used to send the OLD host's token to the NEW host, silently - and, with
+ * no token held, to hand the NEW host every sign-in and command that followed, just as silently.
+ */
 export interface ConnectionChange {
   /** the base the app is talking to now ('' = the origin that served the page) */
   currentBase: string
@@ -22,6 +25,14 @@ export type ConnectionVerdict =
       fromHost: string
       toHost: string
       /** the choice that keeps the secret where it belongs */
+      alternative: string
+    }
+  | {
+      /** the page would start talking to another host: every sign-in and command goes there */
+      kind: 'host_changes'
+      detail: string
+      fromHost: string
+      toHost: string
       alternative: string
     }
   | {
@@ -50,8 +61,10 @@ function isLocal(host: string): boolean {
 }
 
 /**
- * Judge a pending "connect & reload". Only ONE thing is ever escalated: the token moving to a
- * host it was not given for.
+ * Judge a pending "connect & reload". Escalated, most specific first: the token moving to a host it
+ * was not given for, the token crossing the network in clear text, and the page itself moving to
+ * another host. The last needs no token to matter: a passkey sign-in on a re-pointed page is a
+ * ceremony the new host can relay.
  */
 export function connectionChange(c: ConnectionChange): ConnectionVerdict {
   const nextRaw = (c.nextBase ?? '').trim()
@@ -102,10 +115,24 @@ export function connectionChange(c: ConnectionChange): ConnectionVerdict {
     }
   }
 
+  // https://robot -> http://robot keeps the host and drops the encryption: the same question.
+  const downgrade = /^https:\/\//i.test((c.currentBase ?? '').trim()) && /^http:\/\//i.test(nextRaw)
+  if (from !== to || downgrade) {
+    return {
+      kind: 'host_changes',
+      fromHost: from || '(this origin)',
+      toHost: to || '(this origin)',
+      detail:
+        `Every request from this page - a passkey sign-in included - will go to ${to || 'this origin'} ` +
+        `instead of ${from || 'this origin'}. Go ahead only if ${to || 'this origin'} is a machine you run.`,
+      alternative: `stay on ${from || 'this origin'}`,
+    }
+  }
+
   return { kind: 'ok' }
 }
 
 /** Does this verdict need the operator's explicit go-ahead before connecting? */
 export function needsConfirm(v: ConnectionVerdict): boolean {
-  return v.kind === 'token_follows_host' || v.kind === 'cleartext_token'
+  return v.kind === 'token_follows_host' || v.kind === 'cleartext_token' || v.kind === 'host_changes'
 }

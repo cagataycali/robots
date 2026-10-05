@@ -6,8 +6,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   api, setAuthToken, authToken, authRefusedRecently, HttpError, lastRenewalAt, noteCookieSession, cookieSessionExpiry,
-  urlBackendVerdict, carryTokenToBackend, backendLabel, redeemUrlToken,
+  urlBackendVerdict, acceptUrlBackend, declineUrlBackend, foreignBackendNotice, redeemUrlHandoff,
 } from '../lib/endpoints'
+import { needsConfirm } from '../lib/connectionChange'
 import { sessionVerdict, sessionVerdictAt } from '../lib/sessionExpiry'
 import {
   fetchAuthStatus, enroll, webauthnReady, type AuthStatus,
@@ -126,10 +127,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     let alive = true
     ;(async () => {
       try {
-        // A ?token= the page arrived with is redeemed FIRST, against this backend, and becomes
-        // the sign-in only if the backend vouches for it (finding f019). A refusal is said out
-        // loud on the door below, never a silent sign-out.
-        const redeemed = await redeemUrlToken()
+        // A ?handoff= code the page arrived with is redeemed FIRST, against this backend, and the
+        // session arrives as this device's cookie. A refusal is said out loud on the door below,
+        // never a silent sign-out.
+        const redeemed = await redeemUrlHandoff()
         if (!alive) return
         if (redeemed === 'refused') setError('the sign-in carried in that link was not accepted here; sign in below')
         const [st, fleet] = await Promise.allSettled([fetchAuthStatus(), api('/api/fleet')])
@@ -151,8 +152,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     setBusy(true); setError('')
     try {
       const grant = await fn()
-      // The session is the HttpOnly cookie the ceremony set; the page keeps no copy of it
-      // (finding f015). A bearer typed on this door is another matter and still goes to storage.
+      // The session is the HttpOnly cookie the ceremony set; the page keeps no copy of it, and
+      // any bearer typed before the ceremony is dropped (noteCookieSession).
       noteCookieSession(grant.exp) // notifies subscribeAuth -> App remounts with the new key
       setMode('open')              // and this gate instance opens NOW, not on the next refresh
     } catch (e) {
@@ -162,11 +163,20 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
+  // Named on every screen, the sign-in door included: a re-pointed page looks exactly like the real one.
+  const foreign = foreignBackendNotice()
+  const foreignBanner = foreign && (
+    <div className="sessionwarn" role="status" aria-live="polite">
+      <span aria-hidden="true">⚠</span> {foreign}
+    </div>
+  )
+
   if (mode === 'open') {
     // role=status, not alert: the session still works, and a modal here would interrupt a
     // recording to announce something that is five minutes away.
     return (
       <>
+        {foreignBanner}
         {expiring && (
           <div className="sessionwarn" role="status" aria-live="polite">
             <span aria-hidden="true">⏳</span> {expiring}
@@ -189,6 +199,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="authgate">
+      {foreignBanner}
       <div className="authcard" role="dialog" aria-labelledby="authgate-title">
         <StrandsMark height={26} title="Strands Agents" />
         {/* Identity on the gate: an anonymous credential prompt is what a phishing page looks like. */}
@@ -205,24 +216,19 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </p>
         )}
 
-        {pending && (pending.kind === 'token_follows_host' || pending.kind === 'cleartext_token') && (
-          /* A ?backend= in the address bar asked this page to dial another host, or the same host
-             over clear text. The sign-in this browser holds was NOT sent (finding f003): it goes
-             only if the operator says so, the same question the Settings drawer asks for a typed
-             address. */
+        {pending && needsConfirm(pending) && 'toHost' in pending && (
+          /* A ?backend= in the address bar asked this page to talk to another host. Nothing has
+             been sent there: the page keeps its own backend until the operator says yes, the same
+             question the Settings drawer asks for a typed address. */
           <div className="result bad" role="alert">
-            <b>
-              {pending.kind === 'cleartext_token'
-                ? `Send this token to ${pending.toHost} in clear text?`
-                : `Send this token to ${pending.toHost}?`}
-            </b>
+            <b>Connect this page to {pending.toHost}?</b>
             <p>{pending.detail}</p>
             <div className="sheet-actions">
-              <button className="btn ghost danger" type="button" onClick={() => { carryTokenToBackend(); location.reload() }}>
-                send it to {backendLabel()}
+              <button className="btn ghost danger" type="button" onClick={() => acceptUrlBackend()}>
+                connect to {pending.toHost}
               </button>
-              <button className="btn go" type="button" onClick={() => setPending(null)}>
-                {pending.alternative}
+              <button className="btn go" type="button" onClick={() => { declineUrlBackend(); setPending(null) }}>
+                {'fromHost' in pending ? `stay on ${pending.fromHost}` : 'stay here'}
               </button>
             </div>
           </div>
@@ -233,8 +239,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             Passkeys need a secure context. Open this page over <code>https://</code> or{' '}
             <code>http://localhost</code> - on a plain LAN address the browser disables WebAuthn.
             {' '}Already signed in on the <code>https://</code> address? Use its{' '}
-            <em>open the local address</em> link instead of typing this address — it carries
-            your sign-in here in the URL, so no ceremony is needed.
+            <em>open the local address</em> link instead of typing this address — after one passkey
+            tap there it carries a one-time sign-in code here, good for a single use.
           </p>
         )}
 
