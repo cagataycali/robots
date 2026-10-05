@@ -293,6 +293,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "a stream quiet for three periods is stopped: Kortex joint speeds never expire",
         ),
     },
+    "KukaDriver": {
+        "module": "strands_robots/drivers/kuka.py",
+        "link": "FRI over UDP through `pyfri`, in its own process",
+        "port": "controller (KONI) IP to accept, or none for any; `fri_port=30200`",
+        "example": '"192.170.10.2"',
+        "sdk": "lbr-stack's `pyfri`, built from source against pybind11 2.13 or newer",
+        "kwargs": "`control_frequency=50.0`, `connect_timeout=5.0`",
+        "units": "radians, `joint1 .. joint7`",
+        "checks": (
+            "writes only in `COMMANDING_ACTIVE`, `POSITION` mode, normal safety, drives active",
+            "targets outside the iiwa 14 range or past its joint speed in one period are refused",
+            "each FRI cycle moves at most joint speed times sample time; a halt holds the last command",
+        ),
+    },
     "CrazyflieDriver": {
         "module": "strands_robots/drivers/crazyflie.py",
         "link": "CRTP over a Crazyradio through `cflib`",
