@@ -8,7 +8,8 @@ Provides:
     - ``list_robots()``  → what's available
 
 Environment Variables:
-    STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
+    STRANDS_ROBOT_MODE: Answer ``mode="auto"`` ("sim", "real", "auto"). Read
+        only on that branch: a bare ``Robot()`` stays in sim whatever it says.
         Case-insensitive; surrounding whitespace ignored.
     STRANDS_MESH: Opt a bare ``Robot()`` into the Zenoh mesh. Mesh is OFF
         unless asked for: only "true"/"1"/"yes" turns it ON, and unset or
@@ -87,10 +88,10 @@ def _normalize_mode(mode: Any) -> str:
 
 
 def _auto_detect_mode(canonical: str) -> str:
-    """Auto-detect sim vs real mode.
+    """Auto-detect sim vs real mode; reached only from ``mode="auto"``.
 
     Priority:
-        1. ``STRANDS_ROBOT_MODE`` env var (explicit override)
+        1. ``STRANDS_ROBOT_MODE`` env var
         2. For a robot that declares hardware, its native driver's own
            ``probe_hardware()`` - a robot reached over the network rather than a
            serial bus answers for itself (a Reachy Mini's daemon answers ``GET

@@ -15,7 +15,7 @@ A robot in Strands Robots is an object that owns a body and a control loop, and 
 | `sim` (default) | a `Simulation` engine with the world created and the robot added | MuJoCo by default, `backend="newton"` or `"isaac"` | `<name>_sim` |
 | `real` | the lerobot driver, or the native `HardwareDriver` the registry names (`driver="strands"` insists on it) | a USB port, DDS, a vendor API | `<name>` |
 
-With no `mode`, `STRANDS_ROBOT_MODE` decides, then a hardware probe, then a USB scan, and sim is the fallback, so a laptop with nothing attached always gets a simulator. A hardware keyword on a sim robot (`cameras=`) is refused rather than ignored. A misspelt name is refused with the nearest matches.
+`mode="auto"` asks `STRANDS_ROBOT_MODE`, then a hardware probe, then a USB scan, and falls back to sim; no other mode reads the variable. A hardware keyword on a sim robot (`cameras=`) is refused rather than ignored. A misspelt name is refused with the nearest matches.
 
 ## One engine, many robots
 
