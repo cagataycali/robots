@@ -63,8 +63,23 @@ class TestAnUnknownKeyframeIsRefusedByName:
 
     def test_an_unknown_name_names_the_available_keyframes(self) -> None:
         model = mujoco.MjModel.from_xml_string(_MJCF_WITH_KEYS)
-        with pytest.raises(KeyError, match=r"'hoem' not found\. Available: 'home', 'rest'"):
+        # 'hoem' is a near-miss of 'home' - the refusal names the available
+        # keyframes AND suggests the close match (sibling difflib pattern used
+        # in spec_builder.py, base.py _unknown_robot_msg, factory.py:401 etc).
+        with pytest.raises(KeyError, match=r"'hoem' not found\. Did you mean 'home'\?") as exc:
             mjlab_sim._resolve_key(model, "hoem")
+        # The 'Available:' enumerate still lands so an operator can read the
+        # full set when the close-match guess is not the one they wanted.
+        assert "Available: 'home', 'rest'" in str(exc.value)
+
+    def test_an_unknown_name_with_no_close_match_is_a_bare_enumerate(self) -> None:
+        # A distant typo (no 0.6-cutoff hit) must NOT invent a hint - the
+        # refusal falls back to the bare 'Available:' list, matching the
+        # sibling difflib paths (spec_builder.py:194, factory.py:401).
+        model = mujoco.MjModel.from_xml_string(_MJCF_WITH_KEYS)
+        with pytest.raises(KeyError, match=r"'xyz' not found\. Available: 'home', 'rest'") as exc:
+            mjlab_sim._resolve_key(model, "xyz")
+        assert "Did you mean" not in str(exc.value)
 
     def test_an_index_out_of_range_is_refused(self) -> None:
         model = mujoco.MjModel.from_xml_string(_MJCF_WITH_KEYS)

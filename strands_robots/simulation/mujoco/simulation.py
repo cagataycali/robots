@@ -3025,13 +3025,25 @@ class MuJoCoSimEngine(
             idx = keyframe
         else:
             if keyframe not in names:
+                import difflib
+
                 avail = ", ".join(repr(n) for n in names)
+                close = difflib.get_close_matches(str(keyframe).lower(), [n.lower() for n in names], n=1, cutoff=0.6)
+                hint = ""
+                if close:
+                    # Map the lowercase hit back to its original-cased name.
+                    for n in names:
+                        if n.lower() == close[0]:
+                            hint = f" Did you mean {n!r}?"
+                            break
                 return (
                     None,
                     None,
                     {
                         "status": "error",
-                        "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
+                        "content": [
+                            {"text": f"Keyframe {keyframe!r} not found in '{fname}'.{hint} Available: {avail}."}
+                        ],
                     },
                 )
             idx = names.index(keyframe)

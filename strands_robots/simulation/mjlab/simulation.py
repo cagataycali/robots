@@ -1207,5 +1207,14 @@ def _resolve_key(model: Any, keyframe: str | int | None) -> int | None:
     # The ABC contract: an unknown keyframe is a hard error that names what
     # exists; it never silently falls back to the zero pose (F10 was exactly
     # that failure discovered from a robot toppling).
+    import difflib
+
     avail = ", ".join(repr(n) for n in names) or "none"
-    raise KeyError(f"Keyframe {keyframe!r} not found. Available: {avail}.")
+    close = difflib.get_close_matches(str(keyframe).lower(), [n.lower() for n in names], n=1, cutoff=0.6)
+    hint = ""
+    if close:
+        for n in names:
+            if n.lower() == close[0]:
+                hint = f" Did you mean {n!r}?"
+                break
+    raise KeyError(f"Keyframe {keyframe!r} not found.{hint} Available: {avail}.")
