@@ -85,6 +85,24 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
         raise ImportError("read_dataset_episode_indices requires pyarrow (installed with the lerobot extra).") from e
 
     root_path = Path(root)
+    # The three mistake shapes that reach this reader as "no parquet" are a
+    # typo (dir does not exist, incl. broken symlink), a dir-shaped argument
+    # that is actually a file, and an honestly empty / unfinalized dataset
+    # root. Collapsing the first two onto the "run stop_recording/finalize"
+    # message sends the caller fixing a recorder that was never broken; name
+    # the actual shape so the fix the message prescribes matches the shape it
+    # reports. ``exists()`` on a Path follows symlinks, so a broken link lands
+    # here as "does not exist" - the user-facing shape it has on disk.
+    if not root_path.exists():
+        raise FileNotFoundError(
+            f"Dataset root {root_path} does not exist (typo? broken symlink? "
+            "wrong HF cache prefix?)."
+        )
+    if not root_path.is_dir():
+        raise NotADirectoryError(
+            f"Dataset root {root_path} is not a directory (did you point at a "
+            "file inside the dataset instead of its root?)."
+        )
     parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
     if not parquet_files:
         raise FileNotFoundError(

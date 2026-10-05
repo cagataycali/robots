@@ -207,6 +207,10 @@ def verify_dataset(
     try:
         info = read_dataset_episode_indices(root_path)
     except (ImportError, ValueError, OSError) as e:
+        # OSError covers FileNotFoundError (typo / broken link / empty) and
+        # NotADirectoryError (dir-shaped arg that is a file); ValueError
+        # covers a corrupt parquet. All surface as a report line so the
+        # checker's "always produce a report" contract holds.
         problems.append(f"could not read episode parquet: {e}")
         return report
 
