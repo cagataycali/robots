@@ -6941,7 +6941,15 @@ class MuJoCoSimEngine(
         drivable = False
         for robot_name, robot in world.robots.items():
             joints = list(getattr(robot, "joint_names", ()) or ())
-            shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
+            # Annotate with LeRobot/semantic labels when the registry carries
+            # them (post-harness#520), so the LLM hot-path matches what
+            # get_robot_state already prints ("1 (shoulder_pan)"). Without this
+            # the sentence names so101's joints "1,2,3,4,5,6" and the agent
+            # has no path from the README's "pick up the red cube" to the
+            # gripper joint.
+            labels = self._robot_joint_labels(robot) if joints else {}
+            annotated = [f"{j} ({labels[j]})" if j in labels else j for j in joints]
+            shown = ", ".join(annotated[:8]) + ("..." if len(annotated) > 8 else "")
             entry = f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'"
             if getattr(robot, "actuator_ids", None):
                 drivable = True
