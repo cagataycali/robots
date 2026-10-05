@@ -243,6 +243,78 @@ def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict
     return None
 
 
+def _validate_recording_repo_id(repo_id: Any, root: Any) -> dict[str, Any] | None:
+    """Reject a ``repo_id`` whose resolution would ``rmtree`` an unrelated directory.
+
+    ``start_recording`` forwards ``repo_id`` to
+    :func:`~strands_robots.dataset_source.resolve_dataset_dir` and the result
+    straight into :meth:`DatasetRecordingMixin._prepare_dataset_target`, which
+    - with ``overwrite=True`` - calls ``shutil.rmtree`` on that directory
+    BEFORE any dataset-stack probe, schema check or recorder creation. The
+    writer's resolution rule gives ``Path(".")`` for ``""`` and ``Path("/")``
+    for ``"/"`` (both fall through ``local_dataset_dir``'s no-``/`` branch to
+    ``Path(repo_id)``), so an unset-config-value shape would wipe the
+    caller's CWD.
+
+    This guard is the writer-side bookend of :data:`HUB_ID_OUTSIDE_HOME`: that
+    one catches ``owner/../etc`` on the ``owner/name`` branch; this one
+    catches the shapes that bypass it entirely by not having a ``/`` at all,
+    plus the plain filesystem-root forms. When ``root=`` is supplied, the
+    directory being written to is ``Path(root)`` (verbatim; see
+    :func:`resolve_dataset_dir`), so an id without ``/`` is harmless there.
+    The guard narrows accordingly.
+
+    Args:
+        repo_id: Caller-supplied dataset id.
+        root: Caller-supplied override of the on-disk directory, if any.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming ``repo_id``, or
+        ``None`` when the value is safe to forward to ``resolve_dataset_dir``.
+    """
+    import os.path as _p
+
+    _ERR = "start_recording: repo_id must be a non-empty 'owner/name' id or absolute path"
+    if not isinstance(repo_id, str) or isinstance(repo_id, bool):
+        return {
+            "status": "error",
+            "content": [{"text": f"{_ERR} (got {type(repo_id).__name__})."}],
+        }
+    if not repo_id.strip():
+        return {
+            "status": "error",
+            "content": [{"text": f"{_ERR} (got empty / whitespace-only string {repo_id!r})."}],
+        }
+    # If root= is supplied the writer uses Path(root) verbatim, so the
+    # repo_id's own resolution never reaches shutil.rmtree. Leave the
+    # root-overrides-shape pair to the root-side guards.
+    if root:
+        return None
+    # No ``root``: resolve_dataset_dir will treat a repo_id WITHOUT ``/`` as
+    # a local path and feed it to shutil.rmtree on overwrite=True. Refuse the
+    # three shapes that resolve to a destructive target rather than to a
+    # dataset directory inside $HF_LEROBOT_HOME or an owner/name tree.
+    bare = repo_id.strip()
+    # ``.`` / absolute root / ``~`` all name an ancestor of (or equal to) the
+    # dataset home, so the write is not a dataset write.
+    normed = _p.normpath(bare)
+    if bare.startswith("~") or normed in (".", "..", "/"):
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{_ERR}: {repo_id!r} resolves to {normed!r} and would be the "
+                        "target of shutil.rmtree with overwrite=True. Pass an "
+                        "'owner/name' id, or an absolute path naming the dataset "
+                        "directory (not its parent)."
+                    )
+                }
+            ],
+        }
+    return None
+
+
 def _schema_key_collisions(camera_names: Iterable[str]) -> dict[str, list[str]]:
     """Group the camera names that collapse to one :func:`~strands_robots.utils.camera_schema_key`.
 
@@ -1309,6 +1381,20 @@ class DatasetRecordingMixin:
         if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
             return {"status": "error", "content": [{"text": text}]}
         if error := self._validate_recording_start_rate(fps, "start_recording"):
+            return error
+        # ``repo_id`` is the one path-shaped input that reaches
+        # ``_prepare_dataset_target`` and, with ``overwrite=True``, is the
+        # argument to ``shutil.rmtree`` BEFORE any dataset-stack probe or
+        # schema check. An empty string resolves to ``Path(".")`` via
+        # ``local_dataset_dir`` (no ``/`` → treated as a local path), so a
+        # ``start_recording(repo_id="", overwrite=True)`` -- the shape an
+        # unset config value arrives in -- would ``rmtree`` the caller's CWD.
+        # Reject the destructive shapes up front: non-str, empty / whitespace
+        # only, and the plain path components that resolve to a parent of the
+        # dataset home or the filesystem root. The ``owner/../etc`` family is
+        # still handled by :data:`HUB_ID_OUTSIDE_HOME` (there, this is a Hub
+        # id, not a local path).
+        if error := _validate_recording_repo_id(repo_id, root):
             return error
 
         _DatasetRecorder, refusal = self._dataset_recorder_or_refusal(self._RECORDING_VIDEO_HINT)
