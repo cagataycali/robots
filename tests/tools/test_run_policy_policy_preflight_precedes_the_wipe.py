@@ -191,13 +191,13 @@ class TestThePolicyIsBuiltOnceAndBeforeTheRecording:
         assert all(isinstance(obj, MockPolicy) for obj in objects)
         assert len({id(obj) for obj in objects}) == 1, "the policy was rebuilt per episode"
 
-    def test_the_provider_and_config_are_still_forwarded(self) -> None:
-        """The facade's report names the provider it was asked for, object or not."""
+    def test_the_built_object_replaces_the_provider_pair(self) -> None:
+        """The facade refuses an object beside a provider or config, so only the object goes."""
         sim = _OrderedSim()
         _run_tool(sim, policy_provider="mock", policy_config={}, n_episodes=1, n_steps=4, dataset_root=ROOT)
         call = sim.run_policy_calls[0]
-        assert call["policy_provider"] == "mock"
-        assert call["policy_config"] == {}
+        assert isinstance(call["policy_object"], MockPolicy)
+        assert "policy_provider" not in call and "policy_config" not in call
 
     def test_the_recording_less_path_forwards_no_policy_object(self) -> None:
         """Without a recording nothing is at stake on disk; the forwarded call is unchanged."""

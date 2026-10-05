@@ -3208,7 +3208,9 @@ class SimEngine(ABC):
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
 
     @staticmethod
-    def _validate_policy_object(value: Any, method: str) -> dict[str, Any] | None:
+    def _validate_policy_object(
+        value: Any, method: str, policy_provider: Any = "mock", policy_config: Any = None
+    ) -> dict[str, Any] | None:
         """Reject a ``policy_object`` that is not a :class:`Policy` instance.
 
         The counterpart of :meth:`_validate_policy_mapping` for the third opaque
@@ -3227,9 +3229,18 @@ class SimEngine(ABC):
         applied no action, and ``list_policies_running`` then reported nothing
         running - the same reading a completed rollout gives.
 
+        A pre-built policy beside a non-default ``policy_provider`` or a
+        ``policy_config`` is refused too: the object wins and the other two
+        were dropped without a word, so a provider the provider-only path
+        rejects still ran to ``status="success"``.
+
         Args:
             value: The caller-supplied value, or ``None``.
             method: Public method name, used to prefix the error message.
+            policy_provider: The caller's ``policy_provider``; only its
+                default (``"mock"``) or ``None`` may sit beside ``value``.
+            policy_config: The caller's ``policy_config``; must be ``None``
+                beside ``value``.
 
         Returns:
             A structured ``{"status": "error", ...}`` dict to surface, or
@@ -3238,6 +3249,15 @@ class SimEngine(ABC):
         from strands_robots.policies import policy_object_error
 
         message = policy_object_error(value)
+        if message is None and value is not None:
+            unset = policy_provider is None or (isinstance(policy_provider, str) and policy_provider == "mock")
+            ignored = [] if unset else [f"policy_provider={refusal_repr(policy_provider)}"]
+            ignored += [f"policy_config={refusal_repr(policy_config)}"] if policy_config is not None else []
+            if ignored:
+                message = (
+                    f"policy_object is a pre-built policy, so {' and '.join(ignored)} would be ignored. "
+                    "Pass either policy_object= or policy_provider=/policy_config=, not both."
+                )
         if message is None:
             return None
         return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
@@ -3380,8 +3400,8 @@ class SimEngine(ABC):
                 :meth:`_make_run_policy_hook`.
             policy_object: Already-constructed
                 :class:`~strands_robots.policies.Policy` to drive the rollout,
-                bypassing ``create_policy`` entirely (``policy_provider`` /
-                ``policy_config`` are then unused). Reuse one instance across
+                bypassing ``create_policy`` entirely (passing it beside a
+                ``policy_provider`` / ``policy_config`` is refused). Reuse one instance across
                 calls so the checkpoint is not reloaded per rollout - the
                 ``policy_load_cache_hit`` field below reports when a caller
                 rebuilt it instead. ``None`` (default) builds the policy from
@@ -3789,7 +3809,7 @@ class SimEngine(ABC):
 
         if err := self._validate_video_config(video, "run_policy"):
             return err
-        if err := self._validate_policy_object(policy_object, "run_policy"):
+        if err := self._validate_policy_object(policy_object, "run_policy", policy_provider, policy_config):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "run_policy"):
             return err
@@ -5845,7 +5865,7 @@ class SimEngine(ABC):
             success_check = _success_when_check
         if err := self._validate_video_config(video, "eval_policy"):
             return err
-        if err := self._validate_policy_object(policy_object, "eval_policy"):
+        if err := self._validate_policy_object(policy_object, "eval_policy", policy_provider, policy_config):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "eval_policy"):
             return err
@@ -6197,7 +6217,7 @@ class SimEngine(ABC):
             return err
         if err := self._validate_video_config(video, "evaluate_benchmark"):
             return err
-        if err := self._validate_policy_object(policy_object, "evaluate_benchmark"):
+        if err := self._validate_policy_object(policy_object, "evaluate_benchmark", policy_provider, policy_config):
             return err
         if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
             return err
