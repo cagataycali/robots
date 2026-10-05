@@ -399,6 +399,21 @@ def test_cleanup_ends_a_session_blocked_on_a_quiet_controller(tmp_path: Path, mo
     assert driver.connect_eagerly() is None
     assert driver.get_observation()["joint7"] == pytest.approx(0.7)
     session = driver._session
+    # Stream setpoints past the pipe's capacity: the quiet session drains none of
+    # them, and the write must refuse rather than block the caller (and cleanup).
+    refusals: list[str] = []
+
+    def stream() -> None:
+        for _ in range(4000):
+            if (reason := driver._write([0.0] * 7)) is not None:
+                refusals.append(reason)
+                return
+
+    writer = threading.Thread(target=stream, daemon=True)
+    writer.start()
+    writer.join(10.0)
+    assert not writer.is_alive(), "a setpoint write blocked on a session that stopped draining"
+    assert refusals and "went quiet" in refusals[0], refusals
     started = time.monotonic()
     driver.cleanup()
     assert time.monotonic() - started < 5.0

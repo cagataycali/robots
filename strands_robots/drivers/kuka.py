@@ -150,6 +150,10 @@ def _launch(host: str | None, fri_port: int) -> tuple[Any, int, int]:
     finally:
         os.close(inbox)
         os.close(outbox)
+    # The session drains this pipe only between FRI steps, so a quiet controller
+    # stops the draining; a blocking write would then wedge every halt verb. A
+    # target frame is under PIPE_BUF, so a non-blocking write is still atomic.
+    os.set_blocking(to_child, False)
     return process, to_child, from_child
 
 
@@ -402,6 +406,8 @@ class KukaDriver:
         frame = kuka_session.TARGET.pack(*(target or [0.0] * _N), float(target is not None), float(stop))
         try:
             os.write(fd, frame)
+        except BlockingIOError:
+            return "the FRI session has stopped draining setpoints; the controller went quiet (check the FRI link)"
         except OSError as exc:
             return f"the FRI session process is gone: {exc}"
         return None
