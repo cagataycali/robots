@@ -120,6 +120,23 @@ def test_approximate_robot_count_claims_match_the_current_decade() -> None:
     )
 
 
+def test_the_readme_names_the_categories_it_counts() -> None:
+    """The README's category list is the catalog's family labels, one per registry category.
+
+    It once said "8 categories" and listed six, two of them ("quadrupeds",
+    "drones") not categories at all, while "mobile manipulators" and
+    "expressive" went unnamed. The labels are the ones the catalog's filter
+    chips and family pages use, so a reader who clicks through finds each name.
+    """
+    families = docs_hook("robot_pages").FAMILIES
+    line = next(line for line in README.read_text(encoding="utf-8").splitlines() if " categories** - " in line)
+    named = [name.strip() for name in line.split(" categories** - ", 1)[1].split(" - ", 1)[0].split(",")]
+    expected = {families[category][0].lower() for category in _category_counts()}
+    assert sorted(named) == sorted(expected), (
+        f"README.md names {named}; the registry's categories are labelled {sorted(expected)} on the catalog"
+    )
+
+
 def test_the_numbers_hook_counts_what_the_registry_holds() -> None:
     """Every count a ``{{n:...}}`` token can render agrees with ``robots.json``."""
     counts = _category_counts()
