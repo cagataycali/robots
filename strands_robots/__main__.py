@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 _COMMANDS = ("doctor", "verify-dataset", "dashboard", "iot")
+
+
+def _invocation_name() -> str:
+    """Name this process was invoked as, for a usage line that matches what the user typed.
+
+    The console script ``strands-robots`` and ``python -m strands_robots`` reach the same
+    dispatcher, so hard-coding one name recommends the wrong invocation to a user running
+    the other. Fall back to ``strands-robots`` (the documented entry) when ``argv[0]`` has
+    been emptied (``python -c``, a frozen entry point) rather than guessing ``python -m``.
+    """
+    base = os.path.basename(sys.argv[0] or "")
+    if base in ("", "__main__.py", "python", "python3") or base.startswith("python"):
+        return "python -m strands_robots"
+    return base
 
 
 def main() -> None:
@@ -15,7 +30,12 @@ def main() -> None:
     on a missing or unknown command.
     """
     if len(sys.argv) < 2:
-        print("Usage: python -m strands_robots <command>")
+        # Name the invocation the user actually typed; the console-script and
+        # the ``python -m`` entry reach the same dispatcher, so hard-coding one
+        # name here recommended the wrong one to half the users (harness#475
+        # fixed the sibling ``-h/--help/-V/--version`` branches below; the
+        # no-args branch was missed).
+        print(f"Usage: {_invocation_name()} <command>")
         print(f"Commands: {', '.join(_COMMANDS)}")
         sys.exit(1)
 

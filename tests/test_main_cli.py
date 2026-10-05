@@ -18,8 +18,28 @@ class TestMainDispatch:
     """main() - command routing and argv normalisation."""
 
     def test_no_command_prints_usage_and_exits_1(self, monkeypatch, capsys) -> None:
-        """Bare ``python -m strands_robots`` should print usage and exit 1."""
-        monkeypatch.setattr("sys.argv", ["strands_robots"])
+        """Bare ``python -m strands_robots`` should print usage and exit 1.
+
+        The usage line names the invocation the user typed (``argv[0]``), so the
+        console script ``strands-robots`` and the module entry each recommend
+        their own name - hard-coding one here mis-pointed the other half of users.
+        """
+        # Console-script path: argv[0] is the trampoline, usage must say so.
+        monkeypatch.setattr("sys.argv", ["strands-robots"])
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "Usage: strands-robots <command>" in out
+        assert "doctor" in out
+
+    def test_no_command_from_module_entry_recommends_python_m(self, monkeypatch, capsys) -> None:
+        """``python -m strands_robots`` (bare) recommends the module invocation."""
+        # ``python -m`` sets argv[0] to the __main__.py path; the dispatcher
+        # must recognise that shape and fall back to ``python -m strands_robots``.
+        monkeypatch.setattr("sys.argv", ["/usr/lib/python3.12/strands_robots/__main__.py"])
 
         with pytest.raises(SystemExit) as exc:
             main()
