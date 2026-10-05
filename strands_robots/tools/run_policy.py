@@ -502,12 +502,13 @@ def run_policy(
     # episode (``policy_object=``), which also pays a checkpoint load once per
     # call instead of once per episode. Without a recording nothing is at
     # stake on disk and the facade keeps reporting per episode as before.
-    forwarded_policy: dict[str, Any] = {}
+    # The built policy REPLACES the provider pair: the facade refuses both at once.
+    forwarded_policy: dict[str, Any] = {"policy_provider": policy_provider, "policy_config": policy_config}
     if dataset_root is not None:
         built = _build_policy_before_recording(simulation, robot_name, policy_provider, policy_config, dataset_root)
         if isinstance(built, dict):
             return built
-        forwarded_policy["policy_object"] = built
+        forwarded_policy = {"policy_object": built}
 
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
@@ -570,8 +571,6 @@ def run_policy(
                     requested_video_paths.append(ep_video_path)
                 rollout = simulation.run_policy(
                     robot_name=robot_name,
-                    policy_provider=policy_provider,
-                    policy_config=policy_config,
                     instruction=instruction,
                     control_frequency=control_frequency,
                     action_horizon=action_horizon,

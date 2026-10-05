@@ -21,6 +21,8 @@ the compiled model (real behaviour), not internal bookkeeping.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytest.importorskip("mujoco")
@@ -121,10 +123,20 @@ def test_missing_texture_file_fails_loudly(tmp_path):
         _compile(obj)
 
 
-def test_unknown_builtin_fails_loudly():
-    """An unknown builtin name must raise, not silently fall back."""
-    obj = SimObject(name="x", shape="box", material={"builtin": "marble"})
-    with pytest.raises(ValueError, match="unknown builtin"):
+@pytest.mark.parametrize(
+    "builtin, hint",
+    [
+        ("chekker", " Did you mean 'checker'?"),
+        ("gradients", " Did you mean 'gradient'?"),
+        ("flatt", " Did you mean 'flat'?"),
+        ("marble", ""),
+    ],
+)
+def test_unknown_builtin_fails_loudly_and_suggests_a_close_name(builtin, hint):
+    """An unknown builtin raises; a near-miss names the match, a novel name gets none."""
+    obj = SimObject(name="x", shape="box", material={"builtin": builtin})
+    expected = f"unknown builtin '{builtin}'.{hint} Supported: checker, flat, gradient."
+    with pytest.raises(ValueError, match=re.escape(expected)):
         _compile(obj)
 
 

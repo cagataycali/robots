@@ -1,12 +1,12 @@
-"""Native CycloneDDS driver for the Unitree robots gated by the motion-switcher release: Go2, H1 and H1-2.
+"""Native CycloneDDS driver for the Unitree robots gated by the motion-switcher release: Go2, B2, H1 and H1-2.
 
 ``Robot("go2", mode="real", driver="strands", port=<ip>, network_interface="eth0")``
-builds one of these, and so do ``Robot("h1", mode="real", ...)`` and
-``Robot("h1_2", mode="real", ...)``. The three robots share one low-level
+builds one of these, and so do ``Robot("b2", ...)``, ``Robot("h1", ...)`` and
+``Robot("h1_2", ...)`` with ``mode="real"``. The four robots share one low-level
 contract - release the onboard motion mode, then stream CRC-sealed ``LowCmd_``
 frames on ``rt/lowcmd`` - and differ in which joint sits in which
 ``motor_cmd`` slot, how each slot is driven, and which IDL package the frame is
-(the Go2 and H1 speak ``unitree_go``; the H1-2 speaks the G1's ``unitree_hg``,
+(the Go2, B2 and H1 speak ``unitree_go``; the H1-2 speaks the G1's ``unitree_hg``,
 whose frame echoes ``mode_machine``). That difference is one
 :class:`WireProfile` per robot (:data:`WIRE_PROFILES`); everything below reads
 the profile and nothing else is per-robot. The instance satisfies
@@ -123,7 +123,7 @@ logger = logging.getLogger(__name__)
 #: :data:`strands_robots.drivers._SHIPPED_DRIVERS`. The ``go2``, ``h1`` and
 #: ``h1_2`` aliases resolve through :func:`~strands_robots.registry.resolve_name`, so only
 #: the canonical names are listed. Each has a :data:`WIRE_PROFILES` entry.
-SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2", "unitree_h1", "unitree_h1_2")
+SUPPORTED_ROBOTS: tuple[str, ...] = ("unitree_go2", "unitree_h1", "unitree_h1_2", "b2")
 
 #: Percentage below which the write gate refuses. Same floor as the G1 driver:
 #: a quadruped that browns out mid-step falls onto its own hardware.
@@ -371,6 +371,16 @@ WIRE_PROFILES: dict[str, WireProfile] = {
         kd=dict.fromkeys(H1_2_JOINT_INDEX.values(), 1.0),
         onboard_mode="the H1-2's onboard motion mode",
         idl="unitree_hg",
+    ),
+    # The SDK's example/b2/low_level/b2_stand_example.py: the Go2's LegID slots,
+    # header, mode 0x01 and release loop, at kp = 1000, kd = 10 for a heavier robot.
+    "b2": WireProfile(
+        model="b2",
+        joint_index=GO2_JOINT_INDEX,
+        mode=dict.fromkeys(GO2_JOINT_INDEX.values(), _MOTOR_MODE_SERVO),
+        kp=dict.fromkeys(GO2_JOINT_INDEX.values(), 1000.0),
+        kd=dict.fromkeys(GO2_JOINT_INDEX.values(), 10.0),
+        onboard_mode="the B2's sport mode",
     ),
 }
 _GO2 = WIRE_PROFILES["unitree_go2"]

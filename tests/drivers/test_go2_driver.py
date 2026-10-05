@@ -522,6 +522,7 @@ def test_an_idl_whose_slot_count_disagrees_is_named_not_indexed(monkeypatch: pyt
         ("unitree_go2", "FL_hip_joint", "sport mode"),
         # The H1 has no sport mode; its motion-switcher mode is the same gate under its own name.
         ("unitree_h1", "left_hip_yaw", "the H1's onboard motion mode"),
+        ("b2", "FL_hip_joint", "the B2's sport mode"),
     ],
 )
 def test_an_unreleased_onboard_mode_refuses_every_write_path(
@@ -1310,3 +1311,40 @@ def test_an_h1_2_write_waits_for_mode_machine_and_lowstate_supplies_it(stub_unit
     driver._battery = {"pct": 80.0}
     assert driver.send_action({"torso_joint": 0.0})["status"] == "success"
     assert pub.writes[-1][2].mode_machine == 6
+
+
+# --------------------------------------------------------------------------- #
+# The B2: the Go2's wire and slot map at the B2's own gains.                  #
+# --------------------------------------------------------------------------- #
+
+#: ``targetPos_1`` of the SDK's ``example/b2/low_level/b2_stand_example.py``,
+#: indexed by wire slot (``LegID``: FR, FL, RR, RL) as the example writes it.
+_B2_SDK_STAND_BY_SLOT: tuple[float, ...] = (
+    0.0, 1.36, -2.65, 0.0, 1.36, -2.65, -0.2, 1.36, -2.65, 0.2, 1.36, -2.65,
+)  # fmt: skip
+
+
+def test_the_b2_drives_the_sdks_stand_frame_by_joint_name(stub_unitree_sdk: None) -> None:
+    """``Robot("b2", mode="real")`` is this driver, and the SDK's stand pose lands slot for slot.
+
+    The B2 shares the Go2's ``unitree_go`` frame and ``LegID`` slots, so the
+    pose is sent by the description's joint names and must reproduce the SDK
+    example's slot array, rear hips (-0.2 on RR, +0.2 on RL) included, with the
+    example's mode ``0x01`` and ``kp = 1000, kd = 10`` on every leg motor.
+    """
+    del stub_unitree_sdk
+    assert get_native_driver_class("b2") is Go2Driver
+    assert list_driver_coverage()["b2"] == ("strands",)
+    driver, pub = Go2Driver(tool_name="b2", port="192.168.123.161"), _RecordingPublisher()
+    assert driver._profile is WIRE_PROFILES["b2"]
+    driver._connected, driver._sport_mode_released = True, True
+    driver._battery = {"pct": 88.0, "current": 1.0, "cycle": 3}
+    driver._pubs = pub  # type: ignore[assignment]
+    targets = {name: _B2_SDK_STAND_BY_SLOT[slot] for name, slot in GO2_JOINT_INDEX.items()}
+    result = driver.send_action(targets)
+    assert result["status"] == "success", _text(result)
+    ((_topic, _cls, cmd),) = pub.writes
+    assert (tuple(cmd.head), cmd.level_flag) == (_LOWCMD_HEAD, _LEVEL_FLAG_LOW)
+    by_slot = [(m.mode, m.q, m.kp, m.kd) for m in cmd.motor_cmd[:12]]
+    assert by_slot == pytest.approx([(0x01, q, 1000.0, 10.0) for q in _B2_SDK_STAND_BY_SLOT])
+    assert all(m.mode == 0 for m in cmd.motor_cmd[12:]), "slots 12-19 are not B2 leg motors"

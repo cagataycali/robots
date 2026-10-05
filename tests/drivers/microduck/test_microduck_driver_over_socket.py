@@ -130,13 +130,26 @@ def test_send_skill_emits_a_robot_do_request_and_consumes_the_reply() -> None:
             driver.cleanup()
 
 
-def test_an_unknown_skill_is_refused_at_the_door() -> None:
+#: ``(skill sent, what the refusal must point at)``. The policies page names
+#: its ONNX actors "skills" too, so a near-miss gets the robot.do name and a
+#: name with none gets the surface those actors run on.
+UNKNOWN_SKILLS = [
+    ("ball_kick_left", "'kick_left'?"),
+    ("alpha_ground_pick", "'ground_pick'?"),
+    ("alpha_walking", 'create_policy("microduck"'),
+    ("backflip", 'create_policy("microduck"'),
+]
+
+
+@pytest.mark.parametrize("skill, hint", UNKNOWN_SKILLS, ids=[s for s, _ in UNKNOWN_SKILLS])
+def test_an_unknown_skill_is_refused_at_the_door(skill: str, hint: str) -> None:
     with MockRobotd() as server:
         driver = _connected_driver(server)
         try:
-            result = driver.send_action({"skill": "backflip"})
+            result = driver.send_action({"skill": skill})
             assert result["status"] == "error"
-            assert "unknown skill" in result["content"][0]["text"]
+            text = result["content"][0]["text"]
+            assert "unknown skill" in text and hint in text, text
             assert not [r for r in server.received if b"robot.do" in r]
         finally:
             driver.cleanup()

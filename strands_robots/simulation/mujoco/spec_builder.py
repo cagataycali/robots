@@ -764,9 +764,12 @@ class SpecBuilder:
             }
             key = str(builtin).lower()
             if key not in builtin_map:
+                known = sorted(builtin_map)
+                close = difflib.get_close_matches(key, known, n=1, cutoff=0.6)
+                hint = f" Did you mean {close[0]!r}?" if close else ""
                 raise ValueError(
                     f"add_object material for {obj.name!r}: unknown builtin "
-                    f"{builtin!r}; supported: {', '.join(sorted(builtin_map))}."
+                    f"{builtin!r}.{hint} Supported: {', '.join(known)}."
                 )
             builtin_enum = builtin_map[key]
 
