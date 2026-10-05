@@ -13,17 +13,35 @@ bypass -> refuse path on the receiving side (``STRANDS_ROBOT_COMMAND_ALLOW``
 names the verbs an operator pre-approves on the robot host, a dashboard grant for
 the exact call is spent), and with none of those it refuses with a reason that
 says how to approve. Simulation peers are never gated: they move no metal.
+
+Every hardware dispatch here carries a wire source bound to the sender's
+announced session, because the gate attributes a command before it spends an
+approval on it; the unattributed shapes have their own module.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from strands_robots import _motion_grants
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, WireSource
+
+LEADER_ZID = "a1b2c3d4e5f60718"
+#: A source the gate attributes: the sender below announced itself from LEADER_ZID.
+FROM_LEADER = WireSource(sender_id="leader-1", wire_zid=LEADER_ZID, leg="lan")
+
+
+def _presence(peer: str, zid: str) -> Any:
+    payload = {"robot_id": peer, "robot_type": "operator", "timestamp": time.time()}
+    body = SimpleNamespace(to_bytes=lambda: json.dumps(payload).encode())
+    source_info = SimpleNamespace(source_id=SimpleNamespace(zid=type("Zid", (), {"__str__": lambda self: zid})()))
+    return SimpleNamespace(payload=body, source_info=source_info, key_expr="strands/presence")
 
 
 class _HardwareArm:
@@ -80,7 +98,9 @@ def arm() -> _HardwareArm:
 
 @pytest.fixture
 def mesh(arm: _HardwareArm) -> Mesh:
-    return Mesh(arm, peer_id="so101-1", peer_type="robot")
+    m = Mesh(arm, peer_id="so101-1", peer_type="robot")
+    m._on_presence(_presence("leader-1", LEADER_ZID))
+    return m
 
 
 @pytest.fixture
@@ -95,7 +115,7 @@ class TestHardwareRefusesUnapprovedMotion:
     def test_policy_rollout_over_the_wire_is_refused_with_a_remedy(
         self, mesh: Mesh, arm: _HardwareArm, audits: list, action: str
     ) -> None:
-        out = mesh._dispatch({"action": action, "instruction": "wave", "policy_provider": "mock"})
+        out = mesh._dispatch({"action": action, "instruction": "wave", "policy_provider": "mock"}, source=FROM_LEADER)
 
         assert "error" in out, out
         assert "operator approval" in out["error"]
@@ -108,7 +128,10 @@ class TestHardwareRefusesUnapprovedMotion:
         self, mesh: Mesh, arm: _HardwareArm, audits: list, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.WARNING):
-            out = mesh._dispatch({"action": "teleop_receive", "source_peer_id": "evil-leader", "device_name": "leader"})
+            out = mesh._dispatch(
+                {"action": "teleop_receive", "source_peer_id": "evil-leader", "device_name": "leader"},
+                source=FROM_LEADER,
+            )
 
         assert "error" in out, out
         assert "operator approval" in out["error"]
@@ -128,7 +151,9 @@ class TestOperatorApprovalIsHonoured:
     ) -> None:
         monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
 
-        out = mesh._dispatch({"action": "execute", "instruction": "wave", "policy_provider": "mock"})
+        out = mesh._dispatch(
+            {"action": "execute", "instruction": "wave", "policy_provider": "mock"}, source=FROM_LEADER
+        )
 
         assert out["status"] == "success"
         assert len(arm.executed) == 1
@@ -138,7 +163,7 @@ class TestOperatorApprovalIsHonoured:
     ) -> None:
         monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
 
-        out = mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"})
+        out = mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"}, source=FROM_LEADER)
 
         assert "error" in out
         assert arm.following == []
@@ -148,21 +173,24 @@ class TestOperatorApprovalIsHonoured:
     ) -> None:
         monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*")
 
-        assert mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"})["status"] == "success"
+        assert (
+            mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-1"}, source=FROM_LEADER)["status"]
+            == "success"
+        )
         assert arm.following == [("leader-1", "leader")]
 
     def test_a_dashboard_grant_for_the_exact_call_is_spent_once(self, mesh: Mesh, arm: _HardwareArm) -> None:
         call = {"action": "teleop_receive", "source_peer_id": "leader-1", "device_name": "leader"}
         _motion_grants.deposit_grant("so101", call)
 
-        assert mesh._dispatch(dict(call))["status"] == "success"
-        assert "error" in mesh._dispatch(dict(call))
+        assert mesh._dispatch(dict(call), source=FROM_LEADER)["status"] == "success"
+        assert "error" in mesh._dispatch(dict(call), source=FROM_LEADER)
         assert arm.following == [("leader-1", "leader")]
 
     def test_a_grant_for_one_leader_is_not_spendable_by_another(self, mesh: Mesh, arm: _HardwareArm) -> None:
         _motion_grants.deposit_grant("so101", {"action": "teleop_receive", "source_peer_id": "leader-1"})
 
-        out = mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-2"})
+        out = mesh._dispatch({"action": "teleop_receive", "source_peer_id": "leader-2"}, source=FROM_LEADER)
 
         assert "error" in out
         assert arm.following == []
@@ -173,7 +201,9 @@ class TestOperatorApprovalIsHonoured:
         monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
 
         with caplog.at_level(logging.WARNING):
-            out = mesh._dispatch({"action": "start", "instruction": "wave", "policy_provider": "mock"})
+            out = mesh._dispatch(
+                {"action": "start", "instruction": "wave", "policy_provider": "mock"}, source=FROM_LEADER
+            )
 
         assert out["status"] == "success"
         assert any("BYPASS_TOOL_CONSENT" in rec.message for rec in caplog.records)

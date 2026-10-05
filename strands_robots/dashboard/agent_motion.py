@@ -14,17 +14,24 @@ import os
 from collections.abc import Mapping
 from typing import Any
 
+from strands_robots._command_gate import PHYSICAL_MOTION_ACTIONS
 from strands_robots.utils import boolean_flag_error
 
-__all__ = ["MOTION_ENV", "GATED_ACTIONS", "agent_motion_allowed", "peer_is_physical"]
+__all__ = ["MOTION_ENV", "GATED_ACTIONS", "WIRE_SPELLING", "agent_motion_allowed", "peer_is_physical"]
 
 #: The grant. Set on the dashboard's process (or via the consent screen) to let the agent start
 #: physical tasks by itself.
 MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 
+#: The dashboard's spelling of a wire verb where the two differ: a dashboard ``task`` is a wire
+#: ``execute`` (or ``start``). Every other gated action is spelled the same on both surfaces.
+WIRE_SPELLING: dict[str, str] = {"task": "execute"}
+
 #: Actions that can put a real robot in motion. Everything else -- including every way of STOPPING
-#: one -- is deliberately outside this set.
-GATED_ACTIONS: frozenset[str] = frozenset({"task", "teleop_receive", "reset"})
+#: one -- is deliberately outside this set. Derived from the one shared definition
+#: (:data:`~strands_robots._command_gate.PHYSICAL_MOTION_ACTIONS`) so this surface and the mesh
+#: receiving side cannot disagree on what needs a yes: both rollout verbs collapse into ``task``.
+GATED_ACTIONS: frozenset[str] = frozenset({"task"}) | (PHYSICAL_MOTION_ACTIONS - {"execute", "start"})
 
 #: How each gated action reads in a refusal: pointing a follower at a live leader stream is
 #: immediate motion (the follower snaps to the leader's pose the moment the command lands),
@@ -34,6 +41,7 @@ _ACTION_PHRASE: dict[str, str] = {
     "teleop_receive": "pointing the follower {shown} at a live leader stream",
     # A reset drives every joint back to the home pose at once: motion, gated like a task.
     "reset": "returning {shown} to its home pose",
+    "step": "stepping {shown}",
 }
 
 _TRUE = ("1", "true", "yes", "on")

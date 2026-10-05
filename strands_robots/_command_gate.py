@@ -94,6 +94,19 @@ COMMAND_BLOCKLIST = frozenset(
 COMMAND_ALLOW_ENV = "STRANDS_ROS2_COMMAND_ALLOW"
 BYPASS_CONSENT_ENV = "BYPASS_TOOL_CONSENT"
 
+#: The command verbs that put a REAL robot in motion, in their wire spelling:
+#: a policy rollout (``execute`` / ``start``), following a remote leader's
+#: input stream (``teleop_receive``), driving every joint to the home pose at
+#: once (``reset``) and advancing the robot by a number of steps (``step``).
+#: One definition, read by both surfaces that gate them: the mesh receiving
+#: side (``strands_robots.mesh.core.WIRE_MOTION_ACTIONS``) and the dashboard
+#: (``strands_robots.dashboard.agent_motion.GATED_ACTIONS``, which spells a
+#: rollout ``task``). The two used to keep separate sets and disagreed on
+#: ``reset``: the dashboard asked before one, the wire ran it. Every way of
+#: STOPPING a robot is deliberately outside this set; stopping must not get
+#: harder.
+PHYSICAL_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_receive", "reset", "step"})
+
 _APPROVE_RESPONSES = frozenset({"y", "yes", "approve", "approved"})
 
 
