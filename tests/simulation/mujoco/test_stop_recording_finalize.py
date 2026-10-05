@@ -55,6 +55,7 @@ class _FakeRecorder(RecorderStandIn):
         self._push_result = push_result
         self.sync_args: tuple | None = None
         self.push_tags = None
+        self.push_private = None
         # stop_recording's #708 parquet-truth gate reads
         # ``recorder.dataset.meta.total_episodes`` as the ground truth; the
         # other tests keep the no-dataset (gate-skipped) path.
@@ -66,9 +67,10 @@ class _FakeRecorder(RecorderStandIn):
         self.sync_args = (bucket, run_id)
         return self._sync_result
 
-    def push_to_hub(self, tags=None):
+    def push_to_hub(self, tags=None, private=None):
         self.calls.append("push_to_hub")
         self.push_tags = tags
+        self.push_private = private
         return self._push_result
 
 
@@ -132,14 +134,22 @@ class TestStopRecordingFinalize:
         assert result["status"] == "success"
         assert "Bucket sync FAILED: bucket unreachable" in result["content"][0]["text"]
 
-    def test_push_to_hub_per_call_publishes_with_tags(self, recording_sim):
+    @pytest.mark.parametrize(("kwargs", "private"), [({}, True), ({"private": False}, False)])
+    def test_push_to_hub_publishes_private_unless_asked_otherwise(self, recording_sim, kwargs, private):
         rec = _FakeRecorder(push_result={"status": "success"})
         _arm(recording_sim, rec)
-        result = recording_sim.stop_recording(push_to_hub=True)
+        result = recording_sim.stop_recording(push_to_hub=True, **kwargs)
         assert result["status"] == "success"
-        assert "push_to_hub" in rec.calls
-        assert rec.push_tags == ["strands-robots", "sim"]
+        assert (rec.push_tags, rec.push_private) == (["strands-robots", "sim"], private)
         assert "Pushed to HuggingFace Hub" in result["content"][0]["text"]
+
+    def test_a_non_boolean_private_is_refused_before_anything_is_finalized(self, recording_sim):
+        rec = _FakeRecorder(push_result={"status": "success"})
+        _arm(recording_sim, rec)
+        result = recording_sim.stop_recording(push_to_hub=True, private="false")
+        assert result["status"] == "error"
+        assert "private" in result["content"][0]["text"]
+        assert rec.calls == []
 
     def test_push_to_hub_inherited_from_start_recording(self, recording_sim):
         rec = _FakeRecorder(push_result={"status": "success"})

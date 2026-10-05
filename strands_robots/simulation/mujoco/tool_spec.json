@@ -331,6 +331,10 @@
       "type": "boolean",
       "description": "Auto-push dataset to HuggingFace Hub on stop_recording"
     },
+    "private": {
+      "type": "boolean",
+      "description": "stop_recording: visibility of the Hub repo push_to_hub creates. Default True (private); False publishes it world-readable."
+    },
     "vcodec": {
       "type": "string",
       "description": "Video codec for dataset recording (h264, hevc, libsvtav1)"

@@ -1757,13 +1757,15 @@ class DatasetRecorder(Recorder):
     def push_to_hub(
         self,
         tags: list[str] | None = None,
-        private: bool = False,
+        private: bool = True,
     ) -> dict[str, Any]:
         """Push dataset to HuggingFace Hub.
 
         Args:
             tags: Optional tags for the dataset
-            private: Upload as private dataset. Must be a boolean.
+            private: Upload as private dataset (the default, matching
+                :meth:`sync_to_bucket`); ``False`` publishes it world-readable.
+                Must be a boolean.
 
         Refuses to publish an empty dataset (no frames written or no episode
         saved). Pushing then would create a Hub repo containing only
@@ -1787,7 +1789,7 @@ class DatasetRecorder(Recorder):
         empty. It is otherwise forwarded verbatim to LeRobot, whose own
         parameter is ``bool | None`` where ``None`` means *use the namespace
         default* - a third visibility this signature's ``bool`` does not
-        describe, and one a caller reading ``private: bool = False`` would not
+        describe, and one a caller reading ``private: bool = True`` would not
         expect to select.
         """
         if flag_error := boolean_flag_error(private, "private", "push_to_hub"):

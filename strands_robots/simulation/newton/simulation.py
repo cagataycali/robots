@@ -2890,7 +2890,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "run_policy to get N episodes instead of one merged episode. Prefer "
                     "run_policy(n_episodes=N) which flushes a boundary per episode)"
                 ),
-                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None) -> dict",
+                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None, private=True) -> dict",
                 "get_recording_status": "() -> dict",
                 "verify_dataset_episodes": (
                     "(expected: int) -> dict  (after stop_recording, read the parquet and "

@@ -4154,7 +4154,7 @@ class MuJoCoSimEngine(
             "the common case prefer run_policy(n_episodes=N) which flushes a "
             "boundary per episode automatically)"
         )
-        base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
+        base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None, private=True) -> dict"
         base["methods"]["get_recording_status"] = "() -> dict"
         base["methods"]["verify_dataset_episodes"] = (
             "(expected: int) -> dict  (after stop_recording, read the parquet "
