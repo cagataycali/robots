@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import difflib
 import json
 import os
 import stat
@@ -83,6 +84,23 @@ from pathlib import Path
 from typing import Any
 
 from strands_robots.utils import boolean_flag_error, non_negative_whole_number_error
+
+
+def _didyoumean_suffix(bad: Any, options: tuple[str, ...]) -> str:
+    """Return a `` Did you mean 'X'?`` suffix for a bad vocabulary pick, or ''.
+
+    Mirrors the cutoff=0.6 / n=1 convention used across the codebase
+    (``robot.py:211``, ``factory.py:398,649``, ``hardware_robot.py:253``,
+    ``simulation/base.py:205``, ``simulation/predicates.py:2312``,
+    ``training/factory.py:167``). Returns '' when ``bad`` is not a string, or
+    when nothing clears the cutoff - which keeps the historical message
+    byte-exact for callers that pass obvious non-matches (e.g. ``'excellent'``
+    against ``QUALITY_GRADES``), so the suffix is additive, not disruptive.
+    """
+    if not isinstance(bad, str):
+        return ""
+    match = difflib.get_close_matches(bad, options, n=1, cutoff=0.6)
+    return f" Did you mean {match[0]!r}?" if match else ""
 
 # Bump when the sidecar layout changes shape. Read paths refuse a version
 # they do not know rather than guessing at its meaning.
@@ -543,10 +561,14 @@ def annotate_episode(
         raise ValueError(msg)
     episode = int(episode)
     if quality not in QUALITY_GRADES:
-        raise ValueError(f"annotate_episode: quality must be one of {QUALITY_GRADES}, got {quality!r}.")
+        raise ValueError(
+            f"annotate_episode: quality must be one of {QUALITY_GRADES}, got {quality!r}."
+            + _didyoumean_suffix(quality, QUALITY_GRADES)
+        )
     if failure_mode is not None and failure_mode not in FAILURE_MODES:
         raise ValueError(
             f"annotate_episode: failure_mode must be None or one of {FAILURE_MODES}, got {failure_mode!r}."
+            + _didyoumean_suffix(failure_mode, FAILURE_MODES)
         )
     if not isinstance(note, str):
         raise ValueError(f"annotate_episode: note must be a string, got {type(note).__name__}.")
@@ -621,7 +643,10 @@ def filter_episodes(
         if msg := boolean_flag_error(value, flag, "filter_episodes"):
             raise ValueError(msg)
     if min_quality not in QUALITY_GRADES:
-        raise ValueError(f"filter_episodes: min_quality must be one of {QUALITY_GRADES}, got {min_quality!r}.")
+        raise ValueError(
+            f"filter_episodes: min_quality must be one of {QUALITY_GRADES}, got {min_quality!r}."
+            + _didyoumean_suffix(min_quality, QUALITY_GRADES)
+        )
 
     minimum_rank = QUALITY_GRADES.index(min_quality)
     document = read_labels(root)
@@ -732,6 +757,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
                 f"measure_agreement: human_labels[{index}]['failure_mode'] must be None or one of "
                 f"{FAILURE_MODES}, got {human_mode!r}. A tag outside the vocabulary never equals the "
                 "judge's, so counting it as a disagreement would understate the calibration."
+                + _didyoumean_suffix(human_mode, FAILURE_MODES)
             )
         record = document["episodes"].get(str(int(index)), {})
         judge = record.get("judge")
