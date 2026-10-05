@@ -2129,10 +2129,86 @@ function interpretReset(res) {
   if (typeof sentence === "string" && sentence.trim()) return { ok: false, text: `reset refused: ${sentence.trim()}` };
   return { ok: false, text: "reset: the robot did not confirm", ambiguous: true };
 }
+function record(x) {
+  return x && typeof x === "object" && !Array.isArray(x) ? x : null;
+}
+function missingExtra(body) {
+  const top = record(body);
+  if (!top) return null;
+  const candidates = [top, record(top.error), record(top.detail)];
+  for (const c of candidates) {
+    if (!c) continue;
+    const extra = c.missing_extra;
+    if (typeof extra === "string" && extra.trim()) {
+      return {
+        extra: extra.trim(),
+        remedy: typeof c.remedy === "string" && c.remedy.trim() ? c.remedy.trim() : null,
+        driver: typeof c.driver === "string" && c.driver.trim() ? c.driver.trim() : null
+      };
+    }
+  }
+  return null;
+}
+function installLabel(extra) {
+  return `install strands-robots[${extra}]`;
+}
+function installSentence(run, busy) {
+  if (!run) return busy ? "starting the install…" : "";
+  if (run.status === "running") return `installing [${run.extra}]… ${run.lines.length} lines so far`;
+  if (run.status === "done") return `installed [${run.extra}] — spawn again`;
+  return `install of [${run.extra}] failed (exit ${run.exit_code ?? "?"}) — read the log below`;
+}
+function installTail(run, n = 8) {
+  if (!run) return [];
+  return run.lines.slice(Math.max(0, run.lines.length - n));
+}
+function extraRowSentence(row) {
+  if (row.installed) return "installed";
+  const shown = row.missing.slice(0, 4).join(", ");
+  const more = row.missing.length > 4 ? ` and ${row.missing.length - 4} more` : "";
+  return `missing ${shown}${more}`;
+}
+function twinButtonCopy(o) {
+  const twinId = `${o.peerId}-twin`;
+  if (o.busy) {
+    return {
+      label: "…",
+      cls: o.twinLive ? "on" : "",
+      pressed: !!o.twinLive,
+      title: `waiting for ${twinId} — a sim peer takes a moment to start or stop`,
+      aria: `sim twin of ${o.peerId}: working`
+    };
+  }
+  if (o.twinLive) {
+    return {
+      label: "twin on",
+      cls: "on",
+      pressed: true,
+      title: `${twinId} is running: tasks sent to this robot are mirrored to it. Click to stop the twin — the real arm is not affected either way.`,
+      aria: `stop the sim twin of ${o.peerId}`
+    };
+  }
+  return {
+    label: "+ twin",
+    cls: "",
+    pressed: false,
+    title: `Start ${twinId}, a simulated copy of this arm as its own peer. Tasks you send this robot are mirrored to it, so you can watch a policy in sim before trusting it on metal. The real arm is not touched.`,
+    aria: `start a sim twin of ${o.peerId}`
+  };
+}
+function twinFailure(peerId, body) {
+  var _a, _b;
+  const top = body && typeof body === "object" ? body : null;
+  if (!top) return null;
+  const said = typeof top.error === "string" ? top.error : typeof ((_a = top.error) == null ? void 0 : _a.error) === "string" ? top.error.error : typeof ((_b = top.detail) == null ? void 0 : _b.error) === "string" ? top.detail.error : null;
+  if (!said) return null;
+  return { text: `${peerId}-twin did not start: ${said}`, gap: missingExtra(top) };
+}
 function useTask(peer) {
   const [phase, setPhase] = reactExports.useState("idle");
   const [outcome, setOutcome] = reactExports.useState(null);
   const [twinBusy, setTwinBusy] = reactExports.useState(false);
+  const [twinGap, setTwinGap] = reactExports.useState(null);
   const [consent, setConsent] = reactExports.useState(null);
   const lastBody = reactExports.useRef(null);
   const mounted = reactExports.useRef(true);
@@ -2231,10 +2307,19 @@ function useTask(peer) {
   };
   const toggleTwin = async () => {
     setTwinBusy(true);
+    setTwinGap(null);
     try {
-      await post(`/api/robots/${encodeURIComponent(peer.peer_id)}/twin`, {});
+      const r = await post(`/api/robots/${encodeURIComponent(peer.peer_id)}/twin`, {});
+      const why2 = twinFailure(peer.peer_id, r);
+      if (why2 && mounted.current) {
+        setOutcome({ ok: false, text: why2.text });
+        setTwinGap(why2.gap);
+      }
     } catch (e) {
-      setOutcome(fail(e));
+      if (!mounted.current) return;
+      const why2 = twinFailure(peer.peer_id, e instanceof HttpError ? e.body : null);
+      setOutcome(why2 ? { ok: false, text: why2.text, detail: `HTTP ${e.status}` } : fail(e));
+      setTwinGap((why2 == null ? void 0 : why2.gap) ?? null);
     } finally {
       if (mounted.current) setTwinBusy(false);
     }
@@ -2245,6 +2330,8 @@ function useTask(peer) {
     running,
     busy,
     twinBusy,
+    twinGap,
+    clearTwinGap: () => setTwinGap(null),
     run,
     stop,
     reset,
@@ -2482,34 +2569,6 @@ function peerStatusFields(peer, telemetry, hostsChildren) {
     stateAgeS: telemetry.stateAgeS ?? null,
     lockout: ((_h = peer.lockout) == null ? void 0 : _h.state) ?? null,
     hostsChildren: hostsChildren ?? null
-  };
-}
-function twinButtonCopy(o) {
-  const twinId = `${o.peerId}-twin`;
-  if (o.busy) {
-    return {
-      label: "…",
-      cls: o.twinLive ? "on" : "",
-      pressed: !!o.twinLive,
-      title: `waiting for ${twinId} — a sim peer takes a moment to start or stop`,
-      aria: `sim twin of ${o.peerId}: working`
-    };
-  }
-  if (o.twinLive) {
-    return {
-      label: "twin on",
-      cls: "on",
-      pressed: true,
-      title: `${twinId} is running: tasks sent to this robot are mirrored to it. Click to stop the twin — the real arm is not affected either way.`,
-      aria: `stop the sim twin of ${o.peerId}`
-    };
-  }
-  return {
-    label: "+ twin",
-    cls: "",
-    pressed: false,
-    title: `Start ${twinId}, a simulated copy of this arm as its own peer. Tasks you send this robot are mirrored to it, so you can watch a policy in sim before trusting it on metal. The real arm is not touched.`,
-    aria: `start a sim twin of ${o.peerId}`
   };
 }
 const CAMERA_STOPPED_AGE_S = 120;
@@ -4653,9 +4712,76 @@ function ConsentSheet({ need, target, onCancel, onRetry }) {
     }
   ) });
 }
+function InstallExtra({ extra, reason: reason2, onDone }) {
+  const [run, setRun] = reactExports.useState(null);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const timer = reactExports.useRef(null);
+  reactExports.useEffect(() => () => {
+    if (timer.current) window.clearTimeout(timer.current);
+  }, []);
+  const poll = (id) => {
+    timer.current = window.setTimeout(async () => {
+      try {
+        const r = await api(`/api/env/install/${id}`);
+        setRun(r);
+        if (r.status === "running") poll(id);
+        else {
+          setBusy(false);
+          if (r.status === "done") onDone == null ? void 0 : onDone();
+        }
+      } catch (e) {
+        setBusy(false);
+        setError((e == null ? void 0 : e.message) ?? String(e));
+      }
+    }, 1e3);
+  };
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    setRun(null);
+    try {
+      const r = await post("/api/env/install", { extra });
+      setRun(r);
+      poll(r.id);
+    } catch (e) {
+      setBusy(false);
+      setError(e instanceof HttpError && e.status === 409 ? `another install is still running — wait for it: ${e.message}` : (e == null ? void 0 : e.message) ?? String(e));
+    }
+  };
+  const tail = installTail(run);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "install-extra", role: "group", "aria-label": `install ${extra}`, children: [
+    reason2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint", children: reason2 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", disabled: busy, onClick: () => void start(), children: busy ? "installing…" : installLabel(extra) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", role: "status", children: installSentence(run, busy) })
+    ] }),
+    error && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
+      "⚠ ",
+      error
+    ] }),
+    tail.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "install-log", "aria-label": "install log tail", children: tail.join("\n") })
+  ] });
+}
 function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
   var _a, _b;
-  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, consent, clearConsent, retryLast } = useTask(peer);
+  const {
+    phase,
+    outcome,
+    running,
+    busy,
+    twinBusy,
+    twinGap,
+    clearTwinGap,
+    run,
+    stop,
+    reset,
+    toggleTwin,
+    setOutcome,
+    consent,
+    clearConsent,
+    retryLast
+  } = useTask(peer);
   const [sheet, setSheet] = reactExports.useState(false);
   const [camSheet, setCamSheet] = reactExports.useState(null);
   const p = peer.presence;
@@ -4818,6 +4944,17 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
       ] }),
       consent && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn small", onClick: () => setSheet(true), children: "review permission…" })
     ] }),
+    twinGap && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      InstallExtra,
+      {
+        extra: twinGap.extra,
+        reason: twinGap.remedy ? `the sim twin cannot start here: ${twinGap.remedy}` : null,
+        onDone: () => {
+          clearTwinGap();
+          setOutcome({ ok: true, text: `installed [${twinGap.extra}] — click twin again` });
+        }
+      }
+    ),
     consent && sheet && /* @__PURE__ */ jsxRuntimeExports.jsx(
       ConsentSheet,
       {
@@ -5375,7 +5512,20 @@ function fmt(v) {
 }
 function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onClose }) {
   var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin } = useTask(peer);
+  const {
+    phase,
+    outcome,
+    running,
+    busy,
+    twinBusy,
+    twinGap,
+    clearTwinGap,
+    run,
+    stop,
+    reset,
+    toggleTwin,
+    setOutcome
+  } = useTask(peer);
   const cams = Object.keys(peer.cameras ?? {});
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy });
   const [cam, setCam] = reactExports.useState(null);
@@ -5863,6 +6013,17 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
                 /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { children: outcome.detail })
               ] })
             ] }),
+            twinGap && /* @__PURE__ */ jsxRuntimeExports.jsx(
+              InstallExtra,
+              {
+                extra: twinGap.extra,
+                reason: twinGap.remedy ? `the sim twin cannot start here: ${twinGap.remedy}` : null,
+                onDone: () => {
+                  clearTwinGap();
+                  setOutcome({ ok: true, text: `installed [${twinGap.extra}] — click twin again` });
+                }
+              }
+            ),
             phase === "stopping" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint", children: "stop sent, waiting for the peer to confirm…" })
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "side", children: [
@@ -6791,96 +6952,6 @@ function ConsentSettings() {
     note ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "cs-note", role: "status", children: note }) : null,
     error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "cs-error", role: "alert", children: error }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Revoking applies to robots started from now on: a peer that is already running keeps the permission it was started with until you respawn it." })
-  ] });
-}
-function record(x) {
-  return x && typeof x === "object" && !Array.isArray(x) ? x : null;
-}
-function missingExtra(body) {
-  const top = record(body);
-  if (!top) return null;
-  const candidates = [top, record(top.error), record(top.detail)];
-  for (const c of candidates) {
-    if (!c) continue;
-    const extra = c.missing_extra;
-    if (typeof extra === "string" && extra.trim()) {
-      return {
-        extra: extra.trim(),
-        remedy: typeof c.remedy === "string" && c.remedy.trim() ? c.remedy.trim() : null,
-        driver: typeof c.driver === "string" && c.driver.trim() ? c.driver.trim() : null
-      };
-    }
-  }
-  return null;
-}
-function installLabel(extra) {
-  return `install strands-robots[${extra}]`;
-}
-function installSentence(run, busy) {
-  if (!run) return busy ? "starting the install…" : "";
-  if (run.status === "running") return `installing [${run.extra}]… ${run.lines.length} lines so far`;
-  if (run.status === "done") return `installed [${run.extra}] — spawn again`;
-  return `install of [${run.extra}] failed (exit ${run.exit_code ?? "?"}) — read the log below`;
-}
-function installTail(run, n = 8) {
-  if (!run) return [];
-  return run.lines.slice(Math.max(0, run.lines.length - n));
-}
-function extraRowSentence(row) {
-  if (row.installed) return "installed";
-  const shown = row.missing.slice(0, 4).join(", ");
-  const more = row.missing.length > 4 ? ` and ${row.missing.length - 4} more` : "";
-  return `missing ${shown}${more}`;
-}
-function InstallExtra({ extra, reason: reason2, onDone }) {
-  const [run, setRun] = reactExports.useState(null);
-  const [busy, setBusy] = reactExports.useState(false);
-  const [error, setError] = reactExports.useState(null);
-  const timer = reactExports.useRef(null);
-  reactExports.useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current);
-  }, []);
-  const poll = (id) => {
-    timer.current = window.setTimeout(async () => {
-      try {
-        const r = await api(`/api/env/install/${id}`);
-        setRun(r);
-        if (r.status === "running") poll(id);
-        else {
-          setBusy(false);
-          if (r.status === "done") onDone == null ? void 0 : onDone();
-        }
-      } catch (e) {
-        setBusy(false);
-        setError((e == null ? void 0 : e.message) ?? String(e));
-      }
-    }, 1e3);
-  };
-  const start = async () => {
-    setBusy(true);
-    setError(null);
-    setRun(null);
-    try {
-      const r = await post("/api/env/install", { extra });
-      setRun(r);
-      poll(r.id);
-    } catch (e) {
-      setBusy(false);
-      setError(e instanceof HttpError && e.status === 409 ? `another install is still running — wait for it: ${e.message}` : (e == null ? void 0 : e.message) ?? String(e));
-    }
-  };
-  const tail = installTail(run);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "install-extra", role: "group", "aria-label": `install ${extra}`, children: [
-    reason2 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint", children: reason2 }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn go", disabled: busy, onClick: () => void start(), children: busy ? "installing…" : installLabel(extra) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", role: "status", children: installSentence(run, busy) })
-    ] }),
-    error && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "result bad", role: "alert", children: [
-      "⚠ ",
-      error
-    ] }),
-    tail.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "install-log", "aria-label": "install log tail", children: tail.join("\n") })
   ] });
 }
 function ExtrasList() {

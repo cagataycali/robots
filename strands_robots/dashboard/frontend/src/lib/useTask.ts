@@ -10,6 +10,8 @@ import { findConsent, type ConsentNeed } from './consent'
 import { runFailure, stopFailure } from './taskOutcome'
 import { interpretReset, type ResetResponse } from './resetAction'
 import type { RunBody } from '../components/RunForm'
+import { twinFailure } from './twinButton'
+import type { MissingExtra } from './missingExtra'
 
 /** What we believe about this robot's task. */
 export type { TaskPhase } from './taskPhase'
@@ -25,6 +27,8 @@ export function useTask(peer: Peer) {
   const [phase, setPhase] = useState<TaskPhase>('idle')
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [twinBusy, setTwinBusy] = useState(false)
+  /** the extra a refused or dead twin named, for the card's install button */
+  const [twinGap, setTwinGap] = useState<MissingExtra | null>(null)
   const [consent, setConsent] = useState<ConsentNeed | null>(null)
   /** the last refused request, so a grant from the consent sheet can re-send exactly it */
   const lastBody = useRef<{ kind: 'run'; body: RunBody } | { kind: 'reset'; confirmed: boolean } | null>(null)
@@ -142,18 +146,24 @@ export function useTask(peer: Peer) {
   }
 
   const toggleTwin = async () => {
-    setTwinBusy(true)
+    setTwinBusy(true); setTwinGap(null)
     try {
-      await post(`/api/robots/${encodeURIComponent(peer.peer_id)}/twin`, {})
+      const r = await post(`/api/robots/${encodeURIComponent(peer.peer_id)}/twin`, {})
+      const why = twinFailure(peer.peer_id, r)
+      if (why && mounted.current) { setOutcome({ ok: false, text: why.text }); setTwinGap(why.gap) }
     } catch (e) {
-      setOutcome(fail(e))
+      if (!mounted.current) return
+      const why = twinFailure(peer.peer_id, e instanceof HttpError ? e.body : null)
+      setOutcome(why ? { ok: false, text: why.text, detail: `HTTP ${(e as HttpError).status}` } : fail(e))
+      setTwinGap(why?.gap ?? null)
     } finally {
       if (mounted.current) setTwinBusy(false)
     }
   }
 
   return {
-    phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, setOutcome,
+    phase, outcome, running, busy, twinBusy, twinGap, clearTwinGap: () => setTwinGap(null),
+    run, stop, reset, toggleTwin, setOutcome,
     consent, clearConsent: () => setConsent(null), retryLast,
   }
 }

@@ -198,6 +198,17 @@ class TestTheSpawnIsPreflighted:
         gap = env_install.spawn_preflight("so101", {"main": {"index_or_path": 1}})
         assert gap is not None and gap["missing"] == ["cv2"]
 
+    def test_a_sim_spawn_is_checked_for_mujoco_and_nothing_else(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(env_install, "_importable", lambda module: module != "mujoco")
+        assert env_install.spawn_preflight("so101") is None, "a real spawn does not construct a MuJoCo world"
+        gap = env_install.spawn_preflight("so101", {"main": {"index_or_path": 1}}, mode="sim")
+        assert gap == {
+            "driver": None,
+            "missing": ["mujoco"],
+            "missing_extra": "sim-mujoco",
+            "remedy": "pip install 'strands-robots[sim-mujoco]'",
+        }
+
 
 class TestTheRoutes:
     def test_env_lists_extras_with_their_state(self, client: TestClient) -> None:
@@ -254,6 +265,47 @@ class TestTheRoutes:
         assert "pip install 'strands-robots[dashboard]'" in detail["remedy"]
         assert "so101" in detail["error"]
 
+    def test_a_twin_this_environment_cannot_run_is_refused_with_the_extra(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Twin button used to answer 200 + pid for a child that died on ``import mujoco``."""
+        monkeypatch.setattr(env_install, "_importable", lambda module: module != "mujoco")
+        started: list[Any] = []
+        monkeypatch.setattr(client.app.state.devices, "spawn", lambda *a, **k: started.append(a) or {})
+        resp = client.post("/api/robots/so101-real/twin", json={"robot_name": "so101"})
+        assert resp.status_code == 412, resp.text
+        detail = resp.json()["error"]
+        assert detail["missing_extra"] == "sim-mujoco"
+        assert detail["error"].startswith("this environment cannot run so101 in simulation: missing mujoco")
+        assert started == [], "no child is started for a twin that would die on its first import"
+
+    def test_a_twin_that_dies_while_settling_answers_failed_with_the_extra(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dm = client.app.state.devices
+        hint = "ImportError: 'mujoco' is required for MuJoCo simulation\n  pip install 'strands-robots[sim-mujoco]'"
+        spawned: list[tuple[Any, ...]] = []
+
+        def spawn(*args: Any) -> dict[str, Any]:
+            spawned.append(args)
+            return {"peer_id": args[2], "pid": 4242, "mode": args[1]}
+
+        monkeypatch.setattr(dm, "spawn", spawn)
+        monkeypatch.setattr(
+            dm,
+            "settle",
+            lambda peer_id, **_: {
+                "status": "failed",
+                "exit_code": 1,
+                "reason": "ImportError",
+                "log_tail": hint.split("\n"),
+            },
+        )
+        body = client.post("/api/robots/so101-real/twin", json={"robot_name": "so101"}).json()
+        assert spawned[0][:3] == ("so101", "sim", "so101-real-twin")
+        assert body["status"] == "failed" and body["error"] == "ImportError"
+        assert body["missing_extra"] == "sim-mujoco"
+
 
 # ---------------------------------------------------------------------------
 # The page: the extra name travels from the refusal to the button unchanged.
@@ -304,6 +356,26 @@ out({
         assert "exit 1" in got["sentences"][3]
         assert got["tail"] == [f"l{i}" for i in range(4, 12)]
         assert got["rows"] == ["installed", "missing p, q, r, s and 2 more"]
+
+    def test_a_refused_or_dead_twin_becomes_a_sentence_and_an_install_offer(self) -> None:
+        got = run_frontend(
+            """
+const t = await import('./twinButton.ts')
+out({
+  refused: t.twinFailure('arm', { error: { error: 'cannot run so101 in simulation', missing_extra: 'sim-mujoco', remedy: 'r', driver: null } }),
+  dead: t.twinFailure('arm', { peer_id: 'arm-twin', status: 'failed', error: 'ImportError', missing_extra: 'sim-mujoco' }),
+  crashed: t.twinFailure('arm', { peer_id: 'arm-twin', status: 'failed', error: 'exit code 1' }),
+  up: [t.twinFailure('arm', { peer_id: 'arm-twin', pid: 1, status: 'running' }), t.twinFailure('arm', null)],
+})
+"""
+        )
+        assert got["refused"] == {
+            "text": "arm-twin did not start: cannot run so101 in simulation",
+            "gap": {"extra": "sim-mujoco", "remedy": "r", "driver": None},
+        }
+        assert got["dead"]["gap"]["extra"] == "sim-mujoco"
+        assert got["crashed"] == {"text": "arm-twin did not start: exit code 1", "gap": None}
+        assert got["up"] == [None, None]
 
 
 class TestTheButtonSendsOnlyTheServersName:

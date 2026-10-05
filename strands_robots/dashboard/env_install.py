@@ -79,6 +79,9 @@ _DRIVER_MODULES: dict[str, tuple[tuple[str, str], ...]] = {
     "strands": (("serial", "dashboard"),),
 }
 _CAMERA_MODULES: tuple[tuple[str, str], ...] = (("cv2", "dashboard"),)
+#: A sim child is ``Robot(name, mode="sim")``: the MuJoCo backend imports this at
+#: construction, so a missing build is a child dead before it joins the mesh.
+_SIM_MODULES: tuple[tuple[str, str], ...] = (("mujoco", "sim-mujoco"),)
 
 
 # ---------------------------------------------------------------------------
@@ -241,24 +244,32 @@ def missing_extra_in(text: str | None) -> str | None:
     return extra if extra in declared_extras() else None
 
 
-def spawn_preflight(robot_name: str, cameras: Any = None, driver: str | None = None) -> dict[str, Any] | None:
-    """What a real-mode spawn of ``robot_name`` would fail to import, or ``None``.
+def spawn_preflight(
+    robot_name: str, cameras: Any = None, driver: str | None = None, mode: str = "real"
+) -> dict[str, Any] | None:
+    """What a spawn of ``robot_name`` would fail to import, or ``None``.
 
-    Resolves the driver the way the factory will
+    A ``mode="real"`` spawn resolves the driver the way the factory will
     (:func:`~strands_robots.drivers.resolve_driver`) and checks the modules
-    that driver imports at connect, plus OpenCV when cameras are configured.
+    that driver imports at connect, plus OpenCV when cameras are configured. A
+    ``mode="sim"`` spawn (the Devices sheet, a digital twin) checks the MuJoCo
+    build the sim child constructs its world with; its cameras are rendered,
+    so they add nothing.
 
     Args:
         robot_name: The registry robot the spawn names.
         cameras: The spawn's camera dict, or ``None``.
         driver: An explicit ``driver=`` when the spawn carries one.
+        mode: ``"real"`` or ``"sim"``, as :func:`validate_spawn` returned it.
 
     Returns:
         ``None`` when the child would import everything it needs, else
         ``{"missing": [modules], "missing_extra": <extra>, "remedy": <line>,
-        "driver": <resolved>}`` naming the first extra that supplies a missing
-        module.
+        "driver": <resolved, or None for sim>}`` naming the first extra that
+        supplies a missing module.
     """
+    if mode == "sim":
+        return _missing(list(_SIM_MODULES), None)
     from strands_robots.drivers import resolve_driver
     from strands_robots.registry import resolve_name
 
@@ -269,13 +280,18 @@ def spawn_preflight(robot_name: str, cameras: Any = None, driver: str | None = N
     needed = list(_DRIVER_MODULES.get(resolved, ()))
     if cameras:
         needed.extend(_CAMERA_MODULES)
+    return _missing(needed, resolved)
+
+
+def _missing(needed: list[tuple[str, str]], driver: str | None) -> dict[str, Any] | None:
+    """The preflight's answer for ``needed`` ``(module, extra)`` pairs, or ``None`` when all import."""
     missing = [(module, extra) for module, extra in needed if not _importable(module)]
     if not missing:
         return None
     extras = declared_extras()
     first_extra = next((extra for _, extra in missing if extra in extras), missing[0][1])
     return {
-        "driver": resolved,
+        "driver": driver,
         "missing": [module for module, _ in missing],
         "missing_extra": first_extra,
         "remedy": f"pip install '{DISTRIBUTION}[{first_extra}]'",

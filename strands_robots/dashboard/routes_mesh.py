@@ -51,6 +51,7 @@ from strands_robots.dashboard.mesh_bridge import (
 )
 from strands_robots.dashboard.refusals import RefusalTally
 from strands_robots.dashboard.routes_auth import _json_body
+from strands_robots.dashboard.routes_devices import despawn_and_audit, spawn_and_settle
 from strands_robots.dashboard.teleop_health import published_frames, teleop_health
 from strands_robots.dashboard.ttl_cache import TTLCache
 from strands_robots.dashboard.ws_observability import (
@@ -594,6 +595,11 @@ async def toggle_twin(request: Request, peer_id: str, _: dict = Depends(access.r
     """Spawn or despawn a MuJoCo digital twin sim peer named ``<peer>-twin``.
 
     Tasks started via ``/api/robots/<peer>/task`` are mirrored to a live twin.
+    A spawn takes the Devices sheet's one path
+    (:func:`~strands_robots.dashboard.routes_devices.spawn_and_settle`): a twin
+    this environment cannot run is refused with a 412 naming the extra, and a
+    child that dies inside the settle window answers ``status: failed`` with
+    its reason, never a bare pid.
     """
     dm = _devices(request)
     if dm is None:
@@ -602,12 +608,12 @@ async def toggle_twin(request: Request, peer_id: str, _: dict = Depends(access.r
     twin_id = f"{peer_id}-twin"
     existing = registry_entry(dm.robots, twin_id)
     if existing and existing.alive():
-        return cast("dict[str, Any]", await asyncio.to_thread(dm.despawn, twin_id))
+        return await despawn_and_audit(request, twin_id)
     robot_name = body.get("robot_name")
     if not robot_name:
         peer = _bridge(request).peers.get(peer_id) or {}
         robot_name = (peer.get("presence") or {}).get("tool_name") or "so101"
-    return cast("dict[str, Any]", await asyncio.to_thread(dm.spawn, robot_name, "sim", twin_id))
+    return await spawn_and_settle(request, {"robot_name": robot_name, "mode": "sim", "peer_id": twin_id})
 
 
 @router.get("/robots/{peer_id}/policy-fit")
