@@ -4,9 +4,9 @@ description: "An SO-100 or SO-101 on a serial port: which driver talks to it, th
 
 # Feetech arms
 
-At the end of this page an SO-100 or SO-101 (and the LeKiwi it rides on) is open on a serial port, you know which of the two drivers is talking to it, what units a command takes, and how to check the bus before you trust a policy with it. Koch arms are Dynamixel and appear only to say where they go.
+By the end of this page an SO-100, SO-101 or LeKiwi is open on a serial port, and you know which driver talks to it, the units a command takes, and how to check the bus first.
 
-This needs an arm on USB. Find the port first:
+With the arm on USB, find its port:
 
 ```bash
 python -m serial.tools.list_ports -v          # /dev/ttyACM0 on Linux, /dev/tty.usbmodem* on macOS
@@ -65,11 +65,11 @@ Run `lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/ttyACM0 --r
 
 ## LeKiwi
 
-`lekiwi` is an SO-101 on a three-wheel holonomic base with a Raspberry Pi. lerobot's `lekiwi` type runs on the Pi and `lekiwi_client` on your laptop: `Robot("lekiwi_client", mode="real", remote_ip="192.168.1.50")`. `Robot("lekiwi", mode="real", port=...)` builds the native `FeetechDriver`, which drives the arm servos over a local serial port.
+`lekiwi` is an SO-101 on a three-wheel base with a Raspberry Pi. lerobot's `lekiwi` runs on the Pi, `lekiwi_client` on your laptop: `Robot("lekiwi_client", mode="real", remote_ip="192.168.1.50")`. `Robot("lekiwi", mode="real", port=...)` drives the servos through `FeetechDriver`, by the labels on the [lekiwi page](../../robots/lekiwi.md).
 
 ## Twin transport
 
-The native driver runs unchanged against the arm's MuJoCo model, which is how the [drivers](drivers.md) page exercises it without hardware:
+The native driver runs unchanged against the arm's MuJoCo model, no hardware needed:
 
 ```python
 from strands_robots import Robot
