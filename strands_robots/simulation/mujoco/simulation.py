@@ -4981,7 +4981,23 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": name_err}]}
 
         if name in self._world.objects:
-            return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
+            # Parity with sibling guards in this same class (add_camera at
+            # L5683, add_robot at L2549) and with the newton / isaac backends,
+            # which both say "Object '{name}' already exists.". Pre-fix this
+            # method's refusal was "Object '{name}' exists." - missing "already",
+            # missing the ``add_object:`` verb prefix every sibling scene-mutator
+            # in this file uses, and missing the actionable "Remove it first."
+            # add_camera uses. A README-quickstart user re-running the three-line
+            # snippet (``add_object(name="red_cube", ...)``) hit the shortest
+            # error of any sibling with no remedy; a test comment at
+            # tests/simulation/test_object_mass_domain_across_backends.py:249
+            # already quoted the fuller form as the expected message.
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"add_object: object '{name}' already exists. Remove it first (remove_object)."}
+                ],
+            }
 
         # A robot's label is not one of its body names (those are
         # ``<label>/base``, ``<label>/gripper``, ...), so MuJoCo's own
