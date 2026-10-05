@@ -26,6 +26,8 @@ robot = Robot("lekiwi", mode="real", driver="lerobot", port="/dev/ttyACM0")  # l
 robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # FeetechDriver
 ```
 
+The printed `robot_action_keys` are the actuator names (left column below); the right column names [`send_action`](../reference/api/robot.md#send_action) label aliases the registry accepts for the same joints.
+
 | Observation key | `send_action` label |
 |---|---|
 | `base_back_wheel_joint` | `base_back_wheel` |

@@ -725,7 +725,22 @@ def robot_page(name: str) -> str:
         lines += ["Aliases: " + ", ".join(f"`{a}`" for a in aliases) + ".", ""]
     labels = spec.get("joint_labels")
     if labels:
-        lines += ["| Observation key | `send_action` label |", "|---|---|"]
+        # The quickstart above prints ``robot_action_keys``, which returns the
+        # scene's actuator short-names (the left column below). The right column
+        # is a label vocabulary ``send_action`` accepts as an alias via the
+        # registry (see ``strands_robots/registry/robots.json`` ``joint_labels``);
+        # both forms are accepted at the write path. A policy or recording keyed
+        # by the printed actuator names and one keyed by the labels describe the
+        # same joints with incompatible column names, so a dataset reader should
+        # pick one and keep it.
+        lines += [
+            "The printed `robot_action_keys` are the actuator names (left column"
+            " below); the right column names [`send_action`](../reference/api/robot.md#send_action)"
+            " label aliases the registry accepts for the same joints.",
+            "",
+            "| Observation key | `send_action` label |",
+            "|---|---|",
+        ]
         lines += [f"| `{k}` | `{v}` |" for k, v in labels.items()]
         lines.append("")
     gripper = spec.get("gripper")
