@@ -81,6 +81,6 @@ robot = Robot("koch_follower", mode="real", driver="strands", port="/dev/ttyUSB0
 
 ## Where the gates are
 
-A driver refuses before it writes: the Feetech bus past servo travel, the G1 outside its FSM handshake or under 15% battery, the Go2 before sport mode release, the Booster T1 before upper-body control, the Robotiq before activation, the UR in `PROTECTIVE_STOP`, the xArm on a controller error, the Stretch what its SDK would clip. Above all of them sits [the operator gate](../agents.md#the-operator-gate).
+A driver refuses before it writes: the Feetech bus past servo travel, the G1 outside its FSM handshake or under 15% battery, the Go2 before sport mode release, the Booster T1 before upper-body control, the Robotiq before activation, the UR in `PROTECTIVE_STOP`, the xArm or Gen3 on a controller fault, the Stretch what its SDK would clip. Above them sits [the operator gate](../agents.md#the-operator-gate).
 
 Next: [feetech-arms](feetech-arms.md), [teleoperation](teleoperation.md), [cameras](cameras.md), [calibration](calibration.md).

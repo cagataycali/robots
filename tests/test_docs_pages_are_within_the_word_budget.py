@@ -96,7 +96,9 @@ _BUDGET: int = _hook().LIMIT
 #: Raised by 242 to 69,517 when URDriver began serving nine more UR arms: each of their generated
 #: robot pages gained the real-mode fence and Hardware line every driven robot page carries; the
 #: hand-written UR page stayed net -1. Banked to the exact total.
-_SITE_BUDGET = 69_517
+#: Raised by 26 to 69,543 when KinovaDriver began serving the Gen3: its generated robot page gained
+#: the real-mode fence and Hardware line; drivers.md stayed net 0. Banked to the exact total.
+_SITE_BUDGET = 69_543
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.

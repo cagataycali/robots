@@ -279,6 +279,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "`stop` halts and re-arms servo mode",
         ),
     },
+    "KinovaDriver": {
+        "module": "strands_robots/drivers/kinova.py",
+        "link": "Kortex TCP through `kortex_api`",
+        "port": "base IP; `username=`/`password=` for the session",
+        "example": '"192.168.1.10"',
+        "sdk": "Kinova's `kortex_api` wheel, `pip install --no-deps`, run with `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python`",
+        "kwargs": "`control_frequency=40.0`",
+        "units": "radians, `joint_1 .. joint_7`; no gripper",
+        "checks": (
+            "a base in fault, or not `ARMSTATE_SERVOING_READY`, is refused at connect and on every write",
+            "`send_action` becomes joint speeds, refused past 0.8727 rad/s in one period",
+            "a stream quiet for three periods is stopped: Kortex joint speeds never expire",
+        ),
+    },
     "CrazyflieDriver": {
         "module": "strands_robots/drivers/crazyflie.py",
         "link": "CRTP over a Crazyradio through `cflib`",
