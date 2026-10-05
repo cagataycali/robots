@@ -228,6 +228,9 @@ def scan_serial_ports() -> list[dict[str, Any]]:
                 "vid": f"{p.vid:04x}" if p.vid else None,
                 "pid": f"{p.pid:04x}" if p.pid else None,
                 "serial_number": getattr(p, "serial_number", None),
+                # The USB bus path (hub port) the board is plugged into: unlike the serial, the device
+                # does not choose it.
+                "location": getattr(p, "location", None) or None,
                 # The WCH CH34x adapter (the first id the owner lists) is what
                 # ships on the SO-10x arms; FTDI boards could be any bus.
                 "likely_robot": "so101" if (p.vid == WCH_CH34X_VID) else None,
@@ -741,6 +744,38 @@ def usb_identity(port: Mapping[str, Any]) -> str | None:
     return f"{str(vid).lower()}:{str(pid).lower()}"
 
 
+#: What a profile records about the BOARD behind a serial, beyond the serial itself: the chip
+#: (``vid:pid``) and the USB bus location. A spawn payload never rebinds them (see
+#: :meth:`ProfileStore.save`); only an operator who accepts a different board does.
+BOARD_ANCHORS = {"usb": "chip", "location": "USB location"}
+
+
+def board_anchors(port: Mapping[str, Any] | None) -> dict[str, str | None]:
+    """The :data:`BOARD_ANCHORS` a live scan entry shows, ``None`` for any it cannot read."""
+    port = port or {}
+    location = port.get("location")
+    return {"usb": usb_identity(port), "location": str(location) if location else None}
+
+
+def board_mismatch(profile: Mapping[str, Any], port: Mapping[str, Any] | None) -> str | None:
+    """How the live board differs from what ``profile`` remembered, or ``None`` when nothing does.
+
+    Only anchors the profile recorded are compared. One it recorded but the scan cannot read
+    is a mismatch: not being able to check is not the same as the check passing.
+    """
+    seen = board_anchors(port)
+    problems = []
+    for anchor, label in BOARD_ANCHORS.items():
+        remembered = profile.get(anchor)
+        if not remembered:
+            continue
+        if seen[anchor] is None:
+            problems.append(f"remembered {label} {remembered}, seen none (the scan cannot read it)")
+        elif seen[anchor] != remembered:
+            problems.append(f"remembered {label} {remembered}, seen {seen[anchor]}")
+    return "; ".join(problems) or None
+
+
 def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     """The spawn payload a saved USB profile describes, or {} when there is none."""
     if not profile:
@@ -923,10 +958,18 @@ class ProfileStore:
     REMEMBERED_FIELDS = ("cameras",)
 
     def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
-        """Remember ``payload`` as the way to spawn the board at ``key``."""
+        """Remember ``payload`` as the way to spawn the board at ``key``.
+
+        A :data:`BOARD_ANCHORS` value already on file is kept: a spawn of whatever board reports
+        this serial must not rewrite what the genuine board was. :meth:`rebind_board` is the
+        one way to change them.
+        """
         entry = dict(payload)
         with self._lock:
             previous = dict(self._data.get(key) or {})
+        for fname in BOARD_ANCHORS:
+            if previous.get(fname):
+                entry[fname] = previous[fname]
         for fname in self.MEASURED_FIELDS:
             if fname not in entry and fname in previous:
                 entry[fname] = previous[fname]
@@ -943,6 +986,24 @@ class ProfileStore:
             snapshot = {k: dict(v) for k, v in self._data.items()}
         self._persist(snapshot, key)
         return dict(entry)
+
+    def rebind_board(self, key: str, port: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Record the live board's :data:`BOARD_ANCHORS` for ``key``, replacing what was on file.
+
+        Only for an operator who explicitly accepted a different board; returns the anchors
+        now on file, or ``None`` when ``key`` has no profile.
+        """
+        seen = {k: v for k, v in board_anchors(port).items() if v}
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            for fname in BOARD_ANCHORS:
+                entry.pop(fname, None)
+            entry.update(seen)
+            snapshot = {k: dict(v) for k, v in self._data.items()}
+        self._persist(snapshot, key)
+        return seen
 
     def _persist(self, snapshot: dict[str, dict[str, Any]], key: str) -> None:
         """Atomic write of the whole store (tmp + os.replace)."""
@@ -999,8 +1060,8 @@ class AutoSpawnWatcher:
     string the device chose, and what would start is a real arm under a
     remembered peer id with a remembered calibration. The operator confirms
     through ``spawn-remembered``, or lists the serial in
-    :data:`AUTOSPAWN_REAL_ALLOWLIST_ENV`, in which case the board's vid:pid
-    must also match what the profile recorded.
+    :data:`AUTOSPAWN_REAL_ALLOWLIST_ENV`. A board whose chip or USB location
+    differs from what the profile recorded is held, allowlisted or not.
     """
 
     def __init__(
@@ -1064,6 +1125,9 @@ class AutoSpawnWatcher:
             "serial": key,
             "device": port.get("device"),
             "usb": usb_identity(port),
+            "location": board_anchors(port)["location"],
+            "remembered_usb": profile.get("usb"),
+            "remembered_location": profile.get("location"),
             "peer_id": profile.get("peer_id"),
             "robot_name": profile.get("robot_name"),
             "mode": profile.get("mode") or "real",
@@ -1074,6 +1138,13 @@ class AutoSpawnWatcher:
         confirm it, ``("hold", why)`` when the board contradicts what was remembered, ``None`` when the
         operator's allowlist covers it and the chip matches."""
         device = port.get("device") or "the board"
+        if mismatch := board_mismatch(profile, port):
+            # Checked for every serial, allowlisted or not: the proposal would send the operator to
+            # spawn-remembered, which refuses this board for the same reason.
+            return "hold", (
+                f"{device} reports the serial of {profile.get('peer_id')} but is a different board: {mismatch}. "
+                "Not started."
+            )
         if key not in _real_autospawn_allowlist():
             return "propose", (
                 f"real hardware is proposed, not started: {device} reports the serial of {profile.get('peer_id')}, "
@@ -1081,18 +1152,11 @@ class AutoSpawnWatcher:
                 f"{device} on the devices screen, or list the serial in {AUTOSPAWN_REAL_ALLOWLIST_ENV} to let it "
                 f"come up on its own."
             )
-        remembered = profile.get("usb")
-        seen = usb_identity(port)
-        if not remembered:
+        if not profile.get("usb"):
             return "propose", (
                 f"{key} is on {AUTOSPAWN_REAL_ALLOWLIST_ENV} but its profile recorded no usb identity to check the "
                 f"board against; to confirm, spawn the remembered profile for {device} once and it will remember "
-                f"{seen or 'the chip'}."
-            )
-        if seen != remembered:
-            return "hold", (
-                f"{device} reports the serial of {profile.get('peer_id')} but is a different chip: remembered "
-                f"{remembered}, seen {seen or 'no vid:pid'}. Not started."
+                f"{usb_identity(port) or 'the chip'}."
             )
         return None
 
@@ -1968,10 +2032,18 @@ class DeviceManager:
         """The remembered profile for the board at ``port``. Profiles are keyed by USB SERIAL NUMBER, not
         by port - a /dev name is reassigned by the OS, a serial is the board.
         """
+        return self.remembered_board(port)[1]
+
+    def remembered_board(self, port: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """``(live scan entry, remembered profile)`` for the board at ``port``, from one scan.
+
+        The scan entry is what :func:`board_mismatch` checks the profile against; either is
+        ``None`` when the port is not in the scan or its serial has no profile.
+        """
         for entry in scan_serial_ports():
             if entry.get("device") == port and entry.get("serial_number"):
-                return self.profiles.get(str(entry["serial_number"]))
-        return None
+                return entry, self.profiles.get(str(entry["serial_number"]))
+        return None, None
 
     def read_bus_role(
         self,
@@ -2287,10 +2359,10 @@ class DeviceManager:
         key = profile_key(info)
         if not key:
             return None
-        # The chip behind the serial, so a later hotplug can be checked against more than a string
-        # the device chose.
-        usb = usb_identity(info)
-        return self.profiles.save(key, {**payload, "usb": usb} if usb else payload)
+        # The chip and the bus location behind the serial, so a later hotplug can be checked against
+        # more than a string the device chose. save() keeps any already on file.
+        anchors = {k: v for k, v in board_anchors(info).items() if v}
+        return self.profiles.save(key, {**payload, **anchors})
 
     def start_autospawn(
         self,
