@@ -19,6 +19,7 @@
     "mesh_path": "a path on the peer host",
     "output_dir": "a path on the peer host; the peer's own default applies",
     "output_path": "a path on the peer host; the peer's own default applies",
+    "private": "a visibility switch on the peer's egress; the peer decides what it publishes",
     "push_to_hub": "an egress switch; the peer decides what leaves it",
     "root": "a path on the peer host; the peer's own dataset home applies",
     "scene_path": "a path on the peer host",

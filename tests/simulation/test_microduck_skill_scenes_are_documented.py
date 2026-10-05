@@ -544,3 +544,20 @@ class TestTheStanceClaimsAreTrueOfTheAssets:
         with _spawned(BALL_SCENE, STANCE_KEYFRAME) as (_mj, _sim, result):
             assert result.get("status") == "error"
             assert "no <keyframe>" in result["content"][0]["text"]
+
+
+class TestTheBundleSectionNamesTheKeysItsSketchHolds:
+    """``MicroduckPolicyBundle`` looks skills up by the dict keys the caller built.
+
+    The prose once said ``bundle.switch("alpha_stand")`` while its own sketch keyed
+    the bundle ``{"walk", "stand"}``, so a reader following both got ``ValueError:
+    unknown skill 'alpha_stand'``. Every key the section names must be one it holds.
+    """
+
+    def test_every_key_the_section_names_is_a_key_of_the_sketch_bundle(self) -> None:
+        body = _section(_page(), re.compile(r"^#+ .*bundle", re.MULTILINE | re.IGNORECASE), "the skill bundle")
+        held = set(re.findall(r'"(\w+)": MicroduckPolicy\(', body))
+        assert held, "the bundle section no longer carries a sketch that builds a bundle"
+        named = set(re.findall(r'(?:switch\(|active=|move_key=|idle_key=)"(\w+)"', body))
+        assert named, "the bundle section no longer names a key"
+        assert named <= held, f"named {sorted(named - held)} but the sketch holds {sorted(held)}"

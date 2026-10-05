@@ -22,7 +22,7 @@ loader = reader.dataloader(batch_size=64)       # a torch DataLoader over the sa
 
 | target | when | how |
 |---|---|---|
-| Hub dataset repo (`push_to_hub`) | a finished dataset you will version and share | `sim.stop_recording(push_to_hub=True)`, or `DatasetRecorder.push_to_hub(tags=, private=)`. git-LFS history: every push adds |
+| Hub dataset repo (`push_to_hub`) | a finished dataset you will version and share | `sim.stop_recording(push_to_hub=True, private=)` or `DatasetRecorder.push_to_hub(tags=, private=)`, private unless `private=False`. git-LFS history: every push adds |
 | HF Storage Bucket (`sync_to_bucket`) | collection in progress, daily re-sync, a directory that keeps growing | `sim.stop_recording(bucket="you/collection", run_id="2026-09-27")`, `DatasetRecorder.sync_to_bucket(...)`, or `sync_dataset_to_bucket(root, bucket, run_id)` on any finalized directory |
 
 A bucket is Xet-deduplicated: a re-sync uploads only changed chunks. It needs the `hf` CLI with `buckets` and `sync` (`huggingface_hub>=1.5`). The destination is `hf://buckets/<bucket>/<run_id>`.
