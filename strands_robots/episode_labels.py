@@ -66,7 +66,7 @@ writer cannot leave a half-written sidecar. A ``schema_version`` this module
 does not know is refused on read rather than misread.
 
 See ``docs/reference/data/episode-labels.md`` for the full schema documentation and
-``examples/17_judge_recorded_episodes.py`` for the end-to-end pipeline
+``examples/19_judge_recorded_episodes.py`` for the end-to-end pipeline
 (record -> deterministic verdicts -> judge -> filter -> re-train).
 """
 
@@ -654,7 +654,7 @@ def measure_agreement(root: str | Path, human_labels: dict[int, dict[str, Any]])
     a judge whose grades do not track a human's on a small holdout should not
     be deciding what a policy trains on. The measurement ships with the
     pipeline rather than being promised - see
-    ``examples/17_judge_recorded_episodes.py``.
+    ``examples/19_judge_recorded_episodes.py``.
 
     Args:
         root: Dataset root directory.
