@@ -6941,7 +6941,12 @@ class MuJoCoSimEngine(
         drivable = False
         for robot_name, robot in world.robots.items():
             joints = list(getattr(robot, "joint_names", ()) or ())
-            shown = ", ".join(joints[:8]) + ("..." if len(joints) > 8 else "")
+            # The same registry labels get_robot_state prints beside each joint
+            # (``1 (shoulder_pan)``), so the first thing the agent reads names
+            # the gripper as the gripper rather than as servo 6.
+            labels = self._robot_joint_labels(robot) if joints else {}
+            named = [f"{j} ({labels[j]})" if j in labels else j for j in joints]
+            shown = ", ".join(named[:8]) + ("..." if len(named) > 8 else "")
             entry = f"'{robot_name}' ({len(joints)} joints: {shown})" if joints else f"'{robot_name}'"
             if getattr(robot, "actuator_ids", None):
                 drivable = True
