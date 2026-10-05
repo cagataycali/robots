@@ -15,7 +15,7 @@ description: "Toddlerbot 2xM Humanoid (45-DOF)"
 from strands_robots import Robot
 
 robot = Robot("toddlerbot_2xm")
-print(robot.robot_joint_names("toddlerbot_2xm"))
+print(robot.robot_action_keys("toddlerbot_2xm"))
 robot.cleanup()
 ```
 

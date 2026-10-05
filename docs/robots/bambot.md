@@ -17,7 +17,7 @@ URDF from [timqian/bambot@04d9026](https://github.com/timqian/bambot/tree/04d902
 from strands_robots import Robot
 
 robot = Robot("bambot")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("bambot"))
+print(robot.robot_action_keys("bambot"))
 robot.cleanup()
 ```
 

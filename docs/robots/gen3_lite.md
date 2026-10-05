@@ -17,7 +17,7 @@ URDF from [Kinovarobotics/ros2_kortex@8bf2034](https://github.com/Kinovarobotics
 from strands_robots import Robot
 
 robot = Robot("gen3_lite")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("gen3_lite"))
+print(robot.robot_action_keys("gen3_lite"))
 robot.cleanup()
 ```
 

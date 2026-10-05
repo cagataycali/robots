@@ -17,7 +17,7 @@ URDF from [upkie/upkie_description@19a91ce](https://github.com/upkie/upkie_descr
 from strands_robots import Robot
 
 robot = Robot("upkie")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("upkie"))
+print(robot.robot_action_keys("upkie"))
 robot.cleanup()
 ```
 

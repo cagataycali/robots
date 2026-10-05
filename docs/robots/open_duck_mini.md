@@ -15,7 +15,7 @@ description: "Open Duck Mini V2 (16-DOF expressive biped, Feetech servos)"
 from strands_robots import Robot
 
 robot = Robot("open_duck_mini", position=[0.0, 0.0, 0.0262])
-print(robot.robot_joint_names("open_duck_mini"))
+print(robot.robot_action_keys("open_duck_mini"))
 robot.cleanup()
 ```
 

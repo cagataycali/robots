@@ -17,7 +17,7 @@ URDF from [Gepetto/example-robot-data@d0d9098](https://github.com/Gepetto/exampl
 from strands_robots import Robot
 
 robot = Robot("ur3")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("ur3"))
+print(robot.robot_action_keys("ur3"))
 robot.cleanup()
 ```
 

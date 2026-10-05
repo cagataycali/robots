@@ -15,7 +15,7 @@ description: "Hello Robot Stretch 3 (mobile manipulator)"
 from strands_robots import Robot
 
 robot = Robot("stretch3")
-print(robot.robot_joint_names("stretch3"))
+print(robot.robot_action_keys("stretch3"))
 robot.cleanup()
 ```
 

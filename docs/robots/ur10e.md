@@ -15,7 +15,7 @@ description: "Universal Robots UR10e (6-DOF industrial)"
 from strands_robots import Robot
 
 robot = Robot("ur10e", position=[0.0, 0.0, 0.027])
-print(robot.robot_joint_names("ur10e"))
+print(robot.robot_action_keys("ur10e"))
 robot.cleanup()
 ```
 

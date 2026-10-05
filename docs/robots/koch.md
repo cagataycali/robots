@@ -15,7 +15,7 @@ description: "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)"
 from strands_robots import Robot
 
 robot = Robot("koch")
-print(robot.robot_joint_names("koch"))
+print(robot.robot_action_keys("koch"))
 robot.cleanup()
 ```
 

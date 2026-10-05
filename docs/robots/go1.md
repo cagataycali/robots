@@ -15,7 +15,7 @@ description: "Unitree Go1 Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("go1", position=[0.0, 0.0, 0.004])
-print(robot.robot_joint_names("go1"))
+print(robot.robot_action_keys("go1"))
 robot.cleanup()
 ```
 

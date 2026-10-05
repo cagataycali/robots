@@ -15,7 +15,7 @@ description: "Agility Cassie Bipedal Robot"
 from strands_robots import Robot
 
 robot = Robot("cassie")
-print(robot.robot_joint_names("cassie"))
+print(robot.robot_action_keys("cassie"))
 robot.cleanup()
 ```
 

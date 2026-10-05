@@ -15,7 +15,7 @@ description: "Unitree Aliengo Quadruped (12-DOF)"
 from strands_robots import Robot
 
 robot = Robot("aliengo", position=[0.0, 0.0, 0.1265])
-print(robot.robot_joint_names("aliengo"))
+print(robot.robot_action_keys("aliengo"))
 robot.cleanup()
 ```
 

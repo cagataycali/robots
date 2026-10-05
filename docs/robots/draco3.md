@@ -17,7 +17,7 @@ URDF from [shbang91/draco3_description@5afd197](https://github.com/shbang91/drac
 from strands_robots import Robot
 
 robot = Robot("draco3")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("draco3"))
+print(robot.robot_action_keys("draco3"))
 robot.cleanup()
 ```
 

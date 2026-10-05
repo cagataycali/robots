@@ -15,7 +15,7 @@ description: "Unitree A1 Quadruped"
 from strands_robots import Robot
 
 robot = Robot("unitree_a1", position=[0.0, 0.0, 0.12])
-print(robot.robot_joint_names("unitree_a1"))
+print(robot.robot_action_keys("unitree_a1"))
 robot.cleanup()
 ```
 

@@ -15,7 +15,7 @@ description: "Kinova Gen3 (7-DOF lightweight)"
 from strands_robots import Robot
 
 robot = Robot("kinova_gen3")
-print(robot.robot_joint_names("kinova_gen3"))
+print(robot.robot_action_keys("kinova_gen3"))
 robot.cleanup()
 ```
 

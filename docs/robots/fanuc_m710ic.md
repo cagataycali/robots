@@ -17,7 +17,7 @@ URDF from [robot-descriptions/fanuc_m710ic_description@d12af44](https://github.c
 from strands_robots import Robot
 
 robot = Robot("fanuc_m710ic")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("fanuc_m710ic"))
+print(robot.robot_action_keys("fanuc_m710ic"))
 robot.cleanup()
 ```
 

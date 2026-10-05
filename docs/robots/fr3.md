@@ -15,7 +15,7 @@ description: "Franka Research 3 (7-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("fr3")
-print(robot.robot_joint_names("fr3"))
+print(robot.robot_action_keys("fr3"))
 robot.cleanup()
 ```
 

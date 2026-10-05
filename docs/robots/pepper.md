@@ -17,7 +17,7 @@ URDF from [jrl-umi3218/pepper_description@cd9715b](https://github.com/jrl-umi321
 from strands_robots import Robot
 
 robot = Robot("pepper")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("pepper"))
+print(robot.robot_action_keys("pepper"))
 robot.cleanup()
 ```
 

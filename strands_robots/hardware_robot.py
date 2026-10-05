@@ -74,6 +74,7 @@ from strands_robots.utils import (
     positive_finite_number_error,
     refusal_repr,
     refusal_str,
+    refuse_dropped_connection_kwargs,
     require_optional,
     tcp_port_error,
     teleoperator_contract_error,
@@ -142,9 +143,11 @@ _RCLPY_TRANSPORT_INSTALL_HINT = (
 #
 # Post-R5, the dual-gate semantics are:
 #   - kwargs in this allowlist BUT NOT on the resolved target dataclass
-#     are silently dropped (cross-robot polymorphism: passing ``kp=...``
-#     to so101 doesn't blow up just because ``kp`` is a unitree_g1
-#     kwarg).
+#     are dropped with a DEBUG line (cross-robot polymorphism: passing
+#     ``kp=...`` to so101 doesn't blow up just because ``kp`` is a
+#     unitree_g1 kwarg) -- except an address (``port``, ``robot_ip``) that
+#     was the caller's only one, which is refused: the config would connect
+#     to its own default address.
 #   - kwargs declared on the resolved target dataclass are forwarded
 #     automatically, regardless of whether they appear in this list
 #     (so a future lerobot field like ``wifi_ssid`` Just Works without
@@ -1453,6 +1456,12 @@ class Robot(TeleopMixin, AgentTool):
         # configs - adding new ones here is safe because we filter against
         # ``valid_fields`` before constructing.
         forwardable = _FORWARDABLE_KWARGS
+        refuse_dropped_connection_kwargs(
+            kwargs,
+            valid_fields,
+            ("port", *_ADDRESS_FIELDS),
+            owner=f"{ConfigClass.__name__} for robot_type={robot_type!r}",
+        )
         for key in forwardable:
             if key in kwargs and key in valid_fields:
                 config_data[key] = kwargs[key]

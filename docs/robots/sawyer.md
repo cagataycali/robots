@@ -15,7 +15,7 @@ description: "Rethink Robotics Sawyer (7-DOF)"
 from strands_robots import Robot
 
 robot = Robot("sawyer")
-print(robot.robot_joint_names("sawyer"))
+print(robot.robot_action_keys("sawyer"))
 robot.cleanup()
 ```
 

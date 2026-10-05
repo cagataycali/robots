@@ -17,7 +17,7 @@ URDF from [tork-a/rtmros_nextage@ac270fb](https://github.com/tork-a/rtmros_nexta
 from strands_robots import Robot
 
 robot = Robot("nextage")  # clones the description and compiles the URDF on first use
-print(robot.robot_joint_names("nextage"))
+print(robot.robot_action_keys("nextage"))
 robot.cleanup()
 ```
 

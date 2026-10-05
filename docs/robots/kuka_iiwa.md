@@ -15,7 +15,7 @@ description: "KUKA LBR iiwa 14 (7-DOF collaborative)"
 from strands_robots import Robot
 
 robot = Robot("kuka_iiwa")
-print(robot.robot_joint_names("kuka_iiwa"))
+print(robot.robot_action_keys("kuka_iiwa"))
 robot.cleanup()
 ```
 

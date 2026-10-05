@@ -15,7 +15,7 @@ description: "Franka Emika Panda (7-DOF + gripper)"
 from strands_robots import Robot
 
 robot = Robot("panda")
-print(robot.robot_joint_names("panda"))
+print(robot.robot_action_keys("panda"))
 robot.cleanup()
 ```
 

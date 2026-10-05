@@ -15,7 +15,7 @@ description: "Fourier N1 / GR-1 Humanoid (26-DOF)"
 from strands_robots import Robot
 
 robot = Robot("fourier_n1")
-print(robot.robot_joint_names("fourier_n1"))
+print(robot.robot_action_keys("fourier_n1"))
 robot.cleanup()
 ```
 

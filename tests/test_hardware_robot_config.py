@@ -12,7 +12,9 @@ call into a concrete lerobot ``RobotConfig``/driver. The contracts pinned here:
       silently dropped (Review Learnings #86);
     - a cross-robot allowlist kwarg absent from the resolved dataclass is
       dropped, not raised (the ``Robot('so101', kp=[...])`` polymorphism
-      carve-out), while a dataclass field outside the allowlist is still
+      carve-out) - unless it was the caller's only address (``port``, an
+      address field), which is refused rather than left to the config's
+      default - while a dataclass field outside the allowlist is still
       forwarded (new-lerobot-field future-proofing);
     - ``_initialize_robot`` passes a prebuilt driver / config straight through
       and rejects an unsupported object type.
@@ -113,6 +115,30 @@ class TestCreateMinimalConfig:
         cfg = hw._create_minimal_config("so101_follower", None, port="/dev/ttyACM0", kp=[1.0, 2.0])
         assert not hasattr(cfg, "kp")
         assert cfg.port == "/dev/ttyACM0"
+
+    @pytest.mark.parametrize(
+        ("build", "kind", "kwargs", "dropped", "reached"),
+        [
+            ("robot", "unitree_g1", {"port": "10.0.0.5"}, "port", "robot_ip"),
+            ("robot", "so101_follower", {"robot_ip": "10.0.0.5"}, "robot_ip", "port"),
+            ("teleop", "reachy2_teleoperator", {"port": "10.0.0.5"}, "port", "ip_address"),
+            ("teleop", "so101_leader", {"ip_address": "10.0.0.5"}, "ip_address", "port"),
+        ],
+    )
+    def test_connection_kwarg_absent_from_dataclass_is_refused(self, build, kind, kwargs, dropped, reached):
+        # The caller's only address is one the config drops, so it would connect
+        # to its own default (UnitreeG1Config.robot_ip is the factory
+        # 192.168.123.164). Naming both, as a fleet-wide call does, still works:
+        # tests/test_robot_factory.py passes port= and robot_ip= to so101.
+        from strands_robots.teleoperator import _build_teleop_config
+
+        with pytest.raises(ValueError) as excinfo:
+            if build == "robot":
+                _make_robot()._create_minimal_config(kind, None, **kwargs)
+            else:
+                _build_teleop_config(kind, **kwargs)
+        msg = str(excinfo.value)
+        assert f"{dropped}={kwargs[dropped]!r}" in msg and f"['{reached}']" in msg
 
     def test_dataclass_field_outside_allowlist_is_forwarded(self):
         hw = _make_robot()
