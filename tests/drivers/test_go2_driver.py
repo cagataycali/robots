@@ -98,6 +98,24 @@ class _StubLowCmd:
         self.crc: int = 0
 
 
+#: The G1/H1-2 IDL package.
+_HG_IDL = "unitree_sdk2py.idl.unitree_hg.msg.dds_"
+
+
+class _StubHGLowCmd:
+    """Stand-in for ``unitree_hg_msg_dds__LowCmd_()``: 35 slots, ``mode_pr`` and
+    ``mode_machine`` and no ``head`` / ``level_flag`` (the ``unitree_hg`` struct
+    has neither, so a builder that writes them fails here as it would on the IDL)."""
+
+    __slots__ = ("mode_pr", "mode_machine", "motor_cmd", "crc")
+
+    def __init__(self) -> None:
+        self.mode_pr: int = 0
+        self.mode_machine: int = 0
+        self.motor_cmd: list[_StubMotorCmd] = [_StubMotorCmd() for _ in range(35)]
+        self.crc: int = 0
+
+
 class _StubCRC:
     """Stand-in for ``unitree_sdk2py.utils.crc.CRC``.
 
@@ -193,8 +211,12 @@ def install_unitree_sdk_stub(monkeypatch: pytest.MonkeyPatch) -> None:
         "unitree_sdk2py.utils": types.ModuleType("unitree_sdk2py.utils"),
         "unitree_sdk2py.utils.crc": types.ModuleType("unitree_sdk2py.utils.crc"),
     }
+    for hg in ("unitree_sdk2py.idl.unitree_hg", "unitree_sdk2py.idl.unitree_hg.msg", _HG_IDL):
+        names[hg] = types.ModuleType(hg)
     names["unitree_sdk2py.idl.default"].unitree_go_msg_dds__LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
     names["unitree_sdk2py.idl.unitree_go.msg.dds_"].LowCmd_ = _StubLowCmd  # type: ignore[attr-defined]
+    names["unitree_sdk2py.idl.default"].unitree_hg_msg_dds__LowCmd_ = _StubHGLowCmd  # type: ignore[attr-defined]
+    names[_HG_IDL].LowCmd_ = _StubHGLowCmd  # type: ignore[attr-defined]
     names["unitree_sdk2py.utils.crc"].CRC = _StubCRC  # type: ignore[attr-defined]
     for name, module in names.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -1180,3 +1202,111 @@ def test_h1_lowstate_reads_joints_by_the_h1_slot_map() -> None:
     assert set(joints) == set(H1_JOINT_INDEX)
     assert joints["left_hip_yaw"]["q"] == pytest.approx(7.0)
     assert joints["left_ankle"]["q"] == pytest.approx(10.0)
+
+
+#: ``slot`` per H1-2 joint, transcribed from ``H1_2_JointIndex`` in the SDK's
+#: ``example/h1_2/low_level/h1_2_low_level_example.py``, with the description's
+#: ``_joint`` names. The example drives every slot with ``mode = 1`` (Enable),
+#: ``kp = 100`` below slot 13 and ``50`` from it, ``kd = 1``.
+_H1_2_SDK_SLOT: dict[str, int] = {
+    "left_hip_yaw_joint": 0, "left_hip_pitch_joint": 1, "left_hip_roll_joint": 2, "left_knee_joint": 3,
+    "left_ankle_pitch_joint": 4, "left_ankle_roll_joint": 5,
+    "right_hip_yaw_joint": 6, "right_hip_pitch_joint": 7, "right_hip_roll_joint": 8, "right_knee_joint": 9,
+    "right_ankle_pitch_joint": 10, "right_ankle_roll_joint": 11,
+    "torso_joint": 12,
+    "left_shoulder_pitch_joint": 13, "left_shoulder_roll_joint": 14, "left_shoulder_yaw_joint": 15,
+    "left_elbow_joint": 16, "left_wrist_roll_joint": 17, "left_wrist_pitch_joint": 18, "left_wrist_yaw_joint": 19,
+    "right_shoulder_pitch_joint": 20, "right_shoulder_roll_joint": 21, "right_shoulder_yaw_joint": 22,
+    "right_elbow_joint": 23, "right_wrist_roll_joint": 24, "right_wrist_pitch_joint": 25, "right_wrist_yaw_joint": 26,
+}  # fmt: skip
+
+
+def _released_h1_2(mode_machine: int | None = 4) -> tuple[Go2Driver, _RecordingPublisher]:
+    """An H1-2 driver built the way the factory builds it, its gates admitting."""
+    driver = Go2Driver(tool_name="unitree_h1_2", port="192.168.123.163")
+    driver._connected = True
+    driver._sport_mode_released = True
+    driver._mode_machine = mode_machine
+    driver._battery = {"pct": 88.0, "current": 1.0, "cycle": 3}
+    pub = _RecordingPublisher()
+    driver._pubs = pub  # type: ignore[assignment]
+    return driver, pub
+
+
+def test_the_h1_2_is_natively_driven_on_the_hg_wire() -> None:
+    """``Robot("h1_2", mode="real")`` reaches this driver with the ``unitree_hg`` profile.
+
+    The H1-2's frame is the G1's IDL but its gate is the motion-switcher
+    release, so it subscribes ``unitree_hg`` lowstate plus the separate
+    ``rt/lf/bmsstate`` battery topic, and no ``rt/sportmodestate``.
+    """
+    assert get_native_driver_class("h1_2") is Go2Driver
+    assert list_driver_coverage()["unitree_h1_2"] == ("strands",)
+    driver = Go2Driver(tool_name="unitree_h1_2")
+    assert driver._profile is WIRE_PROFILES["unitree_h1_2"]
+    assert [(t, c) for t, c, _d in driver._subscription_plan()] == [
+        ("rt/lowstate", (_HG_IDL, "LowState_")),
+        ("rt/lf/bmsstate", (_HG_IDL, "BmsState_")),
+    ]
+
+
+def test_the_h1_2_frame_is_the_sdks_slot_gain_and_mode_machine(stub_unitree_sdk: None) -> None:
+    """A full-body H1-2 write lands each joint on the SDK's slot with its gains, and echoes mode_machine.
+
+    The description interleaves 24 hand joints between the arms, so its
+    order is not the wire's from the right shoulder on; a hand joint is refused,
+    not written. The frame is a ``unitree_hg`` ``LowCmd_`` with ``mode_pr = 0``
+    and the robot's own ``mode_machine``; the soft stop keeps every slot enabled.
+    """
+    del stub_unitree_sdk
+    driver, pub = _released_h1_2(mode_machine=4)
+    targets = {name: 0.01 * (slot + 1) for name, slot in _H1_2_SDK_SLOT.items()}
+    result = driver.send_action(targets)
+    assert result["status"] == "success", _text(result)
+    ((_topic, cls, cmd),) = pub.writes
+    assert cls is _StubHGLowCmd
+    assert (cmd.mode_pr, cmd.mode_machine, cmd.crc) == (0, 4, 42)
+    for name, slot in _H1_2_SDK_SLOT.items():
+        motor = cmd.motor_cmd[slot]
+        expected = (1, targets[name], 100.0 if slot < 13 else 50.0, 1.0)
+        assert (motor.mode, motor.q, motor.kp, motor.kd) == pytest.approx(expected), name
+    assert all(m.mode == 0 for m in cmd.motor_cmd[27:]), "slots 27-34 are not H1-2 motors"
+    refused = driver.send_action({"L_thumb_proximal_yaw_joint": 0.1})
+    assert refused["status"] == "error" and "unknown joint name" in _text(refused)
+    zero, err = build_zero_torque_lowcmd(WIRE_PROFILES["unitree_h1_2"], 4)
+    assert err is None, err
+    assert {(m.mode, m.kp, m.kd) for m in zero.motor_cmd[:27]} == {(1, 0.0, 0.0)}
+
+
+def test_an_h1_2_write_waits_for_mode_machine_and_lowstate_supplies_it(stub_unitree_sdk: None) -> None:
+    """No ``unitree_hg`` frame leaves before ``rt/lowstate`` has reported ``mode_machine``.
+
+    The firmware checks the echoed byte, so a frame built on a guessed ``0``
+    would be dropped on the robot with nothing said here. Lowstate fills it
+    (and the joints by the H1-2 slot map); ``rt/lf/bmsstate`` fills the battery.
+    """
+    del stub_unitree_sdk
+    driver, pub = _released_h1_2(mode_machine=None)
+    refused = driver.send_action({"torso_joint": 0.0})
+    assert refused["status"] == "error" and "mode_machine unknown" in _text(refused)
+    assert pub.writes == []
+
+    class _Motor:
+        def __init__(self, q: float) -> None:
+            self.q, self.dq, self.tau_est, self.temperature = q, 0.0, 0.0, 30
+
+    class _LowState:
+        mode_machine = 6
+        motor_state = [_Motor(float(i)) for i in range(35)]
+
+    class _Bms:
+        soc, current, cycle = 9.0, 2.0, 11
+
+    driver._on_lowstate(_LowState())
+    driver._on_bms(_Bms())
+    assert driver.state["joints"]["right_hip_roll_joint"]["q"] == pytest.approx(8.0)
+    refused = driver.send_action({"torso_joint": 0.0})
+    assert "battery 9.0% is under floor" in _text(refused)
+    driver._battery = {"pct": 80.0}
+    assert driver.send_action({"torso_joint": 0.0})["status"] == "success"
+    assert pub.writes[-1][2].mode_machine == 6
