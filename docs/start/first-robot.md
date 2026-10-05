@@ -12,17 +12,17 @@ At the end of this page an SO-101 arm stands in a MuJoCo world on your machine; 
 from strands_robots import Robot
 
 robot = Robot("so101")            # mode="sim" is the default
-print(type(robot).__name__, robot.tool_name)
-print(robot.list_robots())
-print(robot.robot_joint_names("so101"))
+print(robot)
+print(robot.robot_name)
+print(robot.robot_joint_names(robot.robot_name))
 print(robot.get_robot_state()["content"][1]["json"]["joint_labels"])
 ```
 
 You should see:
 
 ```text
-MuJoCoSimEngine so101_sim
-['so101']
+<MuJoCoSimEngine robot='so101' tool='so101_sim'>
+so101
 ['1', '2', '3', '4', '5', '6']
 {'1': 'shoulder_pan', '2': 'shoulder_lift', '3': 'elbow_flex', '4': 'wrist_flex', '5': 'wrist_roll', '6': 'gripper'}
 ```

@@ -758,6 +758,8 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     Returns:
         ``strands_robots.simulation.Simulation`` (sim) or
         ``strands_robots.hardware_robot.Robot`` (real hardware).
+        Either one reports ``name`` back as ``robot_name``, the string its
+        methods take; ``tool_name`` is the agent-tool name.
 
     Raises:
         ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``driver`` is not
@@ -1029,6 +1031,11 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # Both drivers are robots on the fleet, so both get the same two
         # attachments. Reached after the branch rather than inside it: a driver
         # that is built but never put on the mesh is a robot no peer can see.
+        # The sim return answers ``robot_name`` from its world; a driver has no
+        # world, so the factory hands it the same answer: the name it was given,
+        # not the tool name, which a caller may have set to anything.
+        if not isinstance(getattr(type(hw), "robot_name", None), property):
+            cast(Any, hw).robot_name = name
         _attach_mesh(hw, canonical, peer_id, mesh)
         _attach_device_connect(hw, canonical, mode, peer_id)
         return hw
