@@ -262,6 +262,34 @@ def _registry_name(name: str) -> str:
         return name
 
 
+def _add_robot_hint(requested: object, known: Sequence[str]) -> str:
+    """The ``" 'X' is a registered robot ... add it first"`` fragment, or ``""``.
+
+    A registry robot the scene does not hold (``so100`` beside a loaded
+    ``so101``) is not a typo, so the scene-local close match would point at
+    the wrong robot; the recovery is ``add_robot``. Returns ``""`` for a
+    non-string, a name the registry does not know, or a robot the scene
+    already holds under any alias (the alias-aware close match covers that).
+    """
+    if not isinstance(requested, str):
+        return ""
+    try:
+        from strands_robots.registry import get_robot
+
+        if get_robot(requested) is None:
+            return ""
+    except Exception:  # noqa: BLE001 - a suggestion must never raise
+        return ""
+    canonical = _registry_name(requested)
+    if canonical in {_registry_name(name) for name in known}:
+        return ""
+    alias = "" if canonical == requested else f" (canonical registry name: '{canonical}')"
+    return (
+        f" '{requested}' is a registered robot{alias} but is not loaded in this scene;"
+        f" add it first with action='add_robot', name='{requested}'."
+    )
+
+
 def close_match_hint(requested: object, known: Sequence[str], same: Callable[[str], str] | None = None) -> str:
     """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
 
@@ -1296,13 +1324,19 @@ class SimEngine(ABC):
 
         A registry alias is suggested even when its spelling is far from the
         world's name: ``"g1"`` scores 0.33 against ``"unitree_g1"``, under
-        difflib's cutoff, yet both resolve to the same registry robot.
+        difflib's cutoff, yet both resolve to the same registry robot. A registry
+        robot that is simply not loaded (``"so100"`` beside ``"so101"``) is named
+        as such with the ``add_robot`` call instead of a sibling "Did you mean".
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
         if known:
-            msg += close_match_hint(requested, known, same=_registry_name)
-            msg += f" Available robots: {known}. Use action='list_robots' to see all."
+            hint = _add_robot_hint(requested, known)
+            if hint:
+                msg += f"{hint} Robots in the scene: {known}."
+            else:
+                msg += close_match_hint(requested, known, same=_registry_name)
+                msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg

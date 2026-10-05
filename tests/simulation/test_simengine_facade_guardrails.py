@@ -606,6 +606,25 @@ def test_unknown_robot_msg_suggests_a_registry_alias(requested, world, suggested
         assert f"Did you mean: {suggested}?" in msg
 
 
+@pytest.mark.parametrize(
+    ("requested", "world", "expected", "absent"),
+    [
+        ("so100", ("so101",), "'so100' is a registered robot but is not loaded", "Did you mean"),
+        ("g1", ("so101",), "(canonical registry name: 'unitree_g1') but is not loaded", "Did you mean"),
+        ("so10", ("so101",), "Did you mean: so101?", "is a registered robot"),  # typo, not a robot
+        ("unitree_g1", ("g1",), "Did you mean: g1?", "is a registered robot"),  # loaded under an alias
+    ],
+)
+def test_unknown_robot_msg_names_add_robot_for_a_registered_robot_not_in_the_scene(requested, world, expected, absent):
+    """A registry robot the scene does not hold gets the add_robot call, not a
+    sibling suggested as if the caller mistyped; typos and aliases keep theirs."""
+    msg = FakeSim(robots=world)._unknown_robot_msg(requested)
+    assert expected in msg
+    assert absent not in msg
+    if "registered" in expected:
+        assert f"action='add_robot', name='{requested}'" in msg
+
+
 def test_unknown_robot_msg_empty_world_points_at_add_robot():
     """With no robots, the helper omits the close-match and points at add_robot."""
     msg = FakeSim(robots=())._unknown_robot_msg("ghost")
