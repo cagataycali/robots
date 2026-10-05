@@ -1226,12 +1226,22 @@ class MuJoCoSimEngine(
         concurrent mj_step is mutating data arrays.
         """
         if self._world is None or self._world._model is None:
+            logger.warning("get_observation(robot_name=%r): returning no observation. %s", robot_name, _NO_WORLD_MSG)
             return {}
         if robot_name is None:
             if not self._world.robots:
+                logger.warning(
+                    "get_observation(robot_name=None): returning no observation because the world has "
+                    "no robots. Call add_robot first."
+                )
                 return {}
             robot_name = next(iter(self._world.robots))
         if not registered(self._world.robots, robot_name):
+            logger.warning(
+                "get_observation(robot_name=%r): unknown robot. Known: %s. Returning empty observation.",
+                robot_name,
+                sorted(self._world.robots),
+            )
             return {}
         if skip_images and self._world is not None and self._world._backend_state.get("recording"):
             # T26: dataset recording needs every frame's image obs. Override

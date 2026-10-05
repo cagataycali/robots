@@ -1188,16 +1188,26 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             (orientation, w,x,y,z), ``base_lin_vel`` (m/s, WORLD frame) and
             ``base_ang_vel`` (rad/s, BODY frame - matching the MuJoCo backend and
             the IMU-gyro frame WBC / locomotion controllers consume) for
-            locomotion controllers. Empty when no world exists or the robot is
-            unknown.
+            locomotion controllers. Empty, with a WARNING naming the cause, when
+            no world exists or the robot cannot be resolved.
         """
         if self._world is None or self._model is None:
+            logger.warning(
+                "get_observation(robot_name=%r): returning no observation. No world. Call create_world first.",
+                robot_name,
+            )
             return {}
         try:
             robot_name = self._resolve_single_robot(robot_name)
-        except ValueError:
+        except ValueError as e:
+            logger.warning("get_observation(robot_name=None): returning no observation. %s", e)
             return {}
         if not registered(self._world.robots, robot_name):
+            logger.warning(
+                "get_observation(robot_name=%r): unknown robot. Known: %s. Returning empty observation.",
+                robot_name,
+                sorted(self._world.robots),
+            )
             return {}
         if skip_images and self._world._backend_state.get("recording"):
             # T26: dataset recording needs every frame's image obs. Override

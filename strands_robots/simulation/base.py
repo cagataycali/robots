@@ -1973,8 +1973,12 @@ class SimEngine(ABC):
                 camera).
 
         Returns:
-            Observation dict per schema above. Returns ``{}`` if the world
-            is not yet created or ``robot_name`` is unknown.
+            Observation dict per schema above. Returns ``{}`` - and logs a
+            WARNING naming the cause - when there is no world (never created,
+            or after :meth:`destroy`), the robot cannot be resolved, or
+            ``robot_name`` is unknown. An empty dict is not a heartbeat: the
+            write methods (``send_action``, ``step``) answer the same
+            condition with ``status="error"``.
         """
         ...
 
