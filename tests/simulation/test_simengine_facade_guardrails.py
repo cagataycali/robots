@@ -586,6 +586,26 @@ def test_unknown_robot_msg_offers_close_match_and_discovery_action():
     assert "list_robots" in msg
 
 
+@pytest.mark.parametrize(
+    ("requested", "world", "suggested"),
+    [
+        ("g1", ("unitree_g1",), "unitree_g1"),  # registry alias, difflib ratio 0.33
+        ("g1_wbc", ("unitree_g1",), "unitree_g1"),  # registry alias, difflib ratio 0.25
+        ("unitree_g1", ("g1",), "g1"),  # the world holds the alias, caller the canonical
+        ("unitreeg1", ("unitree_g1",), "unitree_g1"),  # plain typo, difflib path unchanged
+        ("g1", ("so100",), None),  # alias of a robot the world does not hold
+    ],
+)
+def test_unknown_robot_msg_suggests_a_registry_alias(requested, world, suggested):
+    """A name that resolves to the same registry robot is suggested however far
+    apart the spellings are; the alias table never invents a robot."""
+    msg = FakeSim(robots=world)._unknown_robot_msg(requested)
+    if suggested is None:
+        assert "Did you mean" not in msg
+    else:
+        assert f"Did you mean: {suggested}?" in msg
+
+
 def test_unknown_robot_msg_empty_world_points_at_add_robot():
     """With no robots, the helper omits the close-match and points at add_robot."""
     msg = FakeSim(robots=())._unknown_robot_msg("ghost")

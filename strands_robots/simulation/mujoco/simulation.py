@@ -173,6 +173,7 @@ from strands_robots.utils import (
     camera_name_error,
     coerce_orientation_quaternion,
     coerce_pose_vector,
+    did_you_mean,
     entity_name_error,
     finite_vector_error,
     mounted_camera_pose_error,
@@ -2248,21 +2249,6 @@ class MuJoCoSimEngine(
             msg += " No objects in the scene; add one with action='add_object'."
         return msg
 
-    def _unknown_robot_msg(self, requested: object) -> str:
-        """Actionable 'robot not found' message: name it, offer a close-match,
-        and list the robots in the world - consistent with ``_unknown_object_msg`` /
-        ``_unknown_camera_msg`` / ``_unknown_model_msg`` (#1299/#1303) rather than a
-        dead-end "Robot 'X' not found." that forces an agent driving the API blind
-        into a discovery round-trip on every typo."""
-        known = list(self._world.robots.keys()) if self._world is not None else []
-        msg = f"Robot '{requested}' not found."
-        if known:
-            msg += close_match_hint(requested, known)
-            msg += f" Available robots: {known}. Use action='list_robots' to see all."
-        else:
-            msg += " No robots in the scene; add one with action='add_robot'."
-        return msg
-
     def _teleop_target_error(self, robot_name: str | None) -> str | None:
         """Refuse a teleop ``robot_name`` that is not a robot in this world.
 
@@ -2977,7 +2963,7 @@ class MuJoCoSimEngine(
                     "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
                 },
             )
-        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) for i in range(src.nkey)]
+        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) or str(i) for i in range(src.nkey)]
         if src.nkey == 0:
             return (
                 None,
@@ -3015,7 +3001,14 @@ class MuJoCoSimEngine(
                     None,
                     {
                         "status": "error",
-                        "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
+                        "content": [
+                            {
+                                "text": (
+                                    f"Keyframe {keyframe!r} not found in '{fname}'."
+                                    f"{did_you_mean([keyframe], names)} Available: {avail}."
+                                )
+                            }
+                        ],
                     },
                 )
             idx = names.index(keyframe)
@@ -4138,7 +4131,7 @@ class MuJoCoSimEngine(
             "the common case prefer run_policy(n_episodes=N) which flushes a "
             "boundary per episode automatically)"
         )
-        base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
+        base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None, private=True) -> dict"
         base["methods"]["get_recording_status"] = "() -> dict"
         base["methods"]["verify_dataset_episodes"] = (
             "(expected: int) -> dict  (after stop_recording, read the parquet "

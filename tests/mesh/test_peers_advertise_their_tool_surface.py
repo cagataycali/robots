@@ -95,6 +95,12 @@ def test_every_published_action_is_served_or_denied_on_purpose() -> None:
     assert frozenset(wire_surface.denied_params()) <= wire_surface.published_params()
 
 
+def test_a_peer_alone_decides_what_it_publishes() -> None:
+    """A remote caller can neither arm a Hub push nor flip a locally armed one to public."""
+    assert {"push_to_hub", "private"} <= set(wire_surface.denied_params())
+    assert not ({"push_to_hub", "private"} & security.sim_call_allowed_params())
+
+
 def test_the_mesh_validator_reads_the_same_deny_tables_as_the_peer() -> None:
     """One file, two readers: the wire's early refusal and the peer's surface never disagree."""
     assert security.SIM_CALL_DENIED_ACTIONS == frozenset(wire_surface.denied_actions())

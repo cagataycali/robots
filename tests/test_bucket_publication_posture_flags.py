@@ -185,6 +185,11 @@ class TestTheDomainIsTheSharedOne:
         result = _sync(finalized, **{flag: "false"})
         assert result["message"] == boolean_flag_error("false", flag, "sync_dataset_to_bucket")
 
+    def test_a_push_is_private_by_default_like_the_bucket(self) -> None:
+        dataset = _FakeHubDataset()
+        assert _push(_recorder(dataset))["status"] == "success"
+        assert dataset.pushed == [True]
+
     def test_the_push_message_is_the_shared_one_verbatim(self) -> None:
         result = _push(_recorder(_FakeHubDataset()), private="false")
         assert result["message"] == boolean_flag_error("false", "private", "push_to_hub")

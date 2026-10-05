@@ -59,7 +59,7 @@ from strands_robots.registry import get_driver, get_robot, list_robots
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
 #: rule itself, so another robot arriving in this position is caught there -
-#: which is how the Franka arms, the UR arms, the xArm 7, the Gen3, the H1, the H1-2 and the B2 arrived here, each having moved
+#: which is how the Franka arms, the UR arms, the xArm 7, the Gen3, the iiwa, the H1, the H1-2 and the B2 arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "open_duck_mini",
@@ -83,6 +83,7 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "ur30",
     "xarm7",
     "kinova_gen3",
+    "kuka_iiwa",
     "unitree_h1",
     "unitree_h1_2",
     "b2",
@@ -329,9 +330,9 @@ class TestTheHelperReportsRatherThanRaises:
         class _PlantedDriver:
             pass
 
-        assert _native_driver_refusal("kuka_iiwa") is None, "premise: kuka_iiwa has no driver today"
-        monkeypatch.setitem(drivers_registry_mod._NATIVE_DRIVERS, "kuka_iiwa", _PlantedDriver)
-        reason = _native_driver_refusal("kuka_iiwa")
+        assert _native_driver_refusal("sawyer") is None, "premise: sawyer has no driver today"
+        monkeypatch.setitem(drivers_registry_mod._NATIVE_DRIVERS, "sawyer", _PlantedDriver)
+        reason = _native_driver_refusal("sawyer")
         assert reason is not None
         assert "_PlantedDriver" in reason
 

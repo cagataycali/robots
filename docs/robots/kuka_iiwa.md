@@ -21,7 +21,15 @@ robot.cleanup()
 
 Add a cube and camera ([worlds and objects](../learn/simulation/worlds-and-objects.md)), then run [a checkpoint](../start/first-policy.md) on it.
 
+```python title="sketch"
+robot = Robot("kuka_iiwa", mode="real", port="192.170.10.2")  # KukaDriver
+```
+
 Aliases: `iiwa`, `iiwa14`, `kuka_iiwa_14`.
+
+## Hardware
+
+**`KukaDriver`** (the default for this robot) speaks FRI over UDP through `pyfri`, in its own process: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#kukadriver).
 
 ## Policies verified on this robot
 
