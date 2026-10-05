@@ -174,7 +174,7 @@ def _asset_relative(resolved_dir: Path, param: str, value: str) -> Path:
         ) from exc
 
 
-def _warn_on_a_near_miss_category(name: str, category: str) -> None:
+def _warn_on_a_near_miss_category(name: str, category: object) -> None:
     """Log the known group a category was probably meant to be.
 
     A category is a group name a user may extend, so an unknown one is
@@ -182,6 +182,8 @@ def _warn_on_a_near_miss_category(name: str, category: str) -> None:
     one-robot group beside the one it meant, which the catalog and every
     caller switching on ``"arm"`` then never see - so it is named in a warning.
     """
+    if not isinstance(category, str):
+        return
     declared = category.strip()
     if not declared or declared in _CATEGORY_DISPLAY_ORDER:
         return

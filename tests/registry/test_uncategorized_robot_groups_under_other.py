@@ -25,7 +25,7 @@ from strands_robots.registry import list_robots, list_robots_by_category, regist
 from strands_robots.registry.robots import format_robot_table
 
 
-def _register(tmp_path, name: str, category: str) -> None:
+def _register(tmp_path, name: str, category: str | None) -> None:
     robot_dir = tmp_path / name
     robot_dir.mkdir(parents=True, exist_ok=True)
     (robot_dir / "bot.xml").write_text(f'<mujoco model="{name}"><worldbody/></mujoco>')
@@ -33,7 +33,7 @@ def _register(tmp_path, name: str, category: str) -> None:
         name=name,
         model_xml="bot.xml",
         asset_dir=str(robot_dir),
-        category=category,
+        category=category,  # type: ignore[arg-type]  # None is a dynamic caller main accepts
         joints=4,
         description=f"a {category or 'category-less'} robot",
         overwrite=True,
@@ -109,6 +109,7 @@ def test_a_category_less_robot_is_ordered_after_a_declared_one(tmp_path):
         ("arm", None),
         ("quadruped", None),
         ("", None),
+        (None, None),
     ],
 )
 def test_a_near_miss_category_names_the_group_it_meant(tmp_path, caplog, declared, meant):
@@ -125,4 +126,4 @@ def test_a_near_miss_category_names_the_group_it_meant(tmp_path, caplog, declare
         if meant
         else []
     )
-    assert any(r["name"] == "typobot" for r in list_robots_by_category()[declared.strip() or "other"])
+    assert any(r["name"] == "typobot" for r in list_robots_by_category()[(declared or "").strip() or "other"])
