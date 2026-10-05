@@ -42,7 +42,7 @@ All keyword-only, no `**kwargs`. `providers` defaults to `["CPUExecutionProvider
 
 ## Skills as a bundle
 
-`MicroduckPolicyBundle` in `strands_robots.policies.microduck.composite` holds several `MicroduckPolicy` instances warm and exposes one as active. `bundle.switch("alpha_stand")` swaps mid-rollout. `switch_on_velocity=<threshold>` with `move_key` and `idle_key` auto-selects between two skills by the magnitude of the commanded twist each tick; both keys must name held skills when the gate is on.
+`MicroduckPolicyBundle` in `strands_robots.policies.microduck.composite` holds several `MicroduckPolicy` instances warm and exposes one as active. `bundle.switch("stand")` swaps mid-rollout to the bundle key named below. `switch_on_velocity=<threshold>` with `move_key` and `idle_key` auto-selects between two skills by the magnitude of the commanded twist each tick; both keys must name held skills when the gate is on.
 
 ```python title="sketch"
 from strands_robots.policies.microduck import MicroduckPolicy
