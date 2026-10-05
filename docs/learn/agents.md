@@ -31,7 +31,7 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 
 ## The tools around the robot
 
-`strands_robots.tools` lazy-loads every tool; the ones mounted most:
+`strands_robots.tools` lazy-loads the general-purpose verbs; the per-robot verb packs sit beside the robot they belong to and are imported from there (`from strands_robots.tools.g1 import use_unitree, g1_move_velocity`; `from strands_robots.tools.reachy import reachy_look`). The ones mounted most:
 
 | tool | what it does | gated? |
 |---|---|---|
