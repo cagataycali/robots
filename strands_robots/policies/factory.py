@@ -426,6 +426,28 @@ def _spell_model_path_as_the_provider_does(provider: str, kwargs: Mapping[str, A
     return out
 
 
+def _provider_type_error(provider: object, param: str) -> str | None:
+    """Describe why a non-string ``provider`` names nothing, or ``None`` for a string.
+
+    Resolution strips and indexes the registry with this value, so a non-string
+    otherwise surfaces as a bare ``AttributeError``/``TypeError`` naming neither
+    the parameter nor the problem. A :class:`Policy` (instance or class) is the
+    likeliest wrong value, so the message points at ``policy_object``.
+    """
+    if isinstance(provider, str):
+        return None
+    hint = (
+        " A pre-built policy is passed as policy_object= instead."
+        if isinstance(provider, Policy) or (isinstance(provider, type) and issubclass(provider, Policy))
+        else ""
+    )
+    return (
+        f"{param} must be a string, got {type(provider).__name__} ({provider!r}). "
+        "Pass a provider name (list_providers() reports them), a HuggingFace "
+        f"model ID, or a server URL.{hint}"
+    )
+
+
 def _resolve_policy_class(provider: str, /, **kwargs) -> tuple[str, type[Policy], dict]:
     """Resolve ``provider`` to its policy class WITHOUT instantiating it.
 
@@ -444,9 +466,12 @@ def _resolve_policy_class(provider: str, /, **kwargs) -> tuple[str, type[Policy]
         ``(canonical_provider_name, PolicyClass, resolved_kwargs)``.
 
     Raises:
+        TypeError: If ``provider`` is not a string.
         ImportError / ValueError: Propagated from the underlying class import
             or smart-string resolution when the provider cannot be resolved.
     """
+    if (type_error := _provider_type_error(provider, "provider")) is not None:
+        raise TypeError(type_error)
     # 1. Runtime registry (user-registered providers).
     resolved_name = _runtime_aliases.get(provider, provider)
     if resolved_name in _runtime_registry:
@@ -799,7 +824,8 @@ def create_policy(provider: str, /, **kwargs) -> Policy:
             naming its replacement.
 
     Raises:
-        TypeError: If a keyword misspells one the provider's constructor
+        TypeError: If ``provider`` is not a string (a pre-built policy goes to
+            ``policy_object=`` instead), or if a keyword misspells one the provider's constructor
             binds, names one it cannot bind at all (no ``**kwargs``), omits one
             it requires, or the provider needs its own ``provider`` argument
             (``persistent``, which is constructed directly) - see
@@ -1008,15 +1034,8 @@ def policy_provider_error(provider: str, /, **kwargs) -> str | None:
     Returns:
         The resolution failure message, or ``None`` when ``provider`` resolves.
     """
-    if not isinstance(provider, str):
-        # Resolution indexes the registry with this value, so a non-string
-        # reaches it as a bare TypeError naming neither the parameter nor the
-        # problem ("argument of type 'NoneType' is not iterable").
-        return (
-            f"policy_provider must be a string, got {type(provider).__name__}. "
-            "Pass a provider name (list_providers() reports them), a HuggingFace "
-            "model ID, or a server URL."
-        )
+    if (type_error := _provider_type_error(provider, "policy_provider")) is not None:
+        return type_error
     try:
         canonical, PolicyClass, _ = _resolve_policy_class(provider, **kwargs)
     except ValueError as e:
