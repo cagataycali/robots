@@ -40,6 +40,7 @@ Usage::
     unregister_robot("my_arm")
 """
 
+import difflib
 import json
 import logging
 import os
@@ -50,7 +51,7 @@ from strands_robots.utils import resolve_asset_path, safe_join
 
 from ._overlay import parse_user_robots, user_registry_path, user_registry_source
 from .loader import _REGISTRY_DIR, _refuse_unfolded_user_keys, _validate_robots, invalidate_cache, normalize_robot_name
-from .robots import get_robot
+from .robots import _CATEGORY_DISPLAY_ORDER, get_robot
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,27 @@ def _asset_relative(resolved_dir: Path, param: str, value: str) -> Path:
         ) from exc
 
 
+def _warn_on_a_near_miss_category(name: str, category: str) -> None:
+    """Log the known group a category was probably meant to be.
+
+    A category is a group name a user may extend, so an unknown one is
+    registered as given. But a near miss (``"arms"`` for ``"arm"``) opens a
+    one-robot group beside the one it meant, which the catalog and every
+    caller switching on ``"arm"`` then never see - so it is named in a warning.
+    """
+    declared = category.strip()
+    if not declared or declared in _CATEGORY_DISPLAY_ORDER:
+        return
+    meant = difflib.get_close_matches(declared, _CATEGORY_DISPLAY_ORDER, n=2, cutoff=0.6)
+    if meant:
+        logger.warning(
+            "Robot '%s' declares category=%r, which is a new group; did you mean %s?",
+            name,
+            category,
+            " or ".join(repr(m) for m in meant),
+        )
+
+
 def register_robot(
     name: str,
     *,
@@ -211,7 +233,11 @@ def register_robot(
             block, like the package's hardware-only entries. Such a robot must
             declare *hardware* and is reachable in real mode only.
         description: Human-readable description.
-        category: Robot category (arm, humanoid, mobile, hand, aerial, bimanual, ...).
+        category: Robot category, one of the groups the catalog shows (arm,
+            bimanual, hand, humanoid, expressive, mobile, mobile_manip,
+            aerial) or a new group of your own. A spelling close to a known
+            group (``"arms"``, ``"mobile-manip"``) is registered as given and
+            logs a warning naming the group it probably meant.
         joints: Number of actuated joints.
         asset_dir: Directory containing the model file and meshes.
             - Absolute path: used as-is (``~/`` expanded).
@@ -280,6 +306,7 @@ def register_robot(
 
     # Normalize name
     name = normalize_robot_name(name)
+    _warn_on_a_near_miss_category(name, category)
 
     # Load existing
     data = _load_user_registry()

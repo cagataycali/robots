@@ -98,3 +98,31 @@ def test_a_category_less_robot_is_ordered_after_a_declared_one(tmp_path):
     ]
 
     assert body.index("mysterybot") > body.index("quadbot")
+
+
+@pytest.mark.parametrize(
+    ("declared", "meant"),
+    [
+        ("arms", "'arm'"),
+        ("Arm", "'arm'"),
+        ("mobile-manip", "'mobile_manip' or 'mobile'"),
+        ("arm", None),
+        ("quadruped", None),
+        ("", None),
+    ],
+)
+def test_a_near_miss_category_names_the_group_it_meant(tmp_path, caplog, declared, meant):
+    """A typo still registers, but warns with the known group it was close to.
+
+    An exact group, a deliberately new one and no category at all stay quiet.
+    """
+    with caplog.at_level("WARNING", logger="strands_robots.registry.user_registry"):
+        _register(tmp_path, "typobot", declared)
+
+    warned = [r.getMessage() for r in caplog.records if "did you mean" in r.getMessage()]
+    assert warned == (
+        [f"Robot 'typobot' declares category={declared!r}, which is a new group; did you mean {meant}?"]
+        if meant
+        else []
+    )
+    assert any(r["name"] == "typobot" for r in list_robots_by_category()[declared.strip() or "other"])
