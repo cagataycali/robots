@@ -90,6 +90,7 @@ from strands_robots.simulation.base import (
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
+    scene_contents_sentence,
     unknown_model_msg,
     unknown_parameter_error,
 )
@@ -6921,8 +6922,9 @@ class MuJoCoSimEngine(
         on six embodiments, that refusal was the first tool result in all
         eight. With a world present this names the robots it holds and the
         joints an agent can address, and points at the actions that build on
-        it; with no world it keeps the state-machine sentence, which is then
-        true.
+        it, and names the objects and cameras already added
+        (:func:`~strands_robots.simulation.base.scene_contents_sentence`); with
+        no world it keeps the state-machine sentence, which is then true.
 
         The offered actions are chosen from each robot's resolved actuator
         ownership (:attr:`SimRobot.actuator_ids`) -- the same value
@@ -6964,7 +6966,7 @@ class MuJoCoSimEngine(
         return (
             "One world per instance. The world is ALREADY CREATED and holds robot(s) "
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
-            f"{next_steps}"
+            f"{next_steps}{scene_contents_sentence(world.objects, world.cameras)}"
         )
 
     def wire_tool_spec(self) -> dict[str, Any]:
