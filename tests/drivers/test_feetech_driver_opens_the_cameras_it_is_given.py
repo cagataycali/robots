@@ -198,6 +198,11 @@ class TestTheEntryGrader:
         reason = camera_entry_error("main", config)
         assert reason is not None and "main" in reason and fragment in reason, reason
 
+    def test_an_int_beyond_float_range_is_graded_not_crashed_on(self) -> None:
+        # The NaN clause is scoped to floats: ``math.isnan(10**400)`` raises
+        # OverflowError, and the grader's contract is a refusal string or None.
+        assert camera_entry_error("main", {"index_or_path": 0, "fps": 10**400}) is None
+
     def test_good_entries_become_specs(self) -> None:
         specs = camera_specs(
             {

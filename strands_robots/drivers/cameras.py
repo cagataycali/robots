@@ -110,7 +110,10 @@ def camera_entry_error(name: object, config: object) -> str | None:
             return f"camera {name!r}: {key} must be a positive integer, got {refusal_repr(value)}"
     fps = config.get("fps")
     if fps is not None and (
-        isinstance(fps, bool) or not isinstance(fps, int | float) or math.isnan(fps) or not fps > 0
+        isinstance(fps, bool)
+        or not isinstance(fps, int | float)
+        or (isinstance(fps, float) and math.isnan(fps))
+        or not fps > 0
     ):
         return f"camera {name!r}: fps must be a positive number, got {refusal_repr(fps)}"
     return None
