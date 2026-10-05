@@ -45,6 +45,7 @@ method body, so the module imports on CI and in every unit test.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import os
@@ -227,6 +228,74 @@ _M_TOF_FRAME = "tof.frame"
 #: robot.
 SKILLS: tuple[str, ...] = ("ground_pick", "kick_left", "kick_right", "sit_toggle", "roulade")
 
+#: ONNX actors shipped under ``strands_robots.policies.microduck`` and listed in
+#: ``docs/learn/policies/microduck.md``. They are **not** ``robot.do`` skills -
+#: they are policy weights that run through
+#: ``create_policy("microduck", onnx_path=...)`` or
+#: ``sim.run_policy(policy_provider="microduck", ...)``. A user who read the
+#: policies page first and tries ``send_action({"skill": "alpha_walking"})``
+#: lands on the ``unknown skill`` refusal; naming the two surfaces side by
+#: side turns a stone wall into a one-line nudge.
+_ONNX_ACTOR_NAMES: tuple[str, ...] = (
+    "alpha_walking",
+    "alpha_stand",
+    "alpha_sitstand",
+    "roulade",
+    "ball_kick_left",
+    "ball_kick_right",
+    "roller",
+    "roller_crouch",
+    "alpha_ground_pick",
+)
+
+
+def _unknown_skill_message(raw: str, known: tuple[str, ...] | list[str]) -> str:
+    """Build the ``unknown skill`` refusal with a ``Did you mean`` hint.
+
+    Mirrors the ``difflib.get_close_matches(cutoff=0.7)`` shape used by the
+    five sibling refusals in ``strands_robots.hardware_robot`` /
+    ``.robot`` / ``.policies.factory`` / ``.teleoperator`` (see
+    harness#708 for the pattern). Two independent hints are offered:
+
+    1. A near-match from this driver's own ``robot.do`` whitelist
+       (``kick_left`` for ``ball_kick_left``, ``ground_pick`` for
+       ``alpha_ground_pick``) - the robot can do this skill, it is just
+       called something else.
+    2. An ONNX-actor hint when the typo matches a weight shipped under
+       ``strands_robots.policies.microduck`` - the user wanted
+       ``run_policy``/``create_policy``, not ``send_action``.
+
+    A hit on neither falls back to the current ``expected one of`` message
+    so the pin test
+    (``tests/drivers/microduck/test_microduck_driver_over_socket.py:139``
+    which asserts ``"unknown skill" in text``) still passes.
+    """
+    text = str(raw)
+    key = text.strip().lower()
+    known_list = list(known)
+    close = difflib.get_close_matches(key, known_list, n=2, cutoff=0.6)
+    hint = ""
+    if close:
+        if len(close) == 1:
+            hint = f"; did you mean {close[0]!r}?"
+        else:
+            hint = f"; did you mean one of {close!r}?"
+    elif difflib.get_close_matches(key, list(_ONNX_ACTOR_NAMES), n=1, cutoff=0.6):
+        # The user typed an ONNX-actor name shipped under
+        # ``strands_robots.policies.microduck`` - a different surface. The
+        # driver does not know how to tell the on-robot daemon to run that
+        # weight; the policy is the one that does, via ``run_policy`` /
+        # ``create_policy(policy_provider="microduck")``.
+        actor = difflib.get_close_matches(key, list(_ONNX_ACTOR_NAMES), n=1, cutoff=0.6)[0]
+        hint = (
+            f"; {actor!r} is an ONNX actor, not a ``robot.do`` skill - run it "
+            f'with ``create_policy("microduck", onnx_path="{actor}.onnx")`` or '
+            f'``sim.run_policy(policy_provider="microduck", '
+            f'policy_config={{"onnx_path": "{actor}.onnx"}})``'
+        )
+    return f"unknown skill {raw!r}; expected one of {known_list}{hint}"
+
+
 #: Action keys this driver knows how to turn into an intent. An action key
 #: outside this tuple is refused, so it is also the vocabulary the two refusal
 #: messages name - the one for an action naming none of them, and the one for an
@@ -372,7 +441,7 @@ def action_to_wire(
     if "skill" in action:
         skill = str(action["skill"]).strip().lower()
         if skill not in known_skills:
-            return f"unknown skill {action['skill']!r}; expected one of {list(known_skills)}"
+            return _unknown_skill_message(action["skill"], known_skills)
         commands.append((_M_DO, {"skill": skill}, False))
 
     return commands
@@ -1846,7 +1915,7 @@ def _act_do(driver: MicroduckDriver, params: dict[str, Any]) -> dict[str, Any]:
         # The robot's list may have changed since connect; ask once before refusing.
         _refresh_policies(driver)
         if skill not in driver.known_skills:
-            return refuse(f"do: unknown skill {raw!r}; this robot lists {list(driver.known_skills)}")
+            return refuse(f"do: {_unknown_skill_message(raw, driver.known_skills)}")
     driver._cancel_move()
     return _intent(driver, _M_DO, {"skill": skill}, "do")
 
