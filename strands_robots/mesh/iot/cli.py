@@ -9,6 +9,9 @@ and prints the ``export`` lines a process needs afterwards. Exit codes: 0 on suc
     strands-robots iot provision-robot so101-arm-01
     strands-robots iot provision-operator ops-console-1
     strands-robots iot reprovision so101-arm-01        # rotate to a CSR certificate with CN=<thing>
+    strands-robots iot reprovision watchdog-1 --estop-publish keep   # a safety authority keeps its grant
+    strands-robots iot withdraw-estop-publish --keep watchdog-1      # dry run: who still holds the grant
+    strands-robots iot withdraw-estop-publish --keep watchdog-1 --apply
     strands-robots iot teardown so101-arm-01
 """
 
@@ -45,6 +48,29 @@ def _parser() -> argparse.ArgumentParser:
                     "Only for a designated safety authority; the default strands-robot-no-estop obeys stops"
                 ),
             )
+        if verb == "reprovision":
+            p.add_argument(
+                "--estop-publish",
+                choices=("keep", "drop"),
+                default=None,
+                help=(
+                    "what to do when the current certificate carries strands-robot (the fleet-stop publish grant): "
+                    "keep it for a designated safety authority, or drop it and rotate onto strands-robot-no-estop. "
+                    "Without this flag such a rotation is refused; a certificate without the grant needs no flag"
+                ),
+            )
+    w = sub.add_parser(
+        "withdraw-estop-publish",
+        help=(
+            "move every certificate on strands-robot to strands-robot-no-estop, except the Things named with --keep; "
+            "a dry run unless --apply is given"
+        ),
+    )
+    w.add_argument(
+        "--keep", action="append", default=[], metavar="THING", help="a safety authority that keeps the grant"
+    )
+    w.add_argument("--apply", action="store_true", help="change the account; without it the verb only reports")
+    w.add_argument("--region", default=None, help="AWS region (default: the boto3 session's)")
     return parser
 
 
@@ -54,6 +80,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     from strands_robots.mesh.iot import provision as prov
 
     try:
+        if args.verb == "withdraw-estop-publish":
+            report = prov.withdraw_fleet_stop_grant(
+                region=args.region, safety_authorities=args.keep, apply=bool(args.apply)
+            )
+            for line in report.lines():
+                print(line)
+            return 0
         if args.verb == "teardown":
             prov.teardown_thing(args.thing_name, region=args.region, cert_dir=args.cert_dir)
             print(f"{args.thing_name}: Thing, certificates and local files removed")
@@ -68,7 +101,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.verb == "provision-operator":
             result = prov.provision_operator(args.thing_name, region=args.region, cert_dir=args.cert_dir)
         else:
-            result = prov.reprovision_thing(args.thing_name, region=args.region, cert_dir=args.cert_dir)
+            decision = {"keep": True, "drop": False, None: None}[args.estop_publish]
+            result = prov.reprovision_thing(
+                args.thing_name, region=args.region, cert_dir=args.cert_dir, estop_publish=decision
+            )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

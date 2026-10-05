@@ -109,11 +109,20 @@ class TestTheChildrenPolicyGrantsTheChildKeySpace:
             f"arn:aws:iot:*:*:topic/strands/{THING_VAR}{CHILD_PEER_SEPARATOR}*/response/*",
         ]
 
-    def test_every_resource_is_pinned_to_this_things_children(self):
-        # No statement reaches beyond ``<thing>__``: no bare ``strands/*`` publish,
-        # no shadow, no safety topic.
+    def test_every_grant_is_pinned_to_this_things_children(self):
+        # No Allow reaches beyond ``<thing>__``: no bare ``strands/*`` publish,
+        # no shadow, no safety topic. The document's Deny statements are the
+        # other way round: they name fleet-wide topics only, never the Thing's
+        # own or its children's key space, so they can refuse nothing a child
+        # legitimately publishes.
         for st in _ROBOT_CHILDREN_POLICY_DOC["Statement"]:
             text = json.dumps(st)
+            if st["Effect"] == "Deny":
+                assert THING_VAR not in text
+                for r in _as_list(st["Resource"]):
+                    assert r.startswith("arn:aws:iot:*:*:topic/strands/"), r
+                    assert r.removeprefix("arn:aws:iot:*:*:topic/strands/").split("/")[0] in ("safety", "broadcast")
+                continue
             assert st["Effect"] == "Allow"
             if st["Action"] != "iot:SendDirectMessage":
                 for r in _as_list(st["Resource"]):

@@ -390,6 +390,7 @@ class TestEveryPostureFlagRoutesThroughTheDomain:
         assert found == {
             "bootstrap.py::bootstrap_account": ["confirm", "dry_run", "force_update"],
             "provision.py::provision_robot": ["allow_estop_publish"],
+            "provision.py::withdraw_fleet_stop_grant": ["apply"],
         }
 
     def test_no_surface_reads_a_posture_flag_by_truthiness(self) -> None:
