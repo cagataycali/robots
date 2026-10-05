@@ -59,7 +59,7 @@ from strands_robots.registry import get_driver, get_robot, list_robots
 #: *deselect* a derived case and still report success, where a literal keeps
 #: running and fails. :class:`TestTheDerivedPopulationIsExactlyThese` grades the
 #: rule itself, so another robot arriving in this position is caught there -
-#: which is how the Franka arms, the UR arms, the xArm 7, the H1 and the H1-2 arrived here, each having moved
+#: which is how the Franka arms, the UR arms, the xArm 7, the Gen3, the H1 and the H1-2 arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "open_duck_mini",
@@ -82,23 +82,23 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "ur20",
     "ur30",
     "xarm7",
+    "kinova_gen3",
     "unitree_h1",
     "unitree_h1_2",
 )
 
 #: Robots that reach the same site with no native driver, so the listing of
-#: lerobot's robot types is the right answer and must survive. Two hands and an
-#: arm: every one is a real registry entry with a simulation asset and no
+#: lerobot's robot types is the right answer and must survive. Two hands and five
+#: arms: every one is a real registry entry with a simulation asset and no
 #: real-mode support of any kind. ``panda`` was a member until
 #: :class:`~strands_robots.drivers.franka.driver.FrankaDriver` gave the Franka
 #: family a real-mode path, and ``ur5e`` until :class:`~strands_robots.drivers.ur.URDriver`
 #: did the same for the UR arms, which is exactly the transition these two tuples
-#: exist to keep honest. ``kinova_gen3`` holds the slot ``xarm7`` vacated. The five
-#: Dynamixel arms sit here until a serial bus gives their codec a driver.
+#: exist to keep honest. The five Dynamixel arms sit here until a serial bus gives
+#: their codec a driver.
 NO_DRIVER_OF_EITHER_KIND = (
     "shadow_hand",
     "allegro_hand",
-    "kinova_gen3",
     "aloha",
     "vx300s",
     "wx250s",
