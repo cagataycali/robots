@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from strands_robots.policies import MockPolicy
 from strands_robots.simulation import create_simulation
 
 
@@ -545,8 +546,8 @@ class TestRunMultiPolicyHorizonGuards:
         assert result["status"] == "success", result
 
 
-class _CountingMockPolicy:
-    """MockPolicy wrapper that counts how often the policy is re-queried.
+class _CountingMockPolicy(MockPolicy):
+    """MockPolicy that counts how often the policy is re-queried.
 
     ``run_multi_policy`` buffers each ``get_actions`` chunk and only re-queries a
     policy when its queue drains, so the call count is the observable proof that
@@ -554,25 +555,12 @@ class _CountingMockPolicy:
     """
 
     def __init__(self) -> None:
-        from strands_robots.policies import MockPolicy
-
-        self._inner = MockPolicy()
+        super().__init__()
         self.calls = 0
-
-    @property
-    def provider_name(self) -> str:
-        return self._inner.provider_name
-
-    @property
-    def requires_images(self) -> bool:
-        return self._inner.requires_images
-
-    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        self._inner.set_robot_state_keys(robot_state_keys)
 
     async def get_actions(self, observation_dict: dict, instruction: str, **kwargs: object) -> list[dict]:
         self.calls += 1
-        return await self._inner.get_actions(observation_dict, instruction, **kwargs)
+        return await super().get_actions(observation_dict, instruction, **kwargs)
 
 
 @pytest.fixture
