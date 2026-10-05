@@ -262,6 +262,71 @@ def _registry_name(name: str) -> str:
         return name
 
 
+def _add_robot_hint(requested: object, known: Sequence[str]) -> str:
+    """The ``" '<name>' is a registered robot ... action='add_robot'"`` fragment.
+
+    Returns ``""`` when there is no usable hint, so a caller can test the
+    result in a boolean to pick between this and the scene-local
+    difflib suggestion :func:`close_match_hint` offers for typos.
+
+    A :class:`str` ``requested`` that the robot registry resolves to a
+    canonical name not in ``known`` is the ``add_robot`` case: the caller
+    typed a real registry name (``so100``, ``g1`` -> ``unitree_g1``) that
+    simply is not loaded in this scene. The scene-local close match would
+    otherwise suggest a loaded sibling (``" Did you mean: so101?"``) as if
+    the caller mistyped - but ``so100`` is a registered robot in its own
+    right, and the only recovery is ``add_robot``.
+
+    Owning the string-only check here (mirroring :func:`close_match_hint`)
+    keeps the enclosing ``_unknown_robot_msg`` free of a type gate on the
+    requested name: the message's world-fact listing stays unconditional
+    (see :class:`TestNoHelperGatesTheListingOnTheNameType`).
+
+    Args:
+        requested: Caller-supplied robot name, of any type.
+        known: Robots currently in the scene.
+
+    Returns:
+        A leading-space hint of the form
+        ``" 'X' is a registered robot [(canonical registry name: 'Y')] but is
+        not loaded in this scene; add it first with action='add_robot',
+        name='X'."``, or ``""`` when ``requested`` is not a string, the
+        registry does not resolve it, or the canonical name is already in
+        the scene (so the caller is looking at the robot they asked for and
+        the message's main listing is the useful part).
+    """
+    if not isinstance(requested, str):
+        return ""
+    try:
+        from strands_robots.registry import get_robot
+
+        hit = get_robot(requested)
+    except Exception:  # noqa: BLE001 - a suggestion must never raise
+        return ""
+    if hit is None:
+        return ""
+    canonical = _registry_name(requested)
+    if canonical in known:
+        return ""
+    # The scene may hold an *alias* of the requested robot (world holds
+    # ``"g1"``, caller asks for the canonical ``"unitree_g1"`` - the robot
+    # they want is already loaded under its registry alias). The scene-local
+    # close_match_hint already covers that case with its ``same=_registry_name``
+    # alias-aware suggestion, so defer to it rather than invite a redundant
+    # ``add_robot``. Guarded by _registry_name() against anything that would
+    # make it raise so a suggestion still cannot.
+    try:
+        if any(_registry_name(k) == canonical for k in known):
+            return ""
+    except Exception:  # noqa: BLE001 - a suggestion must never raise
+        return ""
+    canonical_hint = "" if canonical == requested else f" (canonical registry name: '{canonical}')"
+    return (
+        f" '{requested}' is a registered robot{canonical_hint} but is not loaded in this"
+        f" scene; add it first with action='add_robot', name='{requested}'."
+    )
+
+
 def close_match_hint(requested: object, known: Sequence[str], same: Callable[[str], str] | None = None) -> str:
     """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
 
@@ -1297,12 +1362,32 @@ class SimEngine(ABC):
         A registry alias is suggested even when its spelling is far from the
         world's name: ``"g1"`` scores 0.33 against ``"unitree_g1"``, under
         difflib's cutoff, yet both resolve to the same registry robot.
+
+        When ``requested`` is a real registry name that is simply not loaded in
+        this scene (e.g. ``Robot("so101")`` + ``run_policy("so100")``), the
+        scene-local ``close_match_hint`` suggests the loaded sibling as if the
+        caller mistyped (``" Did you mean: so101?"``), which is false - ``so100``
+        is a registered robot in its own right. :func:`_add_robot_hint` detects
+        that case (registry resolves the name to a canonical not in the scene)
+        and returns the ``add_robot`` nudge; when it fires, the scene-local
+        close-match is skipped because its suggestion would be the misleading
+        one. The type-gate on ``requested`` lives in that helper (mirroring
+        :func:`close_match_hint`), so the world-fact listing here stays
+        unconditional on the name type (see
+        :class:`TestNoHelperGatesTheListingOnTheNameType`).
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
         if known:
-            msg += close_match_hint(requested, known, same=_registry_name)
-            msg += f" Available robots: {known}. Use action='list_robots' to see all."
+            add_hint = _add_robot_hint(requested, known)
+            if add_hint:
+                # ``so100`` / ``g1`` with ``so101`` in the scene: the typo-flavoured
+                # ``close_match_hint`` would point at the sibling as if the caller
+                # misspelled, and the only real recovery is ``add_robot``.
+                msg += add_hint + f" Robots in the scene: {known}."
+            else:
+                msg += close_match_hint(requested, known, same=_registry_name)
+                msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg

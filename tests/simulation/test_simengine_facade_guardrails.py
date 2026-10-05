@@ -614,6 +614,102 @@ def test_unknown_robot_msg_empty_world_points_at_add_robot():
     assert "Did you mean" not in msg
 
 
+def test_unknown_robot_msg_registered_robot_absent_from_scene_names_add_robot():
+    """A registered robot the scene does not hold earns the ``add_robot`` nudge,
+    not a scene-local ``Did you mean: <sibling>?`` as if the caller mistyped.
+
+    Pre-fix: ``Robot('so101')`` + ``run_policy('so100')`` answered
+    ``Robot 'so100' not found. Did you mean: so101? Available robots: ['so101'].``,
+    which is wrong twice: ``so100`` is a registered robot in its own right
+    (so :mod:`strands_robots.registry` resolves it), and the "available"
+    listing implied so101 was the only robot that exists. The only recovery is
+    ``add_robot('so100')``, which the message never named.
+
+    The ``so100`` case is simulated by name here (FakeSim's robot set is
+    opaque to the registry); the registry alias case (``g1`` -> ``unitree_g1``)
+    is covered below.
+    """
+    # Patch get_robot so FakeSim's bare name set behaves like a real registry hit.
+    import strands_robots.simulation.base as base_mod
+
+    def _fake_get_robot(name: str):
+        return {"name": name} if name in {"so100", "so101"} else None
+
+    original = getattr(base_mod, "get_robot", None)
+    import strands_robots.registry as registry_mod
+
+    saved_get_robot = registry_mod.get_robot
+    registry_mod.get_robot = _fake_get_robot
+    try:
+        msg = FakeSim(robots=("so101",))._unknown_robot_msg("so100")
+    finally:
+        registry_mod.get_robot = saved_get_robot
+    assert "Robot 'so100' not found." in msg
+    assert "is a registered robot" in msg
+    assert "add_robot" in msg
+    assert "name='so100'" in msg
+    # The misleading sibling suggestion is suppressed.
+    assert "Did you mean: so101" not in msg
+
+
+def test_unknown_robot_msg_registered_alias_names_canonical():
+    """A registry alias ``g1`` -> ``unitree_g1`` the scene does not hold reports the
+    canonical in the ``add_robot`` nudge, so the caller sees both the name
+    they typed and the one the registry prefers."""
+    import strands_robots.registry as registry_mod
+
+    saved_get_robot = registry_mod.get_robot
+    saved_resolve = registry_mod.resolve_name
+    registry_mod.get_robot = lambda name: {"name": "unitree_g1"} if name in {"g1", "unitree_g1"} else None
+    registry_mod.resolve_name = lambda name: "unitree_g1" if name == "g1" else name
+    try:
+        msg = FakeSim(robots=("so101",))._unknown_robot_msg("g1")
+    finally:
+        registry_mod.get_robot = saved_get_robot
+        registry_mod.resolve_name = saved_resolve
+    assert "Robot 'g1' not found." in msg
+    assert "canonical registry name: 'unitree_g1'" in msg
+    assert "add_robot" in msg
+
+
+def test_unknown_robot_msg_scene_holds_alias_defers_to_close_match():
+    """When the scene holds an *alias* of the requested robot (world has
+    ``g1``, caller asks for canonical ``unitree_g1``), the robot they want is
+    already loaded under a different name - the ``add_robot`` nudge would be
+    misleading, and the pre-existing alias-aware ``close_match_hint`` already
+    covers it with ``Did you mean: g1?``. Pins that the fix defers to it."""
+    import strands_robots.registry as registry_mod
+
+    saved_get_robot = registry_mod.get_robot
+    saved_resolve = registry_mod.resolve_name
+    registry_mod.get_robot = lambda name: {"name": "unitree_g1"} if name in {"g1", "unitree_g1"} else None
+    registry_mod.resolve_name = lambda name: "unitree_g1" if name in {"g1", "unitree_g1"} else name
+    try:
+        msg = FakeSim(robots=("g1",))._unknown_robot_msg("unitree_g1")
+    finally:
+        registry_mod.get_robot = saved_get_robot
+        registry_mod.resolve_name = saved_resolve
+    assert "Did you mean: g1?" in msg
+    assert "is a registered robot" not in msg
+
+
+def test_unknown_robot_msg_unknown_name_keeps_close_match():
+    """A name the registry does not know (plain typo) still gets the
+    scene-local ``Did you mean: <sibling>?``: the ``add_robot`` nudge is
+    suppressed when the registry rejects the name because there is no
+    canonical to add. Pins no regression on the typo path."""
+    import strands_robots.registry as registry_mod
+
+    saved_get_robot = registry_mod.get_robot
+    registry_mod.get_robot = lambda name: None  # registry rejects everything
+    try:
+        msg = FakeSim(robots=("so101",))._unknown_robot_msg("so10")
+    finally:
+        registry_mod.get_robot = saved_get_robot
+    assert "Did you mean: so101?" in msg
+    assert "add_robot" not in msg or "No robots" in msg  # add_robot only in empty-scene branch
+
+
 def test_run_policy_unknown_robot_is_actionable():
     """run_policy's not-found error carries the close-match + discovery action."""
     result = FakeSim(robots=("so100",)).run_policy(robot_name="so10", policy_object=MockPolicy())
