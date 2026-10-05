@@ -51,7 +51,7 @@ appendix: a checkpoint you cannot score is a checkpoint you cannot compare to th
 next one. It covers **layer one** of evaluation - deterministic conditions over
 simulator state, which are authoritative. The judge-annotation and human-agreement
 layers on top of it ship as a script rather than a notebook, in
-[`examples/17_judge_recorded_episodes.py`](../17_judge_recorded_episodes.py),
+[`examples/19_judge_recorded_episodes.py`](../19_judge_recorded_episodes.py),
 because they read recorded video and the series is CPU-only.
 
 ## Training needs `lerobot[training]`, on CPU too

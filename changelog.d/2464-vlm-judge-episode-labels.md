@@ -23,7 +23,7 @@ overturn (low for every failure, high only for the success on a graded
 ladder), so the system prompt and the `write_label` parameter schema both
 state that a clean failure can grade medium/high and a jerky or lucky success
 low.
-`examples/17_judge_recorded_episodes.py` runs the pipeline end to end: record
+`examples/19_judge_recorded_episodes.py` runs the pipeline end to end: record
 with per-episode predicate stops, verdicts, scripted judge, judge/human
 agreement on a holdout, and a filtered ACT re-training run on the
 judge-approved subset (`TrainSpec.extra={"dataset.episodes": [...]}`).

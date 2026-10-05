@@ -679,6 +679,20 @@ class TestModeNormalization:
         finally:
             sim.destroy()
 
+    @pytest.mark.parametrize("kwargs", [{}, {"mode": "sim"}], ids=["bare", "explicit-sim"])
+    def test_env_var_real_does_not_leave_sim(self, monkeypatch, kwargs):
+        """STRANDS_ROBOT_MODE answers only ``mode="auto"``: a stale ``real`` in
+        the environment must not take a bare ``Robot()`` onto hardware."""
+        pytest.importorskip("mujoco")
+        from strands_robots.simulation import Simulation
+
+        monkeypatch.setenv("STRANDS_ROBOT_MODE", "real")
+        sim = Robot("so100", **kwargs)
+        try:
+            assert isinstance(sim, Simulation)
+        finally:
+            sim.destroy()
+
     def test_env_var_with_whitespace(self, monkeypatch):
         """STRANDS_ROBOT_MODE='  sim  ' should resolve cleanly without firing the
         'ignored' warning."""

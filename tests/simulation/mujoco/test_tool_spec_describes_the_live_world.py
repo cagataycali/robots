@@ -43,7 +43,10 @@ def test_description_with_no_world_still_starts_at_create_world() -> None:
 def test_description_after_robot_factory_names_the_loaded_robot_and_its_joints(ready_arm) -> None:
     description = ready_arm.tool_spec["description"]
     assert "ALREADY CREATED" in description
-    assert "'so101' (6 joints: 1, 2, 3, 4, 5, 6)" in description
+    assert (
+        "'so101' (6 joints: 1 (shoulder_pan), 2 (shoulder_lift), 3 (elbow_flex), "
+        "4 (wrist_flex), 5 (wrist_roll), 6 (gripper))"
+    ) in description
     assert "do not call create_world" in description
     assert "starting with create_world" not in description
 
