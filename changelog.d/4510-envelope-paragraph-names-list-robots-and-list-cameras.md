@@ -1,0 +1,3 @@
+### Fixed: first-robot envelope paragraph names list_robots() and list_cameras() as additional exceptions
+
+`docs/start/first-robot.md:86` promised "every call but `get_observation()` and `cleanup()` (`None`) returns the same envelope" — but two bare `-> list[str]` listers (`list_robots()` and `list_cameras()`) are USED on the same page's first code block (line 15), eighty-odd lines above the paragraph. A reader following the paragraph literally writes `robot.list_robots()["status"]` and gets `TypeError: list indices must be integers or slices, not str`. The paragraph now names those two as the additional exceptions. Mirrors harness#691's shape fix for the same page.
