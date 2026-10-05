@@ -222,6 +222,7 @@ a:hover { color: var(--accent-bright); }
   font-family: var(--mono); font-size: .92em;
 }
 .hint.warn { color: var(--warn); }
+.hint.camfail { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
 .hint.local-only { color: var(--dim); }
 
 .badge {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cameraEvidence, cameraPlaceholder } from '../lib/cameraEvidence'
+import CameraFailures from './CameraFailures'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
@@ -443,7 +444,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                   // "this peer publishes none" was a denial of the presence THIS SAME peer announces
                   // (lib/cameraEvidence): on a machine where macOS blocks capture, both arms announce top+wrist
                   // and deliver nothing, and the detail screen is where the operator comes to find out why.
-                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested))
+                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested, p?.camera_failures))
                   return (
                     <div className="camtile big">
                       <div className="camstate" title={ph?.title}>
@@ -471,6 +472,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                 )}
               </div>
             )}
+            <CameraFailures failures={p?.camera_failures} arrived={cams}
+                            onReconfigure={canConfig ? c => setCamConfig({ cam: c, add: false }) : undefined} />
             <TelemetryStrip peer={peer} />
             <RunForm
               peerId={peer.peer_id}

@@ -3199,6 +3199,88 @@ function CameraConfigSheet({ peerId, onClose, focusCam = null, startAdding = fal
     notManaged && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "btn ghost", onClick: onClose, children: "close" }) })
   ] }) });
 }
+function cameraFailures(failures, arrived) {
+  const live = new Set((arrived ?? []).filter(Boolean));
+  return Object.entries(failures ?? {}).filter(([name, reason2]) => name && !live.has(name) && typeof reason2 === "string").map(([name, reason2]) => ({ name, reason: reason2.trim() || "no reason given" }));
+}
+function cameraEvidence(peerId, announced, arrived, requested, failures) {
+  const frames = (arrived ?? []).filter(Boolean);
+  if (frames.length > 0) return { kind: "ok", cams: frames };
+  const failed = cameraFailures(failures);
+  if (failed.length > 0) {
+    return {
+      kind: "dropped",
+      requested: failed.map((f) => f.name),
+      message: failed.map((f) => `${f.name}: ${f.reason}`).join("\n") + `
+Recording now would capture joints only. Reconfigure the camera from ${peerId}'s cameras sheet.`
+    };
+  }
+  const names = (announced ?? []).filter(Boolean);
+  if (names.length > 0) {
+    const list = names.join(", ");
+    return {
+      kind: "mute",
+      announced: names,
+      message: `${peerId} announces ${names.length} camera${names.length > 1 ? "s" : ""} (${list}) but no frames have arrived — recording now would capture joints only. A camera that is blocked by macOS, held by another process or unplugged looks identical from here: open devices › logs for ${peerId} to see which.`
+    };
+  }
+  const asked = (requested ?? []).filter(Boolean);
+  if (asked.length > 0) {
+    const list = asked.join(", ");
+    return {
+      kind: "dropped",
+      requested: asked,
+      message: `${peerId} was started with ${list} but announces no cameras — they were dropped when it connected, which means the camera could not be opened: blocked by macOS privacy, held by another process, or unplugged. Recording now would capture joints only. ${peerId}'s log (devices › logs) names the one that failed.`
+    };
+  }
+  return {
+    kind: "unannounced",
+    message: `${peerId} lists no cameras — recording now would capture joints only. That is either a deliberately joints-only robot or cameras that failed to open and were dropped when it connected; from here the two are indistinguishable, and ${peerId}'s log says which.`
+  };
+}
+function cameraPlaceholder(ev) {
+  if (ev.kind === "ok") return null;
+  if (ev.kind === "dropped") {
+    return {
+      head: ev.requested.length === 1 ? `${ev.requested[0]} dropped` : "cameras dropped",
+      sub: `${ev.requested.join(", ")} requested, none opened`,
+      title: ev.message
+    };
+  }
+  if (ev.kind === "mute") {
+    return {
+      head: "no frames",
+      sub: `${ev.announced.join(", ")} announced, nothing arriving`,
+      title: ev.message
+    };
+  }
+  return {
+    head: "no camera",
+    sub: "none listed — joints-only, or dropped at connect",
+    title: ev.message
+  };
+}
+function CameraFailures({ failures, arrived, onReconfigure }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: cameraFailures(failures, arrived).map((f) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hint warn camfail", role: "status", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
+        f.name,
+        ": dropped"
+      ] }),
+      " — ",
+      f.reason
+    ] }),
+    onReconfigure && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        className: "btn ghost",
+        onClick: () => onReconfigure(f.name),
+        title: `change ${f.name}'s mode and restart the robot`,
+        children: "reconfigure"
+      }
+    )
+  ] }, f.name)) });
+}
 const RADIAN_CEILING = 4;
 const RADIAN_FLOOR = 3.2;
 const SWITCH_FRAMES = 8;
@@ -4763,6 +4845,14 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
             c
           );
         }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          CameraFailures,
+          {
+            failures: p == null ? void 0 : p.camera_failures,
+            arrived: cams,
+            onReconfigure: canConfig ? (c) => setCamSheet({ cam: c, add: false }) : void 0
+          }
+        ),
         canConfig && /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
@@ -4939,54 +5029,6 @@ function registryCards(view, peerIds) {
   if (!view || view.status !== "ok") return [];
   const known = new Set(peerIds);
   return view.things.filter((t) => !t.self && !t.peer_live && !t.heard_by_bridge && !known.has(t.thing_name));
-}
-function cameraEvidence(peerId, announced, arrived, requested) {
-  const frames = (arrived ?? []).filter(Boolean);
-  if (frames.length > 0) return { kind: "ok", cams: frames };
-  const names = (announced ?? []).filter(Boolean);
-  if (names.length > 0) {
-    const list = names.join(", ");
-    return {
-      kind: "mute",
-      announced: names,
-      message: `${peerId} announces ${names.length} camera${names.length > 1 ? "s" : ""} (${list}) but no frames have arrived — recording now would capture joints only. A camera that is blocked by macOS, held by another process or unplugged looks identical from here: open devices › logs for ${peerId} to see which.`
-    };
-  }
-  const asked = (requested ?? []).filter(Boolean);
-  if (asked.length > 0) {
-    const list = asked.join(", ");
-    return {
-      kind: "dropped",
-      requested: asked,
-      message: `${peerId} was started with ${list} but announces no cameras — they were dropped when it connected, which means the camera could not be opened: blocked by macOS privacy, held by another process, or unplugged. Recording now would capture joints only. ${peerId}'s log (devices › logs) names the one that failed.`
-    };
-  }
-  return {
-    kind: "unannounced",
-    message: `${peerId} lists no cameras — recording now would capture joints only. That is either a deliberately joints-only robot or cameras that failed to open and were dropped when it connected; from here the two are indistinguishable, and ${peerId}'s log says which.`
-  };
-}
-function cameraPlaceholder(ev) {
-  if (ev.kind === "ok") return null;
-  if (ev.kind === "dropped") {
-    return {
-      head: "cameras dropped",
-      sub: `${ev.requested.join(", ")} requested, none opened`,
-      title: ev.message
-    };
-  }
-  if (ev.kind === "mute") {
-    return {
-      head: "no frames",
-      sub: `${ev.announced.join(", ")} announced, nothing arriving`,
-      title: ev.message
-    };
-  }
-  return {
-    head: "no camera",
-    sub: "none listed — joints-only, or dropped at connect",
-    title: ev.message
-  };
 }
 const TONE = {
   refusing: "warn",
@@ -5804,7 +5846,7 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "detail-stage", children: [
             active ? /* @__PURE__ */ jsxRuntimeExports.jsx(CameraTile, { peerId: peer.peer_id, cam: active, meta: (_d = peer.cameras) == null ? void 0 : _d[active], big: true }) : (() => {
               var _a2;
-              const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, (_a2 = peer.presence) == null ? void 0 : _a2.cameras, cams, peer.cameras_requested));
+              const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, (_a2 = peer.presence) == null ? void 0 : _a2.cameras, cams, peer.cameras_requested, p == null ? void 0 : p.camera_failures));
               return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "camtile big", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "camstate", title: ph == null ? void 0 : ph.title, children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: (ph == null ? void 0 : ph.head) ?? "no camera" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: (ph == null ? void 0 : ph.sub) ?? "" })
@@ -5838,6 +5880,14 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
                 }
               )
             ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              CameraFailures,
+              {
+                failures: p == null ? void 0 : p.camera_failures,
+                arrived: cams,
+                onReconfigure: canConfig ? (c) => setCamConfig({ cam: c, add: false }) : void 0
+              }
+            ),
             /* @__PURE__ */ jsxRuntimeExports.jsx(TelemetryStrip, { peer }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               RunForm,

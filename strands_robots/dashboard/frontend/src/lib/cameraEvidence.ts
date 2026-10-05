@@ -6,14 +6,46 @@ export type CameraEvidence =
   | { kind: 'dropped'; requested: string[]; message: string }
   | { kind: 'unannounced'; message: string }
 
+export interface CameraFailure { name: string; reason: string }
+
+/**
+ * The cameras this robot was configured with that did not open at connect, each with the
+ * driver's own reason (`presence.camera_failures`). A camera whose frames are arriving is not
+ * listed, whatever an older presence still says about it.
+ */
+export function cameraFailures(
+  failures: Record<string, string> | undefined,
+  arrived?: string[] | undefined,
+): CameraFailure[] {
+  const live = new Set((arrived ?? []).filter(Boolean))
+  return Object.entries(failures ?? {})
+    .filter(([name, reason]) => name && !live.has(name) && typeof reason === 'string')
+    .map(([name, reason]) => ({ name, reason: reason.trim() || 'no reason given' }))
+}
+
 export function cameraEvidence(
   peerId: string,
   announced: string[] | undefined,
   arrived: string[] | undefined,
   requested?: string[] | undefined,
+  failures?: Record<string, string> | undefined,
 ): CameraEvidence {
   const frames = (arrived ?? []).filter(Boolean)
   if (frames.length > 0) return { kind: 'ok', cams: frames }
+
+  // The robot's own word on a camera that did not open beats every inference below: it names
+  // the camera and what the device did, so "why is there no camera" has an answer, not a list
+  // of three possibilities.
+  const failed = cameraFailures(failures)
+  if (failed.length > 0) {
+    return {
+      kind: 'dropped',
+      requested: failed.map(f => f.name),
+      message:
+        failed.map(f => `${f.name}: ${f.reason}`).join('\n') +
+        `\nRecording now would capture joints only. Reconfigure the camera from ${peerId}'s cameras sheet.`,
+    }
+  }
 
   const names = (announced ?? []).filter(Boolean)
   if (names.length > 0) {
@@ -61,7 +93,7 @@ export function cameraPlaceholder(ev: CameraEvidence): { head: string; sub: stri
   if (ev.kind === 'ok') return null
   if (ev.kind === 'dropped') {
     return {
-      head: 'cameras dropped',
+      head: ev.requested.length === 1 ? `${ev.requested[0]} dropped` : 'cameras dropped',
       sub: `${ev.requested.join(', ')} requested, none opened`,
       title: ev.message,
     }

@@ -146,6 +146,18 @@ def camera_specs(cameras: Mapping[Any, Any] | None) -> dict[str, CameraSpec]:
     return specs
 
 
+def _mode_text(width: Any, height: Any, fps: Any) -> str:
+    """``640x480 at 5 fps``, naming only the parts that are known (``5 fps``, ``640x?``)."""
+
+    def num(value: Any) -> str | None:
+        return format(value, "g") if isinstance(value, int | float) and value > 0 else None
+
+    w, h, rate = num(width), num(height), num(fps)
+    size = f"{w or '?'}x{h or '?'}" if w or h else None
+    parts = [part for part in (size, f"{rate} fps" if rate else None) if part]
+    return " at ".join(parts) or "an unknown mode"
+
+
 class OpenCVCamera:
     """One camera behind ``cv2.VideoCapture``, returning RGB frames.
 
@@ -189,18 +201,27 @@ class OpenCVCamera:
                 f"camera {self.spec.name!r}: could not open {self.spec.index_or_path!r}; "
                 "check the index with `strands_robots dashboard` > Devices, or the path"
             )
-        if self.spec.width is not None:
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.spec.width)
-        if self.spec.height is not None:
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.spec.height)
-        if self.spec.fps is not None:
-            capture.set(cv2.CAP_PROP_FPS, self.spec.fps)
+        mode = (
+            ("width", cv2.CAP_PROP_FRAME_WIDTH, self.spec.width),
+            ("height", cv2.CAP_PROP_FRAME_HEIGHT, self.spec.height),
+            ("fps", cv2.CAP_PROP_FPS, self.spec.fps),
+        )
+        # ``set`` answers False when the backend rejects the value outright.
+        refused = [name for name, prop, value in mode if value is not None and capture.set(prop, value) is False]
         ok, _frame = capture.read()
         if not ok:
+            # Read the device's answer before releasing it: a mode the device
+            # does not offer and a device another process holds both end here,
+            # and the mode it settled on is what tells the two apart.
+            answer = _mode_text(*(capture.get(prop) for _name, prop, _value in mode))
             capture.release()
+            asked = any(value is not None for _name, _prop, value in mode)
+            tried = _mode_text(self.spec.width, self.spec.height, self.spec.fps) if asked else "its default mode"
+            hint = f"the device refused {', '.join(refused)}; " if refused else ""
             raise OSError(
-                f"camera {self.spec.name!r}: opened {self.spec.index_or_path!r} but no frame arrived; "
-                "another process may hold the device"
+                f"camera {self.spec.name!r}: opened {self.spec.index_or_path!r} asking for {tried}, "
+                f"the device answers {answer} and sent no frame; {hint}pick a mode the device lists "
+                "(the dashboard's cameras sheet probes them), or free it if another process holds it"
             )
         self._capture = capture
 

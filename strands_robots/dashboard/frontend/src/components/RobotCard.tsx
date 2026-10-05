@@ -9,6 +9,7 @@ import { twinButtonCopy } from '../lib/twinButton'
 import { deadCameraNote, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import CameraConfigSheet from './CameraConfigSheet'
+import CameraFailures from './CameraFailures'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
@@ -151,6 +152,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
                 ))}
               </div>
             )}
+            <CameraFailures failures={p?.camera_failures} arrived={cams}
+                            onReconfigure={canConfig ? c => setCamSheet({ cam: c, add: false }) : undefined} />
             {canConfig && (
               <button className="chip addcam" onClick={() => setCamSheet({ cam: null, add: true })}
                       title="attach another camera to this robot (applying restarts it)">
