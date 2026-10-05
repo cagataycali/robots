@@ -24,6 +24,17 @@ def test_every_hardware_keyword_is_named_in_one_refusal():
     assert "robot_ip=, kp=, calibration_dir=" in text
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "named"),
+    [({"driver": "lerobot"}, "driver="), ({"driver": "strands", "port": "/dev/ttyACM0"}, "driver=, port=")],
+)
+def test_a_driver_choice_on_a_sim_robot_is_refused_like_port(kwargs, named):
+    # driver= is the factory's own parameter, so the derived hardware set never
+    # holds it; "auto" (the default) still builds the sim, as the test below shows.
+    with pytest.raises(TypeError, match=rf"would ignore {named}:.*Add mode='real'"):
+        Robot("so101", **kwargs)
+
+
 def test_auto_mode_that_fell_back_to_sim_says_so():
     with patch("strands_robots.robot._auto_detect_mode", return_value="sim"):
         with pytest.raises(TypeError, match="mode='auto' found no servo bus"):
