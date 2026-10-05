@@ -837,11 +837,28 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             )
 
         if driver != "auto":
-            logger.debug(
-                "driver=%r ignored in mode='sim' (a simulated robot is stepped by a physics "
-                "backend, not driven through a device); backend=%r selects the engine",
-                driver,
-                backend,
+            # ``driver=`` picks a hardware-driver family (``"strands"`` or
+            # ``"lerobot"``), which a simulated robot does not have -- the
+            # value's own docstring says "only ``mode='real'`` acts on it".
+            # Refusing it mirrors the ``cameras=`` guard above and the
+            # ``_reject_hardware_kwargs_in_sim`` guard below: a hardware
+            # keyword on a sim robot is refused rather than ignored. Without
+            # this, ``Robot("so101", driver="lerobot")`` -- the exact line
+            # ``docs/robots/so101.md:44`` teaches with ``mode="real"`` -- is
+            # a silent simulator when the caller forgets the mode kwarg.
+            # ``driver=`` itself is in Robot's ``own`` set so it never reaches
+            # ``_hardware_only_kwargs()``: a sibling check here is the only
+            # place that can see it.
+            how = (
+                "mode='auto' found no servo bus and fell back to sim"
+                if requested_mode == "auto"
+                else "mode='sim' is the default"
+            )
+            raise TypeError(
+                f"Robot({canonical!r}) is a simulation ({how}) and would ignore "
+                f"driver={driver!r}: this picks a hardware-driver family, which a "
+                "simulation does not have. Add mode='real' to drive the hardware, "
+                "or drop it to simulate."
             )
 
         from strands_robots.simulation import create_simulation

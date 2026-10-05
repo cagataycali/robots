@@ -332,6 +332,39 @@ class TestTheDriverValueIsCheckedInEveryMode:
         assert not made.called
 
 
+class TestAValidDriverOnSimIsRefusedNotIgnored:
+    """``driver=`` picks a hardware-driver family, which a sim does not have.
+
+    ``docs/concepts/robots.md`` promises *"A hardware keyword on a sim robot is
+    refused rather than ignored."* ``cameras=`` and the hardware-only kwargs
+    (``port=``, ``robot_ip=``, ...) already refuse. ``driver=`` must do the
+    same -- otherwise a user who copies ``Robot("so101", driver="lerobot")``
+    from ``docs/robots/so101.md:44`` and forgets ``mode="real"`` gets a
+    silent simulator while the arm on the desk stays still.
+    """
+
+    def test_sim_mode_refuses_driver_lerobot(self) -> None:
+        with pytest.raises(TypeError) as excinfo:
+            Robot(_ROBOT, driver="lerobot")  # mode='sim' is the default
+        message = str(excinfo.value)
+        assert _ROBOT in message, "the message names the robot"
+        assert "driver='lerobot'" in message, "the message names the kwarg"
+        assert "mode='real'" in message, "the message names the remedy"
+
+    def test_sim_mode_refuses_driver_strands(self) -> None:
+        with pytest.raises(TypeError) as excinfo:
+            Robot(_ROBOT, driver="strands")
+        assert "driver='strands'" in str(excinfo.value)
+
+    def test_sim_mode_still_accepts_driver_auto_default(self) -> None:
+        """Regression guard: the default ``driver='auto'`` continues to build sim."""
+        robot = Robot(_ROBOT)  # driver='auto', mode='sim'
+        try:
+            assert type(robot).__name__ == "MuJoCoSimEngine"
+        finally:
+            robot.cleanup()
+
+
 class TestAskingForANativeDriverThatIsNotThere:
     """``driver="strands"`` with no driver registered is refused, not substituted."""
 
