@@ -128,6 +128,24 @@ def test_unknown_builtin_fails_loudly():
         _compile(obj)
 
 
+def test_unknown_builtin_suggests_close_match():
+    """A 1-char typo on a builtin name must get a 'Did you mean' hint (sibling parity with the
+    material-KEY refusal in ``_describe_material_error`` and the ``_geom_type`` shape refusal
+    in the same file, both of which use ``difflib.get_close_matches``)."""
+    # Close enough to 'checker' at cutoff=0.6
+    obj = SimObject(name="x", shape="box", material={"builtin": "chekker"})
+    with pytest.raises(ValueError, match=r"Did you mean 'checker'"):
+        _compile(obj)
+    # Close enough to 'gradient'
+    obj = SimObject(name="x", shape="box", material={"builtin": "gradients"})
+    with pytest.raises(ValueError, match=r"Did you mean 'gradient'"):
+        _compile(obj)
+    # Truly novel still refuses with the bare list -- no false suggestion.
+    obj = SimObject(name="x", shape="box", material={"builtin": "polka_dot"})
+    with pytest.raises(ValueError, match="unknown builtin 'polka_dot'. Supported:"):
+        _compile(obj)
+
+
 def test_texture_and_builtin_conflict_fails_loudly(texture_png):
     """Specifying both texture and builtin is ambiguous and must raise."""
     obj = SimObject(name="x", shape="box", material={"texture": texture_png, "builtin": "checker"})
