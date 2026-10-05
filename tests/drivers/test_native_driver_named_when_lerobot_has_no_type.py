@@ -65,6 +65,7 @@ NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
     "open_duck_mini",
     "panda",
     "rby1",
+    "spot",
     "stretch",
     "stretch3",
     "fr3",

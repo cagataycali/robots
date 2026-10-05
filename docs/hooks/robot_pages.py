@@ -251,6 +251,20 @@ DRIVERS: dict[str, dict[str, object]] = {
             "off hardware every read returns its cache and every write refuses `not connected`",
         ),
     },
+    "SpotDriver": {
+        "module": "strands_robots/drivers/spot.py",
+        "link": "gRPC through `bosdyn-client`",
+        "port": "robot hostname or IP; credentials from `BOSDYN_CLIENT_USERNAME` / `BOSDYN_CLIENT_PASSWORD`",
+        "example": '"192.168.80.3"',
+        "sdk": "`pip install 'strands-robots[spot]'`",
+        "kwargs": "`control_frequency=10.0`",
+        "units": "arm `arm_sh0 .. arm_wr1` and claw `arm_f1x` in rad; the base through `set_twist(vx, vy, wz)`; legs read only",
+        "checks": (
+            "every command is refused while E-stopped or with the motors off; `stand()` powers on",
+            "a leg joint is refused (the locomotion controller owns it), and an arm target outside its limits",
+            "a twist expires after 0.6 s; `cleanup` powers off safely and returns the lease",
+        ),
+    },
     "XArmDriver": {
         "module": "strands_robots/drivers/xarm.py",
         "link": "TCP through `xarm-python-sdk`",
