@@ -707,13 +707,16 @@ def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots
 
 @pytest.mark.parametrize(
     ("repo_id", "root"),
-    [("", None), ("   ", None), (".", None), (None, None), ("local/ok", "."), ("local/ok", "..")],
+    [("", None), ("   ", None), (".", None), (None, None), ("local/ok", "."), ("local/ok", "..")]
+    + [("local/ok", root) for root in (42, 0, True, False, 3.14, b".", ["."], {"path": "."})],
 )
 def test_start_recording_refuses_a_target_that_holds_the_working_directory(
     sim_with_two_robots, monkeypatch, tmp_path, repo_id, root
 ):
-    """An unset id or a root that is (or holds) the CWD is refused before the
-    session arms - ``overwrite=True`` used to ``rmtree`` the caller's CWD."""
+    """An unset id, a root that is (or holds) the CWD, or a root that is not a
+    path is refused as an error envelope before the session arms -
+    ``overwrite=True`` used to ``rmtree`` the caller's CWD, a non-path root
+    raised ``TypeError`` or (when falsy) silently wrote to the default home."""
     import strands_robots.dataset_recorder as dr
 
     monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)

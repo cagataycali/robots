@@ -183,7 +183,8 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
         The resolved dataset directory as a :class:`~pathlib.Path`.
 
     Raises:
-        ValueError: An empty or non-string ``repo_id``; an ``owner/name`` id
+        ValueError: An empty or non-string ``repo_id``; a ``root`` that is
+            neither ``None`` nor a path; an ``owner/name`` id
             whose segments would leave the dataset home
             (:data:`HUB_ID_OUTSIDE_HOME`); or a directory that is, or contains,
             the working or home directory (:data:`DATASET_DIR_HOLDS_CALLER_FILES`)
@@ -191,6 +192,8 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """
     if not isinstance(repo_id, str) or not repo_id.strip():
         raise ValueError(f"The dataset id must be a non-empty string (got {repo_id!r}).")
+    if root is not None and not isinstance(root, str | os.PathLike):
+        raise ValueError(f"The dataset root must be a path string or None (got {root!r}).")
     if root:
         directory = Path(root)
     elif (local := local_dataset_dir(repo_id)) is not None:
