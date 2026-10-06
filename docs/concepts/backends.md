@@ -1,5 +1,5 @@
 ---
-description: "One interface, several places a robot can be: MuJoCo, Newton and Isaac in simulation, the lerobot driver and native drivers on hardware, and what each one refuses."
+description: "One interface, several places a robot can be: MuJoCo, Newton, Isaac and mjlab in simulation, the lerobot driver and native drivers on hardware, and what each one refuses."
 ---
 
 # Simulation and hardware
@@ -14,9 +14,10 @@ description: "One interface, several places a robot can be: MuJoCo, Newton and I
 |---|---|---|---|
 | MuJoCo | default, `backend="mujoco"` | CPU | one world, one or a few robots, every Start page |
 | Newton | `backend="newton"` | GPU (Warp) | many worlds stepped together |
-| Isaac Sim | `backend="isaac"`, plugin `strands-robots-sim` | GPU, NVIDIA | photoreal scenes, Isaac assets |
+| Isaac Sim | `backend="isaac"`, extra `strands-robots[sim-isaac]` | GPU, NVIDIA | photoreal scenes, Isaac assets |
+| [mjlab](../learn/simulation/mjlab.md) | `backend="mjlab"`, extra `strands-robots[sim-mjlab]` | GPU (MuJoCo-Warp) | GPU-vectorized MuJoCo (`num_envs`), rsl_rl training, ONNX policies |
 
-All three build from the same registry entry and expose the same engine methods; `list_backends()` names what this install can start. The simulator is never gated: a sim world is the place where an agent may do anything, which is why the [ladder](../start/index.md) keeps you there until Stage 3.
+All four are built-ins (`strands_robots.simulation.factory._BUILTIN_BACKENDS`) and expose the same engine methods; `list_backends()` names what this install can start, including any third-party plugin registered on the `strands_robots.backends` entry-point group. The simulator is never gated: a sim world is the place where an agent may do anything, which is why the [ladder](../start/index.md) keeps you there until Stage 3.
 
 ## Hardware backends
 
