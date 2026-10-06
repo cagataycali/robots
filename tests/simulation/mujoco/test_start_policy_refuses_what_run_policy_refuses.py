@@ -28,6 +28,7 @@ rollout marks a robot busy forever.
 
 from __future__ import annotations
 
+import inspect
 import time
 from typing import Any
 
@@ -38,6 +39,7 @@ pytest.importorskip("mujoco")
 from strands_robots.policies import factory as policy_factory  # noqa: E402
 from strands_robots.policies import register_policy  # noqa: E402
 from strands_robots.policies.mock import MockPolicy  # noqa: E402
+from strands_robots.simulation.base import SimEngine  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 _CAMERA = "overhead"
@@ -161,3 +163,57 @@ class TestTheCheckCostsNothingWithoutAHook:
         assert not any(asked_for_images), (
             f"no call may render camera frames for a no-op preflight; got {asked_for_images}"
         )
+
+
+# One unusable value per keyword start_policy once lacked: a bare TypeError
+# from the argument parser before, the blocking surface's own refusal now.
+REFUSED_KNOBS: list[tuple[str, Any]] = [
+    ("control_substeps", 0),
+    ("n_episodes", 0),
+    ("max_onframe_failures", 0),
+    ("rtc_inference_timeout_s", -1.0),
+    ("reset_between", "no"),
+    ("wbc_install_torque_control", "no"),
+    ("async_rtc", "no"),
+    ("observer", 5),
+    ("stop_when", {"predicate": "no_such_predicate"}),
+    ("stop_when", {"predicate": "body_above_z", "body": "ghost", "z": 0.1}),
+]
+
+
+class TestTheAsyncSurfaceTakesEveryBlockingKeyword:
+    @pytest.mark.parametrize("engine", [SimEngine, Simulation], ids=["base", "mujoco"])
+    def test_the_two_signatures_name_the_same_keywords(self, engine):
+        assert list(inspect.signature(engine.start_policy).parameters) == list(
+            inspect.signature(engine.run_policy).parameters
+        )
+
+    @pytest.mark.parametrize(
+        ("knob", "value"), REFUSED_KNOBS, ids=[f"{k}-{i}" for i, (k, _) in enumerate(REFUSED_KNOBS)]
+    )
+    def test_an_unusable_value_is_refused_before_the_submit(self, sim, knob, value):
+        blocking = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=2, **{knob: value})
+        started = sim.start_policy(robot_name="arm", policy_provider="mock", n_steps=2, **{knob: value})
+
+        assert blocking["status"] == "error", blocking
+        assert started["status"] == "error", started
+        assert _text(started) == _text(blocking).replace("run_policy", "start_policy")
+        assert "No policies running" in _text(sim.list_policies_running())
+
+    def test_the_keywords_reach_the_background_rollout(self, sim):
+        frames: list[int] = []
+        started = sim.start_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            n_steps=3,
+            n_episodes=2,
+            control_substeps=2,
+            observer=lambda *args, **kwargs: frames.append(1),
+        )
+        assert started["status"] == "success", started
+        _wait_until_idle(sim)
+
+        report = next(c["json"] for c in sim.policy_result("arm")["content"] if "json" in c)
+        assert report["n_episodes_completed"] == 2
+        assert report["total_steps"] == 6
+        assert frames, "the observer passed to start_policy must be called by the rollout"

@@ -408,27 +408,27 @@
     },
     "control_substeps": {
       "type": "integer",
-      "description": "run_policy / eval_policy / evaluate_benchmark: physics steps integrated per applied action, overriding the value derived from control_frequency. Must be a positive whole number; omit to derive it from control_frequency and the scene timestep."
+      "description": "run_policy / start_policy / eval_policy / evaluate_benchmark: physics steps integrated per applied action, overriding the value derived from control_frequency. Must be a positive whole number; omit to derive it from control_frequency and the scene timestep."
     },
     "reset_between": {
       "type": "boolean",
-      "description": "run_policy: with n_episodes > 1, reset the sim to its initial state between episodes (default true; never after the last one). False chains each episode from the previous end state."
+      "description": "run_policy / start_policy: with n_episodes > 1, reset the sim to its initial state between episodes (default true; never after the last one). False chains each episode from the previous end state."
     },
     "async_rtc": {
       "type": "boolean",
-      "description": "run_policy / eval_policy: overlap policy inference with action execution (latency masking). Omit to resolve it from the policy - chunk-emitting VLAs get it, single-step policies stay synchronous."
+      "description": "run_policy / start_policy / eval_policy: overlap policy inference with action execution (latency masking). Omit to resolve it from the policy - chunk-emitting VLAs get it, single-step policies stay synchronous."
     },
     "rtc_inference_timeout_s": {
       "type": "number",
-      "description": "run_policy / eval_policy: per-chunk deadline (seconds) for the async-RTC prefetch, so a stuck inference is reported as an error instead of hanging the sim. Omit to wait without a deadline; ignored on the synchronous path."
+      "description": "run_policy / start_policy / eval_policy: per-chunk deadline (seconds) for the async-RTC prefetch, so a stuck inference is reported as an error instead of hanging the sim. Omit to wait without a deadline; ignored on the synchronous path."
     },
     "wbc_install_torque_control": {
       "type": "boolean",
-      "description": "run_policy / eval_policy / evaluate_benchmark: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
+      "description": "run_policy / start_policy / eval_policy / evaluate_benchmark: install the torque shim a wbc policy needs on a position-servo scene for the duration of the call (default true). False to drive a torque-actuated scene yourself. No-op for other providers."
     },
     "max_onframe_failures": {
       "type": "integer",
-      "description": "run_policy: consecutive video/dataset hook failures tolerated before the episode aborts. Must be a positive whole number; omit to use the runner's own limit of 5. A lost dataset frame aborts on the first occurrence whatever this is set to."
+      "description": "run_policy / start_policy: consecutive video/dataset hook failures tolerated before the episode aborts. Must be a positive whole number; omit to use the runner's own limit of 5. A lost dataset frame aborts on the first occurrence whatever this is set to."
     },
     "policy_kwargs": {
       "type": "object",
@@ -558,7 +558,7 @@
     },
     "stop_when": {
       "type": "object",
-      "description": "run_policy: optional semantic early-return clause -- the rollout ends as soon as the condition holds in the sim, instead of only when the step budget runs out. Same predicate DSL as a benchmark spec's success: clause: a single bool predicate call like {'predicate': 'grasped', 'body': 'cube', 'gripper_prefix': 'so101/gripper'} or {'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2}, or a group {'all': [<call>, ...]} / {'any': [<call>, ...]}. Predicates resolve through the closed registry (never eval/exec); an unknown name or a float-valued reward term is rejected up front with the valid list. Checked after every applied action (also on the async-RTC path, so the stop lands within one control step). Composes with an active recording: frames are captured up to the stop. The result json reports stopped_reason ('predicate'|'budget'|'cancelled'; 'error' on failures) and steps_used so you can decide whether to retry.",
+      "description": "run_policy / start_policy: optional semantic early-return clause -- the rollout ends as soon as the condition holds in the sim, instead of only when the step budget runs out. Same predicate DSL as a benchmark spec's success: clause: a single bool predicate call like {'predicate': 'grasped', 'body': 'cube', 'gripper_prefix': 'so101/gripper'} or {'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2}, or a group {'all': [<call>, ...]} / {'any': [<call>, ...]}. Predicates resolve through the closed registry (never eval/exec); an unknown name or a float-valued reward term is rejected up front with the valid list. Checked after every applied action (also on the async-RTC path, so the stop lands within one control step). Composes with an active recording: frames are captured up to the stop. The result json reports stopped_reason ('predicate'|'budget'|'cancelled'; 'error' on failures) and steps_used so you can decide whether to retry.",
       "additionalProperties": true
     },
     "cameras": {
