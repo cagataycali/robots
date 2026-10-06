@@ -8,9 +8,11 @@ answered "Closed on 'cube' (4 contacts)" and the lift ``move_to`` answered
 on so100). A Bedrock agent asked to pick the cube up spent 102 tool calls
 re-grasping and editing geom friction and never found ``attach_bodies``.
 
-Pinned here: the lift reports the body it left behind, with the weld parent to
-use; following that advice lifts the cube; and a move that holds nothing, or
-travels too little to tell, adds nothing.
+Pinned here: the close already says the squeeze cannot lift the cube and names
+the weld, so following it lifts the cube with no failed lift first; the lift
+still reports the body it left behind, with the weld parent to use; following
+that advice lifts the cube; and a move that holds nothing, or travels too
+little to tell, adds nothing.
 """
 
 from __future__ import annotations
@@ -61,6 +63,23 @@ def arm_at_cube(request):
 def _cube_z(sim) -> float:
     model, data = sim._world._model, sim._world._data
     return float(data.xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "cube")][2])
+
+
+def test_the_close_names_the_weld_before_any_lift(arm_at_cube):
+    """The README pick ("pick up the red cube") must not need a failed lift to find the weld."""
+    sim, robot, (x, y, z0) = arm_at_cube
+    closed = _ok(sim.set_gripper(robot_name=robot, state="close"), "close")
+
+    (record,) = _json(closed)["unpinched"]
+    assert record["body"] == "cube"
+    assert record["holds_n"] < record["weight_n"]
+    weld = f"attach_bodies(parent='{record['weld_parent']}', child='cube', mode='weld')"
+    assert weld in _text(closed)
+
+    _ok(sim.attach_bodies(parent=record["weld_parent"], child="cube", mode="weld"), "attach")
+    lift = _ok(sim.move_to(robot_name=robot, position=[x, y, z0 + 0.12], tol=0.02), "lift")
+    assert _cube_z(sim) - z0 > 0.05
+    assert "left_behind" not in _json(lift)
 
 
 def test_the_lift_reports_the_cube_it_left_behind(arm_at_cube):

@@ -874,6 +874,7 @@ class MotionPrimitivesCore:
         gripper_joint_positions: dict[str, float],
         *,
         held: dict[str, int] | None = None,
+        unpinched: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Success envelope for ``set_gripper``, shared across backends.
 
@@ -886,6 +887,12 @@ class MotionPrimitivesCore:
         did not look (or the state was ``"open"``), and the reply stays as it
         was. An empty dict is a close that touched nothing, and the text says
         so - a grasp that missed reads exactly like one that landed otherwise.
+
+        ``unpinched`` lists held bodies the squeeze cannot lift
+        (``{"body", "finger_force_n", "holds_n", "weight_n", "weld_parent"}``):
+        each adds a sentence that a lift will leave it behind and names the
+        grasp-assist weld that would carry it, so the caller hears it before
+        the lift rather than after it.
         """
         payload: dict[str, Any] = {
             "state": state,
@@ -901,6 +908,16 @@ class MotionPrimitivesCore:
             if held:
                 what = ", ".join(f"'{name}' ({n} contact{'s' if n != 1 else ''})" for name, n in sorted(held.items()))
                 text += f" Closed on {what}."
+                for rec in unpinched or []:
+                    pushes = ", ".join(f"'{side}' {f:.2f} N" for side, f in rec["finger_force_n"].items())
+                    text += (
+                        f" The fingers press it ({pushes}) but their friction holds at most "
+                        f"{rec['holds_n']:.2f} N of its {rec['weight_n']:.2f} N weight, so a lift will leave "
+                        f"'{rec['body']}' behind. To carry it, call attach_bodies(parent='{rec['weld_parent']}', "
+                        f"child='{rec['body']}', mode='weld') before the lift - a grasp assist, not a physical grasp."
+                    )
+                if unpinched:
+                    payload["unpinched"] = unpinched
             else:
                 text += (
                     " Closed on nothing: no object is touching the fingers, so a lift now carries nothing - "
