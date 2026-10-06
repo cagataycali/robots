@@ -180,3 +180,20 @@ class TestSendActionSingleElementUnwrap:
         result = sim.send_action({"1": {0.5}}, robot_name="so101")
         assert result["status"] == "error"
         assert "scalar" in result["content"][0]["text"]
+
+
+@pytest.mark.parametrize(
+    ("action", "commanded"),
+    [({}, 0), ({"1": 0.0, "2": 0.0}, 2)],
+    ids=["empty-mapping", "two-keys"],
+)
+def test_success_text_names_what_was_commanded_and_how_far_the_world_moved(sim, action, commanded):
+    """An empty mapping still steps the world, so the sentence says both halves."""
+    t0 = sim._world._data.time
+    result = sim.send_action(action, robot_name="so101", n_substeps=3)
+    text = result["content"][0]["text"]
+
+    assert result["status"] == "success", result
+    assert sim._world._data.time > t0
+    assert f"Commanded {commanded} actuator(s) on 'so101'; advanced 3 physics substep(s)." in text
+    assert ("step(n_steps=...)" in text) is (commanded == 0)

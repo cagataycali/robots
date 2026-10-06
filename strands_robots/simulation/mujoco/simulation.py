@@ -91,6 +91,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     scene_contents_sentence,
+    send_action_summary,
     unknown_model_msg,
     unknown_parameter_error,
 )
@@ -1380,7 +1381,7 @@ class MuJoCoSimEngine(
             # Reached only when an installed action controller raised and the
             # name-lookup fallback ran after it: the resolved keys were written.
             return self._unresolved_action_refusal(robot_name, unresolved, applied=applied)
-        return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
+        return {"status": "success", "content": [{"text": send_action_summary(robot_name, len(applied), n_substeps)}]}
 
     def _unresolved_action_refusal(self, robot_name: str, unresolved: list[str], applied: list[str]) -> dict[str, Any]:
         """The ``send_action`` error naming ``unresolved`` keys and the robot's valid ones.

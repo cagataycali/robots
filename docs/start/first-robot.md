@@ -57,7 +57,7 @@ robot.cleanup()
 You should see:
 
 ```text
-{'status': 'success', 'content': [{'text': "Action applied to 'so101' (2 keys)."}]}
+{'status': 'success', 'content': [{'text': "Commanded 2 actuator(s) on 'so101'; advanced 500 physics substep(s)."}]}
 1 0.502
 2 0.021
 3 -0.782

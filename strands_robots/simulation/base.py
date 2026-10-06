@@ -912,6 +912,19 @@ _BOOLEAN_STATE_REASON = (
 )
 
 
+def send_action_summary(robot_name: str, commanded: int, n_substeps: int) -> str:
+    """The success sentence of every backend's ``send_action``.
+
+    Names the two things a call did separately - how many actuators it
+    commanded and how many physics substeps it advanced - because an empty
+    mapping still steps the world, and "applied (0 keys)" read as a no-op.
+    """
+    text = f"Commanded {commanded} actuator(s) on '{robot_name}'; advanced {n_substeps} physics substep(s)."
+    if not commanded:
+        text += " The action mapping was empty: use step(n_steps=...) to advance without commanding."
+    return text
+
+
 def _rollout_error_report(failed: Mapping[str, str], exclude: Sequence[str] = ()) -> str:
     """The asynchronous rollouts that died, as a block, for a reader of the population.
 

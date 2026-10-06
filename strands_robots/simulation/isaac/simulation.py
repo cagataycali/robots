@@ -43,6 +43,7 @@ from strands.tools.tools import AgentTool
 from strands_robots.simulation.base import (
     SimEngine,
     outside_joint_range,
+    send_action_summary,
     unknown_kwargs_error,
     unknown_model_msg,
 )
@@ -6701,7 +6702,7 @@ class IsaacSimulation(
                 return diverged
             return {
                 "status": "success",
-                "content": [{"text": f"Action applied to '{robot_name}', {n_substeps} substeps."}],
+                "content": [{"text": send_action_summary(robot_name, len(action_map), n_substeps)}],
             }
 
         # Route through the same main-thread marshal as ``step``/``reset``: run
