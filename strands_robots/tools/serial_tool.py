@@ -497,6 +497,8 @@ def serial_tool(
                 for key, value in (
                     ("action", action),
                     ("port", port),
+                    # What the bytes mean to the servo; carried when not the default.
+                    ("baudrate", baudrate if baudrate != 9600 else None),
                     ("motor_id", motor_id),
                     ("position", position),
                     ("velocity", velocity),

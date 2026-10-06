@@ -114,6 +114,9 @@ _STRANDS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
     ("strands.hooks", "HookProvider"): "1.0.0",
     ("strands.hooks", "HookRegistry"): "1.0.0",
     ("strands.hooks", "BeforeToolCallEvent"): "1.13.0",
+    # The motion hook forgets an unspent grant once its call returns; only
+    # ``tool_use`` is read, and the 1.10.0 wheel is the first to export it.
+    ("strands.hooks", "AfterToolCallEvent"): "1.10.0",
     # The dashboard's voice console (``strands_robots.dashboard.voice``) drives
     # the bidirectional-streaming agent. Measured against the wheels: through
     # 1.57.1 it lives only under ``strands.experimental.bidi``; 1.57.2 promotes
