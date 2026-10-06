@@ -107,9 +107,8 @@ def signed_cmd_sample(
     return sample(payload, key=f"strands/{target}/cmd", zid=zid)
 
 
-@pytest.fixture
-def require_signatures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> EphemeralCA:
-    """Run the test on a mesh that requires signed identity.
+def require_signed_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> EphemeralCA:
+    """Put the process on a mesh that requires signed identity (the ``require_signatures`` fixture).
 
     Writes a CA and a leaf for ``this-peer`` under ``tmp_path``, points the mTLS
     variables at them, and sets ``STRANDS_MESH_REQUIRE_SIGNED_IDENTITY=1``. The
