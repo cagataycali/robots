@@ -36,6 +36,7 @@ strands-robots verify-dataset ~/.cache/huggingface/lerobot/you/so101_reach --exp
   frames   (parquet): 450
   expected episodes : 5
   info.json episodes: 5
+  info.json frames  : 450
 ```
 
 Exit code 0 on success, 1 on any problem. Flags:

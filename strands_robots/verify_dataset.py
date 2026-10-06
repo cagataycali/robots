@@ -707,16 +707,17 @@ def _format_report(report: dict[str, Any]) -> str:
     verdict = "PASS" if report["ok"] else "FAIL"
     lines.append(f"[{verdict}] {report['root']}")
     lines.append(f"  episodes (parquet): {report['total_episodes']}")
+    lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report.get("video_files_checked"):
         lines.append(f"  video files checked: {report['video_files_checked']}")
     if report.get("stats_vectors_checked"):
         lines.append(f"  stat vectors checked: {report['stats_vectors_checked']}")
-    if report["total_frames"]:
-        lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report["expected"] is not None:
         lines.append(f"  expected episodes : {report['expected']}")
     if report["info_total_episodes"] is not None:
         lines.append(f"  info.json episodes: {report['info_total_episodes']}")
+    if report["info_total_frames"] is not None:
+        lines.append(f"  info.json frames  : {report['info_total_frames']}")
     for problem in report["problems"]:
         lines.append(f"  - {problem}")
     return "\n".join(lines)
