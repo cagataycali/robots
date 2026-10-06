@@ -702,21 +702,31 @@ def _verify_feature_stats(
 
 
 def _format_report(report: dict[str, Any]) -> str:
-    """Render a report dict as a human-readable multi-line summary."""
+    """Render a report dict as a human-readable multi-line summary.
+
+    The parquet episode/frame counts are the ground truth this verifier was
+    built to report, so both are rendered unconditionally - a dataset whose
+    every episode holds zero frames (the ``save_episode`` -before-any-frame
+    mega-episode signature) is a case the verifier was built to catch, and
+    suppressing the ``frames`` line on ``total_frames==0`` was hiding the
+    exact signal. The ``info.json episodes`` / ``info.json frames`` sibling
+    pair is likewise rendered symmetrically whenever either is declared.
+    """
     lines: list[str] = []
     verdict = "PASS" if report["ok"] else "FAIL"
     lines.append(f"[{verdict}] {report['root']}")
     lines.append(f"  episodes (parquet): {report['total_episodes']}")
+    lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report.get("video_files_checked"):
         lines.append(f"  video files checked: {report['video_files_checked']}")
     if report.get("stats_vectors_checked"):
         lines.append(f"  stat vectors checked: {report['stats_vectors_checked']}")
-    if report["total_frames"]:
-        lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report["expected"] is not None:
         lines.append(f"  expected episodes : {report['expected']}")
     if report["info_total_episodes"] is not None:
         lines.append(f"  info.json episodes: {report['info_total_episodes']}")
+    if report["info_total_frames"] is not None:
+        lines.append(f"  info.json frames  : {report['info_total_frames']}")
     for problem in report["problems"]:
         lines.append(f"  - {problem}")
     return "\n".join(lines)
