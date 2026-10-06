@@ -3408,7 +3408,24 @@ class PhysicsMixin:
             # different location, so echoing it would name a file we did not write.
             return {"status": "success", "content": [{"text": f"Model exported to {safe}"}]}
 
-        return {
-            "status": "success",
-            "content": [{"text": f"Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
-        }
+        # Inline response is capped so a 12 kB scene does not flood a tool-call
+        # transcript, but the envelope has to say so: a bare "..." sentinel
+        # lands mid-attribute (e.g. ``<texture type="2d...``) and reads as a
+        # valid XML continuation, and a header reporting the FULL length over
+        # a 2000-char body teaches a round-tripping LLM to feed the cut body
+        # into load_scene / replace_scene_mjcf (parse error 7, line truncated
+        # mid-attribute). Make the preview nature visible in the header, use
+        # an unambiguous sentinel (an XML comment the parser rejects before
+        # the attribute lexer touches the "..." marker), and point the caller
+        # at output_path for the full file. For a scene under the cap, no
+        # suffix is appended and the header still names the full length.
+        _INLINE_XML_PREVIEW_CAP = 2000
+        if len(xml) > _INLINE_XML_PREVIEW_CAP:
+            preview = (
+                f"Model XML preview (first {_INLINE_XML_PREVIEW_CAP} of {len(xml)} chars; "
+                f"pass output_path=... for the full MJCF):\n"
+                f"{xml[:_INLINE_XML_PREVIEW_CAP]}\n<!-- truncated -->"
+            )
+        else:
+            preview = f"Model XML ({len(xml)} chars):\n{xml}"
+        return {"status": "success", "content": [{"text": preview}]}
