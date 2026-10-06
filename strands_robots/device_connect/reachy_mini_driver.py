@@ -381,7 +381,7 @@ class ReachyMiniDriver(DeviceDriver):
         caller as the actor, so a grant or ``STRANDS_ROBOT_COMMAND_ALLOW``
         entry scoped to another caller admits nothing. A refusal is logged and
         written to the safety audit as ``device_connect_motion_refused``, the
-        way :class:`~strands_robots.device_connect.robot_driver.RobotDriver`
+        way :class:`~strands_robots.device_connect.robot_driver.RobotDeviceDriver`
         records its ``execute`` refusals.
         """
         tool_name = f"reachy_mini@{self._host}"
