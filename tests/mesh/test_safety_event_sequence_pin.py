@@ -3,8 +3,8 @@
 One scripted scenario drives the REAL estop/resume handlers of real ``Mesh``
 peers (minus the Zenoh transport) through every branch the two remote
 handlers and the local paths have: engage, redundant engage, replay, a resume
-refused for the wrong code, a resume refused for a malformed envelope, the
-real HMAC resume, its replay, its redundant re-apply, and an audit sink that
+refused for carrying a plain code, a resume refused for a malformed envelope,
+the real signed resume, its replay, its redundant re-apply, and an audit sink that
 raises mid-scenario. The test records the exact ordered sequence of
 ``(peer, event_type, severity, payload keys)`` for every mesh-published and
 every local-only audit record, the lockout state after each step, and the
@@ -23,13 +23,15 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from strands_robots.mesh import core as mesh_core
+from strands_robots.mesh import resume_authority
 from strands_robots.mesh import security as mesh_security
 
 ISSUER = "pin-issuer"
 PEER = "pin-peer"
-CODE = "pin-override-code"
+KEY = Ed25519PrivateKey.generate()
 
 
 class _StoppableRobot:
@@ -55,7 +57,7 @@ def _sample(payload: dict) -> SimpleNamespace:
 def isolated_audit(monkeypatch, tmp_path):
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path / "audit"))
     monkeypatch.setenv("STRANDS_MESH_AUDIT_PSK", "pin-psk")
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
+    monkeypatch.setenv(resume_authority.PUBLIC_KEY_ENV, resume_authority.public_key_text(KEY.public_key()))
 
 
 def _record_everything(monkeypatch):
@@ -93,18 +95,20 @@ EXPECTED_TRACE = [
         ISSUER,
         "emergency_stop",
         "critical",
-        ("lockout_engaged", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
+        ("lockout_engaged", "lockout_epoch", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
     ),
-    ("wire", PEER, "remote_estop_engaged", "critical", ("issuer", "issuer_t", "trigger")),
+    ("wire", PEER, "remote_estop_engaged", "critical", ("issuer", "issuer_t", "lockout_epoch", "trigger")),
     ("wire", PEER, "estop_replay_rejected", "warning", ("issuer", "issuer_t")),
     (
         "wire",
         ISSUER,
         "emergency_stop",
         "critical",
-        ("lockout_engaged", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
+        ("lockout_engaged", "lockout_epoch", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
     ),
     ("wire", PEER, "remote_estop_redundant", "info", ("issuer", "issuer_t", "lockout_engaged_since")),
+    ("local", PEER, "resume_denied", ("reason", "sender_id", "severity")),
+    ("wire", PEER, "resume_denied", "warning", ("reason_code", "sender_id")),
     ("local", PEER, "resume_denied", ("reason", "sender_id", "severity")),
     ("wire", PEER, "resume_denied", "warning", ("reason_code", "sender_id")),
     (
@@ -112,12 +116,12 @@ EXPECTED_TRACE = [
         ISSUER,
         "emergency_stop",
         "critical",
-        ("lockout_engaged", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
+        ("lockout_engaged", "lockout_epoch", "peers_not_stopped", "peers_silent", "responses_received", "sender_id"),
     ),
     ("wire", PEER, "remote_estop_redundant", "info", ("issuer", "issuer_t", "lockout_engaged_since")),
     ("wire", ISSUER, "resume_ok", "info", ("lockout_elapsed_s", "sender_id")),
     ("wire", PEER, "remote_resume_applied", "info", ("issuer", "issuer_t", "trigger")),
-    ("wire", PEER, "resume_replay_rejected", "warning", ("issuer", "proof_nonce_prefix")),
+    ("wire", PEER, "remote_resume_redundant", "info", ("issuer", "issuer_t", "trigger")),
     ("wire", ISSUER, "resume_ok", "info", ("lockout_elapsed_s", "sender_id")),
     ("wire", PEER, "remote_resume_redundant", "info", ("issuer", "issuer_t", "trigger")),
 ]
@@ -126,7 +130,7 @@ EXPECTED_LOCKOUT = [False, True, True, True, True, True, False, False, False]
 
 EXPECTED_REFUSALS = [
     "[safety] %s: REJECTED remote estop -- replay of (issuer=%s, t=%s) already accepted",
-    "[safety] %s: refusing remote resume -- envelope missing override_proof / proof_nonce",
+    "[safety] %s: refusing remote resume from %s -- %s",
     "[safety] %s: refusing remote estop -- envelope missing/invalid ``t``",
     "[safety] %s: refusing remote estop -- ``t``=%s in future (forward_skew_s=%s, now=%s)",
     "[safety] %s: refusing remote estop -- ``t``=%s too old (freshness_window_s=%s, now=%s)",
@@ -134,7 +138,6 @@ EXPECTED_REFUSALS = [
     "[safety] %s: refusing remote resume -- body source_zid present but wire source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
     "[safety] %s: resume after %.1fs lockout",
     "[safety] %s: lockout cleared via remote resume from %s",
-    "[safety] %s: REJECTED remote resume -- replay of (issuer=%s, proof_nonce=%s) already accepted",
     "[safety] %s: resume after %.1fs lockout",
 ]
 
@@ -170,12 +173,12 @@ def test_safety_path_event_sequence_is_pinned(isolated_audit, monkeypatch, caplo
     with pytest.raises(mesh_security.LockoutError):
         peer._dispatch({"action": "execute", "instruction": "keep going"})
     # 5
-    assert peer._dispatch({"action": "resume", "override_code": "not-the-code"}) == {
+    assert peer._dispatch({"action": "resume", "override_code": "a-plain-code"}) == {
         "status": "error",
         "error": "resume rejected",
     }
     lockout.append(peer._estop_lockout.is_set())
-    # malformed resume (no proof): a warning, no audit record, lockout intact
+    # malformed resume (no assertion): a warning and a denial record, lockout intact
     peer._on_safety_resume(_sample({"peer_id": ISSUER, "t": time.time()}))
     # the four envelope-domain refusals of the shared authentication phases
     peer._on_safety_estop(_sample({"peer_id": ISSUER}))
@@ -191,10 +194,10 @@ def test_safety_path_event_sequence_is_pinned(isolated_audit, monkeypatch, caplo
     failing["publish"] = False
     lockout.append(peer._estop_lockout.is_set())
     # 7
-    issuer._estop_lockout.set()
     issuer._last_estop_ts = time.time()
     issuer._last_estop_mono = time.monotonic()
-    assert issuer._dispatch({"action": "resume", "override_code": CODE}) == {"status": "ok"}
+    assertion = resume_authority.sign_assertion(KEY, epoch=issuer._lockout_epoch, targets=[ISSUER, PEER])
+    assert issuer._dispatch({"action": "resume", "assertion": assertion}) == {"status": "ok"}
     proof = resume_envelope()
     peer._on_safety_resume(_sample(proof))
     lockout.append(peer._estop_lockout.is_set())
@@ -203,7 +206,9 @@ def test_safety_path_event_sequence_is_pinned(isolated_audit, monkeypatch, caplo
     lockout.append(peer._estop_lockout.is_set())
     # 9
     issuer._estop_lockout.set()
-    assert issuer._dispatch({"action": "resume", "override_code": CODE}) == {"status": "ok"}
+    issuer._lockout_epoch = resume_authority.new_epoch()
+    assertion = resume_authority.sign_assertion(KEY, epoch=issuer._lockout_epoch, targets=[ISSUER, PEER])
+    assert issuer._dispatch({"action": "resume", "assertion": assertion}) == {"status": "ok"}
     peer._on_safety_resume(_sample(resume_envelope()))
     lockout.append(peer._estop_lockout.is_set())
 

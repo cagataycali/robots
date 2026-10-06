@@ -166,12 +166,16 @@ class TestTheToolAndTheDriverAgree:
     def test_the_tool_refuses_what_the_drivers_refuse(self, value: Any) -> None:
         result = serial_tool(action="send", port=_PORT, data="x", baudrate=value)
         assert result["status"] == "error"
-        assert "baudrate" in result["content"][0]["text"]
+        assert "baudrate must be a positive integer" in result["content"][0]["text"]
 
     def test_a_usable_speed_gets_past_the_tools_option_check(self) -> None:
-        """So the cell above measures the option and not the missing port."""
+        """So the cell above measures the option and not the missing port.
+
+        The approval prompt that may follow names the speed it will open at,
+        so the check is on the option refusal itself, not the word.
+        """
         result = serial_tool(action="send", port=_PORT, data="x", baudrate=1_000_000)
-        assert "baudrate" not in result["content"][0]["text"]
+        assert "baudrate must be a positive integer" not in result["content"][0]["text"]
 
 
 class TestPyserialCoerces:

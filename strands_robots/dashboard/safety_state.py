@@ -104,14 +104,14 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
             reason=(f"an e-stop from {who} locked the fleet" if who else "an e-stop locked the fleet"),
         )
     if kind == "resume":
-        # NOT clear: every peer re-verifies the override code on its own and may refuse.
+        # NOT clear: every peer verifies the signed resume on its own and may refuse.
         return Lockout(
             state="unknown",
             since=float(when),
             arrived=now,
             by=who,
             reason=(
-                "a resume was broadcast, but each peer verifies the override code itself - "
+                "a resume was broadcast, but each peer verifies the signed resume itself - "
                 "not proof that any of them cleared"
             ),
         )

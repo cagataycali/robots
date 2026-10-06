@@ -9,6 +9,22 @@ export type RegistryRobot = {
   name: string
   /** what to show in the dropdown */
   label: string
+  /** How `mode=real` reaches it: a servo bus here, or an address on the network. Absent = no driver. */
+  realTransport?: RealTransport
+}
+
+export type RealTransport = {
+  /** 'serial': `port` is a /dev path on this machine; 'address': it is the robot's IP/host/URI. */
+  portKind: 'serial' | 'address'
+  /** the driver takes the NIC its DDS traffic binds to (G1, Go2) */
+  networkInterface: boolean
+}
+
+function realTransportOf(v: unknown): RealTransport | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const o = v as Record<string, unknown>
+  if (o.port_kind !== 'serial' && o.port_kind !== 'address') return undefined
+  return { portKind: o.port_kind, networkInterface: o.network_interface === true }
 }
 
 /** `keyName` is the MAP KEY, and where it exists it is authoritative for the id. */
@@ -33,8 +49,12 @@ function entryToRobot(value: unknown, keyName?: string): RegistryRobot | null {
   if (keyName && inner && inner !== keyName) bits.push(inner)
   if (typeof o.category === 'string' && o.category) bits.push(o.category)
   if (typeof o.joints === 'number' && Number.isFinite(o.joints)) bits.push(`${o.joints} joints`)
-  if (o.has_real === false && o.has_sim === true) bits.push('sim only')
-  return { name, label: bits.length ? `${name} — ${bits.join(', ')}` : name }
+  const realTransport = realTransportOf(o.real_transport)
+  // A native driver can build a robot whose entry declares no hardware: it is not sim only.
+  if (o.has_real === false && o.has_sim === true && !realTransport) bits.push('sim only')
+  if (realTransport?.portKind === 'address') bits.push('networked')
+  const label = bits.length ? `${name} — ${bits.join(', ')}` : name
+  return realTransport ? { name, label, realTransport } : { name, label }
 }
 
 /** One name, one option. */

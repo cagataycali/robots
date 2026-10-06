@@ -1084,7 +1084,12 @@ def _motion_input_error(
     return None
 
 
-def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolContext | None) -> str | None:
+def _gate_motion(
+    action: str,
+    tool_input: dict[str, Any],
+    tool_context: ToolContext | None,
+    records: Mapping[str, MotorCalibration] | None = None,
+) -> str | None:
     """Operator approval for one arm motion, before the controller is built.
 
     Args:
@@ -1093,11 +1098,16 @@ def _gate_motion(action: str, tool_input: dict[str, Any], tool_context: ToolCont
             positions, pose_name), unset ones omitted; shown to the operator
             and used to match a dashboard grant.
         tool_context: The agent tool context supplying ``interrupt()``.
+        records: The calibration the controller will be built with, when
+            ``tool_input`` names one. A grant is matched against these
+            records, not against a second read of the file, so the frame the
+            operator approved is the one that drives the servos.
 
     Returns:
         A refusal message, or None to let the motion proceed.
     """
-    if consume_grant("pose_tool", tool_input):
+    frame = {"calibration": records} if records is not None else {}
+    if consume_grant("pose_tool", tool_input, **frame):
         return None
     port = str(tool_input.get("port") or "")
     detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))
@@ -1378,6 +1388,8 @@ def pose_tool(
                     # joint, so the same number under a different file is a
                     # different pose: the operator approves both together.
                     ("calibration", calibration),
+                    # Which pose library ``load_pose`` reads the joint targets from.
+                    ("robot_id", robot_id if robot_id != "so101_follower" else None),
                     ("pose_name", pose_name),
                     ("motor_name", motor_name),
                     ("position", position),
@@ -1387,7 +1399,10 @@ def pose_tool(
                     # supplied; ``steps`` has a default here, so it is carried
                     # only when it differs from it. A model that spelled out the
                     # default is asked twice, which errs on the side of asking.
+                    # The rest of the speed profile is carried the same way.
                     ("steps", steps if steps != 20 else None),
+                    ("step_delay", step_delay if step_delay != 0.05 else None),
+                    ("smooth", smooth if smooth is not True else None),
                 )
                 if value is not None and value != ""
             }
@@ -1404,7 +1419,7 @@ def pose_tool(
                 positions=positions,
             ):
                 return {"status": "error", "content": [{"text": input_error}]}
-            if refusal := _gate_motion(action, tool_input, tool_context):
+            if refusal := _gate_motion(action, tool_input, tool_context, records):
                 # The controller does not exist yet: a refused motion is exactly
                 # as inert as a call that never happened.
                 return {"status": "error", "content": [{"text": f"pose_tool: {refusal}"}]}

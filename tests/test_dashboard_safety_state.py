@@ -36,12 +36,12 @@ class TestSeenEvents:
         assert lock.state == "locked" and lock.since == 50.0 and lock.by is None
 
     def test_a_resume_is_a_broadcast_not_a_receipt(self) -> None:
-        # Each peer re-verifies the override code and MAY REFUSE. Painting the fleet
+        # Each peer verifies the signed resume and MAY REFUSE. Painting the fleet
         # green here would be a claim about hardware that nobody checked.
         locked = apply_event(Lockout(), kind="estop", data={"source": "x"}, now=10.0)
         after = apply_event(locked, kind="resume", data={"source": "operator"}, now=20.0)
         assert after.state == "unknown", "a published resume is not proof any peer cleared"
-        assert "verifies the override code itself" in after.reason
+        assert "verifies the signed resume itself" in after.reason
 
     def test_an_unrelated_event_kind_changes_nothing(self) -> None:
         locked = apply_event(Lockout(), kind="estop", data={}, now=1.0)

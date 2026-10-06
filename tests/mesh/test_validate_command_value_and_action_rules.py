@@ -4,9 +4,8 @@
 (a Python or numpy one) rather than read it as ``1.0``, refuses a numeric-looking
 string and a non-finite value, and re-reads its envelope per call so an operator
 can narrow it without a restart. :func:`~strands_robots.mesh.security.validate_command`
-holds the teleop identifiers to the ``[A-Za-z0-9_.-]+`` charset, admits a null
-``teleop_stop.device_name``, and bounds ``resume.override_code`` by type, length
-and charset with an empty default.
+holds the teleop identifiers to the ``[A-Za-z0-9_.-]+`` charset and admits a
+null ``teleop_stop.device_name``.
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ class TestTheInputFrameValueDomain:
 
 
 class TestTheCommandActionRules:
-    """The per-action identifier and override-code rules of a mesh command."""
+    """The per-action identifier rules of a mesh command."""
 
     @pytest.mark.parametrize("identifier", ["**", "*", "a/b", "with space", "semi;colon"])
     def test_a_teleop_source_peer_id_outside_the_charset_is_refused(self, identifier: str) -> None:
@@ -98,25 +97,3 @@ class TestTheCommandActionRules:
 
     def test_a_null_teleop_stop_device_name_is_admitted(self) -> None:
         assert security.validate_command({"action": "teleop_stop", "device_name": None})["device_name"] is None
-
-    @pytest.mark.parametrize("code", [123, [], {}, True])
-    def test_a_non_string_override_code_is_refused(self, code: Any) -> None:
-        with pytest.raises(security.ValidationError, match="must be a string"):
-            security.validate_command({"action": "resume", "override_code": code})
-
-    def test_an_override_code_past_the_length_bound_is_refused(self) -> None:
-        over = "a" * (security.MAX_OVERRIDE_CODE_LEN + 1)
-        with pytest.raises(security.ValidationError, match="too long"):
-            security.validate_command({"action": "resume", "override_code": over})
-
-    @pytest.mark.parametrize("code", ["ok\ninjected", "ok\r\ninjected", "nul\x00byte", "bell\x07"])
-    def test_an_override_code_carrying_a_control_character_is_refused(self, code: str) -> None:
-        with pytest.raises(security.ValidationError, match="control characters"):
-            security.validate_command({"action": "resume", "override_code": code})
-
-    def test_a_printable_override_code_at_the_length_bound_is_admitted(self) -> None:
-        at_bound = "a" * security.MAX_OVERRIDE_CODE_LEN
-        assert security.validate_command({"action": "resume", "override_code": at_bound})["override_code"] == at_bound
-
-    def test_an_omitted_override_code_defaults_to_empty(self) -> None:
-        assert security.validate_command({"action": "resume"})["override_code"] == ""

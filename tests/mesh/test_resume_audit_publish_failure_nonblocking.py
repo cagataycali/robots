@@ -1,170 +1,56 @@
 """Audit-publish failure must never break the remote-resume safety path.
 
 ``_on_safety_resume`` emits a forensic audit event when it refuses a remote
-resume: ``resume_replay_rejected`` when the ``(issuer, proof_nonce)`` envelope
-was already accepted, and ``resume_per_issuer_cap_exceeded`` when one issuer
-tries to hold more than its fair share of replay-cache slots. Both audit
-publishes are best-effort: AGENTS.md mandates that a failing audit sink must
-NOT propagate out of the safety path, since a flaky or full-disk audit backend
-must never abort a rejection and let the fleet slip into a half-state.
-
-Both calls are wrapped in ``except (TypeError, ValueError, OSError)`` so a
-malformed payload (TypeError/ValueError) or a disk failure (OSError) is
-swallowed at DEBUG. These tests pin that contract for both resume audit
-branches - the estop path already has the equivalent coverage in
-``test_estop_audit_publish_failure_nonblocking``. When ``publish_safety_event``
-raises, the handler must return cleanly and leave the lockout in the safe
-state: a rejected replay keeps the lockout engaged, and an over-cap resume is
-refused (the resume never clears the lockout).
+resume (``resume_denied``, e.g. a replayed assertion) and when a valid one
+arrives with nothing to clear (``remote_resume_redundant``). Both publishes are
+best-effort: a flaky or full-disk audit backend must never abort handling and
+let the fleet slip into a half-state. The estop path has the equivalent
+coverage in ``test_estop_audit_publish_failure_nonblocking``.
 """
 
-import hmac
 import json
-import time
-import uuid
+from unittest.mock import MagicMock
 
-from strands_robots.mesh.core import Mesh, resume_proof_key
+from strands_robots.mesh.core import Mesh
 
-
-def _make_mesh(peer_id="r-test"):
-    """Construct a minimally-instantiated Mesh (mirrors test_resume_replay)."""
-    from unittest.mock import MagicMock
-
-    robot = MagicMock()
-    m = Mesh.__new__(Mesh)
-    Mesh.__init__(m, robot, peer_id)
-    return m
+from ._resume import lock, resume_sample, sign_for, trust_new_key
 
 
-def _sample(payload_dict):
-    """Wrap a JSON payload in a fake zenoh sample."""
-    from unittest.mock import MagicMock
-
-    s = MagicMock()
-    s.payload.to_bytes.return_value = json.dumps(payload_dict).encode()
-    return s
-
-
-def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0):
-    """Mint a valid resume envelope whose HMAC binds the routing fields."""
-    proof_nonce = proof_nonce or uuid.uuid4().hex
-    envelope_t = t if t is not None else time.time()
-    mac_input = json.dumps(
-        {
-            "peer_id": peer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": lockout_elapsed_s,
-            "proof_nonce": proof_nonce,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    proof = hmac.new(resume_proof_key(override_code), mac_input, "sha256").hexdigest()
-    return {
-        "peer_id": peer_id,
-        "t": envelope_t,
-        "lockout_elapsed_s": lockout_elapsed_s,
-        "proof_nonce": proof_nonce,
-        "override_proof": proof,
-    }
-
-
-def test_replay_rejected_audit_oserror_is_swallowed_and_lockout_preserved(monkeypatch):
-    """A disk failure while auditing a resume_replay_rejected event must not
-    propagate out of the safety handler, and the rejected replay must leave
-    the lockout engaged."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    m = _make_mesh()
-
-    calls = []
+def _mesh_whose_audit_raises(event_type: str, exc: Exception) -> tuple[Mesh, list[dict]]:
+    m = Mesh(MagicMock(), "r-test")
+    calls: list[dict] = []
 
     def audit(**kwargs):
         calls.append(kwargs)
-        if kwargs.get("event_type") == "resume_replay_rejected":
-            raise OSError("audit log volume full")
+        if kwargs.get("event_type") == event_type:
+            raise exc
 
-    m.publish_safety_event = audit
+    m.publish_safety_event = audit  # type: ignore[assignment, method-assign]
+    return m, calls
 
-    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
 
-    # First resume: accepted, clears the lockout.
-    m._estop_lockout.set()
-    m._on_safety_resume(_sample(env))
-    assert m._estop_lockout.is_set() is False
+def test_a_refused_replay_with_a_failing_audit_keeps_the_lockout(monkeypatch):
+    key = trust_new_key(monkeypatch)
+    m, calls = _mesh_whose_audit_raises("resume_denied", OSError("audit log volume full"))
+    epoch = lock(m)
+    assertion = sign_for(key, m)
+    m._on_safety_resume(resume_sample(assertion))
+    assert not m._estop_lockout.is_set()
 
-    # Re-arm and replay the SAME envelope: rejected via the replay cache.
-    # The rejection audit raises OSError, which must be swallowed.
-    m._estop_lockout.set()
-    m._on_safety_resume(_sample(env))  # must not raise
+    lock(m, epoch)
+    m._on_safety_resume(resume_sample(assertion))  # the replay; must not raise despite the audit OSError
 
-    # Safety intact: the failing audit did not clear the re-armed lockout.
     assert m._estop_lockout.is_set() is True
-    rejected = [c for c in calls if c.get("event_type") == "resume_replay_rejected"]
-    assert len(rejected) == 1
+    assert [c["event_type"] for c in calls].count("resume_denied") == 1
 
 
-def test_per_issuer_cap_audit_valueerror_is_swallowed_and_cap_enforced(monkeypatch):
-    """A malformed-payload (ValueError) failure while auditing a
-    resume_per_issuer_cap_exceeded event must not propagate, and the
-    per-issuer fairness bound must still be enforced (the refused resume
-    adds no cache slot and never clears the lockout)."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    monkeypatch.setenv("STRANDS_MESH_RESUME_REPLAY_CACHE_MAX", "8")  # cap = max(1, 8 // 4) == 2
-    m = _make_mesh()
+def test_a_redundant_resume_with_a_failing_audit_does_not_raise(monkeypatch):
+    key = trust_new_key(monkeypatch)
+    m, calls = _mesh_whose_audit_raises("remote_resume_redundant", ValueError("bad audit payload shape"))
+    epoch = lock(m)
+    m._estop_lockout.clear()  # nothing to clear when the resume arrives
 
-    calls = []
+    m._on_safety_resume(resume_sample(sign_for(key, m, epoch=epoch)))
 
-    def audit(**kwargs):
-        calls.append(kwargs)
-        if kwargs.get("event_type") == "resume_per_issuer_cap_exceeded":
-            raise ValueError("bad audit payload shape")
-
-    m.publish_safety_event = audit
-
-    # Two accepted resumes fill the issuer's cap; the third trips it.
-    for _ in range(3):
-        env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
-        m._on_safety_resume(_sample(env))  # third must not raise despite audit ValueError
-
-    cap_calls = [c for c in calls if c.get("event_type") == "resume_per_issuer_cap_exceeded"]
-    assert len(cap_calls) == 1
-    # Cap enforced despite the failing audit sink: issuer holds at most the cap.
-    flooder_slots = sum(1 for k in m._resume_replay_cache if k[0] == ("body", "op-flooder"))
-    assert flooder_slots == 2
-    # The refused (third) resume must NOT clear the lockout.
-    assert m._estop_lockout.is_set() is True
-
-
-def test_redundant_resume_audit_oserror_is_swallowed_and_lockout_stays_clear(monkeypatch):
-    """A disk failure (OSError) while auditing a ``remote_resume_redundant``
-    event must not propagate out of the safety handler.
-
-    A fully-validated resume that arrives while the lockout is already clear
-    still consumed a replay-cache slot, so forensics record it as
-    ``remote_resume_redundant`` (issue #271). That forensic publish is
-    best-effort: a flaky audit sink must not abort handling. The lockout was
-    already clear and must stay clear.
-    """
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    m = _make_mesh()
-
-    calls = []
-
-    def audit(**kwargs):
-        calls.append(kwargs)
-        if kwargs.get("event_type") == "remote_resume_redundant":
-            raise OSError("audit log volume full")
-
-    m.publish_safety_event = audit
-
-    # Lockout is NOT engaged, so a valid resume lands in the redundant branch.
-    assert m._estop_lockout.is_set() is False
-    env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
-    m._on_safety_resume(_sample(env))  # must not raise despite the audit OSError
-
-    redundant = [c for c in calls if c.get("event_type") == "remote_resume_redundant"]
-    assert len(redundant) == 1
-    # Lockout was clear before and stays clear (a redundant resume is a no-op
-    # on lockout state).
+    assert [c["event_type"] for c in calls] == ["remote_resume_redundant"], json.dumps(calls, default=str)
     assert m._estop_lockout.is_set() is False

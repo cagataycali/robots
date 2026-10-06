@@ -25,7 +25,7 @@ class TestActionAllowlist:
         assert sec.validate_command({"action": "status"})["action"] == "status"
 
     def test_resume_passes(self):
-        assert sec.validate_command({"action": "resume"})["action"] == "resume"
+        assert sec.validate_command({"action": "resume", "assertion": {}})["action"] == "resume"
 
     def test_unknown_action_rejected(self):
         with pytest.raises(sec.ValidationError, match="unknown action"):
@@ -335,57 +335,31 @@ class TestSafeHostAndModel:
 
 
 class TestValidateCommandResume:
-    """Pin the prior fix review fix: validate_command must bound resume.override_code.
+    """A resume carries the operator's signed assertion and never a plain code.
 
-    Before the prior fix, ``validate_command`` had no ``resume`` clause -- a peer
-    sending ``{"action": "resume", "override_code": <non-string>}`` would
-    pass validation and reach ``Mesh._resume_lockout`` where ``.strip()``
-    raises ``AttributeError`` on a list/dict, surfacing as a generic
-    dispatch error rather than a clean ValidationError.
+    The assertion's fields and signature are checked by ``Mesh._admit_resume``;
+    the validator bounds its type and size so nothing else reaches it.
     """
 
-    def test_resume_string_override_passes(self):
-        cmd = {"action": "resume", "override_code": "valid-secret"}
-        out = sec.validate_command(cmd)
-        assert out["override_code"] == "valid-secret"
+    @pytest.mark.parametrize(
+        ("cmd", "match"),
+        [
+            ({"override_code": "valid-secret"}, "plain override code is not accepted"),
+            ({"override_code": ""}, "plain override code is not accepted"),
+            ({"override_code": "x", "assertion": {}}, "override_code"),
+            ({}, "requires `assertion`"),
+            ({"assertion": "signed"}, "requires `assertion`"),
+            ({"assertion": {"targets": ["x" * sec.MAX_RESUME_ASSERTION_BYTES]}}, "too large"),
+            ({"assertion": {"t": object()}}, "not JSON-serializable"),
+        ],
+    )
+    def test_a_resume_without_a_bounded_assertion_is_refused(self, cmd, match):
+        with pytest.raises(sec.ValidationError, match=match):
+            sec.validate_command({"action": "resume", **cmd})
 
-    def test_resume_empty_override_passes(self):
-        # An empty string is the sentinel for "no override supplied" --
-        # validation must let it through; ``_resume_lockout`` then rejects.
-        cmd = {"action": "resume", "override_code": ""}
-        out = sec.validate_command(cmd)
-        assert out["override_code"] == ""
-
-    def test_resume_missing_override_passes_with_default(self):
-        # Missing key is also the no-code sentinel.
-        cmd = {"action": "resume"}
-        out = sec.validate_command(cmd)
-        assert out["override_code"] == ""
-
-    def test_resume_list_override_rejected(self):
-        cmd = {"action": "resume", "override_code": ["x"]}
-        with pytest.raises(sec.ValidationError, match="must be a string"):
-            sec.validate_command(cmd)
-
-    def test_resume_dict_override_rejected(self):
-        cmd = {"action": "resume", "override_code": {"k": "v"}}
-        with pytest.raises(sec.ValidationError, match="must be a string"):
-            sec.validate_command(cmd)
-
-    def test_resume_int_override_rejected(self):
-        cmd = {"action": "resume", "override_code": 12345}
-        with pytest.raises(sec.ValidationError, match="must be a string"):
-            sec.validate_command(cmd)
-
-    def test_resume_oversized_override_rejected(self):
-        cmd = {"action": "resume", "override_code": "x" * 257}
-        with pytest.raises(sec.ValidationError, match="too long"):
-            sec.validate_command(cmd)
-
-    def test_resume_at_limit_override_passes(self):
-        cmd = {"action": "resume", "override_code": "x" * 256}
-        out = sec.validate_command(cmd)
-        assert out["override_code"] == "x" * 256
+    def test_an_assertion_passes_through_for_the_peer_to_verify(self):
+        assertion = {"v": 1, "epoch": "e" * 32, "targets": ["arm-1"], "t": 1.0, "nonce": "n" * 32, "sig": "s"}
+        assert sec.validate_command({"action": "resume", "assertion": assertion})["assertion"] == assertion
 
 
 # === validate_command strips unknown top-level keys ===

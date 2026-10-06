@@ -11,7 +11,7 @@ resume / HITL decisions, as recorded in the audit trail).
 
 READ-ONLY is enforced, not narrated: ``restrict_to_subscribe_only`` replaces
 every command-capable method on the peer (``send`` / ``tell`` / ``broadcast``
-/ ``emergency_stop`` / ``publish_step``) with a refusal, and confines raw
+/ ``emergency_stop`` / ``resume`` / ``publish_step``) with a refusal, and confines raw
 ``publish`` to the peer's own ``strands/{peer_id}/...`` namespace - so a
 command, an estop or a resume cannot be published from this peer by accident.
 Two write paths are deliberately kept, because the peer's own mesh loops need
@@ -127,7 +127,7 @@ SUBSCRIBE_TOPICS: tuple[str, ...] = (
 #                              only (TypeError, ValueError, OSError). Adding
 #                              it here raises inside a Zenoh subscription
 #                              callback on the safety path.
-_COMMAND_METHODS: tuple[str, ...] = ("send", "tell", "ping", "broadcast", "emergency_stop", "publish_step")
+_COMMAND_METHODS: tuple[str, ...] = ("send", "tell", "ping", "broadcast", "emergency_stop", "resume", "publish_step")
 
 
 def restrict_to_subscribe_only(mesh: Any) -> Any:

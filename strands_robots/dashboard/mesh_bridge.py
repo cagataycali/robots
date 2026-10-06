@@ -1393,7 +1393,7 @@ class MeshBridge:
         dashboard cannot attribute does not touch the lockout: the fleet stays
         as it was until a peer proves it clear (``confirm_resume``, or a command
         a peer accepts), and the trail says why. An attributed resume lands on
-        "unknown", as before: each peer verifies the override code itself.
+        "unknown", as before: each peer verifies the signed resume itself.
         """
         data = self._decode(sample)
         if not data:
@@ -1519,9 +1519,8 @@ class MeshBridge:
         single owner. A second copy is exactly how the resume half came to
         report a switched-off rail as a fault while the e-stop half reported it
         correctly, 38 lines apart in this file -- and the operator reading
-        "unavailable" is sent to the two ``override_code`` causes the
-        troubleshooting sheet lists for a refused resume, neither of which is
-        the switch they set.
+        "unavailable" is sent to the causes the troubleshooting sheet lists for
+        a refused resume, none of which is the switch they set.
         """
         from strands_robots.mesh.core import mesh_disabled_by_env
 
@@ -1570,13 +1569,37 @@ class MeshBridge:
             "peers_not_stopped": sorted(_peers_that_did_not_stop(responses)),
         }
 
-    def signed_resume(self, override_code: str) -> dict[str, Any]:
-        """Clear the fleet lockout with the operator override code."""
+    def signed_resume(self, passphrase: str) -> dict[str, Any]:
+        """Clear the fleet lockout with the operator's resume signing key.
+
+        The key file named by ``STRANDS_MESH_RESUME_SIGNING_KEY_FILE`` stays on
+        this host; *passphrase* opens it, and :meth:`Mesh.resume` signs one
+        assertion for this rail's lockout naming every live peer. Neither the
+        passphrase nor the key leaves this process. A wrong passphrase counts
+        toward the same brute-force throttle a refused assertion does.
+        """
         m = self._safety_mesh()
         if m is None:
             return self._rail_unavailable()
-        res = m._resume_lockout(override_code)
-        return {"signed": True, "issuer": m.peer_id, **(res or {})}
+        from strands_robots.mesh import resume_authority
+
+        rejected = {"signed": True, "issuer": m.peer_id, "status": "error", "error": "resume rejected"}
+        path = resume_authority.signing_key_path()
+        if path is None:
+            return {
+                **rejected,
+                "error": f"no resume signing key on this host ({resume_authority.SIGNING_KEY_FILE_ENV})",
+            }
+        if m._resume_throttled():
+            return rejected
+        try:
+            key = resume_authority.load_signing_key(path, passphrase)
+        except (OSError, ValueError, ImportError) as exc:
+            m._note_resume_failure()
+            m._emit_resume_denied(f"signing key not opened: {exc}", "warning")
+            return rejected
+        targets = [pid for pid in self.live_peers() if pid != m.peer_id]
+        return {"signed": True, "issuer": m.peer_id, **m.resume(key, targets=targets)}
 
     def confirm_resume(self, since: float, *, wait_s: float = 2.0, timeout: float = 2.0) -> list[str]:
         """Ask every live host whether its lockout cleared after a resume sent at ``since``.

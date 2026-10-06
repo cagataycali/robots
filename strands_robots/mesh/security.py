@@ -105,7 +105,7 @@ MAX_PEER_ID_LEN: int = 128
 _PEER_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+\Z")
 
 #: Charset gate for wire-routing passthrough fields (``turn_id``,
-#: ``sender_id``, ``override_code``) and host/address strings stored in
+#: ``sender_id``) and host/address strings stored in
 #: ``out``. Rejects NUL, CRLF, and all C0/C1 control characters while
 #: allowing the full printable ASCII range (0x20-0x7E). Applied *after*
 #: type-check + length-bound so a malicious payload with embedded control
@@ -127,11 +127,10 @@ _NATURAL_TEXT_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 #: chars is generous for any legitimate usage.
 MAX_PASSTHROUGH_LEN: int = 128
 
-#: Maximum length of an operator-supplied second-factor override code
-#: used to clear an estop lockout (``resume.override_code``). Bounded
-#: so a malformed payload cannot DoS the comparison via a multi-MB
-#: string.
-MAX_OVERRIDE_CODE_LEN: int = 256
+#: Largest serialized ``resume.assertion`` accepted (256 targets of 128
+#: characters fit). Bounded so a malformed payload cannot make the
+#: signature check walk a multi-MB object.
+MAX_RESUME_ASSERTION_BYTES: int = 40_000
 
 #: Maximum number of joint/motor keys accepted in a single teleop input
 #: frame. A leader arm streams a fixed small set of motor positions
@@ -1457,7 +1456,7 @@ COMMAND_KEYS: dict[str, frozenset[str]] = {
     "step": frozenset({"steps"}),
     "teleop_receive": frozenset({"source_peer_id", "device_name"}),
     "teleop_stop": frozenset({"device_name"}),
-    "resume": frozenset({"override_code"}),
+    "resume": frozenset({"assertion"}),
     "stop": frozenset({"robot_name"}),
 }
 COMMAND_KEYS["start"] = COMMAND_KEYS["execute"]
@@ -1500,7 +1499,7 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     ``policy_provider`` -> ``POLICY_TYPE_NOT_ALLOWED``,
     ``pretrained_name_or_path`` -> ``HF_REPO_NOT_ALLOWED``, ``model_path``
     without traversal); a bounded identifier (``turn_id`` / ``sender_id`` /
-    ``robot_name`` / ``override_code`` / the teleop identifiers: str, length
+    ``robot_name`` / the teleop identifiers: str, length
     bound, charset with no control byte); a numeric domain via
     :func:`_coerce_float` / :func:`_coerce_int` (``duration``, ``policy_port``,
     ``target_pose`` [7], ``target_velocity``, ``control_frequency``,
@@ -1738,18 +1737,23 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 raise ValidationError("teleop_stop.device_name must be a string or null")
             out["device_name"] = device
     elif action == "resume":
-        # The second factor for clearing a lockout: bounded here so a
-        # non-string or oversized value never reaches Mesh._resume_lockout.
-        override_code = cmd.get("override_code", "")
-        if not isinstance(override_code, str):
-            raise ValidationError("resume.override_code must be a string")
-        if len(override_code) > MAX_OVERRIDE_CODE_LEN:
-            raise ValidationError(f"resume.override_code too long (>{MAX_OVERRIDE_CODE_LEN} chars)")
-        if override_code and not _SAFE_PASSTHROUGH_RE.fullmatch(override_code):
+        # The operator's signed assertion (strands_robots.mesh.resume_authority);
+        # its fields and signature are checked by Mesh._admit_resume. A plain
+        # ``override_code`` is a key this peer does not read, so the unread-key
+        # check below refuses it: a code on this topic is readable by others.
+        assertion = cmd.get("assertion")
+        if not isinstance(assertion, dict):
             raise ValidationError(
-                "resume.override_code contains control characters (CRLF/NUL/C0). Use printable ASCII only."
+                "resume requires `assertion`, the operator-signed resume object "
+                "(strands_robots.mesh.resume_authority.sign_assertion); a plain override code is not accepted"
             )
-        out["override_code"] = override_code
+        try:
+            size = len(json.dumps(assertion))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(f"resume.assertion is not JSON-serializable: {exc}") from exc
+        if size > MAX_RESUME_ASSERTION_BYTES:
+            raise ValidationError(f"resume.assertion too large (>{MAX_RESUME_ASSERTION_BYTES} bytes)")
+        out["assertion"] = assertion
     elif action == "stop":
         # Per-robot stop: Mesh._dispatch reads ``stop.robot_name`` to halt one
         # sim rollout (``stop_policy(robot_name)``) instead of every one. A
@@ -2084,7 +2088,7 @@ __all__ = [
     "MAX_INPUT_KEY_LEN",
     "MAX_INPUT_SLEW_ABS",
     "MAX_INPUT_VALUE_ABS",
-    "MAX_OVERRIDE_CODE_LEN",
+    "MAX_RESUME_ASSERTION_BYTES",
     "MAX_PASSTHROUGH_LEN",
     "MAX_PEER_ID_LEN",
     "MAX_SERVER_ADDRESS_LEN",
