@@ -3890,7 +3890,13 @@ class PolicyRunner:
             return text
         from strands_robots.dataset_source import resolve_dataset_dir
 
-        checked = resolve_dataset_dir(repo_id, root)
+        try:
+            checked = resolve_dataset_dir(repo_id, root)
+        except ValueError:
+            # The writers refuse a directory holding the caller's files because
+            # they replace it; a read deletes nothing, and the directory is
+            # only named here, so the caller's own root is named as given.
+            checked = Path(root or repo_id)
         if unreachable:
             parts = [
                 f"No local copy of {repo_id!r} at {checked} and the Hugging Face Hub could not be reached ({text}).",

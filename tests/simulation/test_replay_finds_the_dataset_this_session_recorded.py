@@ -193,6 +193,13 @@ class TestAHubMissIsTranslated:
         assert "the one holding meta/" in text
         assert "Request ID" not in text and "authenticated" not in text
 
+    def test_a_root_holding_the_working_directory_is_named_not_raised(self, tmp_path, monkeypatch) -> None:
+        # The writers refuse such a root because they rmtree it; this read only
+        # names it, so the refusal must not escape replay's error envelope.
+        monkeypatch.chdir(tmp_path)
+        text = _runner({})._replay_load_failure("user/data", ".", Exception(HUB_404))
+        assert text.startswith("No dataset 'user/data' in the root= directory . ")
+
     def test_other_errors_are_verbatim(self) -> None:
         err = ValueError("Episode 5 out of range (0-0)")
         assert _runner({})._replay_load_failure("lab/wave", None, err) == str(err)
