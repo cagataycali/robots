@@ -32,6 +32,10 @@ from strands_robots.registry.policies import (
 
 logger = logging.getLogger(__name__)
 
+# The spellings import_policy_class resolves by auto-discovery alone (see
+# list_aliases): no registry reports them, so the did-you-mean search adds them.
+_DISCOVERED_SPELLINGS = ("composite", "persistent")
+
 #
 # Runtime registration (for user-defined providers not in JSON)
 #
@@ -440,9 +444,10 @@ def import_policy_class(provider: str) -> type:
     # name: case and dash are folded, and 0.6 is Robot()'s cutoff. Aliases are
     # searched but each match is named by the provider it routes to, once, so
     # ``text2motion`` is offered as ``kimodo`` and ``gtp``/``gtp_g1`` as one
-    # ``protomotions``.
+    # ``protomotions``. The auto-discovered wrappers are searched too.
     folded = provider.lower().replace("-", "_")
-    matches = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
+    pool = [*list_providers(), *list_aliases(), *_DISCOVERED_SPELLINGS]
+    matches = difflib.get_close_matches(folded, pool, n=3, cutoff=0.6)
     close = list(dict.fromkeys(map(_canonical_provider_name, matches)))
     hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
     raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")

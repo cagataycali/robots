@@ -557,7 +557,7 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
     ("spelled", "meant"),
     [
         ("WBC", "'wbc'"),
-        ("cosmos", "'cosmos3'"),
+        ("cosmos", "'cosmos3', 'composite'"),
         ("lerobot-local", "'lerobot_local'"),
         # An alias match is named by the provider it routes to, once each.
         ("GTP", "'protomotions'"),
@@ -565,12 +565,22 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
         ("moveit3", "'moveit2'"),
         ("kimod0", "'kimodo'"),
         ("protomotion", "'protomotions', 'kimodo'"),
+        # The auto-discovered wrappers no registry reports are offered too.
+        ("composie", "'composite', 'cosmos3'"),
+        ("persistant", "'persistent'"),
     ],
 )
 def test_an_unknown_provider_names_the_close_spelling(spelled: str, meant: str) -> None:
     """A near-miss provider is refused naming each provider meant once, as ``Robot()`` does for a robot."""
     with pytest.raises(ValueError, match=rf"Unknown policy provider: '{spelled}'\. Did you mean: {meant}\? "):
         create_policy(spelled)
+
+
+def test_the_typo_hint_searches_every_spelling_resolved_outside_the_registry() -> None:
+    """The did-you-mean pool's discovered spellings are exactly the ones auto-discovery resolves."""
+    from strands_robots.policies.factory import _DISCOVERED_SPELLINGS
+
+    assert sorted(_DISCOVERED_SPELLINGS) == sorted(_resolved_outside_the_registry())
 
 
 def test_a_provider_near_nothing_offers_no_guess() -> None:
