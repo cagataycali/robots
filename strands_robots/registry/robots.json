@@ -1069,6 +1069,13 @@
           "subdir": "packages/lekiwi_sim/lekiwi_sim/assets"
         }
       },
+      "gripper": {
+        "actuators": [
+          "Jaw"
+        ],
+        "closed": "low",
+        "open": "high"
+      },
       "hardware": {
         "lerobot_type": "lekiwi"
       }
