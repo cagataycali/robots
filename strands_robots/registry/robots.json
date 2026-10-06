@@ -1059,6 +1059,13 @@
         "Wrist_Roll": "wrist_roll",
         "Jaw": "gripper"
       },
+      "gripper": {
+        "actuators": [
+          "Jaw"
+        ],
+        "closed": "low",
+        "open": "high"
+      },
       "asset": {
         "dir": "lekiwi",
         "model_xml": "lekiwi/lekiwi.xml",
