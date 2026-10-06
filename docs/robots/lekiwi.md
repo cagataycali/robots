@@ -26,7 +26,7 @@ robot = Robot("lekiwi", mode="real", driver="lerobot", port="/dev/ttyACM0")  # l
 robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # FeetechDriver
 ```
 
-| Observation key | `send_action` label |
+| Observation key | also accepted by `send_action` |
 |---|---|
 | `base_back_wheel_joint` | `base_back_wheel` |
 | `base_right_wheel_joint` | `base_right_wheel` |

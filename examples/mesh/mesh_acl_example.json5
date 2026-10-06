@@ -53,9 +53,9 @@
 //     `interfaces: ["lo", "eth0", ...]` line under a subject if you
 //     want to additionally scope it to a NIC subset.
 //
-//  4. `key_exprs` see the user-side key (the Zenoh `namespace`
-//     prefix is stripped before matching). Use `**/cmd` style
-//     globs, NOT `<namespace>/*/cmd`.
+//  4. `key_exprs` see the namespaced key: with namespace `strands`
+//     a command travels as `strands/strands/<peer>/cmd`. Use `**/cmd`
+//     style globs, NOT `<namespace>/*/cmd`.
 //
 //  5. Both nodes check every message against the REMOTE peer's
 //     subject, so each key set is granted in both flows (see the

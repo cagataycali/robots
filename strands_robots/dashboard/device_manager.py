@@ -228,6 +228,9 @@ def scan_serial_ports() -> list[dict[str, Any]]:
                 "vid": f"{p.vid:04x}" if p.vid else None,
                 "pid": f"{p.pid:04x}" if p.pid else None,
                 "serial_number": getattr(p, "serial_number", None),
+                # The USB bus path (hub port) the board is plugged into: unlike the serial, the device
+                # does not choose it.
+                "location": getattr(p, "location", None) or None,
                 # The WCH CH34x adapter (the first id the owner lists) is what
                 # ships on the SO-10x arms; FTDI boards could be any bus.
                 "likely_robot": "so101" if (p.vid == WCH_CH34X_VID) else None,
@@ -262,16 +265,10 @@ def scan_cameras_with_failures(
             if cap.isOpened():
                 ok, frame = cap.read()
                 if ok and frame is not None:
+                    # Size only: the rate an un-configured capture reports is its idle
+                    # rate, not a mode it delivers (probe_modes verifies those).
                     h, w = frame.shape[:2]
-                    fps = cap.get(cv2.CAP_PROP_FPS) or 0
-                    cams.append(
-                        {
-                            "index": i,
-                            "width": w,
-                            "height": h,
-                            "fps": round(fps, 1) if fps and fps > 0 else None,
-                        }
-                    )
+                    cams.append({"index": i, "width": w, "height": h})
                     got = True
         finally:
             cap.release()
@@ -351,73 +348,77 @@ CAMERA_MODE_CANDIDATES: tuple[tuple[int, int], ...] = (
 CAMERA_FPS_CANDIDATES: tuple[int, ...] = (15, 30, 60)
 
 
-def modes_from_readbacks(
-    native: Mapping[str, Any],
-    readbacks: Iterable[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    """Distill set/read-back probes into the modes a camera really has."""
+def modes_from_readbacks(readbacks: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Distill set/read-back probes into the modes a camera really has.
+
+    A mode counts only when the device read back what was asked AND a frame
+    arrived after the set: some UVC cameras accept a rate (often the one they
+    idle at) and then never deliver a frame at it.
+    """
     keep: dict[tuple[int, int, int], dict[str, Any]] = {}
-
-    def _add(w: Any, h: Any, fps: Any) -> None:
-        try:
-            w, h, fps = int(w), int(h), int(round(float(fps)))
-        except (TypeError, ValueError):
-            return
-        if w <= 0 or h <= 0 or fps <= 0:
-            return
-        keep.setdefault((w, h, fps), {"width": w, "height": h, "fps": fps})
-
-    _add(native.get("width"), native.get("height"), native.get("fps"))
     for rb in readbacks:
         req, got = rb.get("requested") or {}, rb.get("got") or {}
-        try:
-            if (
-                int(got.get("width", -1)) == int(req.get("width", -2))
-                and int(got.get("height", -1)) == int(req.get("height", -2))
-                and abs(float(got.get("fps", -99)) - float(req.get("fps", -1))) <= 1.0
-            ):
-                _add(req.get("width"), req.get("height"), req.get("fps"))
-        except (TypeError, ValueError):
+        if not rb.get("delivered"):
             continue
+        try:
+            w, h, fps = int(req["width"]), int(req["height"]), int(round(float(req["fps"])))
+            if (
+                w <= 0
+                or h <= 0
+                or fps <= 0
+                or int(got.get("width", -1)) != w
+                or int(got.get("height", -1)) != h
+                or abs(float(got.get("fps", -99)) - float(req["fps"])) > 1.0
+            ):
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        keep.setdefault((w, h, fps), {"width": w, "height": h, "fps": fps})
     return sorted(keep.values(), key=lambda m: (m["width"] * m["height"], m["fps"]))
 
 
+def opencv_ordered_camera_names(listing: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Pair macOS camera names with OpenCV indices the way OpenCV itself numbers them.
+
+    OpenCV's AVFoundation backend sorts the capture devices by ``uniqueID`` before
+    indexing them, so index 0 is the smallest id - not the first device the OS (or
+    ffmpeg's ``-list_devices``) lists. A built-in camera listed first can therefore be
+    index 1. Without an id for every camera the order is unknowable, and no names are
+    returned rather than names next to the wrong index.
+
+    Args:
+        listing: ``SPCameraDataType`` entries from ``system_profiler -json``.
+
+    Returns:
+        ``{"listing_index": <OpenCV index>, "name": ...}`` per camera.
+    """
+    rows = [(str(c.get("spcamera_unique-id") or ""), str(c.get("_name") or "").strip()) for c in listing]
+    if not rows or any(not uid or not name for uid, name in rows):
+        return []
+    return [{"listing_index": i, "name": name} for i, (_, name) in enumerate(sorted(rows))]
+
+
 def scan_camera_names() -> list[dict[str, Any]]:
-    """Human names of the attached cameras, best effort per platform. macOS: parsed from ffmpeg's
-    AVFoundation device listing (if ffmpeg is installed).
+    """Human names of the attached cameras, keyed by the index OpenCV opens them at.
+
+    macOS: from ``system_profiler SPCameraDataType``, put in OpenCV's order (see
+    :func:`opencv_ordered_camera_names`). Linux: ``/sys/class/video4linux/videoN/name``,
+    whose ``N`` is the ``/dev/videoN`` OpenCV opens for index ``N``.
     """
     names: list[dict[str, Any]] = []
     if sys.platform == "darwin":
-        import shutil
-
-        ffmpeg = shutil.which("ffmpeg") or next(
-            (p for p in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg") if os.path.exists(p)),
-            None,
-        )
-        if not ffmpeg:
-            return names
         try:
             out = subprocess.run(
-                [ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                ["/usr/sbin/system_profiler", "SPCameraDataType", "-json"],
                 capture_output=True,
                 text=True,
                 errors="replace",
                 timeout=10,
-            ).stderr
+            ).stdout
+            return opencv_ordered_camera_names(json.loads(out).get("SPCameraDataType") or [])
         except Exception as e:  # noqa: BLE001 - enumeration is decoration, never fatal
             logger.debug("camera name scan failed: %r", e)
             return names
-        in_video = False
-        for line in out.splitlines():
-            if "AVFoundation video devices" in line:
-                in_video = True
-                continue
-            if "AVFoundation audio devices" in line:
-                break
-            if in_video:
-                m = re.search(r"\[(\d+)\]\s+(.+)\Z", line)
-                if m:
-                    names.append({"listing_index": int(m.group(1)), "name": m.group(2).strip()})
     elif sys.platform.startswith("linux"):
         import glob
 
@@ -432,8 +433,8 @@ def scan_camera_names() -> list[dict[str, Any]]:
 
 
 #: The mesh's own acknowledgement that wire auth is off. ``STRANDS_MESH_LOCAL_DEV`` stands in for
-#: it inside ``resolve_auth_mode`` so a localhost sim needs one variable, not two; a real arm does
-#: not get that shortcut here.
+#: it inside ``resolve_auth_mode`` while the mesh stays on loopback, so a localhost sim needs one
+#: variable, not two; a real arm does not get that shortcut here.
 INSECURE_ACK_ENV = "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"
 
 #: The operator's explicit yes to starting REAL hardware from a dashboard whose mesh runs without
@@ -745,6 +746,38 @@ def usb_identity(port: Mapping[str, Any]) -> str | None:
     return f"{str(vid).lower()}:{str(pid).lower()}"
 
 
+#: What a profile records about the BOARD behind a serial, beyond the serial itself: the chip
+#: (``vid:pid``) and the USB bus location. A spawn payload never rebinds them (see
+#: :meth:`ProfileStore.save`); only an operator who accepts a different board does.
+BOARD_ANCHORS = {"usb": "chip", "location": "USB location"}
+
+
+def board_anchors(port: Mapping[str, Any] | None) -> dict[str, str | None]:
+    """The :data:`BOARD_ANCHORS` a live scan entry shows, ``None`` for any it cannot read."""
+    port = port or {}
+    location = port.get("location")
+    return {"usb": usb_identity(port), "location": str(location) if location else None}
+
+
+def board_mismatch(profile: Mapping[str, Any], port: Mapping[str, Any] | None) -> str | None:
+    """How the live board differs from what ``profile`` remembered, or ``None`` when nothing does.
+
+    Only anchors the profile recorded are compared. One it recorded but the scan cannot read
+    is a mismatch: not being able to check is not the same as the check passing.
+    """
+    seen = board_anchors(port)
+    problems = []
+    for anchor, label in BOARD_ANCHORS.items():
+        remembered = profile.get(anchor)
+        if not remembered:
+            continue
+        if seen[anchor] is None:
+            problems.append(f"remembered {label} {remembered}, seen none (the scan cannot read it)")
+        elif seen[anchor] != remembered:
+            problems.append(f"remembered {label} {remembered}, seen {seen[anchor]}")
+    return "; ".join(problems) or None
+
+
 def remembered_spawn(profile: Mapping[str, Any] | None) -> dict[str, Any]:
     """The spawn payload a saved USB profile describes, or {} when there is none."""
     if not profile:
@@ -927,10 +960,18 @@ class ProfileStore:
     REMEMBERED_FIELDS = ("cameras",)
 
     def save(self, key: str, payload: dict[str, Any], name: str | None = None) -> dict[str, Any]:
-        """Remember ``payload`` as the way to spawn the board at ``key``."""
+        """Remember ``payload`` as the way to spawn the board at ``key``.
+
+        A :data:`BOARD_ANCHORS` value already on file is kept: a spawn of whatever board reports
+        this serial must not rewrite what the genuine board was. :meth:`rebind_board` is the
+        one way to change them.
+        """
         entry = dict(payload)
         with self._lock:
             previous = dict(self._data.get(key) or {})
+        for fname in BOARD_ANCHORS:
+            if previous.get(fname):
+                entry[fname] = previous[fname]
         for fname in self.MEASURED_FIELDS:
             if fname not in entry and fname in previous:
                 entry[fname] = previous[fname]
@@ -947,6 +988,24 @@ class ProfileStore:
             snapshot = {k: dict(v) for k, v in self._data.items()}
         self._persist(snapshot, key)
         return dict(entry)
+
+    def rebind_board(self, key: str, port: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Record the live board's :data:`BOARD_ANCHORS` for ``key``, replacing what was on file.
+
+        Only for an operator who explicitly accepted a different board; returns the anchors
+        now on file, or ``None`` when ``key`` has no profile.
+        """
+        seen = {k: v for k, v in board_anchors(port).items() if v}
+        with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            for fname in BOARD_ANCHORS:
+                entry.pop(fname, None)
+            entry.update(seen)
+            snapshot = {k: dict(v) for k, v in self._data.items()}
+        self._persist(snapshot, key)
+        return seen
 
     def _persist(self, snapshot: dict[str, dict[str, Any]], key: str) -> None:
         """Atomic write of the whole store (tmp + os.replace)."""
@@ -1003,8 +1062,8 @@ class AutoSpawnWatcher:
     string the device chose, and what would start is a real arm under a
     remembered peer id with a remembered calibration. The operator confirms
     through ``spawn-remembered``, or lists the serial in
-    :data:`AUTOSPAWN_REAL_ALLOWLIST_ENV`, in which case the board's vid:pid
-    must also match what the profile recorded.
+    :data:`AUTOSPAWN_REAL_ALLOWLIST_ENV`. A board whose chip or USB location
+    differs from what the profile recorded is held, allowlisted or not.
     """
 
     def __init__(
@@ -1068,6 +1127,9 @@ class AutoSpawnWatcher:
             "serial": key,
             "device": port.get("device"),
             "usb": usb_identity(port),
+            "location": board_anchors(port)["location"],
+            "remembered_usb": profile.get("usb"),
+            "remembered_location": profile.get("location"),
             "peer_id": profile.get("peer_id"),
             "robot_name": profile.get("robot_name"),
             "mode": profile.get("mode") or "real",
@@ -1078,6 +1140,13 @@ class AutoSpawnWatcher:
         confirm it, ``("hold", why)`` when the board contradicts what was remembered, ``None`` when the
         operator's allowlist covers it and the chip matches."""
         device = port.get("device") or "the board"
+        if mismatch := board_mismatch(profile, port):
+            # Checked for every serial, allowlisted or not: the proposal would send the operator to
+            # spawn-remembered, which refuses this board for the same reason.
+            return "hold", (
+                f"{device} reports the serial of {profile.get('peer_id')} but is a different board: {mismatch}. "
+                "Not started."
+            )
         if key not in _real_autospawn_allowlist():
             return "propose", (
                 f"real hardware is proposed, not started: {device} reports the serial of {profile.get('peer_id')}, "
@@ -1085,18 +1154,11 @@ class AutoSpawnWatcher:
                 f"{device} on the devices screen, or list the serial in {AUTOSPAWN_REAL_ALLOWLIST_ENV} to let it "
                 f"come up on its own."
             )
-        remembered = profile.get("usb")
-        seen = usb_identity(port)
-        if not remembered:
+        if not profile.get("usb"):
             return "propose", (
                 f"{key} is on {AUTOSPAWN_REAL_ALLOWLIST_ENV} but its profile recorded no usb identity to check the "
                 f"board against; to confirm, spawn the remembered profile for {device} once and it will remember "
-                f"{seen or 'the chip'}."
-            )
-        if seen != remembered:
-            return "hold", (
-                f"{device} reports the serial of {profile.get('peer_id')} but is a different chip: remembered "
-                f"{remembered}, seen {seen or 'no vid:pid'}. Not started."
+                f"{usb_identity(port) or 'the chip'}."
             )
         return None
 
@@ -1982,30 +2044,38 @@ class DeviceManager:
             try:
                 if not cap.isOpened():
                     raise self._camera_fault(index)
-                # Native mode first: what the camera does when nobody asks.
+                # Native mode first: what the camera reports when nobody asks. It is
+                # a candidate like the others, not a mode until a frame arrives at it.
                 native = {
                     "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                     "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
                     "fps": float(cap.get(cv2.CAP_PROP_FPS)),
                 }
-                for w, h in CAMERA_MODE_CANDIDATES:
+                candidates = [(native["width"], native["height"], round(native["fps"]))]
+                candidates += [(w, h, fps) for w, h in CAMERA_MODE_CANDIDATES for fps in CAMERA_FPS_CANDIDATES]
+                for w, h, fps in candidates:
+                    if w <= 0 or h <= 0 or fps <= 0:
+                        continue
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-                    for fps in CAMERA_FPS_CANDIDATES:
-                        cap.set(cv2.CAP_PROP_FPS, fps)
-                        readbacks.append(
-                            {
-                                "requested": {"width": w, "height": h, "fps": fps},
-                                "got": {
-                                    "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                                    "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                                    "fps": float(cap.get(cv2.CAP_PROP_FPS)),
-                                },
-                            }
-                        )
+                    cap.set(cv2.CAP_PROP_FPS, fps)
+                    got = {
+                        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                        "fps": float(cap.get(cv2.CAP_PROP_FPS)),
+                    }
+                    delivered = bool(cap.read()[0])
+                    readbacks.append(
+                        {"requested": {"width": w, "height": h, "fps": fps}, "got": got, "delivered": delivered}
+                    )
+                    if not delivered:
+                        # A refused mode can leave the capture silent; start the next
+                        # candidate from a fresh open so one refusal cannot hide the rest.
+                        cap.release()
+                        cap = cv2.VideoCapture(index)
             finally:
                 cap.release()
-        return {"index": index, "native": native, "modes": modes_from_readbacks(native, readbacks)}
+        return {"index": index, "native": native, "modes": modes_from_readbacks(readbacks)}
 
     def port_owner(self, port: str) -> str | None:
         """peer_id of the LIVE managed child holding this serial port, if any."""
@@ -2018,10 +2088,18 @@ class DeviceManager:
         """The remembered profile for the board at ``port``. Profiles are keyed by USB SERIAL NUMBER, not
         by port - a /dev name is reassigned by the OS, a serial is the board.
         """
+        return self.remembered_board(port)[1]
+
+    def remembered_board(self, port: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """``(live scan entry, remembered profile)`` for the board at ``port``, from one scan.
+
+        The scan entry is what :func:`board_mismatch` checks the profile against; either is
+        ``None`` when the port is not in the scan or its serial has no profile.
+        """
         for entry in scan_serial_ports():
             if entry.get("device") == port and entry.get("serial_number"):
-                return self.profiles.get(str(entry["serial_number"]))
-        return None
+                return entry, self.profiles.get(str(entry["serial_number"]))
+        return None, None
 
     def read_bus_role(
         self,
@@ -2353,10 +2431,10 @@ class DeviceManager:
         key = profile_key(info)
         if not key:
             return None
-        # The chip behind the serial, so a later hotplug can be checked against more than a string
-        # the device chose.
-        usb = usb_identity(info)
-        return self.profiles.save(key, {**payload, "usb": usb} if usb else payload)
+        # The chip and the bus location behind the serial, so a later hotplug can be checked against
+        # more than a string the device chose. save() keeps any already on file.
+        anchors = {k: v for k, v in board_anchors(info).items() if v}
+        return self.profiles.save(key, {**payload, **anchors})
 
     def start_autospawn(
         self,

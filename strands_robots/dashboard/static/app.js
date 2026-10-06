@@ -125,7 +125,11 @@ function mergeMeshEvent(peers, ev, nowS) {
       return rebaseSnapshotPeers(ev.peers ?? {}, ev.t, nowS);
     case "mesh_reconfigured":
       return {};
-    case "presence":
+    case "presence": {
+      if (!id) return peers;
+      const provenance = { presence_source: ev.presence_source, sim_corroborated: ev.sim_corroborated === true };
+      return { ...peers, [id]: { ...peers[id], peer_id: id, presence: ev.data, ...provenance, last_seen: nowS, stale: false } };
+    }
     case "state":
     case "stream":
     // The SensorLoops topics vouch for a peer exactly as presence/state do: the frame exists
@@ -3973,17 +3977,22 @@ function clearDeployIntent() {
   } catch {
   }
 }
-function runRisk(presence) {
+function runRisk(presence, provenance) {
   const hw = typeof (presence == null ? void 0 : presence.hw) === "string" ? presence.hw.trim() : "";
   const type = String((presence == null ? void 0 : presence.robot_type) ?? "").toLowerCase();
-  if (type === "sim") {
-    return { physical: false, reason: "simulated robot — nothing physical moves", device: null };
-  }
-  if (hw && !/^(sim|mock|fake|mujoco)/i.test(hw)) {
+  const simHw = /^(sim|mock|fake|mujoco)/i.test(hw);
+  if (hw && !simHw) {
     return { physical: true, reason: `real hardware attached (${hw})`, device: hw };
   }
-  if (hw) {
-    return { physical: false, reason: `simulated backend (${hw})`, device: hw };
+  if (type === "sim" || simHw) {
+    if ((provenance == null ? void 0 : provenance.presence_source) === "wire" && provenance.sim_corroborated !== true) {
+      return {
+        physical: true,
+        reason: "it says it is simulated, but this dashboard did not launch it, so the claim cannot be checked",
+        device: hw || null
+      };
+    }
+    return hw ? { physical: false, reason: `simulated backend (${hw})`, device: hw } : { physical: false, reason: "simulated robot — nothing physical moves", device: null };
   }
   if ((presence == null ? void 0 : presence.connected) === false) {
     return { physical: true, reason: "hardware is not connected right now", device: null };
@@ -4208,7 +4217,7 @@ function RunConfirm({
     }
   ) });
 }
-function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onReset }) {
+function RunForm({ peerId, presence, provenance, running, busy, disabled, onRun, onStop, onReset }) {
   var _a, _b;
   const [resetPending, setResetPending] = reactExports.useState(false);
   const reset = resetVerdict({ running, busy, offline: !!disabled });
@@ -4319,7 +4328,7 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onR
       }
     }
     setValidation(null);
-    if (runRisk(presence).physical) {
+    if (runRisk(presence, provenance).physical) {
       setPending(body);
       return;
     }
@@ -4353,7 +4362,7 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onR
       RunConfirm,
       {
         peerId,
-        risk: runRisk(presence),
+        risk: runRisk(presence, provenance),
         instruction: pending.instruction,
         provider: providerName,
         model: modelValue || null,
@@ -4370,7 +4379,7 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onR
       RunConfirm,
       {
         peerId,
-        risk: runRisk(presence),
+        risk: runRisk(presence, provenance),
         instruction: "return every joint to its home pose",
         provider: "reset",
         durationS: void 0,
@@ -4434,7 +4443,7 @@ function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onR
           "aria-label": "reset to home pose",
           title: reset.title,
           disabled: !reset.enabled,
-          onClick: () => runRisk(presence).physical ? setResetPending(true) : onReset(false),
+          onClick: () => runRisk(presence, provenance).physical ? setResetPending(true) : onReset(false),
           children: "↺"
         }
       ),
@@ -4798,6 +4807,7 @@ function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }) {
       {
         peerId: peer.peer_id,
         presence: p,
+        provenance: peer,
         running,
         busy,
         disabled: offline,
@@ -5844,6 +5854,7 @@ function RobotDetail({ peer, twinLive = false, hostsChildren, fleet, onOpen, onC
               {
                 peerId: peer.peer_id,
                 presence: p,
+                provenance: peer,
                 running,
                 busy,
                 disabled: offline,
@@ -7022,7 +7033,7 @@ function PasskeyList({ authRequired }) {
       ] }, r.id))
     ] }),
     msg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: msg.startsWith("✗") ? "warn small" : "hint small", children: msg }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Removing a passkey takes effect immediately; a browser already signed in keeps its session until it reloads." })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Removing a passkey signs that device out at once, pages it already has open included." })
   ] });
 }
 const APPLY_LABEL = {
@@ -8737,7 +8748,7 @@ function CameraGallery({ cameras: cameras2, names, problem, scanned = true, erro
             c.geometry_from === "remembered" && c.width ? " (last seen)" : ""
           ] })
         ] }),
-        c.name_hint && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "camname-hint", title: "from the OS listing — the order is not OpenCV's, so treat it as a hint", children: [
+        c.name_hint && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "camname-hint", title: "matched to the index by OpenCV's own device order, not by opening the camera", children: [
           "probably ",
           /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: c.name_hint }),
           c.name_is_guess ? " · snap a preview to be sure" : ""
@@ -8802,12 +8813,12 @@ function CameraGallery({ cameras: cameras2, names, problem, scanned = true, erro
       ] }, c.index))
     ] }),
     names.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "camnames", children: names.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "chip", title: "position in the OS device listing", children: n.name }, n.listing_index)) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
-        "Attached cameras by name, in OS listing order — which is ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "not" }),
-        " OpenCV index order. The snapshot is the identity: if you're unsure which index is which, look."
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "camnames", children: names.map((n) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "chip", title: `index ${n.listing_index}`, children: [
+        n.listing_index,
+        ": ",
+        n.name
+      ] }, n.listing_index)) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "hint", children: "Attached cameras by name, numbered the way OpenCV numbers them. The snapshot is the identity: if you're unsure which index is which, look." })
     ] })
   ] });
 }
