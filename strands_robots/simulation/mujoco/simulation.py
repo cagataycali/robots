@@ -3097,6 +3097,8 @@ class MuJoCoSimEngine(
                 # width mismatch (unexpected for a matching source model): skip
                 # defensively rather than corrupt an adjacent joint's slice.
                 continue
+            if int(model.jnt_type[j]) == int(mj.mjtJoint.mjJNT_FREE):
+                vals = self._compose_free_pose_with_spawn_frame(robot, vals)
             data.qpos[adr : adr + width] = vals
             stored[jn] = vals
         robot.home_qpos = stored
@@ -3131,6 +3133,30 @@ class MuJoCoSimEngine(
                 data.act[act_adr + i] = v
             stored_actuators[an] = (ctrl_val, act_vals)
         robot.home_actuators = stored_actuators
+
+    def _compose_free_pose_with_spawn_frame(self, robot: SimRobot, pose: list[float]) -> list[float]:
+        """Place a keyframe's free-joint pose inside the frame ``position=``/``orientation=`` name.
+
+        A ``<key>`` stores a floating base's seven ``qpos`` values in the SOURCE
+        model's world. ``add_robot`` attaches that model under a frame at
+        ``robot.position``/``robot.orientation``, and the compiled reference pose
+        already carries the frame - but writing the key verbatim over it threw
+        the frame away, so a keyframe spawn ignored ``position=`` entirely and
+        the burial warning's own ``position=`` suggestion could never clear it.
+        Composing the frame onto the key (rotate then translate the position,
+        pre-multiply the quaternion) is what the attach does to every body.
+        """
+        import numpy as np
+
+        mj = self._mj
+        frame_pos = np.asarray(robot.position or (0.0, 0.0, 0.0), dtype=np.float64)
+        frame_quat = np.asarray(robot.orientation or (1.0, 0.0, 0.0, 0.0), dtype=np.float64)
+        frame_quat = frame_quat / np.linalg.norm(frame_quat)
+        pos = np.zeros(3)
+        mj.mju_rotVecQuat(pos, np.asarray(pose[:3], dtype=np.float64), frame_quat)
+        quat = np.zeros(4)
+        mj.mju_mulQuat(quat, frame_quat, np.asarray(pose[3:7], dtype=np.float64))
+        return [float(v) for v in (*(pos + frame_pos), *quat)]
 
     def _reset_robot_to_reference(self, robot: SimRobot) -> None:
         """Put one robot's joints and velocities at the model's reference

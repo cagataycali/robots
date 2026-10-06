@@ -76,7 +76,7 @@ Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `strands
 
 ### The stance every weight was trained in
 
-Actions decode as `default_pose + raw_action * action_scale`, so the stance is the origin of the network's output. It ships as `MICRODUCK_DEFAULT_POSE` and as the `STAND` keyframe of `scene.xml` and `scene_rollers.xml`: `Robot("microduck", urdf_path=str(scene), keyframe="STAND")` seats it and every `reset()` restores it. Without it the robot starts at the zero configuration, 0.458 rad off at the widest joint. `scene_ball.xml` declares no keyframe, so seat the stance there yourself.
+Actions decode as `default_pose + raw_action * action_scale`, so the stance is the origin of the network's output. It ships as `MICRODUCK_DEFAULT_POSE` and as the `STAND` keyframe of `scene.xml` and `scene_rollers.xml`: `Robot("microduck", urdf_path=str(scene), keyframe="STAND")` seats it and every `reset()` restores it; on `scene_rollers.xml` add `position=[0, 0, 0.0207]`. Without it the robot starts 0.458 rad off at the widest joint. `scene_ball.xml` has no keyframe; seat the stance yourself.
 
 ## Run it
 
