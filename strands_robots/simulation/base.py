@@ -355,7 +355,9 @@ def close_match_hint(requested: object, known: Sequence[str], same: Callable[[st
 DEFAULT_MODEL_DISCOVERY_HINT = " Use action='list_urdfs' to see all available robots."
 
 
-def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence[str]) -> dict[str, Any]:
+def unknown_parameter_error(
+    unknown: Sequence[str], action: str, valid: Sequence[str], taken_by: Sequence[str] = ()
+) -> dict[str, Any]:
     """The tool result refusing an input key the action does not take.
 
     One sentence for every robot tool: the sim tool built it inline and the
@@ -370,6 +372,9 @@ def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence
             suggested for.
         action: The action the keys were sent with.
         valid: The keys this action does take, already sorted by the caller.
+        taken_by: The actions that do take ``unknown[0]``. Named after the
+            ``Valid:`` list, so ``step(duration=2)`` points at ``run_policy``
+            instead of leaving the caller to search the schema for it.
 
     Returns:
         A ``{"status": "error", "content": [{"text": ...}]}`` tool result.
@@ -378,9 +383,10 @@ def unknown_parameter_error(unknown: Sequence[str], action: str, valid: Sequence
     noun = "parameter" if len(unknown) == 1 else "parameters"
     named = ", ".join(f"'{key}'" for key in unknown)
     hint = close_match_hint(unknown[0], valid_sorted)
+    elsewhere = f". '{unknown[0]}' is taken by: {', '.join(taken_by)}." if taken_by else ""
     return {
         "status": "error",
-        "content": [{"text": f"Unknown {noun} {named} for action '{action}'.{hint} Valid: {valid_sorted}"}],
+        "content": [{"text": f"Unknown {noun} {named} for action '{action}'.{hint} Valid: {valid_sorted}{elsewhere}"}],
     }
 
 

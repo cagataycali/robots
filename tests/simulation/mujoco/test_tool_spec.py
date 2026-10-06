@@ -1090,3 +1090,29 @@ class TestTheSchemaPublishesEveryShapeAddObjectCompiles:
         refused = world_sim(action="set_geom_properties", geom_name="egg", size=[0.1])
         assert refused["status"] == "error"
         assert "ellipsoid" in refused["content"][0]["text"], refused
+
+
+def test_every_published_parameter_says_what_it_is_for(sim: Simulation) -> None:
+    """A bare ``{"type": ...}`` entry leaves an agent guessing which action owns the key."""
+    properties = sim.tool_spec["inputSchema"]["json"]["properties"]
+    bare = sorted(name for name, entry in properties.items() if not str(entry.get("description", "")).strip())
+    assert bare == [], f"tool_spec parameters with no description: {bare}"
+
+
+@pytest.mark.parametrize(
+    ("action", "payload", "taken_by"),
+    [
+        ("step", {"duration": 2.0}, " 'duration' is taken by: run_policy, start_policy."),
+        ("step", {"n_steps_typo": 2}, None),
+    ],
+)
+def test_an_unknown_parameter_names_the_actions_that_take_it(
+    sim: Simulation, action: str, payload: dict[str, Any], taken_by: str | None
+) -> None:
+    """``step(duration=2)`` is refused and pointed at the rollout actions; a key no action takes is not."""
+    text = sim(action=action, **payload)["content"][0]["text"]
+    assert text.startswith(f"Unknown parameter '{next(iter(payload))}' for action 'step'."), text
+    if taken_by is None:
+        assert "is taken by" not in text, text
+    else:
+        assert text.endswith(taken_by), text

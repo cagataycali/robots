@@ -89,9 +89,11 @@
       "description": "Path to MJCF/URDF scene file. Read as given; a relative path that is not there is then looked for in the scenes directory (~/.strands_robots/scenes, or STRANDS_ROBOTS_SCENE_ROOT), where a relative export_xml destination lands, so exporting and reloading under one bare name round-trips."
     },
     "timestep": {
+      "description": "create_world/set_timestep: physics integration step in seconds (default 0.002 = 500 Hz); a finite value > 0. step(n_steps=N) advances N of these, so a rollout length in seconds belongs to run_policy's duration, not to step.",
       "type": "number"
     },
     "gravity": {
+      "description": "create_world/set_gravity: gravity vector [x, y, z] in m/s^2 (default [0, 0, -9.81]).",
       "type": "array",
       "items": {
         "type": "number"
@@ -100,6 +102,7 @@
       "maxItems": 3
     },
     "ground_plane": {
+      "description": "create_world: lay a flat ground plane (default true); terrain replaces it with a heightfield.",
       "type": "boolean"
     },
     "terrain": {
@@ -115,6 +118,7 @@
       "description": "Path to URDF/MJCF file"
     },
     "robot_name": {
+      "description": "Which robot an action targets, by the label add_robot gave it (list_robots names them); robot-scoped actions such as run_policy, get_robot_state, set_joint_positions and move_to take it. Optional when the scene holds one robot.",
       "type": "string"
     },
     "data_config": {
@@ -130,6 +134,7 @@
       "description": "Instance label. For add_object/add_camera it's the object/camera name. For add_robot it's OPTIONAL -- the label you'll use later in run_policy(robot_name=...); if omitted it's auto-derived from data_config and auto-numbered on collision (so101, so101_2, ...)."
     },
     "shape": {
+      "description": "add_object: primitive geometry; size is read per shape (see size), mesh loads mesh_path.",
       "type": "string",
       "enum": [
         "box",
@@ -142,6 +147,7 @@
       ]
     },
     "position": {
+      "description": "World position [x, y, z] in meters for add_robot, add_object, move_object, add_camera; move_to: the end-effector target.",
       "type": "array",
       "items": {
         "type": "number"
@@ -183,6 +189,7 @@
       "description": "Fix an add_object body in the world so physics cannot move it. Omit it to leave the choice to the shape: shape='plane' is then made static (a plane is infinite and cannot carry a dynamic mass) and every other shape is dynamic. Sending false for a plane is refused rather than overridden, so omit this rather than spelling out the non-plane default."
     },
     "mesh_path": {
+      "description": "add_object with shape='mesh': path to the mesh file the object is built from.",
       "type": "string"
     },
     "material": {
@@ -218,9 +225,11 @@
       "description": "Camera field of view"
     },
     "width": {
+      "description": "Image width in pixels for render, render_depth, render_all, get_world_point, add_camera, start_cameras_recording.",
       "type": "integer"
     },
     "height": {
+      "description": "Image height in pixels for render, render_depth, render_all, get_world_point, add_camera, start_cameras_recording.",
       "type": "integer"
     },
     "policy_provider": {
@@ -232,9 +241,11 @@
       "description": "The natural-language task the policy is conditioned on (run_policy, start_policy, eval_policy), e.g. 'pick up the red cube'. This is the field for what a caller might otherwise call task= or prompt=."
     },
     "duration": {
+      "description": "run_policy/start_policy: rollout length in seconds of sim time (default 10); the run takes duration x control_frequency control steps, and n_steps wins when both are passed. step does not take it - step(n_steps=...) counts physics timesteps.",
       "type": "number"
     },
     "action_horizon": {
+      "description": "run_policy/start_policy/eval_policy/evaluate_benchmark: how many actions of each returned chunk are applied before the policy is queried again (default 8). Never fewer than the policy's own chunk size, so a policy that emits one action per call is queried every step.",
       "type": "integer"
     },
     "control_frequency": {
@@ -242,6 +253,7 @@
       "description": "run_policy/start_policy/run_multi_policy/eval_policy/evaluate_benchmark: control-loop rate in Hz - one policy query and one applied action per 1/control_frequency s of sim time (duration = n_steps / control_frequency). Unset = the active recording's fps when a recording is open (the dataset recorder writes one frame per control step, so the two rates must agree), else 50. A value you pass that disagrees with an open recording is refused, naming both rates"
     },
     "camera_name": {
+      "description": "render/render_depth/get_world_point: which camera to view from (list_cameras names them). run_policy and the other rollout actions read it as the video camera; add_camera/remove_camera read it as the camera's name.",
       "type": "string"
     },
     "pixels": {
