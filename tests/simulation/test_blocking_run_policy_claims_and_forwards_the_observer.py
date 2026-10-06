@@ -273,8 +273,10 @@ class TestNoObserverSurfaceAcceptsTheLaneAndDropsIt:
         # assertion below by matching nothing.
         assert {name for name, _fn in _observer_surfaces()} == {
             "base.py::SimEngine.run_policy",
+            "base.py::SimEngine.start_policy",
             "policy_runner.py::PolicyRunner.run",
             "simulation.py::MuJoCoSimEngine.run_policy",
+            "simulation.py::MuJoCoSimEngine.start_policy",
         }
 
     def test_every_surface_consumes_or_forwards_the_lane(self) -> None:

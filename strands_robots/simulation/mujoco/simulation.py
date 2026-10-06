@@ -7116,8 +7116,17 @@ class MuJoCoSimEngine(
         policy_object: "Policy | None" = None,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        max_onframe_failures: int | None = None,
+        control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
+        n_episodes: int = 1,
+        reset_between: bool = True,
+        async_rtc: bool | None = None,
+        rtc_inference_timeout_s: float | None = None,
+        wbc_install_torque_control: bool = True,
+        stop_when: dict[str, Any] | Callable[[SimEngine], bool] | None = None,
+        observer: RunPolicyObserver | None = None,
     ) -> dict[str, Any]:
         """Start policy execution on a background thread (non-blocking).
 
@@ -7144,9 +7153,11 @@ class MuJoCoSimEngine(
         future, leaving the caller a ``status="success"`` for a rollout that
         never produced an action.
 
-        accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
-        alternate horizon specification; run_policy converts to duration.
+        Takes exactly the keywords :meth:`run_policy` takes, so a blocking call
+        becomes a background one by changing the method name and nothing else.
         """
+        if observer_error := optional_callable_error(observer, "observer", "start_policy"):
+            return {"status": "error", "content": [{"text": observer_error}]}
         if err := self._validate_rollout_target(robot_name, instruction, "start_policy"):
             return err
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -7177,7 +7188,14 @@ class MuJoCoSimEngine(
         # posture is covered for the same reason: read by truthiness on the
         # worker, fast_mode="false" ran the rollout unpaced under a "started"
         # that named no problem.
-        if err := self._validate_posture_flags("start_policy", fast_mode=fast_mode):
+        if err := self._validate_posture_flags(
+            "start_policy",
+            fast_mode=fast_mode,
+            reset_between=reset_between,
+            wbc_install_torque_control=wbc_install_torque_control,
+        ):
+            return err
+        if async_rtc is not None and (err := self._validate_posture_flags("start_policy", async_rtc=async_rtc)):
             return err
         control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
@@ -7194,6 +7212,24 @@ class MuJoCoSimEngine(
             return err
         if err := self._validate_seed(seed, "start_policy"):
             return err
+        if err := self._validate_positive_int(n_episodes, "n_episodes", "start_policy"):
+            return err
+        if err := self._validate_control_substeps(control_substeps, "start_policy"):
+            return err
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "start_policy"):
+            return err
+        if err := self._validate_onframe_failure_limit(max_onframe_failures, "start_policy"):
+            return err
+        # A stop_when clause is compiled and probed against the live scene
+        # here for the same reason: refused on the worker, a typo'd predicate
+        # or body would be reported as a started rollout.
+        _, err = self._compile_stop_when(stop_when, "start_policy")
+        if err is not None:
+            return err
+        if isinstance(stop_when, dict):
+            self.bind_predicate_robot(robot_name)
+            if err := self._stop_when_unresolved_error(stop_when, "start_policy"):
+                return err
         # Same reason as the horizon guards above: a malformed video config
         # would otherwise be rejected inside the future, after the caller has
         # already been told the policy started and the robot marked running.
@@ -7264,8 +7300,17 @@ class MuJoCoSimEngine(
             policy_object=policy_object,
             n_steps=n_steps,
             max_steps=max_steps,
+            max_onframe_failures=max_onframe_failures,
+            control_substeps=control_substeps,
             policy_kwargs=policy_kwargs,
             seed=seed,
+            n_episodes=n_episodes,
+            reset_between=reset_between,
+            async_rtc=async_rtc,
+            rtc_inference_timeout_s=rtc_inference_timeout_s,
+            wbc_install_torque_control=wbc_install_torque_control,
+            stop_when=stop_when,
+            observer=observer,
         )
         self._policy_threads[robot_name] = future
         self._policy_rates[robot_name] = float(control_frequency)

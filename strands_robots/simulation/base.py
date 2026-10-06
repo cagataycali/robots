@@ -3990,23 +3990,9 @@ class SimEngine(ABC):
         # tool surface only ever passes predicate-DSL dicts, resolved through
         # the closed registry - never eval/exec; programmatic callers may pass
         # a callable directly, mirroring PolicyRunner.evaluate's success_fn.
-        stop_when_fn: Callable[[SimEngine], bool] | None = None
-        if stop_when is not None:
-            if callable(stop_when):
-                stop_when_fn = stop_when
-            else:
-                from strands_robots.simulation.benchmark_spec import compile_stop_when
-
-                try:
-                    stop_when_fn = compile_stop_when(stop_when)
-                except ValueError as e:
-                    return {
-                        "status": "error",
-                        "content": [
-                            {"text": f"run_policy: {e}"},
-                            {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
-                        ],
-                    }
+        stop_when_fn, err = self._compile_stop_when(stop_when, "run_policy")
+        if err is not None:
+            return err
 
         if robot_name not in self.list_robots():
             return {
@@ -4507,7 +4493,33 @@ class SimEngine(ABC):
             )
         return None
 
-    def _stop_when_unresolved_error(self, stop_when: dict[str, Any]) -> dict[str, Any] | None:
+    @staticmethod
+    def _compile_stop_when(
+        stop_when: dict[str, Any] | Callable[[SimEngine], bool] | None, method: str
+    ) -> tuple[Callable[[SimEngine], bool] | None, dict[str, Any] | None]:
+        """Compile a ``stop_when`` clause, or return the refusal ``method`` gives.
+
+        A callable passes through; a dict compiles against the closed predicate
+        registry. Returns ``(predicate, None)`` or ``(None, error envelope)``.
+        """
+        if stop_when is None or callable(stop_when):
+            return stop_when, None
+        from strands_robots.simulation.benchmark_spec import compile_stop_when
+
+        try:
+            return compile_stop_when(stop_when), None
+        except ValueError as e:
+            return None, {
+                "status": "error",
+                "content": [
+                    {"text": f"{method}: {e}"},
+                    {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
+                ],
+            }
+
+    def _stop_when_unresolved_error(
+        self, stop_when: dict[str, Any], method: str = "run_policy"
+    ) -> dict[str, Any] | None:
         """Structured error if a ``stop_when`` clause references unresolvable entities.
 
         Probes every body/joint/robot-base name in the clause against the live
@@ -4524,7 +4536,7 @@ class SimEngine(ABC):
             return {
                 "status": "error",
                 "content": [
-                    {"text": f"run_policy: {text}"},
+                    {"text": f"{method}: {text}"},
                     {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}},
                 ],
             }
@@ -5191,8 +5203,17 @@ class SimEngine(ABC):
         policy_object: Policy | None = None,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        max_onframe_failures: int | None = None,
+        control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
+        n_episodes: int = 1,
+        reset_between: bool = True,
+        async_rtc: bool | None = None,
+        rtc_inference_timeout_s: float | None = None,
+        wbc_install_torque_control: bool = True,
+        stop_when: dict[str, Any] | Callable[[SimEngine], bool] | None = None,
+        observer: RunPolicyObserver | None = None,
     ) -> dict[str, Any]:
         """Run a policy rollout, in the background where the backend has one.
 
@@ -5213,10 +5234,9 @@ class SimEngine(ABC):
         backend that also tracks rollouts in flight advertises
         ``list_policies_running`` there beside it.
 
-        accepts ``n_steps`` (primary) or legacy ``max_steps`` as an
-        alternate to ``duration``. See ``run_policy`` for conversion rules.
-        ``policy_kwargs`` carries the per-call #300 goal payload through to
-        ``policy.get_actions`` (see :meth:`run_policy`).
+        Takes exactly the keywords :meth:`run_policy` takes, with the same
+        meaning and the same refusals, so a blocking call becomes a background
+        one by changing the method name and nothing else.
         """
         robot_name = self._resolve_single_robot(robot_name)
         return self.run_policy(
@@ -5232,8 +5252,17 @@ class SimEngine(ABC):
             policy_object=policy_object,
             n_steps=n_steps,
             max_steps=max_steps,
+            max_onframe_failures=max_onframe_failures,
+            control_substeps=control_substeps,
             policy_kwargs=policy_kwargs,
             seed=seed,
+            n_episodes=n_episodes,
+            reset_between=reset_between,
+            async_rtc=async_rtc,
+            rtc_inference_timeout_s=rtc_inference_timeout_s,
+            wbc_install_torque_control=wbc_install_torque_control,
+            stop_when=stop_when,
+            observer=observer,
         )
 
     def stop_policy(self, robot_name: str = "") -> dict[str, Any]:

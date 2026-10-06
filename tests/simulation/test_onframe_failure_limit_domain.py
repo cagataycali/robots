@@ -391,8 +391,10 @@ class TestNoOnframeFailureLimitSurfaceDrifts:
         names = {name for name, _mod, _fn in _public_surfaces()}
         assert names == {
             "base.py::SimEngine.run_policy",
+            "base.py::SimEngine.start_policy",
             "policy_runner.py::PolicyRunner.run",
             "simulation.py::MuJoCoSimEngine.run_policy",
+            "simulation.py::MuJoCoSimEngine.start_policy",
         }, names
 
     def test_every_public_surface_validates_or_forwards(self):

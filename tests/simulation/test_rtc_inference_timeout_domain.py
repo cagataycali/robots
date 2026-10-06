@@ -312,8 +312,8 @@ class TestEveryPublicSurfaceOwnsTheDomain:
         """Non-vacuity: an empty or mis-rooted sweep must not read as clean."""
         found = _surfaces_taking_the_deadline()
         assert found == {
-            "base.py": ["SimEngine.run_policy", "SimEngine.eval_policy"],
-            "mujoco/simulation.py": ["MuJoCoSimEngine.run_policy"],
+            "base.py": ["SimEngine.run_policy", "SimEngine.start_policy", "SimEngine.eval_policy"],
+            "mujoco/simulation.py": ["MuJoCoSimEngine.start_policy", "MuJoCoSimEngine.run_policy"],
             "policy_runner.py": ["PolicyRunner.run", "PolicyRunner.evaluate"],
         }, found
 
