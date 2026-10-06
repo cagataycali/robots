@@ -1106,8 +1106,12 @@ def _gate_motion(
     Returns:
         A refusal message, or None to let the motion proceed.
     """
-    frame = {"calibration": records} if records is not None else {}
-    if consume_grant("pose_tool", tool_input, **frame):
+    spent = (
+        consume_grant("pose_tool", tool_input, calibration=records)
+        if records is not None
+        else consume_grant("pose_tool", tool_input)
+    )
+    if spent:
         return None
     port = str(tool_input.get("port") or "")
     detail = " ".join(f"{k}={v}" for k, v in tool_input.items() if k not in ("action", "port"))
