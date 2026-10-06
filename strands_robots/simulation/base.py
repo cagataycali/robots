@@ -340,9 +340,27 @@ def close_match_hint(requested: object, known: Sequence[str], same: Callable[[st
     # the next-best candidate instead of shortening the list. difflib returns
     # matches best-first, so the rendered three are unchanged for a caller
     # whose known set cannot contain ``requested``.
+    #
+    # ``cutoff`` is the stdlib default (0.6) rather than a looser value. The
+    # looser 0.4 that lived here was the only outlier in the codebase: every
+    # other difflib site in strands_robots uses 0.5-0.8 (and
+    # :data:`_MISSPELLING_RATIO` is 0.8 for the strict kwarg-misspelling check
+    # ten lines above). 0.4 scored character-overlap matches that carry no
+    # semantic meaning - the agent-facing surface's hero prompt
+    # "pick up the red cube" naturally produces ``action='pick'`` from an LLM,
+    # whose refusal then returned ``Did you mean: run_policy, stop_policy,
+    # eval_policy`` with equal weight; a caller taking the first suggestion
+    # could land on ``stop_policy`` (kills the current controller) or on
+    # ``set_gravity`` for ``action='grab'`` (zeroes gravity) rather than a
+    # recovery of the intended name. The one-edit typos the test suite pins
+    # (``renderr`` -> ``render``, ``set_joint_position`` ->
+    # ``set_joint_positions``, ``get_stat`` -> ``get_state``) all score well
+    # above 0.6 and are unaffected; a name with no close match still gets the
+    # discovery pointer the caller already appended to this hint, so
+    # recovery is preserved for the worst case.
     target = same(requested) if same is not None else None
     aliases = [k for k in known if same is not None and k != requested and same(k) == target]
-    close = difflib.get_close_matches(requested, list(known), n=4, cutoff=0.4)
+    close = difflib.get_close_matches(requested, list(known), n=4, cutoff=0.6)
     matches = list(dict.fromkeys(m for m in aliases + close if m != requested))[:3]
     if not matches:
         return ""
