@@ -374,7 +374,7 @@ def test_a_loader_returning_a_non_policy_is_named_at_create_policy(monkeypatch) 
     class NotAPolicy:
         pass
 
-    register_policy("not_a_policy_probe", lambda: NotAPolicy)
+    register_policy("not_a_policy_probe", lambda: NotAPolicy)  # type: ignore[arg-type,return-value]
     with pytest.raises(ValueError, match=r"register_policy\('not_a_policy_probe'\).*not a Policy subclass"):
         create_policy("not_a_policy_probe")
     assert "not a Policy subclass" in (policy_provider_error("not_a_policy_probe") or "")
