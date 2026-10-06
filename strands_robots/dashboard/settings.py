@@ -526,26 +526,48 @@ MESH_ENV = {
     "policy_type_allow": "STRANDS_MESH_POLICY_TYPE_ALLOW",
 }
 
+#: The environment names a settings value may publish. A closed literal set, not a
+#: prefix: the page writes settings, and every name here reaches ``os.environ`` and so
+#: every child process. These are transport knobs (where to connect, which port and
+#: backend, the camera rate). ``STRANDS_MESH_POLICY_TYPE_ALLOW`` and
+#: ``STRANDS_TRUST_REMOTE_CODE`` are gates the env fence in
+#: :mod:`strands_robots.dashboard.config_api` refuses, so a setting never sets them;
+#: they are granted through the consent routes or the host's own environment.
+EXPORTED_ENV: frozenset[str] = frozenset(
+    {"ZENOH_CONNECT", "ZENOH_LISTEN", "STRANDS_MESH_PORT", "STRANDS_MESH_BACKEND", "STRANDS_MESH_CAMERA_HZ"}
+)
+
 
 def apply_mesh_env() -> dict[str, str]:
-    """Push mesh settings into ``os.environ``."""
-    mesh = load()["mesh"]
+    """Push the exportable mesh settings into ``os.environ`` and return what was set.
+
+    A name outside :data:`EXPORTED_ENV` is skipped and logged, never written, so a
+    stored ``mesh.policy_type_allow`` or ``runtime.trust_remote_code`` cannot open the
+    gate it names.
+    """
+    tree = load()
+    mesh = tree["mesh"]
     applied: dict[str, str] = {}
+    refused: list[str] = []
     for key, env_name in MESH_ENV.items():
         value = mesh.get(key)
         if isinstance(value, list):
             value = ",".join(value)
         if value in (None, ""):
             continue
+        if env_name not in EXPORTED_ENV:
+            refused.append(f"mesh.{key}")
+            continue
         os.environ[env_name] = str(value)
         applied[env_name] = str(value)
+    if tree["runtime"]["trust_remote_code"]:
+        refused.append("runtime.trust_remote_code")
     if applied:
         logger.info("mesh env from settings: %s", applied)
-    also = {
-        "runtime.trust_remote_code": ("STRANDS_TRUST_REMOTE_CODE", load()["runtime"]["trust_remote_code"]),
-    }
-    for _, (env_name, value) in also.items():
-        if value:
-            os.environ[env_name] = "1"
-            applied[env_name] = "1"
+    if refused:
+        logger.warning(
+            "settings not exported to the environment (gates are granted on the host or "
+            "through the consent routes, never from a settings value): %s",
+            ", ".join(refused),
+        )
     return applied
