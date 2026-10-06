@@ -1278,7 +1278,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         """Rotate the wrist-yaw joint to a set-point, holding the arm posture.
 
         Atomic primitive: resolves the wrist-roll/yaw joint by name heuristic
-        (``wrist_roll`` / ``wrist_yaw`` / ``wrist_rotate`` / ``wrist``, else
+        (``wrist_yaw`` / ``wrist_rotate`` / ``wrist_roll`` / ``wrist``, else
         the last non-gripper hinge joint - the distal roll joint on most serial
         arms; gripper DOFs are excluded via the shared registry-metadata-first
         classification, :meth:`_resolve_gripper_actuators`), commands it to

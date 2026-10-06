@@ -1321,7 +1321,7 @@ class IsaacMotionPrimitivesMixin(MotionPrimitivesCore):
         """Rotate the wrist joint to a set-point, holding the arm posture.
 
         Atomic primitive: resolves the wrist joint by name heuristic
-        (``wrist_roll`` / ``wrist_yaw`` / ``wrist_rotate`` / ``wrist``, else
+        (``wrist_yaw`` / ``wrist_rotate`` / ``wrist_roll`` / ``wrist``, else
         the last non-gripper joint - the distal roll joint on most serial
         arms; gripper DOFs are excluded via the shared registry-metadata-first
         classification, :meth:`_resolve_gripper_dofs`), commands it to
