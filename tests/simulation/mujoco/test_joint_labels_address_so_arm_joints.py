@@ -108,6 +108,31 @@ class TestGetRobotState:
         assert payload["joint_labels"] == joint_labels("so101")
 
 
+class TestGetFeatures:
+    """``get_features`` names the joints the way ``get_robot_state`` does."""
+
+    @pytest.mark.parametrize("robot", ["so101", "so100", "panda"])
+    def test_the_robots_entry_and_its_line_carry_the_labels_get_robot_state_does(self, robot):
+        sim = Simulation()
+        sim.create_world()
+        try:
+            res = sim.add_robot(name=robot, data_config=robot)
+            if res["status"] != "success":
+                pytest.skip(_text(res))
+            features = sim.get_features(robot_name=robot)
+            state = _json(sim.get_robot_state(robot))
+            entry = _json(features)["features"]["robots"][robot]
+            assert entry.get("joint_labels") == state.get("joint_labels")
+            labels = joint_labels(robot)
+            assert entry.get("joint_labels", {}) == labels
+            line = ", ".join(f"{j} ({labels[j]})" if j in labels else j for j in entry["joint_names"])
+            assert (f"  joint_labels: {line}" in _text(features)) == bool(labels)
+            whole_world = _json(sim.get_features())["features"]["robots"][robot]
+            assert whole_world == entry
+        finally:
+            sim.destroy()
+
+
 class TestJointWrites:
     def test_a_bare_label_writes_the_joint(self, so101):
         result = so101._dispatch_action("set_joint_positions", {"positions": {"shoulder_lift": 0.3}})

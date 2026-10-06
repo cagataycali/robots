@@ -6378,6 +6378,24 @@ class MuJoCoSimEngine(
 
     # Introspection
 
+    def _robot_features(self, robot: Any) -> dict[str, Any]:
+        """One robot's entry in the ``get_features`` ``robots`` map.
+
+        Carries ``joint_labels`` exactly when :meth:`get_robot_state` does --
+        only for a robot whose registry entry labels its joints -- so the two
+        discovery calls describe the same arm in the same words.
+        """
+        entry: dict[str, Any] = {
+            "joint_names": robot.joint_names,
+            "n_joints": len(robot.joint_names),
+            "n_actuators": len(robot.actuator_ids),
+            "data_config": robot.data_config,
+            "source": os.path.basename(robot.urdf_path),
+        }
+        if labels := self._robot_joint_labels(robot):
+            entry["joint_labels"] = {jnt: labels[jnt] for jnt in robot.joint_names if jnt in labels}
+        return entry
+
     def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
         """Describe the simulation's joints / actuators / cameras / robots.
 
@@ -6468,29 +6486,13 @@ class MuJoCoSimEngine(
                 )
             ]
 
-            robots_info = {
-                robot_name: {
-                    "joint_names": robot.joint_names,
-                    "n_joints": len(robot.joint_names),
-                    "n_actuators": len(robot.actuator_ids),
-                    "data_config": robot.data_config,
-                    "source": os.path.basename(robot.urdf_path),
-                }
-            }
+            robots_info = {robot_name: self._robot_features(robot)}
         else:
             joint_names = all_joint_names
             actuator_names = all_actuator_names
             camera_names = all_camera_names
 
-            robots_info = {}
-            for rname, robot in self._world.robots.items():
-                robots_info[rname] = {
-                    "joint_names": robot.joint_names,
-                    "n_joints": len(robot.joint_names),
-                    "n_actuators": len(robot.actuator_ids),
-                    "data_config": robot.data_config,
-                    "source": os.path.basename(robot.urdf_path),
-                }
+            robots_info = {rname: self._robot_features(robot) for rname, robot in self._world.robots.items()}
 
         features = {
             "n_bodies": model.nbody,
@@ -6526,6 +6528,9 @@ class MuJoCoSimEngine(
         ]
         for rname, rinfo in robots_info.items():
             lines.append(f"{rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})")
+            if labels := rinfo.get("joint_labels"):
+                named = (f"{jnt} ({labels[jnt]})" if jnt in labels else jnt for jnt in rinfo["joint_names"])
+                lines.append(f"  joint_labels: {', '.join(named)}")
 
         return {
             "status": "success",
