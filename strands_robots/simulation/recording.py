@@ -1335,7 +1335,7 @@ class DatasetRecordingMixin:
         try:
             dataset_dir = resolve_dataset_dir(repo_id, root)
         except ValueError as exc:
-            named = f"repo_id={repo_id!r}" + (f", root={root!r}" if root else "")
+            named = f"repo_id={repo_id!r}" + (f", root={root!r}" if root is not None else "")
             return {"status": "error", "content": [{"text": f"start_recording: {named}: {exc}"}]}
 
         probe = self._probe_recording_scene()
