@@ -1577,7 +1577,14 @@ class SimEngine(ABC):
         target past these bounds silently, so a driver reports the clamp from
         this map rather than from the backend's model. An unlimited actuator is
         absent; the default is ``{}`` for backends that cannot report ranges.
+
+        Raises:
+            ValueError: ``robot_name`` is not in the world, with the message
+                :meth:`robot_joint_names` raises, so an alias is not read as a
+                robot with no limits.
         """
+        if robot_name not in self.list_robots():
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return {}
 
     def saturated_actuators(self, robot_name: str) -> list[str] | None:
@@ -1587,7 +1594,14 @@ class SimEngine(ABC):
         limit is pushing against contact or a joint stop instead of reaching its
         command, which key resolution cannot see. ``[]`` means none is pinned;
         the default ``None`` means the backend cannot tell.
+
+        Raises:
+            ValueError: ``robot_name`` is not in the world, with the message
+                :meth:`robot_joint_names` raises, so an alias is not read as
+                "cannot tell".
         """
+        if robot_name not in self.list_robots():
+            raise ValueError(self._unknown_robot_msg(robot_name))
         return None
 
     # Guards the one-time creation of an engine's per-thread binding slot.

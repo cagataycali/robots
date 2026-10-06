@@ -417,6 +417,15 @@ def test_a_roster_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend, me
     assert getattr(engine, method)("arm"), f"{backend} {method}('arm') lost the registered robot"
 
 
+@pytest.mark.parametrize("method", ["actuator_ranges", "saturated_actuators"])
+@pytest.mark.parametrize("backend", sorted(_ROSTER_ENGINES))
+@pytest.mark.parametrize("name", ["arm_", ""], ids=["typo", "empty"])
+def test_a_limits_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend, method, name):
+    """``{}`` and ``None`` are answers about a robot ("no limits", "cannot tell"), not about a missing one."""
+    with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
+        getattr(_ROSTER_ENGINES[backend](sim), method)(name)
+
+
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
 def test_isaac_raises_the_documented_miss_for_an_unhashable_camera(label, name):
     """``get_camera_params`` reports through an exception, so it must be the documented one.
