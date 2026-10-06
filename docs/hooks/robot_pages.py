@@ -733,7 +733,7 @@ def robot_page(name: str) -> str:
     if gripper:
         acts = ", ".join(f"`{a}`" for a in gripper.get("actuators", ()))
         lines += [
-            f"Gripper actuator {acts}: closed at the {gripper.get('closed')} end of travel, open at the {gripper.get('open')} end.",
+            f"Gripper {acts}: the {gripper.get('closed')} end closes, the {gripper.get('open')} end opens.",
             "",
         ]
     if cov.real or spec.get("hardware"):

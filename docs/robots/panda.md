@@ -27,7 +27,7 @@ robot = Robot("panda", mode="real", port="172.16.0.2")  # FrankaDriver
 
 Aliases: `bimanual_panda_gripper`, `bimanual_panda_hand`, `franka`, `franka_emika_panda`, `franka_panda`, `libero_panda`, `oxe_droid`, `oxe_droid_rel`, `oxe_droid_relative_eef_relative_joint`, `single_panda_gripper`.
 
-Gripper actuator `actuator8`: closed at the low end of travel, open at the high end.
+Gripper `actuator8`: the low end closes, the high end opens.
 
 ## Hardware
 

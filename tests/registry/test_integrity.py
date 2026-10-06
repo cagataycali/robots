@@ -382,6 +382,22 @@ def test_shipped_gripper_metadata_entries(registry: dict) -> None:
         assert gripper["closed"] == "low" and gripper["open"] == "high", name
 
 
+def test_a_joint_labelled_gripper_has_gripper_metadata(registry: dict) -> None:
+    """A robot that labels a joint ``gripper`` declares which end closes it.
+
+    Without the block ``set_gripper`` falls back to the name heuristic and the
+    default close=low convention, so an upstream asset that flips the jaw's
+    sense would invert ``set_gripper`` with no error. With it, a renamed
+    actuator is a loud stale-metadata error instead.
+    """
+    missing = [
+        name
+        for name, info in registry.items()
+        if "gripper" in (info.get("joint_labels") or {}).values() and "gripper" not in info
+    ]
+    assert not missing, f"joint_labels name a gripper but no gripper block: {missing}"
+
+
 def test_joint_labels_shape(registry: dict) -> None:
     """Optional ``joint_labels`` blocks are ``{asset joint: label}`` with one
     label per declared joint, labels unique and non-empty. ``get_robot_state``

@@ -38,6 +38,8 @@ robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # FeetechDriver
 | `Wrist_Roll` | `wrist_roll` |
 | `Jaw` | `gripper` |
 
+Gripper `Jaw`: the low end closes, the high end opens.
+
 ## Hardware
 
 **lerobot.** `Robot("lekiwi", mode="real", driver="lerobot")` builds lerobot's `lekiwi` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
