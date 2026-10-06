@@ -17,21 +17,18 @@ from typing import Any
 from strands_robots._command_gate import PHYSICAL_MOTION_ACTIONS
 from strands_robots.utils import boolean_flag_error
 
-__all__ = ["MOTION_ENV", "GATED_ACTIONS", "WIRE_SPELLING", "agent_motion_allowed", "peer_is_physical"]
+__all__ = ["MOTION_ENV", "GATED_ACTIONS", "PHYSICAL_MOTION_ACTIONS", "agent_motion_allowed", "peer_is_physical"]
 
 #: The grant. Set on the dashboard's process (or via the consent screen) to let the agent start
 #: physical tasks by itself.
 MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 
-#: The dashboard's spelling of a wire verb where the two differ: a dashboard ``task`` is a wire
-#: ``execute`` (or ``start``). Every other gated action is spelled the same on both surfaces.
-WIRE_SPELLING: dict[str, str] = {"task": "execute"}
-
-#: Actions that can put a real robot in motion. Everything else -- including every way of STOPPING
-#: one -- is deliberately outside this set. Derived from the one shared definition
-#: (:data:`~strands_robots._command_gate.PHYSICAL_MOTION_ACTIONS`) so this surface and the mesh
-#: receiving side cannot disagree on what needs a yes: both rollout verbs collapse into ``task``.
-GATED_ACTIONS: frozenset[str] = frozenset({"task"}) | (PHYSICAL_MOTION_ACTIONS - {"execute", "start"})
+#: Actions that can put a real robot in motion: the wire verbs of
+#: :data:`~strands_robots._command_gate.PHYSICAL_MOTION_ACTIONS` (the one definition the mesh's own
+#: wire gate, ``mesh.core.WIRE_MOTION_ACTIONS``, and the agent's per-peer proxy tools,
+#: ``peer_tools.motion_actions_for``, also read), plus ``task``, which is how the dashboard's HTTP
+#: route and fleet tool name a rollout. Every way of STOPPING a robot is deliberately outside it.
+GATED_ACTIONS: frozenset[str] = PHYSICAL_MOTION_ACTIONS | {"task"}
 
 #: How each gated action reads in a refusal: pointing a follower at a live leader stream is
 #: immediate motion (the follower snaps to the leader's pose the moment the command lands),

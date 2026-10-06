@@ -69,7 +69,7 @@ A bind beyond `127.0.0.1`, `::1` or `localhost` is refused with exit 2 until the
 
 ## iot
 
-Provisions, re-provisions and tears down AWS IoT identities for the `iot` and `bridge` mesh backends (`[mesh-iot]` extra, AWS credentials in the environment). Exit 0 on success, 1 when AWS refused or the Thing is missing, 2 on a usage error.
+AWS IoT identities for the `iot` and `bridge` mesh backends (`[mesh-iot]` extra, AWS credentials in the environment). Exit 0 on success, 1 when AWS refused or the Thing is missing, 2 on usage error.
 
 ```bash
 strands-robots iot provision-robot so101-arm-01
@@ -82,7 +82,8 @@ strands-robots iot teardown so101-arm-01
 |---|---|
 | `provision-robot THING [--estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot-no-estop` policy (or `strands-robot`) |
 | `provision-operator THING` | the same, `strands-operator` policy |
-| `reprovision THING` | rotate the certificate: the new one is active before the old ones are deleted; Thing, attributes and policies stay; a running peer's MQTT session ends, so restart it |
-| `teardown THING` | delete the Thing, its certificates and the local files |
+| `reprovision THING [--estop-publish {keep,drop}]` | rotate the certificate; Thing, attributes and policies stay; a `strands-robot` certificate needs the flag; restart the peer |
+| `withdraw-estop-publish [--keep THING] [--apply]` | move `strands-robot` certificates to `strands-robot-no-estop`, except `--keep`; dry run without `--apply` |
+| `teardown THING` | delete the Thing, its certificates and local files |
 
-Every verb takes `--region` and `--cert-dir` (default `~/.strands_robots/iot`) and prints `export` lines. `reprovision` gives a robot provisioned before the CSR default (certificate CN `AWS IoT Certificate`) the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).
+Every verb takes `--region`; Thing verbs take `--cert-dir` (default `~/.strands_robots/iot`) and print `export` lines. `reprovision` gives a pre-CSR robot (certificate CN `AWS IoT Certificate`) the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).

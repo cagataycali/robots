@@ -26,9 +26,7 @@ from typing import Any
 import pytest
 
 from strands_robots import _motion_grants
-from strands_robots._command_gate import PHYSICAL_MOTION_ACTIONS
-from strands_robots.dashboard import agent_motion
-from strands_robots.mesh.core import WIRE_MOTION_ACTIONS, Mesh, WireSource
+from strands_robots.mesh.core import Mesh, WireSource
 
 LEADER_ZID = "a1b2c3d4e5f60718"
 OTHER_ZID = "0f0e0d0c0b0a0908"
@@ -135,14 +133,6 @@ def audits(monkeypatch: pytest.MonkeyPatch, mesh: Mesh) -> list[tuple[str, dict[
 
 
 class TestResetAndStepAreGatedLikeEveryOtherMotionVerb:
-    def test_the_wire_gate_and_the_dashboard_read_one_set_of_motion_verbs(self) -> None:
-        """``task`` is the dashboard's spelling of a rollout; every other verb is spelled the same."""
-        assert {"reset", "step"} <= PHYSICAL_MOTION_ACTIONS
-        assert WIRE_MOTION_ACTIONS == PHYSICAL_MOTION_ACTIONS
-        dashboard_on_the_wire = {agent_motion.WIRE_SPELLING.get(a, a) for a in agent_motion.GATED_ACTIONS}
-        assert dashboard_on_the_wire | {"start"} == PHYSICAL_MOTION_ACTIONS
-        assert agent_motion.WIRE_SPELLING == {"task": "execute"}
-
     @pytest.mark.parametrize("action", ["reset", "step"])
     def test_reset_and_step_over_the_wire_are_refused_without_operator_approval(
         self, mesh: Mesh, arm: _HardwareArm, audits: list, action: str

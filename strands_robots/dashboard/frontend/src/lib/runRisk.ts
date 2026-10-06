@@ -3,7 +3,7 @@
  * a sentence enabled ▶, and the 4th click moved a real arm with zero confirmation — no dialog,
  * no mention of the word "physical" anywhere in the app.
  */
-import type { Presence } from '../types'
+import type { Peer, Presence } from '../types'
 
 export type RunRisk = {
   /** True when the run is expected to drive physical hardware. */
@@ -14,22 +14,37 @@ export type RunRisk = {
   device: string | null
 }
 
+/** Where the server filed the presence record from, and whether it could check a sim claim. */
+export type PresenceProvenance = Pick<Peer, 'presence_source' | 'sim_corroborated'>
+
 /**
  * Errs toward "physical". A peer whose nature we cannot establish gets the confirm sheet: a
  * needless dialog costs one click, a missing one costs a collision.
+ *
+ * The browser twin of the server's `agent_motion.peer_is_physical`, in its order: hardware
+ * first, then the sim claim. A presence record is the peer's own description of itself, so a
+ * sim claim the server filed from the wire counts only when the server corroborated it (this
+ * dashboard launched that peer as a sim); anyone on the mesh could have written it otherwise.
  */
-export function runRisk(presence?: Presence | null): RunRisk {
+export function runRisk(presence?: Presence | null, provenance?: PresenceProvenance | null): RunRisk {
   const hw = typeof presence?.hw === 'string' ? presence.hw.trim() : ''
   const type = String(presence?.robot_type ?? '').toLowerCase()
+  const simHw = /^(sim|mock|fake|mujoco)/i.test(hw)
 
-  if (type === 'sim') {
-    return { physical: false, reason: 'simulated robot — nothing physical moves', device: null }
-  }
-  if (hw && !/^(sim|mock|fake|mujoco)/i.test(hw)) {
+  if (hw && !simHw) {
     return { physical: true, reason: `real hardware attached (${hw})`, device: hw }
   }
-  if (hw) {
-    return { physical: false, reason: `simulated backend (${hw})`, device: hw }
+  if (type === 'sim' || simHw) {
+    if (provenance?.presence_source === 'wire' && provenance.sim_corroborated !== true) {
+      return {
+        physical: true,
+        reason: 'it says it is simulated, but this dashboard did not launch it, so the claim cannot be checked',
+        device: hw || null,
+      }
+    }
+    return hw
+      ? { physical: false, reason: `simulated backend (${hw})`, device: hw }
+      : { physical: false, reason: 'simulated robot — nothing physical moves', device: null }
   }
   if (presence?.connected === false) {
     // Online peer, hardware disconnected: the run will fail rather than move.

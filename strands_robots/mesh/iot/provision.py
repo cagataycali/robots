@@ -57,7 +57,7 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -455,6 +455,23 @@ def _robot_policy_doc(*, allow_estop_publish: bool) -> dict[str, Any]:
     doc = copy.deepcopy(_ROBOT_POLICY_DOC)
     if not allow_estop_publish:
         doc["Statement"] = [st for st in doc["Statement"] if st.get("Sid") != "AllowSafetyEstop"]
+        # Not only absent but denied: ``AllowOwnTopics`` grants
+        # ``strands/<thing>/*``, which for a Thing named ``safety`` is the
+        # whole safety segment. The name is refused at provisioning time
+        # (:data:`RESERVED_THING_NAMES`, the Fleet Provisioning hook); the
+        # Deny is the broker-side half for a Thing that was registered by
+        # another path. The authority posture cannot carry this statement
+        # (it must publish the two topics the Deny covers); there the
+        # reservation and ``DenyFleetTopicsFromOwnPrefix`` in the children
+        # document do the work.
+        doc["Statement"].append(
+            {
+                "Sid": "DenySafetyTopics",
+                "Effect": "Deny",
+                "Action": ["iot:Publish", "iot:RetainPublish"],
+                "Resource": "arn:aws:iot:*:*:topic/strands/safety/*",
+            }
+        )
     return doc
 
 
@@ -518,6 +535,34 @@ _ROBOT_CHILDREN_POLICY_DOC: dict[str, Any] = {
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/cmd",
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}__*/response/*",
+            ],
+        },
+        {
+            # Every robot certificate carries this document next to either
+            # robot posture, and an explicit Deny in any attached policy wins,
+            # so this is where a refusal that must reach the safety authority
+            # too lives: the ``strands-robot`` document itself is within a
+            # hundred characters of :data:`POLICY_DOCUMENT_CAP`. A retained
+            # message on a safety topic is redelivered to every peer that
+            # subscribes later, which turns a stop into a lockout nobody is
+            # holding and a resume into a release nobody issued; no robot
+            # credential may store one. The ``broadcast`` segment is the
+            # operators' channel to the fleet; a robot never speaks on it.
+            # Together with :data:`RESERVED_THING_NAMES` this closes the path
+            # by which a Thing's own ``strands/<thing>/*`` grant reached a
+            # fleet-wide topic when the Thing was named after one.
+            "Sid": "DenyFleetTopicsFromOwnPrefix",
+            "Effect": "Deny",
+            "Action": "iot:RetainPublish",
+            "Resource": "arn:aws:iot:*:*:topic/strands/safety/*",
+        },
+        {
+            "Sid": "DenyBroadcastFromRobots",
+            "Effect": "Deny",
+            "Action": ["iot:Publish", "iot:RetainPublish"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/broadcast",
+                "arn:aws:iot:*:*:topic/strands/broadcast/*",
             ],
         },
     ],
@@ -683,6 +728,43 @@ _OWNED_POLICY_DOCUMENTS: dict[str, Callable[[], dict[str, Any]]] = {
 #: :data:`ROBOT_CHILDREN_POLICY_NAME`.
 _ROBOT_POLICY_NAMES = frozenset({ROBOT_POLICY_NAME, ROBOT_NO_ESTOP_POLICY_NAME})
 
+_TOPIC_ARN_PREFIXES = ("arn:aws:iot:*:*:topic/strands/", "arn:aws:iot:*:*:topicfilter/strands/")
+
+
+def _fleet_topic_segments() -> frozenset[str]:
+    """Every literal first segment under ``strands/`` the policy documents name.
+
+    A Thing's own grants resolve ``${iot:Connection.Thing.ThingName}`` into
+    the same position, so a Thing named after one of these segments would be
+    granted the fleet-wide topic as its own key space. Read from the
+    documents rather than typed, so a new fleet-wide topic reserves its name
+    the moment a policy grants it.
+    """
+    documents = [build() for build in _OWNED_POLICY_DOCUMENTS.values()]
+    documents.append(_OPERATOR_OBSERVE_POLICY_DOC)
+    segments: set[str] = set()
+    for document in documents:
+        for st in document.get("Statement", []):
+            resources = st.get("Resource", [])
+            for resource in [resources] if isinstance(resources, str) else list(resources):
+                for prefix in _TOPIC_ARN_PREFIXES:
+                    if isinstance(resource, str) and resource.startswith(prefix):
+                        segment = resource[len(prefix) :].split("/", 1)[0]
+                        if segment not in ("*", "+") and "${" not in segment:
+                            segments.add(segment)
+    return frozenset(segments)
+
+
+#: Thing names no robot or operator may register under: the fleet-wide first
+#: segments of the ``strands/`` namespace (``safety``, ``broadcast``), compared
+#: case-insensitively. The robot policies grant ``strands/<thing>/*``, so a
+#: Thing named ``safety`` was granted ``strands/safety/estop`` and
+#: ``strands/safety/resume`` through its own prefix with the no-estop policy
+#: attached. Enforced by :func:`_validate_thing_name` on every path through
+#: this module and, as a literal copy, by the Fleet Provisioning hook in
+#: :mod:`strands_robots.mesh.iot.bootstrap` (a test pins the two equal).
+RESERVED_THING_NAMES: frozenset[str] = _fleet_topic_segments()
+
 #: The resource segment every robot policy statement grants a Thing's children by.
 _CHILD_KEY_SPACE_MARKER = "${iot:Connection.Thing.ThingName}" + CHILD_PEER_SEPARATOR + "*/"
 
@@ -836,6 +918,13 @@ def _validate_thing_name(thing_name: str) -> None:
         raise ValueError(
             f"thing_name={thing_name!r} contains invalid characters; "
             "allowed: ASCII letters, digits, '-', '_'; max 128 chars."
+        )
+    if thing_name.lower() in RESERVED_THING_NAMES:
+        raise ValueError(
+            f"thing_name={thing_name!r} is reserved: strands/{thing_name.lower()}/... is a fleet-wide topic segment "
+            f"({', '.join(sorted(RESERVED_THING_NAMES))} are), and the robot policy grants every Thing "
+            "strands/<thing>/*, so a Thing of this name would own the fleet's safety or broadcast topics. "
+            "Name the Thing after the robot (for example so101-arm-01)."
         )
     if CHILD_PEER_SEPARATOR in thing_name:
         raise ValueError(
@@ -1094,11 +1183,34 @@ def provision_operator(
     )
 
 
+def _estop_policy_decision_error(policy_names: list[str], estop_publish: bool | None) -> str | None:
+    """Why a rotation that would carry ``strands-robot`` over cannot proceed, or ``None``.
+
+    ``strands-robot`` was the default robot policy before the posture flipped,
+    so most certificates that carry it belong to ordinary robots that should
+    be on ``strands-robot-no-estop``, and a rotation that copied the
+    attachment kept the fleet-stop grant alive on a fresh key with nothing in
+    the output saying so. The caller now decides: ``True`` keeps the safety
+    authority posture (logged), ``False`` moves the identity to the no-estop
+    policy, ``None`` is refused when the grant is present.
+    """
+    if estop_publish is not None or ROBOT_POLICY_NAME not in policy_names:
+        return None
+    return (
+        f"reprovision: the current certificate carries {ROBOT_POLICY_NAME}, the policy that may originate and "
+        "clear a fleet-wide stop. It is not carried over silently: pass estop_publish=True (CLI --estop-publish "
+        "keep) for a designated safety authority, or estop_publish=False (CLI --estop-publish drop) to rotate onto "
+        f"{ROBOT_NO_ESTOP_POLICY_NAME}, the posture every ordinary robot has. withdraw_fleet_stop_grant moves a "
+        "whole account at once."
+    )
+
+
 def reprovision_thing(
     thing_name: str,
     *,
     region: str | None = None,
     cert_dir: Path | str | None = None,
+    estop_publish: bool | None = None,
 ) -> ProvisionedThing:
     """Rotate *thing_name*'s certificate in place to one issued from a local CSR with ``CN=<thing_name>``.
 
@@ -1110,6 +1222,13 @@ def reprovision_thing(
     then are the old certificates deactivated, detached and deleted. The
     certificate CN is fixed at issuance, so this is also how an identity
     follows a renamed Thing.
+
+    One attachment is not copied without a decision: a certificate on
+    ``strands-robot`` holds the fleet-stop publish grant, which was the default
+    before ordinary robots moved to ``strands-robot-no-estop``. With
+    *estop_publish* unset such a rotation is refused before anything is
+    issued; ``True`` keeps the grant (a designated safety authority, logged as
+    a warning) and ``False`` rotates the identity onto the no-estop policy.
 
     The policies this module owns (``strands-robot``, ``strands-robot-no-estop``,
     ``strands-robot-children``, ``strands-operator``) are re-published on the
@@ -1129,15 +1248,25 @@ def reprovision_thing(
         region: AWS region. Defaults to the default boto3 session region.
         cert_dir: Where the new ``<thing>.cert.pem`` and ``<thing>.private.key``
             are written (mode 0600).
+        estop_publish: What to do with a ``strands-robot`` attachment: ``True``
+            keeps it, ``False`` replaces it with ``strands-robot-no-estop``,
+            ``None`` (the default) refuses the rotation while it is present.
+            Ignored when the certificate does not carry the grant.
 
     Returns:
         The new credential, with ``stale_certificates`` naming any old
         certificate that could not be removed.
 
     Raises:
-        ValueError: When the Thing name is malformed or the Thing does not exist.
+        ValueError: When the Thing name is malformed, the Thing does not exist,
+            or its certificate carries the fleet-stop grant and *estop_publish*
+            did not decide its fate.
     """
     _validate_thing_name(thing_name)
+    if estop_publish is not None and (
+        flag_error := boolean_flag_error(estop_publish, "estop_publish", "reprovision_thing")
+    ):
+        raise ValueError(flag_error)
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name
@@ -1160,6 +1289,23 @@ def reprovision_thing(
             f"reprovision: no policy is attached to {thing_name!r}'s certificates, so there is nothing to carry "
             "over; use provision_robot or provision_operator instead"
         )
+    if decision_error := _estop_policy_decision_error(policy_names, estop_publish):
+        raise ValueError(decision_error)
+    if ROBOT_POLICY_NAME in policy_names:
+        if estop_publish:
+            logger.warning(
+                "[provision] %s: keeping %s on the rotated certificate: this robot stays a safety authority that "
+                "may originate and clear a fleet-wide stop",
+                thing_name,
+                ROBOT_POLICY_NAME,
+            )
+        else:
+            policy_names = [ROBOT_NO_ESTOP_POLICY_NAME if n == ROBOT_POLICY_NAME else n for n in policy_names]
+            if policy_names.count(ROBOT_NO_ESTOP_POLICY_NAME) > 1:
+                policy_names.remove(ROBOT_NO_ESTOP_POLICY_NAME)
+            logger.info(
+                "[provision] %s: rotating onto %s (fleet-stop grant dropped)", thing_name, ROBOT_NO_ESTOP_POLICY_NAME
+            )
     if OPERATOR_POLICY_NAME in policy_names and OPERATOR_OBSERVE_POLICY_NAME not in policy_names:
         # An operator provisioned before the fleet view's second policy existed:
         # rotating its key is the moment it gets the reads too.
@@ -1210,6 +1356,118 @@ def reprovision_thing(
         subject_cn=thing_name,
         stale_certificates=stale,
     )
+
+
+@dataclass(frozen=True)
+class FleetStopGrantReport:
+    """What :func:`withdraw_fleet_stop_grant` found and, with ``apply``, changed.
+
+    Attributes:
+        moved: Thing names whose certificate held ``strands-robot`` and was
+            (or, in a dry run, would be) moved to ``strands-robot-no-estop``.
+        kept: Thing names in ``safety_authorities`` whose grant stays.
+        unnamed: Certificates on ``strands-robot`` that are attached to no
+            Thing (reported by ARN; nothing is changed about them).
+        applied: Whether the account was changed or only read.
+    """
+
+    moved: tuple[str, ...]
+    kept: tuple[str, ...]
+    unnamed: tuple[str, ...]
+    applied: bool
+
+    def lines(self) -> list[str]:
+        """The report as the lines the CLI prints."""
+        verb = "moved" if self.applied else "would move"
+        out = [f"{verb} to {ROBOT_NO_ESTOP_POLICY_NAME}: {', '.join(self.moved) or '(none)'}"]
+        if self.kept:
+            out.append(f"kept on {ROBOT_POLICY_NAME} (safety authority): {', '.join(self.kept)}")
+        if self.unnamed:
+            out.append(f"on {ROBOT_POLICY_NAME} but attached to no Thing, left alone: {', '.join(self.unnamed)}")
+        if not self.applied:
+            out.append("dry run: nothing changed; re-run with --apply (or apply=True) to move them")
+        return out
+
+
+def withdraw_fleet_stop_grant(
+    *,
+    region: str | None = None,
+    safety_authorities: Iterable[str] = (),
+    apply: bool = False,
+) -> FleetStopGrantReport:
+    """Move every certificate on ``strands-robot`` to ``strands-robot-no-estop``, except the named authorities.
+
+    ``strands-robot`` carries the grant to originate and clear a fleet-wide
+    stop. It was the default robot policy before ordinary robots moved to the
+    no-estop posture, so a fleet provisioned before then still has it on every
+    certificate until each one is touched. This walks the account once: the
+    documents this module owns are republished first (so the current Deny
+    statements are in place), then for every certificate the grant-bearing
+    policy is attached to, the no-estop policy and the child key space policy
+    are attached BEFORE the old one is detached, so no session is ever without
+    a policy. The Thing, its attributes, its certificate and its other policy
+    attachments are untouched; a robot keeps its MQTT session.
+
+    Args:
+        region: AWS region. Defaults to the default boto3 session region.
+        safety_authorities: Thing names that keep ``strands-robot``. Each is
+            validated like any Thing name.
+        apply: ``False`` (the default) reads and reports only.
+
+    Returns:
+        A :class:`FleetStopGrantReport`.
+
+    Raises:
+        ValueError: When an authority name is malformed or reserved, or
+            *apply* is not a boolean.
+    """
+    authorities: list[str] = []
+    for name in safety_authorities:
+        _validate_thing_name(name)
+        authorities.append(name)
+    if flag_error := boolean_flag_error(apply, "apply", "withdraw_fleet_stop_grant"):
+        raise ValueError(flag_error)
+    apply = bool(apply)
+    boto3 = _require_boto3()
+    iot = boto3.client("iot", region_name=region)
+
+    if apply:
+        for name in (ROBOT_POLICY_NAME, ROBOT_NO_ESTOP_POLICY_NAME, ROBOT_CHILDREN_POLICY_NAME):
+            _ensure_policy(iot, name, _OWNED_POLICY_DOCUMENTS[name]())
+
+    targets: list[str] = []
+    marker: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"policyName": ROBOT_POLICY_NAME, "pageSize": 250}
+        if marker:
+            kwargs["marker"] = marker
+        page = iot.list_targets_for_policy(**kwargs)
+        targets.extend(str(t) for t in page.get("targets", []))
+        marker = page.get("nextMarker")
+        if not marker:
+            break
+
+    moved: list[str] = []
+    kept: list[str] = []
+    unnamed: list[str] = []
+    for cert_arn in targets:
+        things = [str(t) for t in iot.list_principal_things(principal=cert_arn).get("things", [])]
+        if not things:
+            unnamed.append(cert_arn)
+            continue
+        if any(t in authorities for t in things):
+            kept.extend(t for t in things if t not in kept)
+            continue
+        moved.extend(t for t in things if t not in moved)
+        if not apply:
+            continue
+        attached = {str(p["policyName"]) for p in iot.list_attached_policies(target=cert_arn).get("policies", [])}
+        for name in (ROBOT_NO_ESTOP_POLICY_NAME, ROBOT_CHILDREN_POLICY_NAME):
+            if name not in attached:
+                iot.attach_policy(policyName=name, target=cert_arn)
+        iot.detach_policy(policyName=ROBOT_POLICY_NAME, target=cert_arn)
+        logger.info("[provision] %s: moved %s to %s", ", ".join(things), ROBOT_POLICY_NAME, ROBOT_NO_ESTOP_POLICY_NAME)
+    return FleetStopGrantReport(moved=tuple(moved), kept=tuple(kept), unnamed=tuple(unnamed), applied=apply)
 
 
 def teardown_thing(
