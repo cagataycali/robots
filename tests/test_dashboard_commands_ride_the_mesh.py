@@ -12,19 +12,13 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest import mock
 
 import pytest
 
 from strands_robots.dashboard.mesh_bridge import MeshBridge
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
-
-
-def _sample(payload: dict[str, Any]) -> Any:
-    sample = mock.MagicMock()
-    sample.payload.to_bytes.return_value = json.dumps(payload).encode()
-    return sample
+from tests._mesh_reply import reply_sample
 
 
 @pytest.fixture
@@ -38,8 +32,8 @@ def wired(tmp_path, monkeypatch):
     def loopback(key: str, msg: dict[str, Any]) -> None:
         published.append(key)
         turn = msg["turn_id"]
-        mesh._on_response(_sample({"turn_id": turn, "responder_id": "impostor", "result": {"forged": True}}))
-        mesh._on_response(_sample({"turn_id": turn, "responder_id": "arm", "result": {"status": "success"}}))
+        mesh._on_response(reply_sample(mesh, {"turn_id": turn, "responder_id": "impostor", "result": {"forged": True}}))
+        mesh._on_response(reply_sample(mesh, {"turn_id": turn, "responder_id": "arm", "result": {"status": "success"}}))
 
     monkeypatch.setattr(mesh_core, "put", loopback)
     # The raw session is watched too, so a publish that bypasses Mesh is seen, not lost.

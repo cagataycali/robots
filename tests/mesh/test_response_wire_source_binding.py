@@ -22,10 +22,10 @@ import threading
 import time
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
+from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
 from strands_robots.mesh.core import BROADCAST_RESPONDER, Mesh
 
@@ -188,8 +188,24 @@ class TestBroadcastTurn:
         assert mesh._responses["t5"] == []
         assert [e for e, _ in audits] == ["response_hijack_rejected"]
 
-    def test_bridge_transport_with_no_wire_identity_anywhere_still_works(self, mesh: Mesh, audits: list) -> None:
-        """Both absent: the IoT and bridge transports never carry a zid and bind the topic instead."""
+    def test_a_reply_nobody_can_attribute_is_refused_on_zenoh(self, mesh: Mesh, audits: list) -> None:
+        """No wire zid on the sample and none bound to the name: on Zenoh that is anyone's reply."""
+        mesh._on_presence(_presence("robot-b", zid=None))
+        event = _register(mesh, "t6", BROADCAST_RESPONDER)
+
+        mesh._on_response(_response("t6", "robot-b", zid=None))
+
+        assert mesh._responses["t6"] == []
+        assert not event.is_set()
+        assert [e for e, _ in audits] == ["response_hijack_rejected"]
+        assert "does not bind the sender" in audits[0][1]["reason"]
+
+    @pytest.mark.parametrize("backend", ["iot", "bridge"])
+    def test_a_broker_that_binds_the_topic_still_accepts_zid_less_replies(
+        self, mesh: Mesh, audits: list, monkeypatch: pytest.MonkeyPatch, backend: str
+    ) -> None:
+        """The IoT policy pins ``response/${ThingName}``, so the topic segment names the sender there."""
+        monkeypatch.setattr(mesh_core, "select_backend", lambda: backend)
         mesh._on_presence(_presence("robot-b", zid=None))
         event = _register(mesh, "t6", BROADCAST_RESPONDER)
 
@@ -200,15 +216,16 @@ class TestBroadcastTurn:
         assert event.is_set()
         assert audits == []
 
-    def test_magicmock_samples_keep_the_legacy_contract(self, mesh: Mesh) -> None:
-        """The existing unit fixtures (MagicMock zid, Mock repr) count as no wire identity."""
+    def test_a_reply_on_the_legacy_key_shape_is_refused(self, mesh: Mesh, audits: list) -> None:
+        """``strands/<me>/response/<turn>`` names no responder, so the topic cannot vouch for the body."""
+        mesh._on_presence(_presence("robot-b", zid=_ZID_B))
         _register(mesh, "t7", BROADCAST_RESPONDER)
-        sample = MagicMock()
-        sample.payload.to_bytes.return_value = json.dumps({"turn_id": "t7", "responder_id": "x", "result": {}}).encode()
+        payload = {"type": "response", "turn_id": "t7", "responder_id": "robot-b", "result": {"status": "success"}}
 
-        mesh._on_response(sample)
+        mesh._on_response(_sample(payload, zid=_ZID_B, key="strands/op/response/t7"))
 
-        assert len(mesh._responses["t7"]) == 1
+        assert mesh._responses["t7"] == []
+        assert [e for e, _ in audits] == ["response_hijack_rejected"]
 
 
 class TestPointToPointTurn:
@@ -256,3 +273,119 @@ class TestEmergencyStopAccounting:
         assert published[0][1]["peers_silent"] == ["arm-2"]
         msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.CRITICAL]
         assert any("arm-2" in m and "no acknowledgement" in m for m in msgs), msgs
+
+    def _estop_against(self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> dict[str, Any]:
+        """Run ``emergency_stop`` with *replies* arriving on the real ``_on_response`` path."""
+        mesh._running = True
+        broadcast = mesh.broadcast
+
+        def fanout(key: str, msg: dict[str, Any]) -> None:
+            for make in replies:
+                mesh._on_response(make(msg["turn_id"]))
+
+        monkeypatch.setattr(mesh, "publish", fanout)
+        monkeypatch.setattr(mesh, "broadcast", lambda cmd, timeout=3.0: broadcast(cmd, timeout=0.2))
+        monkeypatch.setattr(mesh, "_publish_safety_envelope", lambda topic, env: None)
+        events: list[dict[str, Any]] = []
+        monkeypatch.setattr(mesh, "publish_safety_event", lambda **kw: events.append(kw))
+        monkeypatch.setattr(mesh, "_local_session_zid", lambda: None)
+        responses = mesh.emergency_stop()
+        return {"responses": responses, **events[0]["payload"]}
+
+    def test_a_forged_stop_ack_never_marks_an_unattributed_peer_as_stopped(
+        self, monkeypatch: pytest.MonkeyPatch, audits: list
+    ) -> None:
+        """An admitted peer answers first in the victim's name; neither reply has a wire source."""
+        operator = Mesh(None, peer_id="op", peer_type="operator")
+        monkeypatch.setattr(operator, "_audit_local", lambda event, payload: audits.append((event, payload)))
+        operator._on_presence(_presence("victim", zid=None))
+
+        def forged(turn: str) -> Any:
+            body = {"type": "response", "turn_id": turn, "responder_id": "victim", "result": {"ok": True}}
+            return _sample(body, zid=None, key=f"strands/op/response/victim/{turn}")
+
+        out = self._estop_against(operator, monkeypatch, [forged])
+
+        assert out["responses"] == []
+        assert out["peers_silent"] == ["victim"]
+        assert out["peers_not_stopped"] == []
+
+    def test_the_victims_own_reply_is_counted_after_a_forgery(
+        self, monkeypatch: pytest.MonkeyPatch, audits: list
+    ) -> None:
+        """The honest reply carries its session zid, so the forgery cannot claim its slot."""
+        operator = Mesh(None, peer_id="op", peer_type="operator")
+        monkeypatch.setattr(operator, "_audit_local", lambda event, payload: audits.append((event, payload)))
+        operator._on_presence(_presence("victim", zid=_ZID_B))
+
+        def reply(zid: str | None, result: dict[str, Any]) -> Any:
+            def make(turn: str) -> Any:
+                body = {"type": "response", "turn_id": turn, "responder_id": "victim", "result": result}
+                return _sample(body, zid=zid, key=f"strands/op/response/victim/{turn}")
+
+            return make
+
+        out = self._estop_against(
+            operator, monkeypatch, [reply(None, {"ok": True}), reply(_ZID_B, {"ok": False, "error": "no stop_task"})]
+        )
+
+        assert [r["result"] for r in out["responses"]] == [{"ok": False, "error": "no stop_task"}]
+        assert out["peers_not_stopped"] == ["victim"]
+        assert out["peers_silent"] == []
+        assert [e for e, _ in audits] == ["response_hijack_rejected"]
+
+
+class TestPresenceAndRepliesCarryTheSessionZid:
+    """What an honest peer puts on a real Zenoh wire is what the receiver can verify."""
+
+    @pytest.fixture
+    def wire(self, monkeypatch: pytest.MonkeyPatch) -> Any:
+        zenoh = pytest.importorskip("zenoh")
+        config = zenoh.Config()
+        config.insert_json5("mode", '"peer"')
+        config.insert_json5("scouting/multicast/enabled", "false")
+        config.insert_json5("listen/endpoints", '["tcp/127.0.0.1:0"]')
+        session = zenoh.open(config)
+        monkeypatch.setattr(mesh_session, "_SESSION", session)
+        seen: list[Any] = []
+        arrived = threading.Event()
+
+        def keep(sample: Any) -> None:
+            seen.append(sample)
+            arrived.set()
+
+        sub = session.declare_subscriber("strands/**", keep)
+        try:
+            yield SimpleNamespace(session=session, seen=seen, arrived=arrived)
+        finally:
+            sub.undeclare()
+            session.close()
+
+    def test_presence_binds_the_announcing_session_on_the_receiver(self, wire: Any, mesh: Mesh) -> None:
+        robot = Mesh(_FakeRobot(), peer_id="robot-b")
+        robot._running = True
+        loop = threading.Thread(target=robot._heartbeat_loop, daemon=True)
+        loop.start()
+        try:
+            assert wire.arrived.wait(5.0), "no presence reached the wire"
+        finally:
+            robot._running = False
+            robot._stop_event.set()
+            loop.join(5.0)
+
+        mesh._on_presence(wire.seen[0])
+
+        assert mesh.peer_wire_zid("robot-b") == str(wire.session.info.zid())
+
+    def test_a_command_reply_is_recorded_from_the_session_it_was_sent_on(self, wire: Any, mesh: Mesh) -> None:
+        robot = Mesh(_FakeRobot(), peer_id="robot-b")
+        mesh._bind_peer_wire_zid("robot-b", str(wire.session.info.zid()))
+        event = _register(mesh, "f" * 32, BROADCAST_RESPONDER)
+        key = f"strands/op/response/robot-b/{'f' * 32}"
+
+        robot._reply("op", "f" * 32, key, {"type": "response", "turn_id": "f" * 32, "responder_id": "robot-b"}, None)
+        assert wire.arrived.wait(5.0), "no reply reached the wire"
+        mesh._on_response(wire.seen[0])
+
+        assert [r["responder_id"] for r in mesh._responses["f" * 32]] == ["robot-b"]
+        assert event.is_set()

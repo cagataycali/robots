@@ -31,6 +31,7 @@ from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.drivers.cameras import camera_names, camera_read_source, device_camera_names
 from strands_robots.mesh import security as _security
+from strands_robots.mesh._backend_select import select_backend
 from strands_robots.mesh._kill_switch import mesh_disabled_by_env
 from strands_robots.mesh.sensors import SensorLoopsMixin
 from strands_robots.mesh.session import (
@@ -798,6 +799,17 @@ def _routable_target_error(target: Any) -> str | None:
     return None
 
 
+#: Backends whose broker policy, not the payload, names the sender of a reply.
+#: The AWS IoT robot policy only lets a certificate publish on
+#: ``strands/+/response/${ThingName}/*``, so on ``iot`` (and on the IoT leg of
+#: ``bridge``) the topic's responder segment is bound to the publishing identity
+#: and a reply that carries no wire zid is judged on that segment. ``zenoh`` is
+#: deliberately absent: its role-separated ACL grants every robot certificate
+#: the whole response tree, so the segment is the publisher's own claim and only
+#: the wire zid can say who sent the reply.
+_TOPIC_BOUND_REPLY_BACKENDS = frozenset({"iot", "bridge"})
+
+
 def _responder_segment(key: str, me: str) -> str | None:
     """The ``<responder>`` of ``strands/<me>/response/<responder>/<turn>``, or ``None``.
 
@@ -1054,8 +1066,6 @@ class Mesh(SensorLoopsMixin):
         # anyway sent operators to STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1, the
         # opt-in the security docs tell them never to set in production
         # (iot-deep lane, D1). ``bridge`` keeps the gate: it has a Zenoh leg.
-        from strands_robots.mesh._backend_select import select_backend
-
         if select_backend() == "iot":
             logger.info(
                 "[mesh] %s: permissive Zenoh ACL shape ignored on the iot backend -- "
@@ -1611,7 +1621,7 @@ class Mesh(SensorLoopsMixin):
         with Ticker(1.0 / HEARTBEAT_HZ, self._stop_event) as ticker:
             while self._running:
                 try:
-                    self.publish(f"strands/{self.peer_id}/presence", self._build_presence())
+                    self._publish_with_wire_source(f"strands/{self.peer_id}/presence", self._build_presence())
                     prune_peers()
                 except Exception as exc:
                     logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
@@ -1704,8 +1714,10 @@ class Mesh(SensorLoopsMixin):
         which is what a restarted robot looks like.
 
         A presence with no wire zid (bridge and IoT transports, or a zenoh
-        older than the floor) binds nothing and clears nothing; that peer's
-        replies are then judged under the both-absent rule.
+        older than the floor) binds nothing and clears nothing. Its replies
+        then carry no zid either, which :meth:`_on_response` accepts only on a
+        backend whose broker binds the response topic to the sender; on Zenoh
+        such a peer stays on the roster and is reported silent by an e-stop.
         """
         if wire_zid is None:
             return True
@@ -2455,7 +2467,7 @@ class Mesh(SensorLoopsMixin):
             if result.delivered:
                 return
             self._note_direct_fallback(sender, result.reason, result.detail, leg="reply")
-        self.publish(rkey, payload)
+        self._publish_with_wire_source(rkey, payload)
 
     def _note_direct_fallback(self, peer: str, reason: str, detail: str, leg: str = "command") -> None:
         """Log why a direct send to *peer* fell back to publish: once per peer for 403, debug otherwise.
@@ -3549,9 +3561,9 @@ class Mesh(SensorLoopsMixin):
         enforced at the Zenoh transport. We additionally bind the reply to
         its wire source: the sample's TLS-bound zid must be the session the
         claimed ``responder_id`` announced itself from on the presence topic
-        (or both must be absent, on transports that carry no zid). Then a
-        point-to-point scope check: a response is accepted only if its
-        ``responder_id`` matches the expected target recorded in
+        (or both absent, only on a backend whose broker binds the topic to the
+        sender). Then a point-to-point scope check: a response is accepted
+        only if its ``responder_id`` matches the expected target recorded in
         :attr:`_expected_responders` by :meth:`send`. Broadcast turns
         use the ``BROADCAST_RESPONDER`` sentinel and accept any verified
         responder, once per session -- that is the broadcast contract.
@@ -3579,10 +3591,28 @@ class Mesh(SensorLoopsMixin):
         # to (``${...ThingName}`` / ``${...CommonName}``), while ``responder_id``
         # is whatever the payload says. Accepting the payload alone let a peer
         # authorised for its own segment claim another robot's identity in the
-        # body. A response on the shorter legacy shape (no responder segment)
-        # is judged on the payload as before.
+        # body. Every responder publishes on the five-segment shape, so a reply
+        # on the shorter legacy shape (no responder segment) names nobody the
+        # topic can vouch for and is refused rather than judged on the payload.
         topic_responder = _responder_segment(str(getattr(sample, "key_expr", "")), self.peer_id)
-        if topic_responder is not None and topic_responder != responder:
+        if topic_responder is None:
+            logger.warning(
+                "[mesh] %s: dropped response on turn %s -- the key names no responder segment "
+                "(responder_id=%r cannot be checked against the topic)",
+                self.peer_id,
+                turn[:12],
+                responder,
+            )
+            self._audit_local(
+                "response_hijack_rejected",
+                {
+                    "turn_prefix": turn[:12],
+                    "responder_id": responder,
+                    "reason": "response key has no responder segment",
+                },
+            )
+            return
+        if topic_responder != responder:
             logger.warning(
                 "[mesh] %s: dropped response on turn %s -- topic names responder %r but the payload "
                 "says responder_id=%r (possible response spoof)",
@@ -3600,8 +3630,11 @@ class Mesh(SensorLoopsMixin):
         # same three-state rule ``_decode_bound_safety_envelope`` applies to
         # the safety envelopes: the sample's TLS-bound zid and the session
         # this responder announced itself from (``_on_presence``) must both be
-        # present and equal, or both absent (bridge and IoT transports carry
-        # no wire zid and bind the topic segment instead). A reply carrying a
+        # present and equal, or both absent -- and both-absent only on a
+        # backend in ``_TOPIC_BOUND_REPLY_BACKENDS``, whose broker policy binds
+        # the topic segment to the sender. On Zenoh both-absent is a reply
+        # nobody can attribute: every honest peer attaches its wire source
+        # (``_publish_with_wire_source``), so it is refused. A reply carrying a
         # wire zid in the name of a peer we never saw announce itself, a
         # reply from a different session than the one bound to that name,
         # and a reply with its SourceInfo stripped for a peer we know by
@@ -3609,8 +3642,10 @@ class Mesh(SensorLoopsMixin):
         # accepts answers from MANY peers, not from an unidentified one.
         wire_zid = _extract_sample_source_zid(sample)
         bound_zid = self.peer_wire_zid(responder) if isinstance(responder, str) else None
-        if wire_zid != bound_zid:
-            if bound_zid is None:
+        if wire_zid != bound_zid or (wire_zid is None and select_backend() not in _TOPIC_BOUND_REPLY_BACKENDS):
+            if wire_zid is None and bound_zid is None:
+                why = "wire source absent on a transport whose topic does not bind the sender"
+            elif bound_zid is None:
                 why = "wire source is a session that never announced this peer id"
             elif wire_zid is None:
                 why = "wire source absent for a peer known by session (SourceInfo stripped)"
@@ -3635,8 +3670,8 @@ class Mesh(SensorLoopsMixin):
             )
             return
         # One answer per verified identity per turn. The wire zid is the key
-        # when the transport carries one; the (topic-bound) responder id
-        # otherwise.
+        # when the transport carries one; the responder id only on a backend
+        # whose broker binds it to the topic -- never a body claim on its own.
         source_key = f"zid:{wire_zid}" if wire_zid is not None else f"id:{responder}"
         with self._rpc_lock:
             event = self._pending.get(turn)
@@ -5260,6 +5295,51 @@ class Mesh(SensorLoopsMixin):
                 exc,
             )
             put(key, self._strip_wire_zid(payload))
+
+    def _publish_with_wire_source(self, key: str, payload: dict[str, Any]) -> None:
+        """Publish *payload* on *key* with this session's wire source attached.
+
+        Presence and command replies go through here so a receiver can tell
+        who sent them: :meth:`_on_presence` learns the zid each peer id speaks
+        from, and :meth:`_on_response` refuses a reply whose zid is not the one
+        bound to its ``responder_id``. Neither ``Session.put`` nor
+        ``Publisher.put`` attaches a ``SourceInfo`` unless asked, so a plain
+        :meth:`publish` arrives with no wire source at all.
+
+        The ``SourceInfo`` carries the id of one long-lived publisher declared
+        on this peer's presence key (the same cached-publisher mechanism as
+        :meth:`_publish_safety_envelope`); receivers read only its zid, which
+        Zenoh fills in from the TLS-authenticated session.
+
+        Publishes plainly on the ``iot`` and ``bridge`` backends, whose broker
+        binds the topic to the sender instead. On Zenoh, a closed session, a
+        publisher that cannot be declared or a zenoh below the ``[mesh]`` floor
+        also publish plainly, and a reply sent that way is refused by its
+        receiver -- an unattributed acknowledgement never counts.
+        """
+        if _is_transport_backend():
+            self.publish(key, payload)
+            return
+        identity = self._safety_publisher_for(f"strands/{self.peer_id}/presence")
+        session = current_session()
+        if identity is None or session is None:
+            self.publish(key, payload)
+            return
+        try:
+            import zenoh
+
+            source_info = zenoh.SourceInfo(identity.id, self._next_safety_sn("wire-source"))
+            encoded = json.dumps(payload).encode()
+        except (ImportError, TypeError, ValueError, AttributeError):
+            # zenoh missing or below the floor, or a payload the encoder
+            # refuses: ``publish`` owns reporting the second case.
+            self.publish(key, payload)
+            return
+        try:
+            session.put(key, encoded, source_info=source_info)
+        except (RuntimeError, OSError, TypeError) as exc:
+            logger.warning("[mesh] %s: attributed put(%s) failed: %s", self.peer_id, key, exc)
+            self.publish(key, payload)
 
     def publish(self, key: str, payload: dict[str, Any]) -> None:
         """Publish *payload* on *key* via the mesh transport.
