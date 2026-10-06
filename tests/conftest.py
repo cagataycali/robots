@@ -117,6 +117,10 @@ def named_rpc_caller(monkeypatch: pytest.MonkeyPatch) -> str:
     # the stop tests here arrive from other named devices ("other-robot"); any
     # named caller may stop. A test that grades an ignored stop sets its own.
     monkeypatch.setenv("DEVICE_CONNECT_ESTOP_ALLOW", "*")
+    # An admitted ``execute`` still needs the operator's yes on the robot host;
+    # this operator pre-approved it. The refusal is graded in
+    # ``tests/test_device_connect_execute_needs_operator_approval.py``.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
 
     def _named() -> str:
         return caller

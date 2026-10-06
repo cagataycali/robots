@@ -168,6 +168,10 @@ class _RecvMesh:
     def __init__(self):
         self._estop_lockout = None
 
+    def peer_wire_zid(self, peer_id):
+        # The leader announced itself from one session; the receiver binds to it.
+        return "a1b2c3d4e5f60718"
+
     def subscribe(self, *a, **k):
         return "sub"
 

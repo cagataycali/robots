@@ -1078,6 +1078,7 @@ class _FakeReceiver:
         self.started = False
         self.stopped = False
         self.stats = {"frames_received": 10, "hz_actual": 50.0}
+        self.start_refusal: str | None = None  # the stream opened, bound to the leader's session
 
     def start(self) -> None:
         self.started = True

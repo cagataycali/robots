@@ -4,7 +4,7 @@ description: A robot and the @tool functions in a Strands Agent, and what happen
 
 # Agents
 
-At the end of this page a Strands `Agent` holds a robot as one of its tools, you know which of the {{n:tools}} `@tool` functions to mount beside it, and what happens when the model asks a real robot to move: the gate, the variable that pre-approves it, the audit row.
+By the end of this page a Strands `Agent` holds a robot as a tool, you know which of the {{n:tools}} `@tool` functions to mount beside it, and what happens when the model asks a real robot to move: the gate, the variable that pre-approves it, the audit row.
 
 ```python
 from strands import Agent
@@ -27,11 +27,11 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 | `mode="sim"` (default) | `<name>_sim` | `get_robot_state`, `set_joint_positions`, `move_to`, `run_policy`, `render`, `step` and the world API |
 | `mode="real"` | the robot's name | `get_state`, `get_robot_state`, `list_cameras`, `render`, `execute`, `start`, `status`, `stop` |
 
-`execute` runs one rollout to completion, `start` runs it in the background; `status` and `stop` follow. Two `Robot("so101")` in one agent collide on `so101_sim`; name them with `tool_name=`.
+`execute` runs one rollout to completion, `start` runs it in the background. Two `Robot("so101")` in one agent collide on `so101_sim`; name them with `tool_name=`.
 
 ## The tools around the robot
 
-`strands_robots.tools` lazy-loads shared tools; the ones mounted most:
+`strands_robots.tools` lazy-loads shared tools; the most mounted:
 
 | tool | what it does | gated? |
 |---|---|---|
@@ -60,14 +60,14 @@ Reading is never gated; `robot_mesh` gates `stop`.
 
 | caller | gated verbs | allowlist variable |
 |---|---|---|
-| `Robot(mode="real")` tool | `execute`, `start` | `STRANDS_ROBOT_COMMAND_ALLOW` |
+| `Robot(mode="real")` tool, mesh and Device Connect commands | `execute`, `start`; mesh also `teleop_receive`, `reset`, `step` | `STRANDS_ROBOT_COMMAND_ALLOW` |
 | `pose_tool` | `move_motor`, `move_multiple`, `incremental_move`, `load_pose`, `reset_to_home` | `STRANDS_POSE_COMMAND_ALLOW` |
 | `serial_tool` | bus writes | `STRANDS_SERIAL_COMMAND_ALLOW` |
 | `use_unitree` | motion RPCs (`loco.SetVelocity`, ...) | `STRANDS_UNITREE_COMMAND_ALLOW` |
 | `use_ros`, `use_rosbridge`, `use_rtps` | `publish`, `service_call`, `action_send_goal` on a blocklisted name (`/cmd_vel`, `/e_stop`, ...) | `STRANDS_ROS2_COMMAND_ALLOW` (by base name: `/cmd_vel` covers every namespace) |
 | `robot_mesh` | `emergency_stop`, `broadcast`, `tell`, `send`, `stop`, `rpc` | `STRANDS_MESH_HITL_ACTIONS` selects the set |
 
-Values are the verbs or targets the tool matches (`execute`, `/cmd_vel`, `loco.SetVelocity`), comma-separated; `*` pre-approves every command where the tool honours it; `=1` or `=true` pre-approve nothing.
+Values are the verbs or targets the tool matches, comma-separated; `*` pre-approves every command where the tool honours it; `=1` or `=true` pre-approve nothing.
 
 ## What a refusal looks like
 

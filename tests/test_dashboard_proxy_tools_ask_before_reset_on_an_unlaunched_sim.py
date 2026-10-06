@@ -12,7 +12,7 @@ The browser trusted the claim too: ``runRisk`` read ``robot_type`` before
 skipped its confirm sheet.
 
 Now one set, ``agent_motion.PHYSICAL_MOTION_ACTIONS``, is every proxy row and
-the HTTP gate's core, the mesh's own wire gate gates nothing outside it, and
+the HTTP gate's core and the mesh's own wire gate, and
 ``runRisk`` reads hardware first and believes a wire sim claim only when the
 server corroborated it.
 """
@@ -73,9 +73,7 @@ def test_the_gate_the_proxies_and_the_wire_read_one_set() -> None:
     table = peer_tools.motion_actions_for(proxies, peers)
     assert set(table.values()) == {agent_motion.PHYSICAL_MOTION_ACTIONS}
     assert agent_motion.GATED_ACTIONS == agent_motion.PHYSICAL_MOTION_ACTIONS | {"task"}
-    # The robot host's own gate may lag (it gates fewer verbs), never lead.
-    assert WIRE_MOTION_ACTIONS <= agent_motion.PHYSICAL_MOTION_ACTIONS
-    assert agent_motion.PHYSICAL_MOTION_ACTIONS - WIRE_MOTION_ACTIONS <= {"reset", "step"}
+    assert WIRE_MOTION_ACTIONS == agent_motion.PHYSICAL_MOTION_ACTIONS
 
 
 def _sample(peer_id: str, body: dict[str, Any]) -> Any:

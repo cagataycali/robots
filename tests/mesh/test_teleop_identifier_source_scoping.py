@@ -68,7 +68,11 @@ class _FakeMesh:
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
 
-    def subscribe(self, topic: str, callback: Any = None, name: str | None = None) -> str:
+    def peer_wire_zid(self, peer_id: str) -> str | None:
+        # Every leader in these cells announced itself from one session; the receiver binds to it.
+        return "a1b2c3d4e5f60718"
+
+    def subscribe(self, topic: str, callback: Any = None, name: str | None = None, **kw: Any) -> str:
         self.subscribed.append(topic)
         return name or topic
 

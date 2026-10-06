@@ -110,3 +110,24 @@ def _clear_acl_thread_snapshot():
     _acl_config._clear_thread_snapshot()
     yield
     _acl_config._clear_thread_snapshot()
+
+
+@pytest.fixture(autouse=True)
+def _restore_peer_roster():
+    """Leave the module-global peer roster as each test found it.
+
+    ``Mesh._on_presence`` writes the sender into ``session._PEERS`` and nothing
+    removes it, so a test that announces a peer (``tests._wire_source.
+    bound_source``, a presence sample fed to a mesh fixture) leaks it into every
+    later test in the process - a gateway test then counts one remote peer it
+    never discovered. The roster is restored, not cleared, so peers a
+    module-scoped fixture registered before the test survive it.
+    """
+    from strands_robots.mesh import session
+
+    with session._PEERS_LOCK:
+        before = dict(session._PEERS)
+    yield
+    with session._PEERS_LOCK:
+        session._PEERS.clear()
+        session._PEERS.update(before)

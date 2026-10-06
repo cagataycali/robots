@@ -90,7 +90,7 @@ def test_a_local_dispatch_that_raises_answers_instead_of_propagating(
     arm = _Arm()
     mesh = Mesh(arm, peer_id="issuer-1")
     _quiet(mesh, monkeypatch, [])
-    monkeypatch.setattr(mesh, "_dispatch", lambda cmd: (_ for _ in ()).throw(RuntimeError("engine gone")))
+    monkeypatch.setattr(mesh, "_dispatch", lambda cmd, source=None: (_ for _ in ()).throw(RuntimeError("engine gone")))
 
     responses = mesh.emergency_stop()
 

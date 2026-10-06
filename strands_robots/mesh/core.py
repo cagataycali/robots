@@ -19,10 +19,11 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from strands_robots import refusal_codes
-from strands_robots._command_gate import gate_motion
+from strands_robots._command_gate import PHYSICAL_MOTION_ACTIONS, gate_motion
 from strands_robots._motion_grants import consume_grant
 from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
@@ -55,7 +56,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
-from strands_robots.mesh.transport.base import SAFETY_COMMAND_TOPICS, DirectSender, retained_delivery
+from strands_robots.mesh.transport.base import SAFETY_COMMAND_TOPICS, DirectSender, retained_delivery, sample_leg
 from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -112,14 +113,36 @@ def get_local_robots() -> dict[str, Mesh]:
 
 
 #: The verbs a wire command can carry that move REAL hardware: a policy
-#: rollout (``execute`` / ``start``) and following a remote leader's input
-#: stream (``teleop_receive``). On a hardware peer each one passes
+#: rollout (``execute`` / ``start``), following a remote leader's input
+#: stream (``teleop_receive``), ``reset`` (every joint to the home pose at
+#: once) and ``step``. On a hardware peer each one passes
 #: :func:`~strands_robots._command_gate.gate_motion` in ``_dispatch`` before
 #: anything is dispatched; ``teleop_stop`` and ``stop`` are never gated,
 #: stopping must not get harder. Simulation peers move no metal and are not
 #: gated. ``set_joints`` is not here because a hardware peer refuses it
-#: outright (``_dispatch_set_joints``).
-WIRE_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_receive"})
+#: outright (``_dispatch_set_joints``). The set is the one shared definition
+#: (:data:`~strands_robots._command_gate.PHYSICAL_MOTION_ACTIONS`) the
+#: dashboard gate reads too, so the two surfaces cannot disagree on what needs
+#: a yes: ``reset`` used to be gated by the dashboard and run bare by the wire.
+WIRE_MOTION_ACTIONS: frozenset[str] = PHYSICAL_MOTION_ACTIONS
+
+
+@dataclass(frozen=True)
+class WireSource:
+    """Where a wire command came from, as the transport saw it.
+
+    ``sender_id`` is the envelope's own claim (validated as an identifier,
+    nothing more); ``wire_zid`` is the publishing session's TLS-bound id the
+    Zenoh sample carried (:func:`_extract_sample_source_zid`), ``None`` when
+    the sample carried none; ``leg`` is which transport delivered it
+    (:func:`~strands_robots.mesh.transport.base.sample_leg`). The motion gate
+    attributes a command to its sender only when the claim and the wire agree.
+    """
+
+    sender_id: str
+    wire_zid: str | None
+    leg: str
+
 
 #: The allowlist variable the receiving robot host reads: the same
 #: ``STRANDS_ROBOT_COMMAND_ALLOW`` the hardware ``Robot`` agent tool reads
@@ -128,6 +151,59 @@ WIRE_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_rec
 #: pre-approves a verb whichever path it arrives by. Comma-separated verbs
 #: from :data:`WIRE_MOTION_ACTIONS`, or ``*``.
 WIRE_MOTION_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
+
+
+def remote_motion_refusal(action: str, tool_name: str, cmd: Mapping[str, Any]) -> tuple[str, str] | None:
+    """The operator-approval decision for a remote command that moves a REAL robot.
+
+    One copy of the approval path every remote entry point runs once it knows
+    who asked: the mesh receiving side (:meth:`Mesh._wire_motion_refusal`,
+    after it has attributed the command to its sender) and the Device Connect
+    ``execute`` RPC (after the caller passed its authorization check). In
+    order: a dashboard grant for this exact call is spent,
+    ``STRANDS_ROBOT_COMMAND_ALLOW`` on the robot host pre-approves the verb,
+    ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING, and otherwise
+    the command is refused with the remedy, because a remote handler has no
+    operator to interrupt.
+
+    Args:
+        action: One of :data:`WIRE_MOTION_ACTIONS`.
+        tool_name: The robot's tool name; keys the grant and the allowlist.
+        cmd: The command as the operator would be shown it.
+
+    Returns:
+        ``None`` when the command may proceed, else ``(refusal, what)``: the
+        refusal sentence and the one-line description of the motion, for the
+        caller's log line and audit row.
+    """
+    tool_input = {k: v for k, v in cmd.items() if v is not None}
+    if consume_grant(tool_name, tool_input):
+        return None
+    if action == "teleop_receive":
+        what = (
+            f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
+            f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
+        )
+    elif action == "reset":
+        what = f"'reset' drives every joint of the real robot {tool_name!r} to its home pose at once"
+    elif action == "step":
+        what = f"'step' advances the real robot {tool_name!r} by {cmd.get('steps', 1)!r} step(s)"
+    else:
+        what = (
+            f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
+            f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
+        )
+    refusal = gate_motion(
+        "robot",
+        action,
+        tool_name,
+        f"{what}; a command arriving from another machine needs operator approval on this robot host.",
+        None,
+        allow_env=WIRE_MOTION_ALLOW_ENV,
+        allow_match=lambda allowed: "*" in allowed or action in allowed,
+    )
+    return None if refusal is None else (refusal, what)
+
 
 #: Sentinel stored in :attr:`Mesh._expected_responders` for
 #: broadcast turn_ids. Distinct from any real peer_id (no peer_id
@@ -2318,10 +2394,17 @@ class Mesh(SensorLoopsMixin):
         # sender's reply address in the MQTT5 Response Topic. A zenoh.Sample
         # has no such attribute, so the default keeps the computed reply key.
         reply_to = getattr(sample, "response_topic", None)
+        # The publisher's session id and the delivering transport are read off
+        # the sample here, the one place they exist, and travel with the
+        # command: the motion gate binds its approval to them, never to a field
+        # the publisher wrote into the body.
+        exec_kwargs: dict[str, Any] = {"wire_zid": _extract_sample_source_zid(sample), "leg": sample_leg(sample)}
+        if isinstance(reply_to, str):
+            exec_kwargs["reply_to"] = reply_to
         threading.Thread(
             target=self._exec_cmd,
             args=(data,),
-            kwargs={"reply_to": reply_to} if isinstance(reply_to, str) else {},
+            kwargs=exec_kwargs,
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
@@ -2472,7 +2555,9 @@ class Mesh(SensorLoopsMixin):
             "[mesh] %s: direct %s to %s not delivered (%s %s); publishing", self.peer_id, leg, peer, reason, detail
         )
 
-    def _exec_cmd(self, data: dict[str, Any], reply_to: str | None = None) -> None:
+    def _exec_cmd(
+        self, data: dict[str, Any], reply_to: str | None = None, *, wire_zid: str | None = None, leg: str = "lan"
+    ) -> None:
         sender = data.get("sender_id", "")
         # full 128-bit fallback. Pre-fix, an inbound command without
         # turn_id triggered a 32-bit hex which was birthday-colliding under
@@ -2671,7 +2756,7 @@ class Mesh(SensorLoopsMixin):
                 return
 
         try:
-            result = self._dispatch(cmd)
+            result = self._dispatch(cmd, source=WireSource(sender_id=str(sender), wire_zid=wire_zid, leg=leg))
             if rkey is not None:
                 reply(
                     rkey,
@@ -2806,7 +2891,7 @@ class Mesh(SensorLoopsMixin):
                 audit_payload["code"] = coded["code"]
             self._audit_local("command_rejected", audit_payload)
 
-    def _dispatch(self, cmd: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(self, cmd: dict[str, Any], source: WireSource | None = None) -> dict[str, Any]:
         action = cmd.get("action", "status")
         r = self.robot
 
@@ -2837,7 +2922,7 @@ class Mesh(SensorLoopsMixin):
             # still a reachable one). :meth:`ping` measures the round trip.
             return {"pong": True, "peer_id": self.peer_id, "t": time.time()}
 
-        if action in WIRE_MOTION_ACTIONS and (refusal := self._wire_motion_refusal(action, cmd)) is not None:
+        if action in WIRE_MOTION_ACTIONS and (refusal := self._wire_motion_refusal(action, cmd, source)) is not None:
             return {"error": refusal}
 
         if action == "status":
@@ -3190,7 +3275,36 @@ class Mesh(SensorLoopsMixin):
             return True
         return hasattr(r, "run_policy") and hasattr(r, "_world") and hasattr(r, "list_robots")
 
-    def _wire_motion_refusal(self, action: str, cmd: Mapping[str, Any]) -> str | None:
+    def _wire_source_attribution(self, source: WireSource | None) -> str | None:
+        """Why a wire command cannot be attributed to its sender, or ``None`` when it can.
+
+        An approval is spent on behalf of SOMEONE, so a hardware peer first
+        establishes who asked, from what the transport itself vouches for:
+        the envelope must name a sender, the Zenoh sample must carry the
+        publisher's TLS-bound session id, and that id must be the one the
+        sender announced its presence from (:meth:`peer_wire_zid`, bound on
+        the presence topic and defended against takeover there). A body
+        ``sender_id`` on its own is whatever the publisher typed, and a
+        transport that attaches no publisher identity to a command (the AWS
+        IoT leg) cannot be attributed at all; both are refused, because a
+        yes nobody can be held to is not a yes.
+        """
+        if source is None:
+            return "the command arrived with no wire source"
+        if not source.sender_id:
+            return "the command names no sender"
+        if source.leg != "lan":
+            return f"the {source.leg} transport attaches no verified publisher identity to a command"
+        if source.wire_zid is None:
+            return "the sample carried no publisher session id"
+        bound = self.peer_wire_zid(source.sender_id)
+        if bound is None:
+            return f"sender {source.sender_id!r} has not announced its presence from any session"
+        if bound != source.wire_zid:
+            return f"sender {source.sender_id!r} announced its presence from another session"
+        return None
+
+    def _wire_motion_refusal(self, action: str, cmd: Mapping[str, Any], source: WireSource | None = None) -> str | None:
         """Operator approval for a wire command that moves REAL hardware, or ``None``.
 
         The sending ``robot_mesh`` tool asks its own operator before it
@@ -3211,10 +3325,20 @@ class Mesh(SensorLoopsMixin):
         Simulation peers are never gated (the dashboard's LAN demos spawn
         sims and drive them from an agent turn); they move no metal.
 
+        Before any approval is consulted the command is attributed to its
+        sender (:meth:`_wire_source_attribution`): an allowlist or a grant
+        approves a verb, and a verb nobody can be shown to have asked for is
+        refused whichever approvals are set. The refusal names the gap and
+        the audit row carries the claimed sender and the session the sample
+        came from.
+
         Args:
             action: One of :data:`WIRE_MOTION_ACTIONS`.
             cmd: The validated command, shown to a grant lookup as the tool
                 input the operator was shown.
+            source: What the transport saw, ``None`` for a dispatch that did
+                not arrive over the wire (refused on hardware: there is no
+                sender to attribute it to).
 
         Returns:
             The refusal sentence, or ``None`` when the command may proceed.
@@ -3223,36 +3347,41 @@ class Mesh(SensorLoopsMixin):
         if r is None or self._is_simulation_host():
             return None
         tool_name = str(getattr(r, "tool_name_str", None) or self.peer_id)
-        tool_input = {k: v for k, v in cmd.items() if v is not None}
-        if consume_grant(tool_name, tool_input):
-            return None
-        if action == "teleop_receive":
-            what = (
-                f"'teleop_receive' makes the real robot {tool_name!r} follow the input stream of peer "
-                f"{cmd.get('source_peer_id')!r} (device {cmd.get('device_name', 'leader')!r}) until stopped"
+        if (gap := self._wire_source_attribution(source)) is not None:
+            refusal = (
+                f"{action!r} on the real robot {tool_name!r} is refused: {gap}, so no operator approval "
+                "can be spent on its behalf. A motion command must come from a mesh peer that announced "
+                "its presence on the session it publishes from."
             )
-        else:
-            what = (
-                f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
-                f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
+            logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, gap)
+            self._audit_local(
+                "wire_motion_refused",
+                {
+                    "action": action,
+                    "robot": tool_name,
+                    "reason": gap,
+                    "sender": source.sender_id if source is not None else None,
+                    "wire_zid": source.wire_zid if source is not None else None,
+                    "leg": source.leg if source is not None else None,
+                    "source_peer_id": cmd.get("source_peer_id"),
+                    "device_name": cmd.get("device_name"),
+                    "instruction": cmd.get("instruction"),
+                },
             )
-        refusal = gate_motion(
-            "robot",
-            action,
-            tool_name,
-            f"{what}; a command arriving over the mesh needs operator approval on this robot host.",
-            None,
-            allow_env=WIRE_MOTION_ALLOW_ENV,
-            allow_match=lambda allowed: "*" in allowed or action in allowed,
-        )
-        if refusal is None:
+            return refusal
+        if (refused := remote_motion_refusal(action, tool_name, cmd)) is None:
             return None
+        refusal, what = refused
         logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, what)
         self._audit_local(
             "wire_motion_refused",
             {
                 "action": action,
                 "robot": tool_name,
+                "reason": "no operator approval",
+                "sender": source.sender_id if source is not None else None,
+                "wire_zid": source.wire_zid if source is not None else None,
+                "leg": source.leg if source is not None else None,
                 "source_peer_id": cmd.get("source_peer_id"),
                 "device_name": cmd.get("device_name"),
                 "instruction": cmd.get("instruction"),
@@ -4505,9 +4634,21 @@ class Mesh(SensorLoopsMixin):
 
     # Subscribe / publish_step / on_stream
     def subscribe(
-        self, topic: str, callback: Callable[[str, dict[str, Any]], None] | None = None, name: str | None = None
+        self,
+        topic: str,
+        callback: Callable[[str, dict[str, Any]], None] | None = None,
+        name: str | None = None,
+        *,
+        on_sample: Callable[[str, dict[str, Any], str | None], None] | None = None,
     ) -> str | None:
         """Subscribe to any Zenoh topic and receive parsed JSON dicts.
+
+        ``callback(key, data)`` receives the decoded payload. ``on_sample(key,
+        data, wire_zid)`` receives it together with the publisher's TLS-bound
+        session id read off the sample (:func:`_extract_sample_source_zid`,
+        ``None`` when the sample carried none), for a subscriber that must
+        bind what it applies to who published it; the teleop input receiver is
+        one. The two are exclusive.
 
         Returns:
             The subscription name (``name`` when given, else *topic*) once the
@@ -4536,6 +4677,8 @@ class Mesh(SensorLoopsMixin):
                 f"subscribe: callback must be callable, got {callback!r} - the signature is "
                 "subscribe(topic, callback=None, name=None); did you pass the name first?"
             )
+        if on_sample is not None and (callback is not None or not callable(on_sample)):
+            raise TypeError("subscribe: on_sample must be callable and is exclusive with callback")
         if name is not None and not isinstance(name, str):
             raise TypeError(
                 f"subscribe: name must be a string, got {type(name).__name__} - the signature is "
@@ -4586,7 +4729,9 @@ class Mesh(SensorLoopsMixin):
                     data = json.loads(raw)
                 except json.JSONDecodeError:
                     data = {"raw": raw}
-                if callback is not None:
+                if on_sample is not None:
+                    on_sample(key, data, _extract_sample_source_zid(sample))
+                elif callback is not None:
                     callback(key, data)
                 else:
                     with self._inbox_lock:

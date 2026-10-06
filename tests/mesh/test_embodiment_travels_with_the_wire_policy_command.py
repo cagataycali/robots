@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from strands_robots.mesh import Mesh, security
+from tests._wire_source import bound_source
 
 
 class _FakeSim:
@@ -100,7 +101,8 @@ def test_hardware_dispatch_hands_embodiment_to_the_policy_constructor(monkeypatc
     # first; pre-approve this one verb so the test reaches the dispatcher.
     monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
     arm = _FakeArm()
-    Mesh(arm, peer_id="arm-a")._dispatch(_cmd())
+    mesh = Mesh(arm, peer_id="arm-a")
+    mesh._dispatch(_cmd(), source=bound_source(mesh))
     assert arm.calls[0]["embodiment"] == "so101"
 
 

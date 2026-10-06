@@ -134,6 +134,7 @@ def test_robot_execute_rejects_ssrf_policy_provider(monkeypatch):
 
 def test_robot_execute_allows_vetted_provider(monkeypatch):
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")  # authz is graded elsewhere
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")  # operator approval is graded elsewhere
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     robot = _FakeRobot()
@@ -170,6 +171,7 @@ def test_execute_allowed_for_listed_caller(monkeypatch):
     from strands_robots.device_connect.robot_driver import RobotDeviceDriver
 
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "trusted-controller,safety-*")
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")  # operator approval is graded elsewhere
     robot = _FakeRobot()
     d = RobotDeviceDriver(robot)
     res = _run(d.execute("go", policy_provider="mock", source_device="trusted-controller"))
