@@ -798,6 +798,22 @@ class RenderingMixin:
             if pycam_name not in cameras_to_render:
                 cameras_to_render.append(pycam_name)
 
+        # Two spellings of one ``mjOBJ_CAMERA`` id are two keys naming one
+        # camera (e.g. ``lekiwi/front`` and ``front`` after ``add_robot``
+        # namespaces an included MJCF). The schema publishes both keys by
+        # design (model-named for scene-wide iteration, short-aliased for
+        # config-level policy code), pinned in
+        # ``test_observation_camera_keys_carry_their_own_view.py``, so we
+        # cannot DROP a key. We can, and must, render the camera once:
+        # rendering under both keys issued a second ``update_scene`` +
+        # ``render`` pair per step and emitted two separate buffers under
+        # them -- a non-deterministic silent-wrong (two keys pointing at
+        # one cam_id do NOT guarantee bytewise-equal buffers, the renderer
+        # state can change between passes), and 2x the per-step render
+        # cost on every multi-robot-namespaced scene (lekiwi: 5->3 passes,
+        # stretch3: 11->6 passes). Compute each cam_id's view once and
+        # publish it under every key that resolves to that cam_id.
+        rendered_views: dict[int, np.ndarray] = {}
         for cname in cameras_to_render:
             if not cname:
                 continue
@@ -826,13 +842,25 @@ class RenderingMixin:
                 continue
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
+            # If a sibling key already rendered this cam_id this step, publish
+            # the same buffer under this key instead of calling ``render`` a
+            # second time. The dimensions requested by the first spelling of
+            # a cam_id win; a second spelling that would ask for a different
+            # (width, height) is rare (same cam_id, differently-shaped
+            # ``SimCamera`` registrations under two keys) and would have been
+            # a schema inconsistency on the writing side already.
+            if cam_id in rendered_views:
+                obs[cname] = rendered_views[cam_id]
+                continue
             try:
                 renderer = self._get_renderer(w, h)
                 if renderer is None:
                     continue
                 viz_option = self._get_viz_option()
                 renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
-                obs[cname] = renderer.render().copy()
+                frame = renderer.render().copy()
+                obs[cname] = frame
+                rendered_views[cam_id] = frame
             except (RuntimeError, ValueError) as e:
                 # Individual camera failure shouldn't stop joint state collection.
                 # Common cause: camera ID invalid after scene recompile.
