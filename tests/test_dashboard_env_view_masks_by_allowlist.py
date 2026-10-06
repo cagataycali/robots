@@ -92,3 +92,36 @@ def test_every_page_writable_key_has_a_decided_display(env_file):
     """Nothing the page can write is left to the name heuristic alone."""
     for key in sorted(config_api.ALLOWED_ENV_KEYS):
         assert key in config_api.SHOWN_ENV_KEYS or config_api.is_secret(key), key
+
+
+#: Every key the page may write, chosen one by one. The write allowlist used to be the
+#: display list splatted in, so adding a key to be SEEN made it writable; a key that picks
+#: a path this process writes (``STRANDS_DASH_RECORD_CRUMB``), a containment home
+#: (``STRANDS_ROBOTS_VIDEO_ROOT``) or where a credential is sent (``OPENAI_BASE_URL``) was
+#: page-writable that way. Growing this set is a decision, made here in review.
+_WRITABLE_ON_PURPOSE = {
+    "OPENAI_API_KEY",
+    "HF_TOKEN",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "AWS_PROFILE",
+    "STRANDS_MODEL_ID",
+    "VOICE_MODEL",
+    "VOICE_PROVIDER",
+    "VOICE_NAME",
+    "DASHBOARD_VOICE_PROMPT",
+    "STRANDS_ROBOTS_NO_DYLD_SHIM",
+}
+
+
+@pytest.mark.parametrize(
+    "key", sorted({*config_api.INTERESTING_ENV, *config_api.SHOWN_ENV_KEYS, *_WRITABLE_ON_PURPOSE})
+)
+def test_a_key_is_page_writable_only_if_it_was_chosen_to_be(env_file, key):
+    """Display and write are two closed sets: no display-only key is writable, on any path."""
+    writable = key in _WRITABLE_ON_PURPOSE
+    assert config_api.env_key_allowed(key) is writable
+    assert (config_api.env_entry_error(key, "/somewhere/else") is None) is writable
+    row = next((r for r in config_api.env_view() if r["key"] == key), None)
+    if row is not None:
+        assert row["editable"] is writable

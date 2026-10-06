@@ -87,7 +87,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
   const [meshPort, setMeshPort] = useState('')
   const [meshBackend, setMeshBackend] = useState('')
   const [cameraHz, setCameraHz] = useState('')
-  const [trustRemote, setTrustRemote] = useState(false)
   const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
   const [newKey, setNewKey] = useState('')
   const [newValue, setNewValue] = useState('')
@@ -147,7 +146,6 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
         + '— your version is still in the field, saving will overwrite theirs',
       )
     }
-    setTrustRemote(config.runtime.trust_remote_code)
     setEnvDraft({})
     setServerToken('')
   }, [config, serverDrafts])
@@ -647,13 +645,10 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   {envValueError(newValue) && <em className="field-err" role="alert">⚠ {envValueError(newValue)}</em>}
                 </label>
               </div>
-              <label className="field check">
-                <input type="checkbox" checked={trustRemote} onChange={e => setTrustRemote(e.target.checked)} />
-                <span>
-                  Allow HuggingFace <code>trust_remote_code</code> (lerobot_local, kimodo) —
-                  executes code from the model repo
-                </span>
-              </label>
+              <p className="hint">
+                HuggingFace <code>trust_remote_code</code> is granted from the consent card under Security,
+                or set on the host — never from this form.
+              </p>
               <div className="sheet-actions">
                 <button className="btn go" disabled={saving || !envValid}
                         title={envValid ? undefined : 'fix the highlighted fields first'}
@@ -663,7 +658,7 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                   // "remove", and sending both would write the value and then delete the line.
                   for (const k of envUnset) env[k] = null
                   if (newKey.trim()) env[newKey.trim()] = newValue
-                  void apply({ env, runtime: { trust_remote_code: trustRemote } })
+                  void apply({ env })
                   setNewKey(''); setNewValue(''); setEnvUnset([])
                 }}>save</button>
               </div>

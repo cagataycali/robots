@@ -7211,7 +7211,7 @@ const EXTRA_ENTRIES = [
   { key: "connection.token", label: "Auth token (this browser)", tab: "connection", keywords: "login password bearer", effect: "Credential this browser sends with every request." },
   { key: "agent.system_prompt", label: "System prompt", tab: "agent", keywords: "instructions personality behavior", effect: "Standing instructions for the fleet agent." },
   { key: "env.vars", label: "Environment variables", tab: "env", keywords: "api key secret credential openai huggingface hf token .env", effect: "Credentials and flags written to the server .env file." },
-  { key: "env.trust_remote_code", label: "HuggingFace trust_remote_code", tab: "env", keywords: "lerobot kimodo model repo security allow", effect: "Allows model repos to execute their own code when loaded." },
+  { key: "security.trust_remote_code", label: "HuggingFace trust_remote_code", tab: "security", keywords: "lerobot kimodo model repo consent grant allow", effect: "Granted or revoked from the consent card; lets model repos execute their own code when loaded." },
   { key: "security.auth_token", label: "Server auth token", tab: "security", keywords: "password protect lock api", effect: "Token every client must present on /api and /ws." },
   { key: "security.cors_origins", label: "CORS origins", tab: "security", keywords: "browser cross origin websites", effect: "Which websites a browser may call this API from. Adding one needs a server restart; removing one is refused for writes and websockets straight away." },
   { key: "mesh.restart", label: "Restart mesh", tab: "mesh", keywords: "re-point reconnect zenoh session", effect: "Re-opens the shared mesh session." }
@@ -7334,7 +7334,6 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
   const [meshPort, setMeshPort] = reactExports.useState("");
   const [meshBackend, setMeshBackend] = reactExports.useState("");
   const [cameraHz, setCameraHz] = reactExports.useState("");
-  const [trustRemote, setTrustRemote] = reactExports.useState(false);
   const [envDraft, setEnvDraft] = reactExports.useState({});
   const [newKey, setNewKey] = reactExports.useState("");
   const [newValue, setNewValue] = reactExports.useState("");
@@ -7407,7 +7406,6 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
         `⚠ changed on the server while you were editing: ${r.conflicts.join(", ")} — your version is still in the field, saving will overwrite theirs`
       );
     }
-    setTrustRemote(config.runtime.trust_remote_code);
     setEnvDraft({});
     setServerToken("");
   }, [config, serverDrafts]);
@@ -8000,13 +7998,10 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "field check", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "checkbox", checked: trustRemote, onChange: (e) => setTrustRemote(e.target.checked) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-            "Allow HuggingFace ",
-            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "trust_remote_code" }),
-            " (lerobot_local, kimodo) — executes code from the model repo"
-          ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
+          "HuggingFace ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "trust_remote_code" }),
+          " is granted from the consent card under Security, or set on the host — never from this form."
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-actions", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
@@ -8018,7 +8013,7 @@ function SettingsDrawer({ open, onClose, mesh, initialTab }) {
               const env = { ...envDraft };
               for (const k of envUnset) env[k] = null;
               if (newKey.trim()) env[newKey.trim()] = newValue;
-              void apply({ env, runtime: { trust_remote_code: trustRemote } });
+              void apply({ env });
               setNewKey("");
               setNewValue("");
               setEnvUnset([]);

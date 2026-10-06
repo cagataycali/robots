@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 def crumb_path() -> Path:
-    """Where the breadcrumb lives. Beside auth.json, so one directory holds the dashboard's state."""
+    """Where the breadcrumb lives. Beside auth.json, so one directory holds the dashboard's state.
+
+    ``STRANDS_DASH_RECORD_CRUMB`` may move it within ``~/.strands_dashboard`` only. The crumb is
+    written and later unlinked, so an override that resolves anywhere else (a symlink
+    included) is ignored with a warning rather than handed a write and a delete.
+    """
+    home = (Path.home() / ".strands_dashboard").resolve()
+    default = home / "record_session.json"
     override = os.getenv("STRANDS_DASH_RECORD_CRUMB")
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / ".strands_dashboard" / "record_session.json"
+    if not override:
+        return default
+    candidate = Path(override).expanduser().resolve()
+    if candidate != home and candidate.is_relative_to(home):
+        return candidate
+    logger.warning("STRANDS_DASH_RECORD_CRUMB is outside %s; the crumb stays at %s", home, default)
+    return default
 
 
 def write_crumb(session: Mapping[str, Any], *, path: Path | None = None, now: float | None = None) -> None:

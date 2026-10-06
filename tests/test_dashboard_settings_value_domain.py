@@ -202,9 +202,10 @@ class TestTheRemoteCodeGateIsNotOpenedByAValueItWouldRefuse:
         """Control: the readable spellings are unchanged in both directions."""
         assert _from_file(store, "runtime", "trust_remote_code", spelled) is expected
 
-    def test_an_opted_in_setting_still_reaches_the_environment(self, store):
-        _from_file(store, "runtime", "trust_remote_code", "true")
-        assert settings.apply_mesh_env().get("STRANDS_TRUST_REMOTE_CODE") == "1"
+    def test_an_opted_in_setting_is_not_exported_from_the_file(self, store):
+        """The file is page-writable, so even a readable opt-in in it does not open the gate."""
+        assert _from_file(store, "runtime", "trust_remote_code", "true") is True
+        assert "STRANDS_TRUST_REMOTE_CODE" not in settings.apply_mesh_env()
 
 
 class TestAnUnusableValueIsReportedOrDegradedToTheKeysShape:

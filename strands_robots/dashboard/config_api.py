@@ -54,6 +54,8 @@ INTERESTING_ENV = [
     "STRANDS_ROBOTS_VIDEO_ROOT",
     "STRANDS_ROBOTS_NO_DYLD_SHIM",
     "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
+    "STRANDS_DASH_RECORD_CRUMB",
+    "OPENAI_BASE_URL",
 ]
 
 
@@ -104,19 +106,27 @@ def is_displayable(key: str) -> bool:
 # The set is CLOSED, not a prefix: a prefix (``STRANDS_*``) admitted the very keys the
 # other defenses stand on - the containment homes, the auth switch, the standing motion
 # grant, the remote-code opt-in - so holding a session became holding every gate.
-#: Keys the page may show and edit. Add a key here only if a client changing it
-#: cannot move a containment home, weaken auth or consent, or opt code execution in.
+#: Keys the page may edit: a closed literal of its own, never derived from the display list
+#: above, so a key added there to be SEEN does not become writable with it. Add a key here
+#: only if a client changing it cannot move a containment home, weaken auth or consent, opt
+#: code execution in, choose a path this process writes to, or choose where a credential
+#: is sent: ``STRANDS_DASH_RECORD_CRUMB`` (a file the record session writes and unlinks),
+#: ``STRANDS_ROBOTS_VIDEO_ROOT`` (the video sandbox) and ``OPENAI_BASE_URL`` (the host that
+#: receives ``OPENAI_API_KEY``) are shown, and set on the host.
 ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
-    (
-        *INTERESTING_ENV,
-        "STRANDS_MODEL_ID",
+    {
+        "OPENAI_API_KEY",
+        "HF_TOKEN",
+        "AWS_REGION",
         "AWS_DEFAULT_REGION",
-        "OPENAI_BASE_URL",
+        "AWS_PROFILE",
+        "STRANDS_MODEL_ID",
+        "VOICE_MODEL",
         "VOICE_PROVIDER",
         "VOICE_NAME",
         "DASHBOARD_VOICE_PROMPT",
-        "STRANDS_DASH_RECORD_CRUMB",
-    )
+        "STRANDS_ROBOTS_NO_DYLD_SHIM",
+    }
 )
 #: Never dashboard-managed, whatever the allowlist says later: each of these is a gate
 #: some other route reads live from ``os.environ``. Kept as a second fence so that adding
@@ -129,7 +139,7 @@ ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
 #: acknowledgement, and ``STRANDS_MESH_MULTICAST``, which reopens LAN scouting. Both were
 #: in ``INTERESTING_ENV`` and so page-writable: one settings save turned mesh auth off for
 #: the next session and for every child that read the env file. The mesh knobs a page may
-#: change (port, backend, camera rate, policy allowlist) travel as ``mesh.*`` settings,
+#: change (port, backend, camera rate) travel as ``mesh.*`` settings,
 #: never as env writes, so nothing the page needs is behind this prefix.
 GATE_BEARING_ENV_PREFIXES: tuple[str, ...] = (
     "STRANDS_DASH_AUTH_",
@@ -156,32 +166,60 @@ GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
 )
 ENV_VALUE_MAX_LEN = 4096
 
-#: Settings keys that ARE credentials. :mod:`~strands_robots.dashboard.settings` maps each to an env spelling that
-#: ``GATE_BEARING_ENV_KEYS`` refuses on the ``env`` half of the same request body, and the
-#: settings half reached the identical value with no check at all: any admitted session,
-#: the pre-enrolment loopback posture included, could write ``security.auth_token`` to disk,
-#: and :func:`~strands_robots.dashboard.access.caller` honours that bearer independently of
-#: passkey enrolment, so it kept admitting its holder after every passkey was deleted. A
-#: bearer is set on the host (``DASHBOARD_AUTH_TOKEN`` in the dashboard's environment),
-#: never from the page. Clearing one stays page-writable: that is the operator's remedy for
-#: a bearer they did not set. Both ``POST /api/config`` and ``POST /api/settings`` go
-#: through :func:`refuse_settings_credentials`; a test derives this roster from the schema.
-REFUSED_SETTINGS_KEYS: frozenset[tuple[str, str]] = frozenset({("security", "auth_token")})
+
+def env_key_gate_bearing(key: str) -> bool:
+    """Whether a key is one of the gates this process reads live - never page-writable."""
+    return key in GATE_BEARING_ENV_KEYS or key.startswith(GATE_BEARING_ENV_PREFIXES)
+
+
+#: Settings mapped to a gate-bearing env spelling that the page may still tune. The mesh
+#: knobs travel as ``mesh.*`` settings precisely because their ``STRANDS_MESH_`` spelling is
+#: fenced on the env half; these three are configuration (where to listen, which backend,
+#: how often to publish frames), not a gate.
+SETTINGS_TUNABLE_ENV_KEYS: frozenset[str] = frozenset(
+    {"STRANDS_MESH_PORT", "STRANDS_MESH_BACKEND", "STRANDS_MESH_CAMERA_HZ"}
+)
+
+
+def _host_only_settings_keys() -> frozenset[tuple[str, str]]:
+    """Every settings key whose env spelling is a gate this module refuses on the env half."""
+    return frozenset(
+        (section, key)
+        for section, keys in settings._SCHEMA.items()
+        for key, (env_name, _default) in keys.items()
+        if env_name and env_key_gate_bearing(env_name) and env_name not in SETTINGS_TUNABLE_ENV_KEYS
+    )
+
+
+#: Settings keys the page may clear but never set. :mod:`~strands_robots.dashboard.settings`
+#: maps each to an env spelling that :func:`env_key_gate_bearing` refuses on the ``env`` half
+#: of the same request body, and before this fence the settings half reached the identical
+#: variable with no check: ``security.auth_token`` is a standing bearer
+#: :func:`~strands_robots.dashboard.access.caller` honours independently of passkey
+#: enrolment, ``runtime.trust_remote_code`` was exported as ``STRANDS_TRUST_REMOTE_CODE`` and
+#: ``mesh.policy_type_allow`` as ``STRANDS_MESH_POLICY_TYPE_ALLOW`` by
+#: :func:`~strands_robots.dashboard.settings.apply_mesh_env`. Derived from the schema, so a new
+#: mapping onto a gate is covered without an edit here. Each is set on the host or granted
+#: through the consent routes, one kind and one subject at a time. Clearing one stays
+#: page-writable: that is the operator's remedy for a gate they did not open. Both
+#: ``POST /api/config`` and ``POST /api/settings`` go through :func:`refuse_settings_credentials`.
+REFUSED_SETTINGS_KEYS: frozenset[tuple[str, str]] = _host_only_settings_keys()
 
 
 def settings_entry_error(section: str, key: str, value: Any) -> str | None:
     """Why this settings key/value pair must not reach the store, or None if fine.
 
-    Only credential-bearing keys are refused, and only when the value would SET one:
-    ``None`` and the empty string clear it, which remains the page's own business.
+    Only keys in :data:`REFUSED_SETTINGS_KEYS` are refused, and only when the value would
+    SET one: ``None``, ``""``, ``False`` and ``[]`` clear it, which remains the page's own
+    business. The refused value is never echoed.
     """
     if (section, key) not in REFUSED_SETTINGS_KEYS:
         return None
-    if value is None or value == "":
+    if value is None or value is False or value == "" or value == []:
         return None
+    env_name = settings._SCHEMA[section][key][0]
     return (
-        f"{section}.{key} is not page-writable: a dashboard bearer is set on the host "
-        "(DASHBOARD_AUTH_TOKEN in the dashboard's environment), never from a settings write"
+        f"{section}.{key} is not page-writable: it sets {env_name}, a gate set on the host, never from a settings write"
     )
 
 
@@ -201,11 +239,6 @@ def refuse_settings_credentials(patch: dict[str, Any]) -> list[str]:
                 errors.append(problem)
                 del values[key]
     return errors
-
-
-def env_key_gate_bearing(key: str) -> bool:
-    """Whether a key is one of the gates this process reads live - never page-writable."""
-    return key in GATE_BEARING_ENV_KEYS or key.startswith(GATE_BEARING_ENV_PREFIXES)
 
 
 def env_key_allowed(key: str) -> bool:

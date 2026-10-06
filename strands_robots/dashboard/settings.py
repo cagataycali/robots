@@ -516,22 +516,34 @@ def _write_file(data: dict[str, Any]) -> None:
 # ----------------------------------------------------------------------
 
 #: Settings key -> env var read by ``strands_robots.mesh.session`` / the
-#: transport factory.
+#: transport factory. ``policy_type_allow`` is absent on purpose: its variable is a gate,
+#: set on the host or granted through the consent routes, never exported from this file.
 MESH_ENV = {
     "connect": "ZENOH_CONNECT",
     "listen": "ZENOH_LISTEN",
     "port": "STRANDS_MESH_PORT",
     "backend": "STRANDS_MESH_BACKEND",
     "camera_hz": "STRANDS_MESH_CAMERA_HZ",
-    "policy_type_allow": "STRANDS_MESH_POLICY_TYPE_ALLOW",
 }
 
 
 def apply_mesh_env() -> dict[str, str]:
-    """Push mesh settings into ``os.environ``."""
+    """Push the mesh connection settings into ``os.environ``.
+
+    A key whose variable is a gate (``runtime.trust_remote_code``,
+    ``mesh.policy_type_allow``: :data:`~strands_robots.dashboard.config_api.REFUSED_SETTINGS_KEYS`)
+    is never exported, whatever the settings file holds: the file is page-writable, so a
+    value in it is not evidence the host opened that gate. One the file still holds is
+    logged, by name only.
+    """
+    # Deferred: config_api imports this module, and owns the gate predicate.
+    from strands_robots.dashboard.config_api import REFUSED_SETTINGS_KEYS
+
     mesh = load()["mesh"]
     applied: dict[str, str] = {}
     for key, env_name in MESH_ENV.items():
+        if ("mesh", key) in REFUSED_SETTINGS_KEYS:
+            continue
         value = mesh.get(key)
         if isinstance(value, list):
             value = ",".join(value)
@@ -541,11 +553,15 @@ def apply_mesh_env() -> dict[str, str]:
         applied[env_name] = str(value)
     if applied:
         logger.info("mesh env from settings: %s", applied)
-    also = {
-        "runtime.trust_remote_code": ("STRANDS_TRUST_REMOTE_CODE", load()["runtime"]["trust_remote_code"]),
-    }
-    for _, (env_name, value) in also.items():
-        if value:
-            os.environ[env_name] = "1"
-            applied[env_name] = "1"
+    stored = _read_file()
+    for section, key in sorted(REFUSED_SETTINGS_KEYS):
+        value = stored.get(section, {}).get(key) if isinstance(stored.get(section), dict) else None
+        if value not in (None, False, "", []):
+            logger.warning(
+                "%s.%s in %s is not exported: %s is set on the host, never from the settings file",
+                section,
+                key,
+                SETTINGS_FILE,
+                _SCHEMA[section][key][0],
+            )
     return applied

@@ -241,7 +241,7 @@ const EXTRA_ENTRIES: SearchEntry[] = [
   { key: 'connection.token', label: 'Auth token (this browser)', tab: 'connection', keywords: 'login password bearer', effect: 'Credential this browser sends with every request.' },
   { key: 'agent.system_prompt', label: 'System prompt', tab: 'agent', keywords: 'instructions personality behavior', effect: 'Standing instructions for the fleet agent.' },
   { key: 'env.vars', label: 'Environment variables', tab: 'env', keywords: 'api key secret credential openai huggingface hf token .env', effect: 'Credentials and flags written to the server .env file.' },
-  { key: 'env.trust_remote_code', label: 'HuggingFace trust_remote_code', tab: 'env', keywords: 'lerobot kimodo model repo security allow', effect: 'Allows model repos to execute their own code when loaded.' },
+  { key: 'security.trust_remote_code', label: 'HuggingFace trust_remote_code', tab: 'security', keywords: 'lerobot kimodo model repo consent grant allow', effect: 'Granted or revoked from the consent card; lets model repos execute their own code when loaded.' },
   { key: 'security.auth_token', label: 'Server auth token', tab: 'security', keywords: 'password protect lock api', effect: 'Token every client must present on /api and /ws.' },
   { key: 'security.cors_origins', label: 'CORS origins', tab: 'security', keywords: 'browser cross origin websites', effect: 'Which websites a browser may call this API from. Adding one needs a server restart; removing one is refused for writes and websockets straight away.' },
   { key: 'mesh.restart', label: 'Restart mesh', tab: 'mesh', keywords: 're-point reconnect zenoh session', effect: 'Re-opens the shared mesh session.' },

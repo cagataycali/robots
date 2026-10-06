@@ -13,11 +13,18 @@ included, write a durable credential the Settings drawer then reported as "auth 
 Both doors now share one fence, ``REFUSED_SETTINGS_KEYS``: a credential-bearing settings
 key is refused with a reason naming the out-of-band way to set it. Clearing one stays
 page-writable, because that is the operator's remedy for a bearer they did not set.
+
+The same two doors reached the other gates the env half refuses: ``runtime.trust_remote_code``
+and ``mesh.policy_type_allow`` were stored, and ``apply_mesh_env`` exported them as
+``STRANDS_TRUST_REMOTE_CODE`` and ``STRANDS_MESH_POLICY_TYPE_ALLOW`` on the next mesh start.
+The roster is now every settings key whose env spelling is gate-bearing, derived from the
+schema, and ``apply_mesh_env`` exports none of them whatever the file holds.
 """
 
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -69,6 +76,59 @@ def test_the_roster_names_every_credential_bearing_settings_key():
     for section, key in config_api.REFUSED_SETTINGS_KEYS:
         assert key in settings._SCHEMA[section], f"{section}.{key} is not a settings key"
     assert ("security", "auth_token") in config_api.REFUSED_SETTINGS_KEYS
+
+
+def test_the_roster_is_every_settings_key_that_reaches_a_gate():
+    """Derived from the schema: a key whose env spelling the env half fences is refused here too."""
+    assert config_api.REFUSED_SETTINGS_KEYS == {
+        ("security", "auth_token"),
+        ("runtime", "trust_remote_code"),
+        ("mesh", "policy_type_allow"),
+    }
+
+
+#: A settings write that would open a gate, the gate's variable, and a clearing value.
+_GATES = [
+    ({"runtime": {"trust_remote_code": True}}, "runtime.trust_remote_code", "STRANDS_TRUST_REMOTE_CODE", False),
+    ({"mesh": {"policy_type_allow": ["anything"]}}, "mesh.policy_type_allow", "STRANDS_MESH_POLICY_TYPE_ALLOW", []),
+]
+
+
+def _stored(isolated) -> dict:
+    path = isolated / "settings.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@pytest.mark.parametrize(("patch", "dotted", "env_name", "_clear"), _GATES)
+@pytest.mark.parametrize("route", ["/api/config", "/api/settings"])
+def test_a_settings_write_cannot_open_a_gate(client, isolated, monkeypatch, route, patch, dotted, env_name, _clear):
+    monkeypatch.setenv(env_name, "")  # recorded, so teardown removes whatever a regression exports
+    monkeypatch.delenv(env_name)
+    r = client.post(route, json=patch)
+    assert r.status_code == 422, r.text
+    reported = r.json().get("errors") or [r.json().get("error", "")]
+    assert any(dotted in e and env_name in e for e in reported), reported
+    section, key = dotted.split(".")
+    assert key not in _stored(isolated).get(section, {})
+    settings.apply_mesh_env()
+    assert env_name not in os.environ
+
+
+@pytest.mark.parametrize(("patch", "dotted", "env_name", "clear"), _GATES)
+def test_a_settings_write_may_still_close_a_gate(isolated, patch, dotted, env_name, clear):
+    section, key = dotted.split(".")
+    assert config_api.apply({section: {key: clear}})["errors"] == []
+
+
+@pytest.mark.parametrize(("patch", "dotted", "env_name", "_clear"), _GATES)
+def test_a_gate_already_in_the_settings_file_is_not_exported(isolated, monkeypatch, patch, dotted, env_name, _clear):
+    """A value written before the fence, or by hand, is not the host opening the gate."""
+    monkeypatch.setenv(env_name, "")  # recorded, so teardown removes whatever a regression exports
+    monkeypatch.delenv(env_name)
+    (isolated / "settings.json").write_text(json.dumps(patch), encoding="utf-8")
+    settings.load(refresh=True)
+    assert env_name not in settings.apply_mesh_env()
+    assert env_name not in os.environ
 
 
 def test_the_two_fences_agree_on_every_refused_key():
