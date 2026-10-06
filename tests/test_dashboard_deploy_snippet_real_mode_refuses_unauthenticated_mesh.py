@@ -45,7 +45,10 @@ def test_a_real_snippet_refuses_where_the_spawn_route_refuses(mesh_env):
         (
             _REAL,
             {"STRANDS_MESH_LOCAL_DEV": "1", **_ACK},
-            [_WARNING + "\nos.environ.setdefault('STRANDS_MESH_LOCAL_DEV', '1')"],
+            [
+                "\n".join([_WARNING, *deploy.REAL_ARM_AUTH_OFF_EXPLANATION])
+                + "\nos.environ.setdefault('STRANDS_MESH_LOCAL_DEV', '1')"
+            ],
             [device_manager.REAL_SPAWN_ACK_ENV + "'"],
         ),
         # A sim snippet still carries a live local-dev posture as it is.
@@ -98,3 +101,57 @@ def test_local_dev_acknowledges_auth_off_only_on_loopback(monkeypatch, env, outc
             _zenoh_config.resolve_auth_mode()
     else:
         assert _zenoh_config.resolve_auth_mode() == outcome
+
+
+def test_an_acknowledged_real_arm_snippet_says_what_the_auth_off_line_does_and_how_to_leave_it():
+    snippet = deploy.render_snippet(_REAL, hub_host="192.168.1.20", mesh_env={"STRANDS_MESH_LOCAL_DEV": "1", **_ACK})[
+        "snippet"
+    ]
+    block = "\n".join([_WARNING, *deploy.REAL_ARM_AUTH_OFF_EXPLANATION])
+    assert block in snippet
+    # The way out is named with the variables the mesh actually reads, right above the line.
+    for name in ("STRANDS_MESH_TLS_CA", "STRANDS_MESH_TLS_CERT", "STRANDS_MESH_TLS_KEY", "STRANDS_MESH_ACL_FILE"):
+        assert name in snippet, name
+    assert snippet.index(_WARNING) < snippet.index("os.environ.setdefault('STRANDS_MESH_LOCAL_DEV', '1')")
+
+
+@pytest.mark.parametrize(
+    ("payload", "mesh_env", "hub_host", "expected"),
+    [
+        # A local-dev posture carried to another machine: the resolver there will refuse without the
+        # second factor, so the file says so before the operator runs it.
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1"}, "192.168.1.20", True),
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1"}, "hub.lab", True),
+        (_REAL, {"STRANDS_MESH_LOCAL_DEV": "1", **_ACK}, "192.168.1.20", True),
+        # The dashboard already carries the second factor: the note would be noise.
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1", device_manager.INSECURE_ACK_ENV: "1"}, "192.168.1.20", False),
+        # A loopback hub stays on this machine, where local-dev is allowed to mean auth off.
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1"}, "127.0.0.1", False),
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1"}, "localhost", False),
+        # No hub at all (the commented-out ZENOH_CONNECT): nothing points off this machine.
+        (_SIM, {"STRANDS_MESH_LOCAL_DEV": "1"}, None, False),
+        # mTLS posture: no local-dev line, so nothing to annotate.
+        (_SIM, {}, "192.168.1.20", False),
+    ],
+)
+def test_a_local_dev_line_that_reaches_another_machine_names_the_second_factor_it_will_need(
+    payload, mesh_env, hub_host, expected
+):
+    snippet = deploy.render_snippet(payload, hub_host=hub_host, mesh_env=mesh_env)["snippet"]
+    note = "\n".join(deploy.LOCAL_DEV_LEAVES_THIS_MACHINE_NOTE)
+    assert (note in snippet) is expected
+    if expected:
+        assert device_manager.INSECURE_ACK_ENV in snippet
+        assert snippet.index(note) < snippet.index("os.environ.setdefault('STRANDS_MESH_LOCAL_DEV', '1')")
+
+
+def test_the_resume_key_warning_no_longer_points_at_the_local_dev_flag():
+    # The flag turns wire auth off; it has nothing to do with who may clear an e-stop.
+    import inspect
+
+    from strands_robots.mesh import core
+
+    source = inspect.getsource(core.Mesh.start)
+    start = source.index('"resume_public_key"')
+    end = source.index('"multicast"', start)
+    assert "STRANDS_MESH_LOCAL_DEV" not in source[start:end]

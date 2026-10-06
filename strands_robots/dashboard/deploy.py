@@ -39,9 +39,25 @@ _LIVE_ONLY_KEYS: tuple[str, ...] = (
     device_manager.INSECURE_ACK_ENV,
 )
 
-#: The comment a real-arm snippet carries above an acknowledged auth-off line.
+#: The comment a real-arm snippet carries above an acknowledged auth-off line. The first line is
+#: the one-line verdict; the rest says what the line below it does to the arm and how to leave it.
 REAL_ARM_AUTH_OFF_WARNING = (
     f"# WARNING: mesh wire auth is off for a real arm, acknowledged by {device_manager.REAL_SPAWN_ACK_ENV}"
+)
+REAL_ARM_AUTH_OFF_EXPLANATION: tuple[str, ...] = (
+    "# With the line below, any process that reaches this robot's mesh endpoint can move the arm:",
+    "# no certificate, no access list. Keep this file on a network you control, or better, delete",
+    "# the line and give the edge device the fleet's certificates instead:",
+    "#   STRANDS_MESH_TLS_CA / STRANDS_MESH_TLS_CERT / STRANDS_MESH_TLS_KEY (+ STRANDS_MESH_ACL_FILE)",
+)
+
+#: Said above a rendered ``STRANDS_MESH_LOCAL_DEV`` line when the hub below is on another machine
+#: and the file carries no :data:`device_manager.INSECURE_ACK_ENV`: the mesh will refuse to start
+#: there, and the refusal should not be the first the operator hears of it.
+LOCAL_DEV_LEAVES_THIS_MACHINE_NOTE: tuple[str, ...] = (
+    "# NOTE: STRANDS_MESH_LOCAL_DEV turns wire auth off for ONE machine. ZENOH_CONNECT below points",
+    f"# off this machine, so the mesh refuses to start unless {device_manager.INSECURE_ACK_ENV}=1 is",
+    "# set as well. Prefer the certificates above and drop the LOCAL_DEV line.",
 )
 
 
@@ -150,6 +166,17 @@ def hub_host_from_reached(reached_on: str | None) -> tuple[str | None, str | Non
     )
 
 
+def _hub_is_loopback(hub_host: str) -> bool:
+    """True when ``ZENOH_CONNECT`` to ``hub_host`` cannot leave the machine the file runs on."""
+    host = hub_host.strip().strip("[]").lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _stamped_names(cameras: Any) -> dict[str, str]:
     """{camera: the roster name this index carried when it was configured}, for the cameras that have one."""
     if not isinstance(cameras, Mapping):
@@ -246,9 +273,16 @@ def render_snippet(
     lines += ["", "import os", "import time", ""]
 
     lines.append("# The mesh posture this dashboard runs with (setdefault: your own env wins).")
-    for key, val in resolve_mesh_env(mesh_env, mode):
-        if mode == "real" and key == "STRANDS_MESH_LOCAL_DEV":
-            lines.append(REAL_ARM_AUTH_OFF_WARNING)
+    rendered_env = resolve_mesh_env(mesh_env, mode)
+    rendered_keys = {key for key, _ in rendered_env}
+    hub_leaves_this_machine = bool(hub_host) and not _hub_is_loopback(str(hub_host))
+    for key, val in rendered_env:
+        if key == "STRANDS_MESH_LOCAL_DEV":
+            if mode == "real":
+                lines.append(REAL_ARM_AUTH_OFF_WARNING)
+                lines.extend(REAL_ARM_AUTH_OFF_EXPLANATION)
+            if hub_leaves_this_machine and device_manager.INSECURE_ACK_ENV not in rendered_keys:
+                lines.extend(LOCAL_DEV_LEAVES_THIS_MACHINE_NOTE)
         lines.append(f"os.environ.setdefault({key!r}, {str(val)!r})")
     try:
         port_txt = str(int(str(hub_port))) if hub_port not in (None, "") else str(DEFAULT_HUB_PORT)
