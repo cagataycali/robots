@@ -10,7 +10,7 @@ answers, not only the one shell. It is as tight as the product allows: scripts,
 styles, fonts and workers only from this origin; no plugins, no ``<base>``, no
 framing; images also from ``data:`` and ``blob:`` (camera previews are object
 URLs). ``connect-src`` is this origin plus the origins the operator lists in
-``DASHBOARD_CONNECT_ORIGINS`` (each with its socket twin), nothing else: it was
+``STRANDS_DASH_CONNECT_ORIGINS`` (each with its socket twin), nothing else: it was
 ``http: https: ws: wss:``, which let any script that reached the page post what
 it found to any host. The list is read from the environment, never from
 settings the page can write.
@@ -62,7 +62,7 @@ class TestEveryAnswerCarriesThePolicy:
         assert response.headers.get("referrer-policy") == "no-referrer", "a token in a URL must not leak in Referer"
 
 
-# DASHBOARD_CONNECT_ORIGINS -> connect-src
+# STRANDS_DASH_CONNECT_ORIGINS -> connect-src
 CONNECT_ORIGINS = [
     ("https://robot.lan:8090", ["'self'", "https://robot.lan:8090", "wss://robot.lan:8090"]),
     (
@@ -76,7 +76,7 @@ CONNECT_ORIGINS = [
 
 @pytest.mark.parametrize("raw,expected", CONNECT_ORIGINS)
 def test_connect_src_adds_only_the_origins_the_operator_spelled_out(raw: str, expected: list[str], monkeypatch) -> None:
-    monkeypatch.setenv("DASHBOARD_CONNECT_ORIGINS", raw)
+    monkeypatch.setenv("STRANDS_DASH_CONNECT_ORIGINS", raw)
     assert _policy(TestClient(create_app()).get("/api/health"))["connect-src"] == expected
 
 

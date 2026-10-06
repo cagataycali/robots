@@ -11,5 +11,5 @@ typed bearer in memory only and deletes a copy an older build stored. Any move t
 another host, or https to http, is a `host_changes` question before the page
 dials it, and a persistent notice names the backend whenever it is not the page's
 own origin. `connect-src` is `'self'` plus the origins listed in the new
-`DASHBOARD_CONNECT_ORIGINS` environment variable. The LAN link carries
+`STRANDS_DASH_CONNECT_ORIGINS` environment variable. The LAN link carries
 `?handoff=<code>`; a `?token=` in a URL is refused.

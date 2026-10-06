@@ -117,7 +117,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 #: the Settings drawer or ``?backend=`` points at). Comma-separated ``scheme://host[:port]``.
 #: Read from the environment only, never from settings.json: the page can write settings,
 #: and a policy the page can widen is no policy.
-CONNECT_ORIGINS_ENV = "DASHBOARD_CONNECT_ORIGINS"
+CONNECT_ORIGINS_ENV = "STRANDS_DASH_CONNECT_ORIGINS"
 
 _SOCKET_SCHEME = {"http": "ws", "https": "wss"}
 
@@ -150,7 +150,7 @@ def content_security_policy(extra_connect: list[str] | None = None) -> str:
     Scripts, styles, fonts and workers come from this origin only; no plugins, no
     ``<base>``, no framing. Images also from ``data:`` and ``blob:`` (camera previews are
     object URLs). ``connect-src`` is this origin plus the origins the operator listed in
-    ``DASHBOARD_CONNECT_ORIGINS`` (:func:`connect_origins`), nothing else: a script that
+    ``STRANDS_DASH_CONNECT_ORIGINS`` (:func:`connect_origins`), nothing else: a script that
     reaches the page cannot post what it finds to a host nobody named.
     """
     return "; ".join(

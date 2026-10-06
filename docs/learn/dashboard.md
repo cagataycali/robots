@@ -37,7 +37,7 @@ One dependency, `access.require_session`, guards every route but the login scree
 2. The static `security.auth_token`, compared in constant time.
 3. The bootstrap token as bearer, only while no passkey is enrolled, from this machine's own browser: loopback socket, no proxy header, a loopback `Host`, an `Origin` naming the same host.
 
-The first passkey closes the third door. Both need `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`, or the token the process minted into a `0600` file beside the credential store. `STRANDS_DASH_AUTH_ORIGIN` and `STRANDS_DASH_AUTH_RP_ID` pin the WebAuthn origin and relying party behind a proxy; `STRANDS_DASH_AUTH_TOKEN_TTL` (86400 s), `..._SESSION_MAX_AGE` (2592000 s) and `..._HANDOFF_TTL` (300 s) bound a session; a non-integer value is refused, not defaulted. A device handoff takes a fresh passkey tap and yields a one-time code. `DASHBOARD_CONNECT_ORIGINS` lists origins the page may dial.
+The first passkey closes the third door. Both need `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`, or the token the process minted into a `0600` file beside the credential store. `STRANDS_DASH_AUTH_ORIGIN` and `STRANDS_DASH_AUTH_RP_ID` pin the WebAuthn origin and relying party behind a proxy; `STRANDS_DASH_AUTH_TOKEN_TTL` (86400 s), `..._SESSION_MAX_AGE` (2592000 s) and `..._HANDOFF_TTL` (300 s) bound a session; a non-integer value is refused, not defaulted. A device handoff takes a fresh passkey tap and yields a one-time code. `STRANDS_DASH_CONNECT_ORIGINS` lists origins the page may dial.
 
 Signing out or removing a passkey ends its sessions, open sockets included (re-checked every 2 s). Adding a passkey or removing the last needs the bootstrap proof.
 
