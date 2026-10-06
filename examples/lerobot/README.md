@@ -169,7 +169,7 @@ For production multi-episode collection, wrap the loop in Python and use direct 
 from strands_robots import Robot
 from strands import Agent
 
-robot = Robot("so100", data_config="so100_dualcam")
+robot = Robot("so100")
 agent = Agent(tools=[robot])
 
 # Setup phase via the agent (natural-language scene composition)

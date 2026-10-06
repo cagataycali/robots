@@ -2254,7 +2254,7 @@ class TestRealModeAccountsForEverySpawnParameter:
     SENTINELS: dict[str, object] = {
         "name": "so100",
         "urdf_path": "/tmp/sentinel-model.xml",
-        "data_config": "so100_dualcam",
+        "data_config": "so100_follower",
         "position": [1.0, 2.0, 0.5],
         "orientation": [0.0, 1.0, 0.0, 0.0],
         "keyframe": "home",
@@ -2370,14 +2370,14 @@ class TestRealModeAccountsForEverySpawnParameter:
         ``policy_config`` a policy is built with, so dropping it here selected the
         policy's default embodiment for a caller who named one.
         """
-        hw_kwargs, _ = self._call_real(caplog, data_config="so100_dualcam")
-        assert hw_kwargs.get("data_config") == "so100_dualcam", (
+        hw_kwargs, _ = self._call_real(caplog, data_config="so100_follower")
+        assert hw_kwargs.get("data_config") == "so100_follower", (
             f"data_config did not reach the hardware class; got kwargs {sorted(hw_kwargs)}"
         )
 
     def test_data_config_is_not_reported_as_ignored(self, caplog):
         """It is forwarded, so it must not also claim to have been dropped."""
-        _, records = self._call_real(caplog, data_config="so100_dualcam")
+        _, records = self._call_real(caplog, data_config="so100_follower")
         assert not [m for m in records if "data_config" in m and "ignored in mode='real'" in m], (
             f"data_config is forwarded and must not be reported as ignored; records: {records}"
         )

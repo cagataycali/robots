@@ -9,6 +9,7 @@ the 38→68 robot expansion, silently breaking auto-download.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -132,6 +133,22 @@ def test_no_alias_shadows_canonical_name(registry: dict) -> None:
             if key in canonical and key != name:
                 shadows.append(f"{name}.aliases contains {alias!r}, the canonical robot name {key!r}")
     assert not shadows, "Alias shadows canonical:\n  " + "\n  ".join(shadows)
+
+
+def test_no_alias_names_a_camera_rig(registry: dict) -> None:
+    """An alias names the robot, never a sensor setup the entry does not carry.
+
+    ``so100_4cam`` resolved to the bare ``so100`` arm, so ``Robot("so100_4cam")``
+    built a scene with no cameras and said nothing. Cameras come from
+    ``add_camera`` / ``cameras=``, not from the robot's name.
+    """
+    rigs = [
+        f"{name}.aliases contains {alias!r}"
+        for name, info in registry.items()
+        for alias in info.get("aliases", []) or []
+        if any(re.fullmatch(r"\w*cams?", token) for token in normalize_robot_name(alias).split("_"))
+    ]
+    assert not rigs, "Aliases that promise cameras:\n  " + "\n  ".join(rigs)
 
 
 def test_hardware_only_robots_declare_lerobot_type(registry: dict) -> None:

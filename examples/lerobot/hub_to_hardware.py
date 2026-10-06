@@ -161,7 +161,7 @@ def build_agent(
         robot_mesh,
     )
 
-    robot_kwargs: dict[str, Any] = {"data_config": "so100_dualcam"}
+    robot_kwargs: dict[str, Any] = {}
     if mode == "real":
         if not port:
             raise SystemExit("--mode real requires --port (e.g. /dev/ttyACM0). Hardware paths can't be guessed safely.")

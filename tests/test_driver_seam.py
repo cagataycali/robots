@@ -444,7 +444,7 @@ class TestBuildingARegisteredNativeDriver:
             mode="real",
             driver="strands",
             cameras={"wrist": {"type": "opencv", "index_or_path": 0}},
-            data_config="so100_dualcam",
+            data_config="so100_follower",
             port="192.168.1.10",
         )
         # ``driver="strands"`` is typed as the driver contract, so reading a
@@ -452,7 +452,7 @@ class TestBuildingARegisteredNativeDriver:
         # overload doing its job.
         assert isinstance(robot, _CompleteDriver)
         assert robot.forwarded["tool_name"] == _ROBOT
-        assert robot.forwarded["data_config"] == "so100_dualcam"
+        assert robot.forwarded["data_config"] == "so100_follower"
         assert robot.forwarded["cameras"] == {"wrist": {"type": "opencv", "index_or_path": 0}}
         assert robot.forwarded["port"] == "192.168.1.10", "port stays polymorphic - here an IP"
 
