@@ -94,7 +94,7 @@ in sim runs on the metal by changing `mode`.
 | **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](docs/learn/hardware/teleoperation.md), [Recording](docs/learn/data/record.md) |
 | **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](docs/learn/training/lerobot.md) |
 | **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](docs/learn/simulation/index.md) |
-| **Mesh** every robot as a Zenoh peer: `tell()` another robot what to do, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](docs/learn/mesh/fleet.md) |
+| **Mesh** every `Robot(mesh=True)` as a Zenoh peer: `robot.mesh.tell(peer, instruction, policy_provider=...)` to ask another robot to run a policy, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](docs/learn/mesh/fleet.md) |
 | **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](docs/learn/ros2.md) |
 | **Configure** every environment variable the package reads, with its default and its guard | [Configuration](docs/reference/configuration.md) |
 
