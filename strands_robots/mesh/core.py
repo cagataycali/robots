@@ -539,27 +539,18 @@ _ZENOH_ZID_PATTERN = re.compile(r"^[0-9a-f]{1,32}\Z")
 
 
 def _extract_sample_source_zid(sample: Any) -> str | None:
-    """Return the TLS-bound publisher ZID from a Zenoh ``sample``, or ``None``.
+    """Return the publisher session id a Zenoh ``sample`` carries, or ``None``.
 
-    Zenoh attaches ``sample.source_info.source_id.zid`` (the publishing
-    session's ``ZenohId``) at the wire level. The ``ZenohId`` is established
-    during the session bootstrap that follows the mTLS handshake, and the
-    ``zenoh-python`` API does not expose a public constructor for either
-    ``ZenohId`` or ``EntityGlobalId`` -- they can only be obtained from
-    ``Session.info.zid()`` or ``Publisher.id`` on a session that has already
-    completed the handshake against the trust roots in ``connect.tls``.
-
-    Combined with mTLS this means a peer holding a valid cert for one
-    session cannot mint an envelope that *also* claims the wire-level
-    ``source_zid`` of a different session: the cross-session forgery is
-    bounded by what their own session's ``ZenohId`` actually is.
-
-    The body's ``peer_id`` field remains application-level metadata (chosen
-    by the operator at ``init_mesh`` time and routable across reconnects);
-    this helper returns the wire-level identity that the safety handlers
-    pin HMAC inputs and replay caches to. The two are complementary: body
-    ``peer_id`` survives a session restart, wire ``source_zid`` survives an
-    attacker mutating the body.
+    ``sample.source_info.source_id.zid`` is the ``ZenohId`` the PUBLISHER
+    attached to its own sample. It is not bound to the TLS link or the
+    session: ``zenoh.SourceInfo(entity_id, sn)`` accepts any id, including one
+    read off another peer's heartbeat a moment earlier, and Zenoh never checks
+    it against the authenticated transport. So this value is a hint about
+    which session spoke (useful against an accidental second session claiming
+    a live name) and never proof of who did; the proof is the signature a
+    peer puts over its message (:mod:`~strands_robots.mesh.wire_identity`),
+    which the handlers read when signatures are required. The legacy handlers
+    keep comparing this hint on a mesh that has not turned signatures on.
 
     Returns ``None`` when:
 
@@ -975,7 +966,7 @@ class Mesh(SensorLoopsMixin):
         self._responses: dict[str, list[dict[str, Any]]] = {}
         self._expected_responders: dict[str, str] = {}
         # peer_id -> (wire zid, monotonic time of the last presence from that
-        # zid). Learned by ``_on_presence`` from the TLS-bound
+        # zid). Learned by ``_on_presence`` from the publisher-chosen
         # ``sample.source_info.source_id.zid`` and read by ``_on_response``,
         # which refuses a reply whose wire source is not the session this
         # peer_id last announced itself from. The body's ``responder_id`` is a
@@ -1976,8 +1967,13 @@ class Mesh(SensorLoopsMixin):
         A presence with no wire zid (bridge and IoT transports, or a zenoh
         older than the floor) binds nothing and clears nothing. Its replies
         then carry no zid either, which :meth:`_on_response` accepts only on a
-        backend whose broker binds the response topic to the sender; on Zenoh
+        leg whose broker binds the response topic to the sender; on Zenoh
         such a peer stays on the roster and is reported silent by an e-stop.
+
+        This is the legacy table, consulted only when signatures are not
+        required (:meth:`_signing_required`): the zid is a label the publisher
+        attached and could have copied, so it stops an accidental second
+        session, not an attacker. :meth:`_bind_peer_cert` is the signed one.
         """
         if wire_zid is None:
             return True
@@ -5690,19 +5686,21 @@ class Mesh(SensorLoopsMixin):
             put(key, self._strip_wire_zid(payload))
 
     def _publish_with_wire_source(self, key: str, payload: dict[str, Any]) -> None:
-        """Publish *payload* on *key* with this session's wire source attached.
+        """Publish *payload* on *key* with this session's ``SourceInfo`` attached.
 
-        Presence and command replies go through here so a receiver can tell
-        who sent them: :meth:`_on_presence` learns the zid each peer id speaks
-        from, and :meth:`_on_response` refuses a reply whose zid is not the one
-        bound to its ``responder_id``. Neither ``Session.put`` nor
-        ``Publisher.put`` attaches a ``SourceInfo`` unless asked, so a plain
-        :meth:`publish` arrives with no wire source at all.
+        Presence and command replies go through here so a receiver on a mesh
+        WITHOUT signed identity can still tell one session from another:
+        :meth:`_on_presence` learns the zid each peer id speaks from, and
+        :meth:`_on_response` refuses a reply whose zid is not the one bound to
+        its ``responder_id``. Neither ``Session.put`` nor ``Publisher.put``
+        attaches a ``SourceInfo`` unless asked, so a plain :meth:`publish`
+        arrives with no session id at all.
 
-        The ``SourceInfo`` carries the id of one long-lived publisher declared
-        on this peer's presence key (the same cached-publisher mechanism as
-        :meth:`_publish_safety_envelope`); receivers read only its zid, which
-        Zenoh fills in from the TLS-authenticated session.
+        The ``SourceInfo`` is a label this publisher chooses (the id of its
+        long-lived presence publisher, the same cached-publisher mechanism as
+        :meth:`_publish_safety_envelope`); any peer could attach any id, so it
+        is a hint, not an identity. The identity is the ``sig`` block
+        :meth:`_sign` puts in the payload, which travels through here unchanged.
 
         Publishes plainly on the ``iot`` and ``bridge`` backends, whose broker
         binds the topic to the sender instead. On Zenoh, a closed session, a

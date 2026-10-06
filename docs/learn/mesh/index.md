@@ -66,6 +66,12 @@ The mTLS trio is required together: with any of the three unset or pointing at a
 
 Discovery: the first process on a host listens on `tls/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, forgotten dashboards included. Across hosts set `ZENOH_CONNECT=tls/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
 
+## Signed wire identity
+
+mTLS admits a peer; it does not say which peer wrote a message. The Zenoh `SourceInfo` label is the publisher's own, so an admitted peer could copy a robot's label and answer an e-stop in its name. A peer with a certificate signs what it publishes (`strands_robots.mesh.wire_identity`): a `sig` block with its DER leaf, a time, a nonce and the signature over the canonical body. The mTLS pair signs under `mtls`, the IoT device certificate on `iot` and `bridge`.
+
+`STRANDS_MESH_REQUIRE_SIGNED_IDENTITY`: `auto` (default) requires a signature when the auth mode is `mtls` and `STRANDS_MESH_TLS_CA` loads; `1` always; `0` keeps the session-id path. When required, a presence binds `robot_id` to a leaf whose common name is that id (or its parent, for a `<peer>__<robot>` child), a reply counts once per nonce from a leaf speaking for its `responder_id`, and a motion command is attributed to its signer. Approvals name that signer: `STRANDS_ROBOT_COMMAND_ALLOW=reset@lab-op` pre-approves one verified peer, `*@lab-op` every verb for it; a bare verb admits any verified peer, with one warning. A peer without a certificate is dropped from the roster and its replies and motion commands refused; it can still stop a robot and read state.
+
 ## Rates and caps
 
 Presence at 2 Hz, state at 10 Hz, camera off until `STRANDS_MESH_CAMERA_HZ` is set. Commands are capped at 20 Hz and 16 KiB per message, safety topics at 2 Hz and 4 KiB, camera frames at 1 MiB, sessions at 256. Each cap has a `STRANDS_MESH_*` override listed in [reference/configuration](../../reference/configuration.md).

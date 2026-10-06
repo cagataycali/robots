@@ -98,7 +98,9 @@ _BUDGET: int = _hook().LIMIT
 #: hand-written UR page stayed net -1. Banked to the exact total.
 #: Raised by 26 to 69,543 when KinovaDriver began serving the Gen3: its generated robot page gained
 #: the real-mode fence and Hardware line; drivers.md stayed net 0. Banked to the exact total.
-_SITE_BUDGET = 69_543
+#: Raised by 160 to 69,703 when learn/mesh/index.md gained the "Signed wire identity" section: the
+#: knob, the verb@peer allowlist spelling and what an unsigned peer can still do. Banked to the exact total.
+_SITE_BUDGET = 69_703
 
 #: How far :data:`_SITE_BUDGET` may sit above the real total before it is stale.
 #: A cut larger than this has to be banked by lowering the ceiling.
