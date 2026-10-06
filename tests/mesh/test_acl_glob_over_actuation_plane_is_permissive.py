@@ -8,10 +8,13 @@ operators to write globs instead, ``**/cmd``, ``**/broadcast``,
 to a subject with no certificate constraint, such a rule let any CA-signed
 peer command and stop every robot, and the gate stayed silent.
 
-Now an ``allow`` rule that can ``put`` on any key expression reaching the
-command, broadcast or safety plane (``**``, ``*``, ``$*`` and their
-combinations) counts as a wide-open rule for the detector, and the loader
-warns about such a rule bound to a subject that lacks ``cert_common_names``.
+Now an ``allow`` rule that can ``put`` on any key expression reaching a
+peer's command topic, the broadcast, the safety commands or a teleop input
+stream counts as writing the actuation plane, decided structurally for any
+peer name, glob or namespace (``neon/cmd``, ``scout-$*/cmd``,
+``fleet/*/cmd``, ``**/input/**``) rather than against one sample key. Bound to
+a subject without ``cert_common_names`` (an ``interfaces`` list scopes a link,
+not a peer) it makes the gate refuse to start, and the loader names it.
 """
 
 from __future__ import annotations
@@ -58,6 +61,9 @@ class TestGlobsOverTheActuationPlaneArePermissive:
             ["$*/cmd"],
             ["**/c$*"],
             ["presence", "**/cmd"],
+            ["neon/cmd", "scout-01/cmd", "**/input/**"],
+            ["**/neon/cmd"],
+            ["**/input/**"],
         ],
     )
     def test_bound_to_an_unconstrained_subject(self, key_exprs: list[str]) -> None:
@@ -77,6 +83,16 @@ class TestGlobsOverTheActuationPlaneArePermissive:
     def test_telemetry_globs_are_not_the_actuation_plane(self, key_exprs: list[str]) -> None:
         assert _is_permissive_acl_shape(_acl(key_exprs, _ANY)) is False
 
+    @pytest.mark.parametrize("subject", [{"id": "lab", "interfaces": ["eth0"]}, {"id": "any", "interfaces": ["*"]}])
+    @pytest.mark.parametrize("key_exprs", [["neon/cmd", "scout-01/cmd", "**/input/**"], ["**"], ["**/safety/*"]])
+    def test_an_interface_only_subject_is_refused(self, key_exprs: list[str], subject: dict[str, Any]) -> None:
+        """An ``interfaces`` list admits every CA-signed peer on that link."""
+        assert _is_permissive_acl_shape(_acl(key_exprs, subject)) is True
+
+    @pytest.mark.parametrize("key_exprs", [[""], ["a//cmd"], [7]])
+    def test_a_key_expression_the_check_cannot_read_fails_closed(self, key_exprs: list[Any]) -> None:
+        assert _is_permissive_acl_shape(_acl(key_exprs, _ANY)) is True  # type: ignore[arg-type]
+
     def test_a_subscribe_only_glob_is_not_a_command(self) -> None:
         """Reading the command plane is observation; writing it is actuation."""
         assert _is_permissive_acl_shape(_acl(["**/cmd"], _ANY, messages=["declare_subscriber"])) is False
@@ -84,12 +100,47 @@ class TestGlobsOverTheActuationPlaneArePermissive:
 
 class TestTheKeyExpressionMatcher:
     @pytest.mark.parametrize(
-        "ke", ["**", "**/cmd", "*/cmd", "$*/cmd", "**/broadcast", "broadcast", "safety/**", "**/safety/*"]
+        "ke",
+        [
+            "**",
+            "**/cmd",
+            "*/cmd",
+            "$*/cmd",
+            "**/broadcast",
+            "broadcast",
+            "safety/**",
+            "**/safety/*",
+            "neon/cmd",
+            "scout-01/cmd",
+            "scout-$*/cmd",
+            "fleet/*/cmd",
+            "**/neon/cmd",
+            "strands/neon/cmd",
+            "strands/strands/neon/cmd",
+            "**/input/**",
+            "neon/input/*",
+            "strands/broadcast",
+            "",
+        ],
     )
     def test_reaches(self, ke: str) -> None:
         assert _key_expr_reaches_actuation_plane(ke) is True
 
-    @pytest.mark.parametrize("ke", ["**/presence", "arm-1/state", "**/response/**", "cmd/**", "safety", ""])
+    @pytest.mark.parametrize(
+        "ke",
+        [
+            "**/presence",
+            "arm-1/state",
+            "**/response/**",
+            "cmd/**",
+            "safety",
+            "**/state/**",
+            "**/robot-a/lidar/**",
+            "**/response/robot-a/*",
+            "**/robot-a/response/**",
+            "input/**",
+        ],
+    )
     def test_does_not_reach(self, ke: str) -> None:
         assert _key_expr_reaches_actuation_plane(ke) is False
 
@@ -117,3 +168,70 @@ class TestTheLoaderWarns:
             _acl_config._load_acl_file(path)
 
         assert not [r for r in caplog.records if "cert_common_names" in r.message]
+
+
+class TestTheDetectorAgreesWithTheLiveMatcher:
+    """Every spelling a live Zenoh ACL lets a ``put`` through on is one the detector flags.
+
+    The mesh publishes ``strands/<peer>/cmd`` and ``strands/<peer>/input/<device>``,
+    and the matcher sees those keys behind the configured namespace (here
+    ``lab``): ``**/neon/cmd`` and ``lab/strands/neon/cmd`` admit the command,
+    ``neon/cmd`` and ``strands/neon/cmd`` admit nothing. The detector flags the
+    inert spellings too (fail closed), so an ACL is never judged safe because of
+    how a command grant happened to be spelled.
+    """
+
+    @pytest.mark.parametrize(
+        ("port", "key_expr", "topic", "delivered", "flagged"),
+        [
+            (28741, "**/cmd", "strands/neon/cmd", True, True),
+            (28742, "**/neon/cmd", "strands/neon/cmd", True, True),
+            (28743, "lab/strands/neon/cmd", "strands/neon/cmd", True, True),
+            (28744, "neon/cmd", "strands/neon/cmd", False, True),
+            (28745, "strands/neon/cmd", "strands/neon/cmd", False, True),
+            (28746, "**/input/**", "strands/neon/input/gamepad", True, True),
+            (28747, "**/presence", "strands/neon/cmd", False, False),
+        ],
+    )
+    def test_spelling(self, port: int, key_expr: str, topic: str, delivered: bool, flagged: bool) -> None:
+        zenoh = pytest.importorskip("zenoh")
+        import time
+
+        acl = _acl([key_expr], {"id": "lo", "interfaces": ["lo"]})
+        acl["rules"][0]["flows"] = ["ingress", "egress"]
+        acl["rules"].append(
+            {
+                "id": "sub",
+                "key_exprs": ["**"],
+                "messages": ["declare_subscriber"],
+                "flows": ["ingress", "egress"],
+                "permission": "allow",
+            }
+        )
+        acl["policies"][0]["rules"].append("sub")
+
+        def config(side: str) -> Any:
+            cfg = zenoh.Config()
+            cfg.insert_json5("mode", '"peer"')
+            cfg.insert_json5("scouting/multicast/enabled", "false")
+            cfg.insert_json5("namespace", '"lab"')
+            cfg.insert_json5(f"{side}/endpoints", json.dumps([f"tcp/127.0.0.1:{port}"]))
+            cfg.insert_json5("access_control", json.dumps(acl))
+            return cfg
+
+        got: list[str] = []
+        receiver = zenoh.open(config("listen"))
+        try:
+            receiver.declare_subscriber("**", lambda sample: got.append(str(sample.key_expr)))
+            sender = zenoh.open(config("connect"))
+            try:
+                time.sleep(0.8)
+                sender.put(topic, b"{}")
+                time.sleep(0.5)
+            finally:
+                sender.close()
+        finally:
+            receiver.close()
+
+        assert bool(got) is delivered, got
+        assert _key_expr_reaches_actuation_plane(key_expr) is flagged
