@@ -1476,6 +1476,17 @@ class SubstepSchedule:
         return count
 
 
+#: Why the benchmark (``spec=``) path refuses ``async_rtc=True``. One sentence
+#: shared by :meth:`PolicyRunner.evaluate` and ``SimEngine.evaluate_benchmark``,
+#: which refuses it before any policy is built.
+SPEC_PATH_ASYNC_RTC_REFUSAL = (
+    "async_rtc is only supported on the success_fn eval path. "
+    "The spec/benchmark path stays synchronous for bit-stable "
+    "reproducibility; use run_policy(async_rtc=...) for "
+    "benchmark-style latency masking."
+)
+
+
 class PolicyRunner:
     """Backend-agnostic policy execution against a ``SimEngine``.
 
@@ -4200,19 +4211,7 @@ class PolicyRunner:
         _policy_kwargs = policy_kwargs or {}
 
         if async_rtc and spec is not None:
-            return {
-                "status": "error",
-                "content": [
-                    {
-                        "text": (
-                            "async_rtc is only supported on the success_fn eval path. "
-                            "The spec/benchmark path stays synchronous for bit-stable "
-                            "reproducibility; use run_policy(async_rtc=...) for "
-                            "benchmark-style latency masking."
-                        )
-                    }
-                ],
-            }
+            return {"status": "error", "content": [{"text": SPEC_PATH_ASYNC_RTC_REFUSAL}]}
 
         if spec is not None:
             return self._evaluate_with_spec(
