@@ -214,10 +214,22 @@ def _locate_pair() -> tuple[Path, Path, str] | None:
     """Where this peer's certificate and key are, or ``None`` when nowhere is configured."""
     from strands_robots.mesh._zenoh_config import _resolve_tls_paths, resolve_auth_mode
 
-    if resolve_auth_mode() == "mtls":
-        _ca, cert, key = _resolve_tls_paths()
-        return cert, key, "STRANDS_MESH_TLS_CERT"
-    if select_backend() in ("iot", "bridge"):
+    backend = select_backend()
+    if backend != "iot":
+        # The Zenoh leg's auth mode; ``none`` without its acknowledgement is a
+        # mode the session refuses to open under, so there is nothing to sign for.
+        try:
+            mode = resolve_auth_mode()
+        except ValueError:
+            mode = None
+        tls_set = all(
+            os.getenv(name, "").strip()
+            for name in ("STRANDS_MESH_TLS_CA", "STRANDS_MESH_TLS_CERT", "STRANDS_MESH_TLS_KEY")
+        )
+        if mode == "mtls" and tls_set:
+            _ca, cert, key = _resolve_tls_paths()
+            return cert, key, "STRANDS_MESH_TLS_CERT"
+    if backend in ("iot", "bridge"):
         thing = os.getenv("STRANDS_IOT_THING_NAME", "").strip()
         if not thing:
             return None

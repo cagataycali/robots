@@ -386,3 +386,52 @@ class TestLoadingAnIdentity:
         empty.write_bytes(b"not a certificate\n")
         monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(empty))
         assert wi.TrustRoots.load() is None
+
+
+class TestWhichPairSigns:
+    @pytest.fixture(autouse=True)
+    def _clean(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in (
+            "STRANDS_MESH_AUTH_MODE",
+            "STRANDS_MESH_TLS_CA",
+            "STRANDS_MESH_TLS_CERT",
+            "STRANDS_MESH_TLS_KEY",
+            "STRANDS_MESH_LOCAL_DEV",
+            "STRANDS_MESH_BACKEND",
+            "STRANDS_IOT_THING_NAME",
+            "STRANDS_IOT_CERT_DIR",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+    def test_mtls_mode_with_no_tls_variables_is_no_identity_not_a_problem(self) -> None:
+        """The default auth mode is mtls; a dev box with nothing set has nothing to sign with."""
+        assert wi.WireIdentity.load_or_problem() is None
+
+    def test_the_iot_device_certificate_signs_on_the_iot_backend(
+        self, monkeypatch: pytest.MonkeyPatch, ca: EphemeralCA, tmp_path: Path
+    ) -> None:
+        cert_path, key_path = ca.issue("thing-1", tmp_path / "iot")
+        cert_path.rename(tmp_path / "iot" / "thing-1.cert.pem")
+        key_path.rename(tmp_path / "iot" / "thing-1.private.key")
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot")
+        monkeypatch.setenv("STRANDS_IOT_THING_NAME", "thing-1")
+        monkeypatch.setenv("STRANDS_IOT_CERT_DIR", str(tmp_path / "iot"))
+
+        ident = wi.WireIdentity.load()
+
+        assert ident is not None and ident.cn == "thing-1" and ident.source == "STRANDS_IOT_CERT_DIR"
+
+    def test_the_bridge_prefers_the_mtls_pair(
+        self, monkeypatch: pytest.MonkeyPatch, ca: EphemeralCA, tmp_path: Path
+    ) -> None:
+        cert_path, key_path = ca.issue("robot-a", tmp_path / "tls")
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "bridge")
+        monkeypatch.setenv("STRANDS_MESH_TLS_CA", str(ca.cert_path))
+        monkeypatch.setenv("STRANDS_MESH_TLS_CERT", str(cert_path))
+        monkeypatch.setenv("STRANDS_MESH_TLS_KEY", str(key_path))
+        monkeypatch.setenv("STRANDS_IOT_THING_NAME", "thing-1")
+        monkeypatch.setenv("STRANDS_IOT_CERT_DIR", str(tmp_path / "nowhere"))
+
+        ident = wi.WireIdentity.load()
+
+        assert ident is not None and ident.source == "STRANDS_MESH_TLS_CERT"
