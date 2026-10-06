@@ -27,7 +27,7 @@ robot = Robot("yahboom_m3pro", mode="real", port="192.168.1.50:9090")  # Yahboom
 
 Aliases: `m3pro`, `m3_pro`, `rosmaster_m3_pro`, `rosmaster_m3pro`, `yahboom_m3_pro`, `yahboom_rosmaster_m3_pro`.
 
-Gripper actuator `gripper`: closed at the low end of travel, open at the high end.
+Gripper `gripper`: the low end closes, the high end opens.
 
 ## Hardware
 
