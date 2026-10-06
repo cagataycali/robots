@@ -15,7 +15,7 @@
 //
 // The peer-id is the second key segment: `strands/robot-a/state`, and a
 // reply from robot-a to op-1 travels on `strands/op-1/response/robot-a/<turn>`
-// (the fleet namespace prefix is stripped before matching). Spell them
+// (the fleet namespace is prepended before matching). Spell them
 // with a leading `**/`: on Zenoh 1.x neither `strands/robot-a/state` nor
 // `robot-a/state` matched in a live two-peer run.
 //

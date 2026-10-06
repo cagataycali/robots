@@ -115,10 +115,11 @@ Configuration env vars
 
 ``STRANDS_MESH_LOCAL_DEV``
     Set to ``1`` / ``true`` / ``yes`` for a one-variable localhost
-    developer preset. Defaults ``AUTH_MODE`` to ``none`` AND satisfies
-    the ``_I_KNOW_THIS_IS_INSECURE`` second factor by itself, so a
-    fresh ``Robot()`` joins the mesh with zero security setup -- the
-    "no setup" promise from the README. An explicit
+    developer preset. Defaults ``AUTH_MODE`` to ``none`` and satisfies
+    the ``_I_KNOW_THIS_IS_INSECURE`` second factor by itself while the
+    mesh stays on loopback, so a fresh ``Robot()`` joins a localhost
+    mesh with zero security setup. Pointed at another host (or with
+    multicast on) it needs ``_I_KNOW_THIS_IS_INSECURE=1`` as well. An explicit
     ``STRANDS_MESH_AUTH_MODE`` still overrides (force ``mtls`` even in
     local dev). Intended for single-machine experiments only; never
     set on a shared or production network.
@@ -137,6 +138,7 @@ Configuration env vars
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import math
@@ -247,15 +249,49 @@ def _local_dev_enabled() -> bool:
     """True when ``STRANDS_MESH_LOCAL_DEV`` is set to a truthy value.
 
     The localhost-only developer preset (GH #373 friction #7). When on, the
-    mesh runs without mTLS/ACL for frictionless single-machine experiments,
-    and ``LOCAL_DEV`` itself acts as the explicit "I accept insecure" second
-    factor -- so the operator does not ALSO need
-    ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1``. Truthy: ``1``, ``true``,
-    ``yes`` (case-insensitive). This is intentionally a *separate* knob from
-    ``STRANDS_MESH_AUTH_MODE`` so production code paths that read auth mode
-    directly never accidentally inherit a dev default.
+    mesh defaults to running without mTLS/ACL for single-machine experiments.
+    Truthy: ``1``, ``true``, ``yes`` (case-insensitive). This is intentionally a
+    *separate* knob from ``STRANDS_MESH_AUTH_MODE`` so production code paths
+    that read auth mode directly never accidentally inherit a dev default.
+    Whether it also counts as the insecure acknowledgement is decided by
+    :func:`_mesh_stays_on_this_machine`.
     """
     return os.getenv("STRANDS_MESH_LOCAL_DEV", "").strip().lower() in ("1", "true", "yes")
+
+
+def _endpoint_is_loopback(endpoint: str) -> bool:
+    """True when a zenoh endpoint (``tcp/127.0.0.1:7447``) cannot reach another machine."""
+    proto, _, address = endpoint.strip().partition("/")
+    if proto.lower().startswith("unix"):
+        return True
+    host = address.split("#", 1)[0].split("?", 1)[0]
+    host = host.rsplit(":", 1)[0] if host.count(":") == 1 or host.startswith("[") else host
+    host = host.strip("[]").lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _mesh_stays_on_this_machine() -> bool:
+    """True when this process's mesh can only talk to peers on the same machine.
+
+    Multicast scouting off and every ``ZENOH_CONNECT`` / ``ZENOH_LISTEN``
+    endpoint on loopback (the session's own default when neither is set).
+    Only then does ``STRANDS_MESH_LOCAL_DEV`` stand in for
+    ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``: a dev flag inherited by a box
+    that dials a hub on another host is not a decision to run that link
+    without auth.
+    """
+    if os.getenv("STRANDS_MESH_MULTICAST", "").strip().lower() in ("true", "1", "yes", "on"):
+        return False
+    for name in ("ZENOH_CONNECT", "ZENOH_LISTEN"):
+        for endpoint in os.getenv(name, "").split(","):
+            if endpoint.strip() and not _endpoint_is_loopback(endpoint):
+                return False
+    return True
 
 
 def resolve_auth_mode() -> str:
@@ -276,22 +312,33 @@ def resolve_auth_mode() -> str:
     auth off.
 
     **Local-dev shortcut** (GH #373 friction #7): setting
-    ``STRANDS_MESH_LOCAL_DEV=1`` defaults the auth mode to ``"none"`` AND
-    satisfies the insecure-acknowledgement second factor on its own -- one
-    env var, not two, to run a frictionless localhost mesh. An explicit
-    ``STRANDS_MESH_AUTH_MODE`` still wins (so you can force ``mtls`` even in
-    local dev), and an explicit ``AUTH_MODE=none`` under ``LOCAL_DEV`` no
-    longer needs the ``_I_KNOW_THIS_IS_INSECURE`` factor because ``LOCAL_DEV``
-    is the acknowledgement.
+    ``STRANDS_MESH_LOCAL_DEV=1`` defaults the auth mode to ``"none"``. It
+    also satisfies the insecure-acknowledgement second factor, but only while
+    the mesh stays on this machine (multicast off, every ``ZENOH_CONNECT`` /
+    ``ZENOH_LISTEN`` endpoint on loopback). A process under ``LOCAL_DEV``
+    that dials or listens beyond loopback needs
+    ``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`` as its own decision. An
+    explicit ``STRANDS_MESH_AUTH_MODE`` still wins (so you can force ``mtls``
+    even in local dev).
     """
     local_dev = _local_dev_enabled()
     default_mode = "none" if local_dev else "mtls"
     raw = os.getenv("STRANDS_MESH_AUTH_MODE", default_mode).strip().lower()
     if raw not in ("mtls", "none"):
         raise ValueError(f"STRANDS_MESH_AUTH_MODE={raw!r} not supported (expected 'mtls' or 'none')")
-    if raw == "none" and not local_dev:
+    if raw == "none" and not (local_dev and _mesh_stays_on_this_machine()):
         ack = os.getenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "").strip().lower()
         if ack not in ("1", "true", "yes"):
+            if local_dev:
+                raise ValueError(
+                    "STRANDS_MESH_LOCAL_DEV turns mesh wire auth off, and this "
+                    "process's mesh reaches beyond this machine (a non-loopback "
+                    "ZENOH_CONNECT / ZENOH_LISTEN endpoint, or "
+                    "STRANDS_MESH_MULTICAST=true). Refusing without an explicit "
+                    "second factor: set STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1 to "
+                    "run that link without mTLS and ACL, or set "
+                    "STRANDS_MESH_AUTH_MODE=mtls with the fleet's certificates."
+                )
             raise ValueError(
                 "STRANDS_MESH_AUTH_MODE=none disables BOTH the mTLS "
                 "terminator AND the ACL block -- the entire wire-layer "
