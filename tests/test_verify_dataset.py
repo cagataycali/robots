@@ -182,7 +182,7 @@ class TestCLI:
         ids=["zero_frames", "header_drift", "no_header"],
     )
     def test_human_report_prints_every_frame_count(
-        self, tmp_path: Path, capsys, frames: list[int], info: dict | None, shown: list[str], hidden: list[str]
+        self, tmp_path: Path, capsys, frames: list[int | None], info: dict | None, shown: list[str], hidden: list[str]
     ) -> None:
         _write_dataset(tmp_path, episode_indices=list(range(len(frames))), frames_per_episode=frames, info=info)
         verify_main([str(tmp_path)])
