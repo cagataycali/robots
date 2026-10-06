@@ -12,14 +12,16 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from strands_robots.dashboard import device_manager
+
 __all__ = ["render_snippet", "snippet_filename"]
 
-#: Env the dashboard's own spawner sets. Rendered as setdefault so an edge
-#: box with a deliberate different posture (real ACL file, mTLS) wins.
+#: Env the dashboard's own spawner adds to every child (``device_manager.child_env``). Rendered as
+#: setdefault so an edge box with a deliberate different posture (real ACL file, mTLS) wins.
+#: Nothing about wire auth or discovery is here: the snippet carries the posture this dashboard
+#: runs with (:data:`_LIVE_ONLY_KEYS`), never a baked-in looser one.
 _MESH_ENV: tuple[tuple[str, str], ...] = (
     ("STRANDS_ROBOTS_NO_DYLD_SHIM", "1"),
-    ("STRANDS_MESH_LOCAL_DEV", "1"),
-    ("STRANDS_MESH_MULTICAST", "true"),
     ("STRANDS_MESH", "true"),
     ("STRANDS_MESH_CAMERA_HZ", "5"),
 )
@@ -27,25 +29,44 @@ _MESH_ENV: tuple[tuple[str, str], ...] = (
 #: Default zenoh port, mirroring ``strands_robots.mesh.session``.
 DEFAULT_HUB_PORT = 7447
 
-_LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ", "STRANDS_MESH_MULTICAST"})
+_LIVE_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_CAMERA_HZ"})
 
-_SECURITY_LOOSENING_KEYS: frozenset[str] = frozenset({"STRANDS_MESH_LOCAL_DEV"})
+#: Rendered only when the dashboard runs with them, and for ``mode="real"`` only alongside the
+#: operator's own :data:`device_manager.REAL_SPAWN_ACK_ENV` - the same yes the spawn route asks for.
+_LIVE_ONLY_KEYS: tuple[str, ...] = (
+    "STRANDS_MESH_LOCAL_DEV",
+    "STRANDS_MESH_MULTICAST",
+    device_manager.INSECURE_ACK_ENV,
+)
+
+#: The comment a real-arm snippet carries above an acknowledged auth-off line.
+REAL_ARM_AUTH_OFF_WARNING = (
+    f"# WARNING: mesh wire auth is off for a real arm, acknowledged by {device_manager.REAL_SPAWN_ACK_ENV}"
+)
 
 
-def resolve_mesh_env(env: Mapping[str, str] | None) -> list[tuple[str, str]]:
-    """The env block to render, taking live values over the frozen defaults."""
+def _truthy(value: object) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes")
+
+
+def resolve_mesh_env(env: Mapping[str, str] | None, mode: str = "sim") -> list[tuple[str, str]]:
+    """The env block to render: the child defaults, then the dashboard's live mesh posture.
+
+    ``STRANDS_MESH_LOCAL_DEV``, ``STRANDS_MESH_MULTICAST`` and the insecure
+    acknowledgement appear only when ``env`` carries them. For ``mode="real"``
+    multicast follows the live value alone and the two auth-off keys appear
+    only when ``env`` also sets :data:`device_manager.REAL_SPAWN_ACK_ENV`.
+    """
     live = env or {}
     out: list[tuple[str, str]] = []
     for key, default in _MESH_ENV:
         value = str(live.get(key, "")).strip()
-        if key in _SECURITY_LOOSENING_KEYS:
-            if value:
-                out.append((key, value))
-            continue
-        if key in _LIVE_KEYS and value:
+        out.append((key, value if key in _LIVE_KEYS and value else default))
+    acknowledged = mode != "real" or _truthy(live.get(device_manager.REAL_SPAWN_ACK_ENV))
+    for key in _LIVE_ONLY_KEYS:
+        value = str(live.get(key, "")).strip()
+        if value and (acknowledged or key == "STRANDS_MESH_MULTICAST"):
             out.append((key, value))
-        else:
-            out.append((key, default))
     return out
 
 
@@ -168,6 +189,12 @@ def render_snippet(
         return {"error": "peer_id must match [A-Za-z0-9._:-]{1,64}"}
     if (host_problem := hub_host_error(hub_host)) is not None:
         return {"error": host_problem}
+    # No mapping is the empty posture (mTLS by default), read the same way by the gate and the block.
+    mesh_env = {} if mesh_env is None else mesh_env
+    if mode == "real" and (refusal := device_manager.real_spawn_posture_refusal(mesh_env)) is not None:
+        # The spawn route's own gate, on the posture the file would carry: a script that starts a
+        # physical arm is the same decision whether it runs here or on the edge box.
+        return {"error": refusal}
 
     stamp = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(now if now is not None else time.time()))
     name = payload.get("name") or peer_id
@@ -219,7 +246,9 @@ def render_snippet(
     lines += ["", "import os", "import time", ""]
 
     lines.append("# The mesh posture this dashboard runs with (setdefault: your own env wins).")
-    for key, val in resolve_mesh_env(mesh_env):
+    for key, val in resolve_mesh_env(mesh_env, mode):
+        if mode == "real" and key == "STRANDS_MESH_LOCAL_DEV":
+            lines.append(REAL_ARM_AUTH_OFF_WARNING)
         lines.append(f"os.environ.setdefault({key!r}, {str(val)!r})")
     try:
         port_txt = str(int(str(hub_port))) if hub_port not in (None, "") else str(DEFAULT_HUB_PORT)

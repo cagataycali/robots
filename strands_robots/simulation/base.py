@@ -2250,6 +2250,16 @@ class SimEngine(ABC):
                 try:
                     float(value)
                 except (TypeError, ValueError):
+                    # Name the length-1 unwrap above, or a caller refused for
+                    # ``[0.5, 0.6]`` cannot tell that ``[0.5]`` is accepted.
+                    width = None if isinstance(value, (str, bytes, Mapping)) else sequence_length(value)
+                    hint = (
+                        ""
+                        if width is None
+                        else f" It carries {width} element{'' if width == 1 else 's'}; a "
+                        "one-element sequence ([v], (v,), np.array([v])) is unwrapped once "
+                        "to its scalar, so send one value per actuator key."
+                    )
                     return None, {
                         "status": "error",
                         "content": [
@@ -2257,7 +2267,7 @@ class SimEngine(ABC):
                                 "text": (
                                     f"send_action: action value for key '{key}' must be a "
                                     "scalar number (one value per actuator/joint), got "
-                                    f"{type(value).__name__}."
+                                    f"{type(value).__name__}.{hint}"
                                 )
                             }
                         ],

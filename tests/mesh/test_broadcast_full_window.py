@@ -8,20 +8,13 @@ systematically under-counted the fleet: an operator could not distinguish
 must be honoured in full so every peer that replies within it is counted.
 """
 
-import json
 import threading
 import time
-import types
 
 import pytest
 
 from strands_robots.mesh import core
-
-
-def _sample(payload: dict) -> object:
-    s = types.SimpleNamespace()
-    s.payload = types.SimpleNamespace(to_bytes=lambda: json.dumps(payload).encode())
-    return s
+from tests._mesh_reply import reply_sample
 
 
 def test_broadcast_collects_responses_across_the_full_window(monkeypatch):
@@ -35,11 +28,11 @@ def test_broadcast_collects_responses_across_the_full_window(monkeypatch):
         def responder():
             # ack #1 arrives immediately (old code returned ~0.3s after this)
             time.sleep(0.05)
-            m._on_response(_sample({"turn_id": turn, "responder_id": "r1", "result": 1}))
+            m._on_response(reply_sample(m, {"turn_id": turn, "responder_id": "r1", "result": 1}))
             # acks #2 and #3 arrive AFTER the old 0.3s early-return window
             time.sleep(0.5)
-            m._on_response(_sample({"turn_id": turn, "responder_id": "r2", "result": 2}))
-            m._on_response(_sample({"turn_id": turn, "responder_id": "r3", "result": 3}))
+            m._on_response(reply_sample(m, {"turn_id": turn, "responder_id": "r2", "result": 2}))
+            m._on_response(reply_sample(m, {"turn_id": turn, "responder_id": "r3", "result": 3}))
 
         threading.Thread(target=responder, daemon=True).start()
 
