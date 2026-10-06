@@ -1430,14 +1430,11 @@ class TestOnFrameHookForSpec:
         assert len(captured_steps) == 60, f"expected 60 calls (3 ep × 20 steps), got {len(captured_steps)}"
         assert captured_steps == list(range(60)), "global counter should be monotonic across episodes"
 
-    def test_on_frame_failures_logged_not_fatal(self, caplog):
-        """A raising ``on_frame`` is logged WARNING but the rollout
-        continues. The hook is opt-in telemetry - a broken recorder
-        shouldn't crash a 5-episode eval.
-
-        Pinned so a future refactor doesn't accidentally promote hook
-        failures to fatal errors.
-        """
+    @pytest.mark.parametrize(("limit", "status", "warned"), [(None, "error", 5), (30, "success", 20)])
+    def test_on_frame_failures_are_bounded_by_the_ceiling(self, caplog, limit, status, warned):
+        """A raising ``on_frame`` is logged WARNING and tolerated up to
+        ``max_onframe_failures`` in a row (default 5, as in ``run``); a ceiling
+        the 20-step episode never reaches lets the benchmark complete."""
         import logging as _logging
 
         def bad_on_frame(step, obs, action):
@@ -1450,13 +1447,20 @@ class TestOnFrameHookForSpec:
 
         with caplog.at_level(_logging.WARNING, logger="strands_robots.simulation.policy_runner"):
             result = PolicyRunner(sim).evaluate(
-                "fake_robot", policy, spec=spec, n_episodes=1, seed=42, on_frame=bad_on_frame
+                "fake_robot",
+                policy,
+                spec=spec,
+                n_episodes=1,
+                seed=42,
+                on_frame=bad_on_frame,
+                max_onframe_failures=limit,
             )
 
-        assert result["status"] == "success", f"hook failure must not fail the rollout: {result}"
+        assert result["status"] == status, result
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert (payload["onframe_error"] is None) == (status == "success")
         warnings = [r for r in caplog.records if "on_frame hook failed" in r.getMessage()]
-        # 20 steps → 20 hook invocations → 20 warnings.
-        assert len(warnings) == 20, f"expected 20 warnings, got {len(warnings)}"
+        assert len(warnings) == warned, f"expected {warned} warnings, got {len(warnings)}"
 
     def test_on_frame_default_none_is_noop(self):
         """The default ``on_frame=None`` doesn't change behaviour - the

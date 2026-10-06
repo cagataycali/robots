@@ -390,8 +390,11 @@ class TestNoOnframeFailureLimitSurfaceDrifts:
         # negative assertion below could pass by matching nothing.
         names = {name for name, _mod, _fn in _public_surfaces()}
         assert names == {
+            "base.py::SimEngine.eval_policy",
+            "base.py::SimEngine.evaluate_benchmark",
             "base.py::SimEngine.run_policy",
             "base.py::SimEngine.start_policy",
+            "policy_runner.py::PolicyRunner.evaluate",
             "policy_runner.py::PolicyRunner.run",
             "simulation.py::MuJoCoSimEngine.run_policy",
             "simulation.py::MuJoCoSimEngine.start_policy",
@@ -428,7 +431,12 @@ class TestTheDomainIsDiscoverable:
 
     @pytest.mark.parametrize(
         ("method", "owner"),
-        [(SimEngine.run_policy, "run_policy"), (PolicyRunner.run, "PolicyRunner.run")],
+        [
+            (SimEngine.run_policy, "run_policy"),
+            (SimEngine.evaluate_benchmark, "evaluate_benchmark"),
+            (PolicyRunner.run, "PolicyRunner.run"),
+            (PolicyRunner.evaluate, "PolicyRunner.evaluate"),
+        ],
     )
     def test_the_args_entry_states_the_domain(self, method, owner):
         doc = inspect.getdoc(method) or ""
