@@ -114,3 +114,35 @@ def test_a_str_subclass_cannot_pass_a_blank_model_xml():
 
     with pytest.raises(ValueError, match="model_xml must name a model file"):
         register_robot("drone", model_xml=Padded("   "), hardware={"driver": "strands"})
+
+
+@pytest.mark.parametrize(
+    ("hardware", "hint"),
+    [
+        (
+            {"driver": "strands", "lerobot_tpye": "koch"},
+            "hardware.lerobot_tpye is not a known field; did you mean 'lerobot_type'?",
+        ),
+        ({"driver": "strands", "drvier": "x"}, "hardware.drvier is not a known field; did you mean 'driver'?"),
+        (
+            {"driver": "strands", "port": "/dev/ttyACM0"},
+            "hardware.port is not a known field; known: driver, lerobot_type, requires_lerobot_from_source",
+        ),
+        ({"driver": "strands", "lerobot_type": "koch", "requires_lerobot_from_source": True}, None),
+    ],
+)
+def test_a_hardware_key_nothing_reads_is_named_with_the_field_it_meant(caplog, hardware, hint):
+    """The robot still registers, but a key no reader acts on is named in a warning."""
+    with caplog.at_level("WARNING", logger="strands_robots.registry.user_registry"):
+        register_robot("typo_arm", hardware=hardware)
+    assert [r.getMessage() for r in caplog.records] == (
+        [f"Robot 'typo_arm' stores a key nothing reads: {hint}"] if hint else []
+    )
+
+
+def test_a_refused_declaration_names_the_field_a_typo_meant():
+    """The refusal itself carries the hint, so a caller reading only the error sees it."""
+    with pytest.raises(
+        ValueError, match=r"hardware\.lerobot_tpye is not a known field; did you mean 'lerobot_type'\?$"
+    ):
+        register_robot("typo_arm", hardware={"driver": "lerobot", "lerobot_tpye": "koch"})
