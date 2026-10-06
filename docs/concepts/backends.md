@@ -1,5 +1,5 @@
 ---
-description: "One interface, several places a robot can be: MuJoCo, Newton and Isaac in simulation, the lerobot driver and native drivers on hardware, and what each one refuses."
+description: "One interface, several places a robot can be: MuJoCo, Newton, Isaac and mjlab in simulation, the lerobot driver and native drivers on hardware, and what each one refuses."
 ---
 
 # Simulation and hardware
@@ -14,9 +14,10 @@ description: "One interface, several places a robot can be: MuJoCo, Newton and I
 |---|---|---|---|
 | MuJoCo | default, `backend="mujoco"` | CPU | one world, one or a few robots, every Start page |
 | Newton | `backend="newton"` | GPU (Warp) | many worlds stepped together |
-| Isaac Sim | `backend="isaac"`, plugin `strands-robots-sim` | GPU, NVIDIA | photoreal scenes, Isaac assets |
+| Isaac Sim | `backend="isaac"` | GPU, NVIDIA | photoreal scenes, Isaac assets |
+| mjlab | `backend="mjlab"` | GPU (MuJoCo-Warp) | thousands of MuJoCo worlds, RL training |
 
-All three build from the same registry entry and expose the same engine methods; `list_backends()` names what this install can start. The simulator is never gated: a sim world is the place where an agent may do anything, which is why the [ladder](../start/index.md) keeps you there until Stage 3.
+All four build from the same registry entry and expose the same engine methods; `list_backends()` names what this install can start. The simulator is never gated: a sim world is the place where an agent may do anything, which is why the [ladder](../start/index.md) keeps you there until Stage 3.
 
 ## Hardware backends
 
@@ -26,8 +27,8 @@ A hardware robot publishes a smaller tool: read (`status`, `get_state`, `list_ca
 
 ## Transports
 
-Between a native driver and the motors sits a transport: a serial port for Feetech and Dynamixel, a TCP socket for Franka and Robotiq, DDS for Unitree, a ROS 2 graph or rosbridge for anything with a ROS stack. The robot page for each hardware robot ([SO-101](../robots/so101.md), say) names its transport and the address the driver needs, and [Real arm](../start/first-real-arm.md) shows the port discovery once.
+Between a native driver and the motors sits a transport: a serial port for Feetech and Dynamixel, a TCP socket for Franka and Robotiq, DDS for Unitree, a ROS 2 graph or rosbridge for anything with a ROS stack. Each hardware robot's page ([SO-101](../robots/so101.md), say) names its transport and address, and [Real arm](../start/first-real-arm.md) shows port discovery.
 
 ## The same call, checked
 
-Every guide on this site that shows a sim fence and a real sketch uses the same method names, and a grader reads both to make sure they spell one API. When a backend cannot honour a call it refuses with a sentence naming what it lacks; it does not approximate. `render` on a real arm returns the camera frame; `randomize` sent to a real arm's tool is answered by naming the tool that has that action, the simulator's.
+Every guide's sim fence and real sketch use the same method names, and a grader checks that they spell one API. When a backend cannot honour a call it refuses with a sentence naming what it lacks; it does not approximate. `render` on a real arm returns the camera frame; `randomize` sent to a real arm's tool is answered by naming the tool that has that action, the simulator's.
