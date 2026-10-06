@@ -226,7 +226,7 @@ async def renew(request: Request, response: Response, who: dict = Depends(access
     """Renew the presented session if it is due; the absolute cap is the auth module's."""
     if who.get("via") != "passkey":
         return {"renewed": False}
-    fresh = auth.renew_if_due(access.presented_token(request))
+    fresh = auth.renew_if_due(access.session_token(request))
     if fresh:
         _set_session_cookie(response, request, fresh)
     return {"renewed": bool(fresh)}

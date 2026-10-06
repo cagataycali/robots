@@ -33,7 +33,7 @@ Two e-stops: `POST /api/safety/estop` stops this process's simulations; `POST /a
 
 One dependency, `access.require_session`, guards every route but the login screen and `/api/health`. Three ways in, first match wins:
 
-1. A passkey session token: the `strands_dash` cookie, else `Authorization: Bearer`; never a query string.
+1. A passkey session token: the `strands_dash` cookie before `Authorization: Bearer`; never a query string.
 2. The static `security.auth_token`, compared in constant time.
 3. The bootstrap token as bearer, only while no passkey is enrolled, from this machine's own browser: loopback socket, no proxy header, a loopback `Host`, an `Origin` naming the same host. A DNS-rebound page or cross-site fetch fails there.
 

@@ -4,10 +4,11 @@ One dependency, ``require_session``, guards every route that is not the login
 screen. Three ways in, in this order, and the first that answers wins:
 
 1. A valid passkey session token (``auth.verify_token``), presented as the
-   ``strands_dash`` cookie the login screen sets or, when there is no cookie,
-   as ``Authorization: Bearer``. The cookie wins when both are present: a
-   bearer is something a page script can hold, the ``HttpOnly`` cookie is not,
-   so a script-held token never shadows the session the browser keeps. A
+   ``strands_dash`` cookie the login screen sets or as ``Authorization:
+   Bearer``. The cookie is tried first and a valid one wins: a bearer is
+   something a page script can hold, the ``HttpOnly`` cookie is not, so a
+   script-held token never shadows the session the browser keeps. A stale
+   cookie that answers nothing does not hide a valid bearer at any door. A
    handoff session (``via="handoff"``) is honoured from the cookie only.
    Query-string tokens are not read: they land in access logs.
 2. The static ``security.auth_token`` from settings, compared in constant time.
@@ -73,24 +74,28 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
-def _presented(request: Request) -> tuple[str, str]:
-    """``(token, where)``: the cookie when there is one, else the bearer header; ``("", "")`` for neither."""
+def _presented(request: Request) -> list[tuple[str, str]]:
+    """Every ``(token, where)`` a request carries, cookie first, then the bearer header."""
+    found = []
     cookie = request.cookies.get(COOKIE, "").strip()
     if cookie:
-        return cookie, "cookie"
+        found.append((cookie, "cookie"))
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer ") and header[7:].strip():
-        return header[7:].strip(), "bearer"
-    return "", ""
+        found.append((header[7:].strip(), "bearer"))
+    return found
 
 
 def presented_token(request: Request) -> str:
-    """The session token a request carries, or an empty string.
+    """The first token a request carries, or an empty string.
 
-    The ``HttpOnly`` cookie first; the ``Authorization: Bearer`` header only
-    when there is no cookie. Never the query string.
+    The ``HttpOnly`` cookie first, then the ``Authorization: Bearer`` header.
+    Never the query string. Doors that judge a credential try each in this
+    order and take the first that answers, so a valid cookie always wins and a
+    stale one never hides a valid bearer.
     """
-    return _presented(request)[0]
+    found = _presented(request)
+    return found[0][0] if found else ""
 
 
 def came_through_a_proxy(request: Request) -> bool:
@@ -153,6 +158,19 @@ def origin_is_self(request: Request) -> bool:
     return split.scheme in ("http", "https") and split.netloc == host.strip().lower()
 
 
+def _session(request: Request) -> tuple[str, dict[str, Any]] | None:
+    """``(token, claims)`` of the first presented credential that is a valid session, or None."""
+    for token, where in _presented(request):
+        try:
+            claims = auth.verify_token(token)
+        except HTTPException:
+            continue
+        if where != "cookie" and claims.get("via") == "handoff":
+            continue
+        return token, claims
+    return None
+
+
 def session_claims(request: Request) -> dict[str, Any] | None:
     """Claims of a valid presented session, or None. Never raises.
 
@@ -160,39 +178,37 @@ def session_claims(request: Request) -> dict[str, Any] | None:
     holds it in its ``HttpOnly`` cookie, so a copy in a header was lifted
     from somewhere it was never meant to be.
     """
-    token, where = _presented(request)
-    if not token:
-        return None
-    try:
-        claims = auth.verify_token(token)
-    except HTTPException:
-        return None
-    if where != "cookie" and claims.get("via") == "handoff":
-        return None
-    return claims
+    found = _session(request)
+    return found[1] if found else None
+
+
+def session_token(request: Request) -> str:
+    """The presented token that :func:`session_claims` accepted, or an empty string."""
+    found = _session(request)
+    return found[0] if found else ""
 
 
 def static_token_matches(request: Request) -> bool:
-    """Whether the presented token equals ``security.auth_token`` (constant time)."""
+    """Whether a presented token equals ``security.auth_token`` (constant time)."""
     configured = settings.get("security", "auth_token")
     if not configured:
         return False
-    return hmac.compare_digest(presented_token(request), str(configured))
+    return any(hmac.compare_digest(token, str(configured)) for token, _ in _presented(request))
 
 
 def bootstrap_token_matches(request: Request) -> bool:
-    """Whether the presented token is the first-enrollment proof (constant time).
+    """Whether a presented token is the first-enrollment proof (constant time).
 
     The expectation is the one ``auth.begin_registration`` checks: the
     configured ``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN``, else the ``0600`` file
     beside the credential store. A request that presents nothing is refused
     before the file is consulted, so an anonymous probe never mints it.
     """
-    presented = presented_token(request)
+    presented = _presented(request)
     if not presented:
         return False
     _source, expected = auth._first_enrollment_proof()
-    return hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+    return any(hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")) for token, _ in presented)
 
 
 def open_posture(request: Request) -> bool:

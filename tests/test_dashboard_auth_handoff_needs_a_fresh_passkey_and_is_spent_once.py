@@ -11,8 +11,8 @@ Now minting takes an assertion over a ``/handoff/begin`` challenge on top of
 the session, the answer is a code that no route accepts as a credential, the
 code is spent by ``/handoff/redeem`` exactly once (the redeeming device gets the
 session as its own ``HttpOnly`` cookie), and that session is honoured from the
-cookie only. When a request carries both a cookie and a bearer, the cookie is
-the one read.
+cookie only. When a request carries both a cookie and a bearer, a valid cookie
+wins, and a stale one never hides a valid bearer or the access-token door.
 """
 
 from __future__ import annotations
@@ -114,24 +114,44 @@ class TestTheCodeIsNotACredentialAndIsSpentOnce:
         lifted = device.cookies.get(access.COOKIE)
         assert lifted and auth.verify_token(lifted)["via"] == "handoff"
         assert _bare(lifted).get(GUARDED).status_code == 401
+        behind_a_stale_cookie = _bare(lifted)
+        behind_a_stale_cookie.cookies.set(access.COOKIE, "junk")
+        assert behind_a_stale_cookie.get(GUARDED).status_code == 401
 
 
-# cookie, bearer -> status of a guarded route
+# cookie, bearer -> status of a guarded route. "valid" is the owner's passkey
+# session, "static" the configured access token.
 PRESENTED = [
     ("valid", "junk", 200),
-    ("junk", "valid", 401),
+    ("junk", "valid", 200),
+    ("junk", "static", 200),
     ("", "valid", 200),
     ("", "", 401),
+    ("junk", "junk", 401),
 ]
 
 
-@pytest.mark.parametrize("cookie,bearer,status", PRESENTED)
-def test_the_cookie_wins_over_a_bearer(owner, cookie, bearer, status) -> None:
-    """A bearer is read only when there is no cookie: a script-held copy never shadows the browser's session."""
-    valid = owner.cookies.get(access.COOKIE)
+def _client(owner: TestClient, cookie: str, bearer: str) -> TestClient:
+    values = {"valid": owner.cookies.get(access.COOKIE), "junk": "junk", "static": "the-static-token"}
     client = TestClient(create_app(), base_url="http://localhost")
     if cookie:
-        client.cookies.set(access.COOKIE, valid if cookie == "valid" else "junk")
+        client.cookies.set(access.COOKIE, values[cookie])
     if bearer:
-        client.headers["Authorization"] = f"Bearer {valid if bearer == 'valid' else 'junk'}"
-    assert client.get(GUARDED).status_code == status
+        client.headers["Authorization"] = f"Bearer {values[bearer]}"
+    return client
+
+
+@pytest.mark.parametrize("cookie,bearer,status", PRESENTED)
+def test_the_first_credential_that_answers_is_the_one_read(owner, cookie, bearer, status) -> None:
+    """Cookie first, bearer second: a stale cookie never hides a valid bearer or the access-token door."""
+    settings.override("security", "auth_token", "the-static-token")
+    assert _client(owner, cookie, bearer).get(GUARDED).status_code == status
+
+
+def test_a_valid_cookie_wins_over_a_valid_bearer(owner) -> None:
+    """A script-held session for someone else never shadows the browser's own."""
+    other = issue_enrolled("AgICAgICAgICAgICAgICAg", "Other")
+    request = connection(
+        path=GUARDED, cookie=f"{access.COOKIE}={owner.cookies.get(access.COOKIE)}", authorization=f"Bearer {other}"
+    )
+    assert access.session_claims(request)["sub"] == OWNER
