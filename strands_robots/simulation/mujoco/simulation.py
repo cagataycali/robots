@@ -8119,6 +8119,19 @@ class MuJoCoSimEngine(
             return None
         return "name"
 
+    def _actions_taking(self, param: str) -> list[str]:
+        """The published actions whose method declares ``param``, sorted.
+
+        Read from the signatures the router binds against, so the answer a
+        refusal gives cannot drift from what the next call will accept.
+        """
+        taking = []
+        for action in sorted(_PUBLISHED_ACTIONS):
+            method = getattr(self, self._ACTION_ALIASES.get(action, action), None)
+            if method is not None and param in inspect.signature(method).parameters:
+                taking.append(action)
+        return taking
+
     def _validate_and_build_kwargs(
         self,
         action: str,
@@ -8206,7 +8219,9 @@ class MuJoCoSimEngine(
             # an unknown robot already is: ``policy`` is answered with
             # ``policy_provider, policy_config`` instead of a 20-name list to
             # scan. The sentence is the one the real arm tool uses too.
-            return None, unknown_parameter_error([reported_unknown], action, valid_sorted)
+            return None, unknown_parameter_error(
+                [reported_unknown], action, valid_sorted, self._actions_taking(unknown[0])
+            )
 
         # 2) Scalar string type validation. The schema publishes these as
         # strings, and every value at this boundary arrives as JSON, so a
