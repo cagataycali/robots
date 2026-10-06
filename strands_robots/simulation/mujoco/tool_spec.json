@@ -89,7 +89,8 @@
       "description": "Path to MJCF/URDF scene file. Read as given; a relative path that is not there is then looked for in the scenes directory (~/.strands_robots/scenes, or STRANDS_ROBOTS_SCENE_ROOT), where a relative export_xml destination lands, so exporting and reloading under one bare name round-trips."
     },
     "timestep": {
-      "type": "number"
+      "type": "number",
+      "description": "set_timestep: physics integration dt in seconds (default 0.002s = 500 Hz). Smaller dt = more stable but slower; larger dt = faster but risks explosion on stiff contacts. The step action counts n_steps at this rate (duration = n_steps * timestep)."
     },
     "gravity": {
       "type": "array",
@@ -232,10 +233,12 @@
       "description": "The natural-language task the policy is conditioned on (run_policy, start_policy, eval_policy), e.g. 'pick up the red cube'. This is the field for what a caller might otherwise call task= or prompt=."
     },
     "duration": {
-      "type": "number"
+      "type": "number",
+      "description": "run_policy/start_policy/run_multi_policy/eval_policy/evaluate_benchmark: wall-clock rollout length in seconds (duration = n_steps / control_frequency); pass this or n_steps, not both. NOT accepted by step/start_cameras_recording -- step counts physics ticks via n_steps, start_cameras_recording stops on max_frames_per_camera."
     },
     "action_horizon": {
-      "type": "integer"
+      "type": "integer",
+      "description": "run_policy/start_policy/run_multi_policy/eval_policy: how many future actions a chunk-emitting policy returns per get_actions call (lerobot_local ACT/Pi0/SmolVLA/Diffusion, flux3_action). Each chunk drains across control steps before the next policy query, so this trades inference frequency against reactivity. Non-chunk policies (mock, scripted, wbc) ignore it."
     },
     "control_frequency": {
       "type": "number",
