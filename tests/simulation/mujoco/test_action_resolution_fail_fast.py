@@ -303,3 +303,26 @@ class TestObserverPreflight:
         robot = sim._world.robots["so101"]
         assert robot.policy_running is False
         assert robot.policy_claim_stops is None
+
+
+@pytest.mark.parametrize(
+    ("action", "n_steps"),
+    [
+        ({"joint_0": 0.5}, 1),  # unresolved keys, below the probe window
+        ({"joint_0": 0.5}, 2),
+        ({"joint_0": 0.5}, 3),  # unresolved keys, in-window fail-fast
+        ({}, 1),  # an empty action commands no actuator
+        ({}, 5),
+    ],
+)
+def test_an_error_rollout_report_leads_with_policy_failed(sim, action, n_steps):
+    """status="error" never opens with "Policy complete", on either side of the probe window."""
+    result = sim.run_policy(
+        robot_name="so101",
+        policy_object=_FixedKeysPolicy(action),
+        n_steps=n_steps,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    assert result["status"] == "error", result
+    assert result["content"][0]["text"].startswith("Policy failed"), result["content"][0]["text"]
