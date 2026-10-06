@@ -57,7 +57,12 @@ def test_the_file_has_the_documented_shape() -> None:
 
 def test_the_file_lists_exactly_the_urdf_only_complement() -> None:
     pytest.importorskip("robot_descriptions")
-    assert sorted(_table()) == discovery.list_urdf_only()
+    table = _table()
+    assert sorted(table) == discovery.list_urdf_only(include_refused=True)
+    # The default listing is what Robot(name) can spawn: a refused description
+    # stays a known name (it reports its refusal) but is not offered.
+    assert discovery.list_urdf_only() == sorted(n for n, e in table.items() if e["has_sim"])
+    assert all(discovery.is_urdf_only(n) for n in table)
 
 
 def test_urdf_only_is_disjoint_from_mjcf_discovery_and_the_curated_registry() -> None:

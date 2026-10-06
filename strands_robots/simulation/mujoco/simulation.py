@@ -426,7 +426,16 @@ def _compiled_geometry_detail(mj: Any, model: Any, shape: str, geom_name: str) -
     if shape == "mesh":
         geometry = "extent unavailable" if extent is None else f"extent={extent}m from the asset"
         return f"{geometry} (collision uses its convex hull)"
-    return "size unavailable" if extent is None else f"size={extent}"
+    if extent is None:
+        return "size unavailable"
+    if shape == "capsule":
+        # The bounding extent includes both caps, so it is one diameter longer
+        # than the size[2] the caller passed; name the split so that number has
+        # a visible rule behind it.
+        geom_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+        radius, half_length = (float(v) for v in model.geom_size[geom_id][:2])
+        return f"size={extent} ({round(2 * half_length, 6)} m cylinder + {round(2 * radius, 6)} m of end caps)"
+    return f"size={extent}"
 
 
 def _validated_mesh_handle(mesh: Any) -> Any:
