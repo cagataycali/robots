@@ -482,12 +482,13 @@ def _audit_process_state_is_left_as_found() -> Iterator[None]:
 
 #: Every "warn once per process" memo in the package, as ``(module, name)``: a
 #: module-level container of the keys already reported, born empty, whose only
-#: job is to stop a repeat. Sixteen of them across eleven modules. Emptied by
+#: job is to stop a repeat. Seventeen of them across twelve modules. Emptied by
 #: :func:`_warn_once_memos_are_left_empty` below, and discovered rather than
 #: trusted in ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so
-#: a seventeenth cannot appear without a row here.
+#: an eighteenth cannot appear without a row here.
 WARN_ONCE_MEMOS: tuple[tuple[str, str], ...] = (
     ("strands_robots._mesh_switch", "_UNKNOWN_WARNED"),
+    ("strands_robots.dashboard.record_crash", "_warned_overrides"),
     ("strands_robots.device_connect._authz", "_warned_permissive"),
     ("strands_robots.device_connect._authz", "_warned_insecure_acl"),
     ("strands_robots.device_connect._authz", "_warned_unconfigured"),
