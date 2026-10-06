@@ -444,7 +444,9 @@ class TestReprovisionThing:
     def test_new_certificate_attached_and_activated_before_the_old_one_is_removed(self, rotating, tmp_path):
         iot = rotating()
         iot.existing_policy = {"Version": "2012-10-17", "Statement": []}  # the account's copy predates a grant
-        result = prov.reprovision_thing("so101-r", cert_dir=tmp_path)
+        # The stand-in's old certificate carries ``strands-robot`` (the
+        # fleet-stop grant), which a rotation only carries over when told to.
+        result = prov.reprovision_thing("so101-r", cert_dir=tmp_path, estop_publish=True)
         names = iot.names()
         assert "create_certificate_from_csr" in names
         assert names.index("attach_thing_principal") < names.index("detach_thing_principal")
@@ -490,7 +492,7 @@ class TestReprovisionThing:
     def test_a_failed_deactivation_is_a_warning_with_the_command_and_is_reported(self, rotating, tmp_path, caplog):
         rotating(fail_deactivate=True)
         with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.iot.provision"):
-            result = prov.reprovision_thing("so101-r", cert_dir=tmp_path)
+            result = prov.reprovision_thing("so101-r", cert_dir=tmp_path, estop_publish=True)
         assert result.stale_certificates == ("old0000000000",)
         (w,) = [r for r in caplog.records if "still attached and active" in r.getMessage()]
         assert "aws iot update-certificate --certificate-id old0000000000 --new-status INACTIVE" in w.getMessage()
@@ -517,7 +519,9 @@ class TestIotCli:
         from strands_robots.mesh.iot.cli import main
 
         rotating()
-        rc = main(["reprovision", "so101-r", "--region", "us-west-2", "--cert-dir", str(tmp_path)])
+        rc = main(
+            ["reprovision", "so101-r", "--region", "us-west-2", "--cert-dir", str(tmp_path), "--estop-publish", "keep"]
+        )
         out = capsys.readouterr().out
         assert rc == 0
         assert "CN=so101-r" in out and "policy strands-robot" in out
@@ -544,7 +548,7 @@ class TestIotCli:
         from strands_robots.mesh.iot.cli import main
 
         rotating(fail_deactivate=True)
-        rc = main(["reprovision", "so101-r", "--cert-dir", str(tmp_path)])
+        rc = main(["reprovision", "so101-r", "--cert-dir", str(tmp_path), "--estop-publish", "keep"])
         assert rc == 0
         assert "old0000000000" in capsys.readouterr().err
 

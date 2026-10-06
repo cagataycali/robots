@@ -78,7 +78,7 @@ PROVISIONING_HOOK_ROLE = "strands-mesh-provisioning-hook-role"
 #: IoT policy for the SigV4 path (``STRANDS_IOT_DIRECT_AUTH=sigv4``).
 OPERATOR_DIRECT_POLICY = "strands-operator-direct"
 #: Bump whenever _PROVISIONING_HOOK_SOURCE changes.
-_PROVISIONING_HOOK_VERSION = 2
+_PROVISIONING_HOOK_VERSION = 3
 LOG_GROUP_NAME = "/aws/iot/strands-mesh"
 
 #: Ledger names for the two Lambda resource policy statements the bootstrap
@@ -221,6 +221,19 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
 #     grant even though its Thing name differs. Accepted: CN equal to the
 #     ThingName, or the CN AWS writes into a certificate it generated the key
 #     for ("AWS IoT Certificate"), which matches no robot grant.
+#   * The ThingName is the device's to propose, so it is held to what
+#     ``provision_robot`` would accept (charset, no child separator, no
+#     trailing underscore) and to the reserved fleet segments: the robot
+#     policy grants ``strands/<thing>/*``, so a Thing named ``safety`` would
+#     own ``strands/safety/estop`` and ``strands/safety/resume`` through its
+#     own prefix. ``_RESERVED_THING_NAMES`` is a literal copy of
+#     ``provision.RESERVED_THING_NAMES`` (the hook runs in Lambda without the
+#     package; a test pins the two equal).
+#   * The ThingName is bound to the allowlisted serial: it must be the serial
+#     itself or ``<model>-<serial>`` with one alphanumeric model token
+#     (``g1-robot-001`` for serial ``robot-001``). A claim-cert holder with
+#     one allowlisted serial can then register exactly two names, both of
+#     which name that device.
 #
 # The CN is read with a small DER walk rather than ``cryptography``: the
 # hook runs in Lambda with only the runtime's boto3 available, and adding a
@@ -240,6 +253,14 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
 
     _SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
     _ALLOW_PREFIX = "/strands-mesh/provisioning/allow/"
+    # Mirrors provision._validate_thing_name: its charset, the child peer
+    # separator and the trailing underscore it refuses.
+    _THING_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+    _CHILD_PEER_SEPARATOR = "__"
+    # Mirrors provision.RESERVED_THING_NAMES: the fleet-wide first segments
+    # of the strands/ namespace, compared case-insensitively.
+    _RESERVED_THING_NAMES = {"safety", "broadcast"}
+    _MODEL_TOKEN_RE = re.compile(r"^[A-Za-z0-9]{1,32}$")
     # The subject CN AWS writes into a certificate whose key it generated
     # (CreateKeysAndCertificate). It names no robot, so it inherits no grant.
     _AWS_GENERATED_CN = "AWS IoT Certificate"
@@ -284,6 +305,20 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
         except Exception:
             return None
 
+    def thing_name_problem(thing_name, serial):
+        # Why this ThingName may not be registered for this serial, or None.
+        if not isinstance(thing_name, str) or not _THING_NAME_RE.fullmatch(thing_name):
+            return "outside the accepted charset or length"
+        if _CHILD_PEER_SEPARATOR in thing_name or thing_name.endswith("_"):
+            return "would alias another Thing's child peers"
+        if thing_name.lower() in _RESERVED_THING_NAMES:
+            return "is a reserved fleet-wide topic segment"
+        if thing_name == serial:
+            return None
+        if thing_name.endswith("-" + serial) and _MODEL_TOKEN_RE.fullmatch(thing_name[: -len(serial) - 1]):
+            return None
+        return "is not the serial or <model>-<serial>"
+
     def lambda_handler(event, context):
         # AWS IoT Fleet Provisioning PreProvisioningHook.
         # Must return {"allowProvisioning": bool}. Deny-by-default.
@@ -293,6 +328,11 @@ _PROVISIONING_HOOK_SOURCE = textwrap.dedent(
 
         if not isinstance(serial, str) or not _SERIAL_RE.fullmatch(serial):
             log.warning("provisioning DENY: bad/missing SerialNumber %r", serial)
+            return {"allowProvisioning": False}
+
+        problem = thing_name_problem(thing_name, serial)
+        if problem is not None:
+            log.warning("provisioning DENY: ThingName %r for serial %r %s", thing_name, serial, problem)
             return {"allowProvisioning": False}
 
         pem = (event or {}).get("certificatePem")
@@ -910,7 +950,15 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
 
 
 def _provisioning_template_body() -> dict[str, Any]:
-    """The Fleet Provisioning template document: Thing, certificate, and the two robot policies."""
+    """The Fleet Provisioning template document: Thing, certificate, and the two robot policies.
+
+    The device proposes ``ThingName`` and ``SerialNumber``; the hook
+    (:data:`_PROVISIONING_HOOK_SOURCE`) accepts a ``ThingName`` that is the
+    allowlisted ``SerialNumber`` itself or ``<model>-<SerialNumber>`` with one
+    alphanumeric model token, within the charset ``provision_robot`` accepts
+    and never one of the reserved fleet segments
+    (:data:`~strands_robots.mesh.iot.provision.RESERVED_THING_NAMES`).
+    """
     return {
         "Parameters": {
             "ThingName": {"Type": "String"},
