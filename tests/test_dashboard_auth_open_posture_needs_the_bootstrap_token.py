@@ -70,6 +70,13 @@ class TestTheL4ForwarderCaseIsRefused:
             access.caller(request)
         assert raised.value.status_code == 401
 
+    def test_a_stale_cookie_does_not_hide_the_proof(self, fresh_install: Path) -> None:
+        auth._first_enrollment_proof()
+        request = connection(
+            path="/api/whoami", cookie=f"{access.COOKIE}=expired", **_bearer(_local_token(fresh_install))
+        )
+        assert access.open_posture(request) is True
+
     def test_a_guessed_token_is_refused(self, fresh_install: Path) -> None:
         auth._first_enrollment_proof()  # the file exists, so this is a mismatch and not an absence
         request = connection(path="/api/whoami", **_bearer("not-the-token"))

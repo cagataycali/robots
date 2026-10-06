@@ -365,20 +365,26 @@ def _dashboard_auth_store_is_a_per_test_file(tmp_path: Path, monkeypatch: pytest
 #: each is born with. Restored by
 #: :func:`_dashboard_auth_process_state_is_left_as_found` below and graded
 #: against the module's own bindings in
-#: ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so a fourth
+#: ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so a fifth
 #: one cannot appear there without a decision here.
-DASHBOARD_AUTH_PROCESS_STATE: dict[str, object] = {"_cache": {}, "_challenges": {}, "_corrupt": None}
+DASHBOARD_AUTH_PROCESS_STATE: dict[str, object] = {
+    "_cache": {},
+    "_challenges": {},
+    "_corrupt": None,
+    "_handoff_codes": {},
+}
 
 
 @pytest.fixture(autouse=True)
 def _dashboard_auth_process_state_is_left_as_found() -> Iterator[None]:
     """Leave the dashboard's auth module holding nothing a test put there.
 
-    :mod:`strands_robots.dashboard.auth` keeps three process-globals:
+    :mod:`strands_robots.dashboard.auth` keeps four process-globals:
     ``_cache`` (the parsed credential store, keyed on the file), ``_challenges``
     (the WebAuthn ceremonies awaiting a finish, bounded by ``_CHAL_MAX`` and
-    ``_CHAL_MAX_PER_IP``) and ``_corrupt`` (the diagnosis of a store that would
-    not parse). All three outlive the test that filled them, so a store one test
+    ``_CHAL_MAX_PER_IP``), ``_corrupt`` (the diagnosis of a store that would
+    not parse) and ``_handoff_codes`` (one-time handoff codes not yet redeemed).
+    All four outlive the test that filled them, so a store one test
     wrote answers a later test's read, and a ceremony one test stashed counts
     against a later test's per-ip cap.
 
@@ -394,7 +400,7 @@ def _dashboard_auth_process_state_is_left_as_found() -> Iterator[None]:
     and covers the names a caller left out.
 
     The module is looked up rather than imported so a session that never touches
-    the dashboard does not pull in fastapi and webauthn. Every one of the three
+    the dashboard does not pull in fastapi and webauthn. Every one of the four
     is born empty or ``None`` - unlike the predicate registry above, whose
     baseline is the shipped set - so the born values can be stated here and a
     module that first appears during a test is restored as correctly as one that

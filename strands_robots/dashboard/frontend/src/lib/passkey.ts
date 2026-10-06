@@ -142,23 +142,49 @@ export async function beginLogin(): Promise<PreparedLogin> {
   return { challenge_id, options, t: Date.now() }
 }
 
-/** Run the authenticator ceremony for a prepared challenge. */
-export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<SessionGrant> {
+/** The authenticator's assertion over a prepared challenge, in the JSON shape auth.py verifies. */
+async function assertion(p: PreparedLogin, timeoutMs: number, action: string): Promise<any> {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   let cred: any
   try {
     cred = await navigator.credentials.get({ publicKey: prepGet(p.options), signal: ac.signal })
   } catch (e: any) {
-    if (ac.signal.aborted) throw new Error('the authenticator did not answer in time — tap sign in to try again')
+    if (ac.signal.aborted) throw new Error(`the authenticator did not answer in time — tap ${action} to try again`)
     throw e
   } finally { clearTimeout(timer) }
-  if (!cred) throw new Error('passkey sign-in was cancelled')
+  if (!cred) throw new Error(`passkey ${action} was cancelled`)
+  return credToJSON(cred)
+}
+
+/** Run the authenticator ceremony for a prepared challenge. */
+export async function completeLogin(p: PreparedLogin, timeoutMs = 75_000): Promise<SessionGrant> {
+  const credential = await assertion(p, timeoutMs, 'sign in')
   const res = await api('/api/auth/login/finish', {
     method: 'POST',
-    body: JSON.stringify({ challenge_id: p.challenge_id, credential: credToJSON(cred) }),
+    body: JSON.stringify({ challenge_id: p.challenge_id, credential }),
   })
   return grantOf(res)
+}
+
+/**
+ * A handoff challenge, fetched AHEAD of the tap for the same iOS reason as beginLogin. Minting a
+ * handoff takes a fresh passkey assertion: the session cookie alone is something any script in
+ * the page could ride.
+ */
+export async function beginHandoff(): Promise<PreparedLogin> {
+  const { challenge_id, options } = await api('/api/auth/handoff/begin', { method: 'POST', body: '{}' })
+  delete (options as any).allowCredentials
+  return { challenge_id, options, t: Date.now() }
+}
+
+/** Answer a prepared handoff challenge; the server answers with a one-time code for a link. */
+export async function completeHandoff(p: PreparedLogin, timeoutMs = 75_000): Promise<{ code?: string | null }> {
+  const credential = await assertion(p, timeoutMs, 'open the local address')
+  return api('/api/auth/handoff', {
+    method: 'POST',
+    body: JSON.stringify({ challenge_id: p.challenge_id, credential }),
+  })
 }
 
 /** Sign in with an already-enrolled passkey. The session arrives as the cookie. */

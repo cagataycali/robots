@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from unittest import mock
 
 import jwt
 import pytest
@@ -82,10 +83,11 @@ def _renewable_age(module) -> int:
 
 
 def _handoff_window(module) -> int:
-    """Seconds a minted handoff token, the one that rides in a URL, stays usable."""
+    """Seconds a minted handoff code, the one that rides in a URL, stays usable."""
     now = time.time()
     claims = {"sub": "c", "iat": now, "iat0": now, "exp": now + 10**7}
-    return int(module.issue_handoff(claims, now=now)["expires_in"])
+    with mock.patch.object(module, "_verified_assertion", lambda *a, **k: {"id": "c"}):
+        return int(module.issue_handoff(None, claims, "challenge", {}, now=now)["expires_in"])
 
 
 # knob -> (its reader, the surface that spends it). The domain is only worth

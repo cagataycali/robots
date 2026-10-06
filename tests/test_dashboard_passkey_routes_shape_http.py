@@ -140,7 +140,9 @@ class TestOnlyAPasskeySessionManagesTheEnrolledKeys:
     def test_a_passkey_session_reaches_the_auth_module(self, client, monkeypatch, passkey, method, path, verb):
         monkeypatch.setattr(auth, verb, lambda *a, **k: {"done": verb})
 
-        response = getattr(client, method)(path, headers=passkey)
+        # A handoff also carries the fresh assertion it is minted against.
+        body = {"json": {"challenge_id": "c1", "credential": {"id": "cred-touchid"}}} if method == "post" else {}
+        response = getattr(client, method)(path, headers=passkey, **body)
 
         assert response.status_code == 200
         assert response.json() == {"done": verb}

@@ -2,7 +2,7 @@
 
 ``absorbRenewedSession`` read ``X-Session-Token`` off EVERY response the
 dashboard received, success or refusal, from whichever host answered, and
-wrote the value over the stored bearer after one shape test (three dot
+wrote the value over the held bearer after one shape test (three dot
 separated segments). No server route in this repository sends that header
 (``POST /api/auth/renew`` renews by setting the ``strands_dash`` cookie), so
 the only party that could ever exercise the path was one that is not the real
@@ -53,12 +53,12 @@ def _after_answer(path: str, status: int, offered: str | None, *, setup: str = "
     header = {} if offered is None else {"X-Session-Token": offered}
     return run_frontend(
         f"""
-localStorage.setItem('strands.token', {stored!r})
 const m = await import('./endpoints.ts')
+if ({stored!r}) m.setAuthToken({stored!r})
 {setup}
 globalThis.answer = {{ status: {status}, headers: {json.dumps(header)}, body: '{{"renewed": true}}' }}
 await m.api({path!r}).catch(() => null)
-out({{ token: localStorage.getItem('strands.token'), renewed_at: m.lastRenewalAt() }})
+out({{ token: m.authToken(), renewed_at: m.lastRenewalAt() }})
 """
     )
 

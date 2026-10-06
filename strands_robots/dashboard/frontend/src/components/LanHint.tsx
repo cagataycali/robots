@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-import { api, post } from '../lib/endpoints'
+import { api } from '../lib/endpoints'
 import { DISMISS_KEY, HintBody, handoffHref, lanHintVerdict, readDismissed } from '../lib/lanHint'
+import { beginHandoff, completeHandoff, loginFresh, webauthnReady, type PreparedLogin } from '../lib/passkey'
 
 export default function LanHint() {
   const [body, setBody] = useState<HintBody | null>(null)
@@ -10,6 +11,9 @@ export default function LanHint() {
   )
   // Hooks live above the early return; `leaving` is only readable once the hint shows.
   const [leaving, setLeaving] = useState(false)
+  // The handoff challenge, fetched ahead of the tap: iOS only opens the passkey sheet while the
+  // tap's user-activation is alive, so the click must reach credentials.get() without a fetch first.
+  const prepared = useRef<PreparedLogin | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -26,6 +30,19 @@ export default function LanHint() {
     origin: typeof location === 'undefined' ? '' : location.origin,
     dismissed,
   })
+
+  useEffect(() => {
+    if (!verdict.show || !webauthnReady()) return
+    let alive = true
+    const arm = () => {
+      if (loginFresh(prepared.current)) return
+      beginHandoff().then(p => { if (alive) prepared.current = p }).catch(() => {})
+    }
+    arm()
+    const t = setInterval(arm, 200_000) // refresh before the 300s server TTL
+    return () => { alive = false; clearInterval(t) }
+  }, [verdict.show])
+
   if (!verdict.show) return null
 
   const dismiss = () => {
@@ -35,9 +52,10 @@ export default function LanHint() {
   }
 
   /**
-   * The LAN page is plain http — no WebAuthn — so the sign-in must ride along. Minted at
-   * CLICK time (a hint can sit on screen longer than the token lives), and every failure
-   * (old server 404, auth off, network) navigates to the plain link: today's behavior.
+   * The LAN page is plain http — no WebAuthn — so a sign-in must ride along: a one-time code,
+   * minted at CLICK time against a fresh passkey tap (a hint can sit on screen longer than the
+   * code lives). Every failure (no prepared challenge, cancelled tap, old server, auth off)
+   * navigates to the plain link.
    */
   const go = async (e: React.MouseEvent<HTMLAnchorElement>) => {
     // A modified click asks for a new tab/window — let the browser have the plain link.
@@ -46,8 +64,12 @@ export default function LanHint() {
     if (leaving) return
     setLeaving(true)
     let href = verdict.url
-    try { href = handoffHref(verdict.url, await post<{ token?: string | null }>('/api/auth/handoff')) }
-    catch { /* the plain link is the honest fallback */ }
+    const p = loginFresh(prepared.current) ? prepared.current : null
+    prepared.current = null
+    if (p) {
+      try { href = handoffHref(verdict.url, await completeHandoff(p)) }
+      catch { /* the plain link is the honest fallback */ }
+    }
     location.href = href
   }
 
