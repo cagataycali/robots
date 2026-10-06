@@ -197,6 +197,49 @@ def _warn_on_a_near_miss_category(name: str, category: object) -> None:
         )
 
 
+#: Hardware block fields read by :mod:`strands_robots.registry` and consumers
+#: (loader, has_hardware, lerobot_from_source_entry, factory). A key outside
+#: this set is dead weight that an unlucky typo of a canonical field renders
+#: as. Mirrors :data:`_CATEGORY_DISPLAY_ORDER`'s role for :func:`_warn_on_a_near_miss_category`.
+_KNOWN_HARDWARE_FIELDS = ("driver", "lerobot_type", "requires_lerobot_from_source")
+
+
+def _warn_on_unknown_hardware_fields(name: str, hardware: dict[str, Any] | None) -> None:
+    """Log the known field a hardware key was probably meant to be.
+
+    A hardware block is a schema with three readers in-tree
+    (:data:`_KNOWN_HARDWARE_FIELDS`), so an unknown key is dead weight at best
+    and a silent misconfiguration at worst (``"lerobot_tpye"`` for
+    ``"lerobot_type"`` passes the asset-less declaration check if a sibling
+    ``driver="strands"`` carries it, then the typed value is never read). The
+    key is kept, so a future reader can still see it, and the near miss is
+    named in a warning - the same discipline :func:`_warn_on_a_near_miss_category`
+    enforces for the ``category`` field.
+    """
+    if not isinstance(hardware, dict):
+        return
+    for key in hardware:
+        if not isinstance(key, str) or key in _KNOWN_HARDWARE_FIELDS:
+            continue
+        meant = difflib.get_close_matches(key, _KNOWN_HARDWARE_FIELDS, n=2, cutoff=0.6)
+        if meant:
+            logger.warning(
+                "Robot '%s' declares hardware.%s=%r, which is not a known hardware field; did you mean %s?",
+                name,
+                key,
+                hardware[key],
+                " or ".join(repr(m) for m in meant),
+            )
+        else:
+            logger.warning(
+                "Robot '%s' declares hardware.%s=%r, which is not a known hardware field (known: %s).",
+                name,
+                key,
+                hardware[key],
+                ", ".join(repr(m) for m in _KNOWN_HARDWARE_FIELDS),
+            )
+
+
 def register_robot(
     name: str,
     *,
@@ -309,6 +352,7 @@ def register_robot(
     # Normalize name
     name = normalize_robot_name(name)
     _warn_on_a_near_miss_category(name, category)
+    _warn_on_unknown_hardware_fields(name, hardware)
 
     # Load existing
     data = _load_user_registry()
