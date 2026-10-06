@@ -67,17 +67,27 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
     return reg.get("providers", {}).get(_canonical_provider_name(name))
 
 
-#: Providers removed from the registry, each with the one sentence that refuses
-#: its spelling. A removed name is refused, never rerouted: without this table
-#: ``create_policy("groot")`` would fall through :func:`resolve_policy`'s last
-#: stage and reach ``lerobot_local`` as a checkpoint id, and the caller's next
-#: report would name a HuggingFace repo it never asked for.
+#: Spellings that are not providers, each with the one sentence that refuses
+#: it and names where it runs: ``groot``, removed in 1.0, and the LeRobot policy
+#: types the README lists by name. Such a name is refused, never rerouted:
+#: without this table ``create_policy("act")`` would fall through
+#: :func:`resolve_policy`'s last stage and reach ``lerobot_local`` as a
+#: checkpoint id, and the caller's next report would name a HuggingFace repo it
+#: never asked for.
 REMOVED_PROVIDERS: dict[str, str] = {
     "groot": (
         "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
         "lerobot_local(policy_type='groot'); for a remote GPU host run "
         "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
     ),
+    **{
+        policy_type: (
+            f"policy_provider {policy_type!r} is a LeRobot policy type, not a provider: "
+            f"use policy_provider='lerobot_local' with policy_type={policy_type!r} "
+            "and pretrained_name_or_path='<checkpoint>'."
+        )
+        for policy_type in ("act", "diffusion", "molmoact2", "pi0", "pi05", "pi0_fast", "smolvla", "tdmpc", "vqbet")
+    },
 }
 
 

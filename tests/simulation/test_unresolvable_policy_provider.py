@@ -50,9 +50,9 @@ _ARM = """<mujoco><worldbody><body name="l1">
 <geom type="capsule" fromto="0 0 0 0.15 0 0" size="0.02"/></body></worldbody>
 <actuator><position name="a1" joint="j1" kp="30" ctrlrange="-1.5 1.5"/></actuator></mujoco>"""
 
-# Names no spelling ``create_policy`` accepts can reach. "molmoact2" is the
-# real guess from the report: it is a lerobot *policy type*, not a provider.
-UNRESOLVABLE: list[str] = ["nope", "molmoact2", "", "lerobot-local"]
+# Names no spelling ``create_policy`` accepts can reach. A lerobot policy type
+# such as "molmoact2" is refused too, with its own sentence (tests/policies).
+UNRESOLVABLE: list[str] = ["nope", "", "lerobot-local"]
 
 # The built-in providers, read from the shipped registry rather than from
 # ``list_providers()``: that accessor also returns ``register_policy`` additions,
@@ -127,7 +127,7 @@ class TestTheDiscoverySignalReachesTheCaller:
 
     @pytest.mark.parametrize("action,extra", SURFACES, ids=[s[0] for s in SURFACES])
     def test_the_refusal_names_every_builtin_provider(self, sim, action, extra):
-        result = getattr(sim, action)(robot_name="arm", policy_provider="molmoact2", **extra)
+        result = getattr(sim, action)(robot_name="arm", policy_provider="nope", **extra)
         message = _text(result)
         missing = [p for p in BUILTIN_PROVIDERS if p not in message]
         assert not missing, f"refusal does not name {missing}: {message}"
@@ -146,6 +146,7 @@ class TestTheDiscoverySignalReachesTheCaller:
     def test_it_names_the_value_the_caller_supplied(self, sim):
         result = sim.run_policy(robot_name="arm", policy_provider="molmoact2", duration=0.05)
         assert "'molmoact2'" in _text(result)
+        assert "policy_provider='lerobot_local' with policy_type='molmoact2'" in _text(result)
 
 
 class TestStartPolicyRefusesBeforeItSubmits:
