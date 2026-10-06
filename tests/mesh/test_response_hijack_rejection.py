@@ -18,17 +18,16 @@ not crash the wire-input path nor accept the forged response.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from strands_robots.mesh import Mesh
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh.core import BROADCAST_RESPONDER
+from tests._mesh_reply import reply_sample
 
 
 class _FakeRobot:
@@ -36,13 +35,6 @@ class _FakeRobot:
 
     def __init__(self) -> None:
         self.tool_name_str = "fakebot"
-
-
-def _make_sample(payload: dict[str, Any]) -> Any:
-    """Build a fake zenoh sample compatible with the mesh callbacks."""
-    sample = MagicMock()
-    sample.payload.to_bytes.return_value = json.dumps(payload).encode()
-    return sample
 
 
 @pytest.fixture
@@ -66,7 +58,7 @@ def test_mismatched_responder_is_dropped(mesh: Mesh, caplog: pytest.LogCaptureFi
     turn = "turn-point-to-point"
     event = _register_pending(mesh, turn, expected="peer-b")
 
-    sample = _make_sample({"turn_id": turn, "responder_id": "peer-evil", "result": {"ok": 1}})
+    sample = reply_sample(mesh, {"turn_id": turn, "responder_id": "peer-evil", "result": {"ok": 1}})
     with caplog.at_level(logging.WARNING):
         mesh._on_response(sample)
 
@@ -84,7 +76,7 @@ def test_matching_responder_is_recorded(mesh: Mesh) -> None:
     turn = "turn-legit"
     event = _register_pending(mesh, turn, expected="peer-b")
 
-    sample = _make_sample({"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
+    sample = reply_sample(mesh, {"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
     mesh._on_response(sample)
 
     with mesh._rpc_lock:
@@ -97,7 +89,7 @@ def test_broadcast_turn_accepts_any_responder(mesh: Mesh) -> None:
     turn = "turn-broadcast"
     event = _register_pending(mesh, turn, expected=BROADCAST_RESPONDER)
 
-    sample = _make_sample({"turn_id": turn, "responder_id": "anyone", "result": {"i": 1}})
+    sample = reply_sample(mesh, {"turn_id": turn, "responder_id": "anyone", "result": {"i": 1}})
     mesh._on_response(sample)
 
     with mesh._rpc_lock:
@@ -110,7 +102,7 @@ def test_hijack_emits_audit_event(mesh: Mesh) -> None:
     turn = "turn-audit"
     _register_pending(mesh, turn, expected="peer-b")
 
-    sample = _make_sample({"turn_id": turn, "responder_id": "peer-evil", "result": {"x": 1}})
+    sample = reply_sample(mesh, {"turn_id": turn, "responder_id": "peer-evil", "result": {"x": 1}})
     with patch.object(mesh_core, "log_safety_event") as mock_audit:
         mesh._on_response(sample)
 
@@ -127,7 +119,7 @@ def test_hijack_audit_failure_is_soft(mesh: Mesh) -> None:
     turn = "turn-audit-fail"
     event = _register_pending(mesh, turn, expected="peer-b")
 
-    sample = _make_sample({"turn_id": turn, "responder_id": "peer-evil", "result": {"x": 1}})
+    sample = reply_sample(mesh, {"turn_id": turn, "responder_id": "peer-evil", "result": {"x": 1}})
     with patch.object(mesh_core, "log_safety_event", side_effect=OSError("audit disk full")):
         # Must not raise despite the audit write failing.
         mesh._on_response(sample)

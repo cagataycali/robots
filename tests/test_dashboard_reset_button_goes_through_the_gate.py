@@ -187,7 +187,7 @@ def test_every_card_offers_reset_next_to_the_run_controls_through_the_task_hook(
     """The button is in the run form, so the card and the detail view both carry it, wired to useTask.reset."""
     run_form = (FRONTEND_SRC / "components" / "RunForm.tsx").read_text(encoding="utf-8")
     assert "resetVerdict(" in run_form and 'aria-label="reset to home pose"' in run_form
-    assert "runRisk(presence).physical ? setResetPending(true) : onReset(false)" in run_form, (
+    assert "runRisk(presence, provenance).physical ? setResetPending(true) : onReset(false)" in run_form, (
         "a real arm's reset must open the confirm sheet; a sim's goes straight through"
     )
     for component in ("RobotCard.tsx", "RobotDetail.tsx"):
