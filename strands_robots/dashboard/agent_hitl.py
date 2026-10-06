@@ -16,9 +16,15 @@ import os
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 
-from strands_robots._motion_grants import DIRECT_SERIAL_TOOLS, deposit_grant, motion_fields, resolve_target
+from strands_robots._motion_grants import (
+    DIRECT_SERIAL_TOOLS,
+    consume_grant,
+    deposit_grant,
+    motion_fields,
+    resolve_target,
+)
 from strands_robots.dashboard.agent_motion import MOTION_ENV, peer_is_physical
 
 logger = logging.getLogger(__name__)
@@ -111,6 +117,11 @@ def motion_intent(
         # pose/serial inputs carry the motion in named fields, not an
         # instruction string; show the operator WHAT a yes moves, verbatim.
         instruction = _direct_serial_detail(tool_name, action, tool_input)
+    elif extra := [f for f in motion_fields(tool_input) if not f.startswith("duration=")]:
+        # Every field the grant is keyed on is one the operator reads: which
+        # policy an execute/start runs is part of what they approve, so it is
+        # named next to the words it is asked to follow. Duration has its own line.
+        instruction = f"{instruction} ({' '.join(extra)})" if instruction else " ".join(extra)
     reason: dict[str, Any] = {
         "tool": tool_name,
         "action": action,
@@ -177,6 +188,7 @@ class MotionInterruptHook(HookProvider):
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         """Subscribe the motion gate to every tool call the agent is about to make."""
         registry.add_callback(BeforeToolCallEvent, self._gate)
+        registry.add_callback(AfterToolCallEvent, self._expire)
 
     def adopt(self, proxy_motion: Mapping[str, frozenset[str]], proxy_targets: Mapping[str, str]) -> None:
         """Learn proxies registered after construction, so a peer adopted mid-turn is gated like the rest."""
@@ -219,3 +231,19 @@ class MotionInterruptHook(HookProvider):
             deposit_grant(name, tool_input)
             return
         event.cancel_tool = cancel_sentence(reason)
+
+    def _expire(self, event: AfterToolCallEvent) -> None:
+        """Forget an unspent yes once the direct-serial call it was given for has returned.
+
+        ``pose_tool`` and ``serial_tool`` spend the grant in the same call, so
+        one still deposited afterwards is a yes for a call that stopped before
+        its gate - a pose missing from the library, a target outside the
+        travel. Left behind, it would be spendable by the next call that
+        happens to share its key. Proxy and fleet calls are left to the TTL:
+        their spender is a mesh peer that may read the grant after this call
+        returns.
+        """
+        tool_use = event.tool_use or {}
+        name = str(tool_use.get("name") or "")
+        if name in DIRECT_SERIAL_TOOLS:
+            consume_grant(name, tool_use.get("input") or {})
