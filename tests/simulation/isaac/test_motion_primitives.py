@@ -543,6 +543,14 @@ class TestRotateWrist:
         assert payload["final_yaw"] == pytest.approx(0.7, abs=0.03)
         assert art.positions[3] == pytest.approx(0.7, abs=0.03)
 
+    def test_a_wrist_with_roll_and_yaw_joints_drives_the_yaw_joint(self):
+        names = ["shoulder_pan", "shoulder_lift", "elbow", "wrist_roll", "wrist_yaw", "jaw"]
+        sim, art = _make_sim(joint_names=names, limits=[(-3.0, 3.0)] * 6)
+        result = sim.rotate_wrist(robot_name="arm", target_yaw=0.7)
+        assert _json_block(result)["wrist_joint"] == "wrist_yaw", result
+        assert art.positions[4] == pytest.approx(0.7, abs=0.03)
+        assert art.positions[3] == pytest.approx(0.0)
+
     def test_holds_other_joints_at_their_current_positions(self):
         start = [0.4, -0.3, 0.9, 0.0, 0.2]
         sim, art = _make_sim(positions=list(start))

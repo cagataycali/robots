@@ -50,11 +50,15 @@ _GRIPPER_HINTS = ("gripper", "finger", "jaw")
 # values.
 _CTRLRANGE_ENDS = ("low", "high")
 
-# Wrist-yaw joint hints, most-specific first. Fallback: the last non-gripper
-# hinge joint in the robot's chain (the distal roll joint on most serial
-# arms). "Non-gripper" is decided by the shared registry-metadata-first
+# Wrist joint hints for rotate_wrist(target_yaw=...), most-specific first. A
+# joint named for yaw wins: on a wrist with separate roll, pitch and yaw joints
+# (unitree_g1, apollo, ergocub, stretch3) the call drives the yaw joint it is
+# named for, not the roll joint beside it. Arms with no yaw joint fall through
+# to their twist joint (wrist_rotate / wrist_roll), then to the last non-gripper
+# hinge joint; the result's ``wrist_joint`` names the joint that was driven.
+# "Non-gripper" is decided by the shared registry-metadata-first
 # classification, not by _GRIPPER_HINTS alone.
-_WRIST_HINTS = ("wrist_roll", "wrist_yaw", "wrist_rotate", "wrist")
+_WRIST_HINTS = ("wrist_yaw", "wrist_rotate", "wrist_roll", "wrist")
 
 # Hard ceiling on max_steps / steps to prevent unbounded primitive runtime.
 _MAX_PRIMITIVE_STEPS = 10_000
