@@ -197,6 +197,27 @@ def _warn_on_a_near_miss_category(name: str, category: object) -> None:
         )
 
 
+#: The ``hardware`` keys the registry and its readers act on; any other key is stored but never read.
+_KNOWN_HARDWARE_FIELDS = ("driver", "lerobot_type", "requires_lerobot_from_source")
+
+
+def _unknown_hardware_fields(hardware: dict[str, Any] | None) -> str:
+    """Name each ``hardware`` key nothing reads, with the known field it was probably meant to be.
+
+    Returns:
+        ``""`` when every key is known, else one clause per unknown key, e.g.
+        ``"hardware.lerobot_tpye is not a known field; did you mean 'lerobot_type'?"``.
+    """
+    clauses = []
+    for key in hardware or {}:
+        if key in _KNOWN_HARDWARE_FIELDS:
+            continue
+        meant = difflib.get_close_matches(str(key), _KNOWN_HARDWARE_FIELDS, n=1, cutoff=0.6)
+        hint = f"did you mean {meant[0]!r}?" if meant else f"known: {', '.join(_KNOWN_HARDWARE_FIELDS)}"
+        clauses.append(f"hardware.{key} is not a known field; {hint}")
+    return " ".join(clauses)
+
+
 def register_robot(
     name: str,
     *,
@@ -254,7 +275,10 @@ def register_robot(
             onto another robot's canonical name or alias is refused rather than
             resolving to that robot.
         robot_descriptions_module: Optional ``robot_descriptions`` module name.
-        hardware: Hardware config dict (``lerobot_type``, ``driver``, ...).
+        hardware: Hardware config dict: ``driver``, ``lerobot_type``,
+            ``requires_lerobot_from_source``. Any other key is stored but
+            never read, so it is named in a warning with the field it was
+            probably meant to be.
             Optional with ``model_xml``; required without it, where it must
             declare a non-empty ``lerobot_type`` or ``driver="strands"``.
         overwrite: If False (default), raises ValueError if *name* is already
@@ -309,6 +333,8 @@ def register_robot(
     # Normalize name
     name = normalize_robot_name(name)
     _warn_on_a_near_miss_category(name, category)
+    if unknown := _unknown_hardware_fields(hardware):
+        logger.warning("Robot '%s' stores a key nothing reads: %s", name, unknown)
 
     # Load existing
     data = _load_user_registry()
@@ -461,6 +487,7 @@ def _require_hardware_declaration(name: str, hardware: dict[str, Any] | None) ->
     raise ValueError(
         f"Robot '{name}' is registered without model_xml, so it has no simulation asset and hardware must "
         f"declare a non-empty 'lerobot_type' or driver 'strands'; got hardware={hardware!r}"
+        + (f". {unknown}" if (unknown := _unknown_hardware_fields(hardware)) else "")
     )
 
 
