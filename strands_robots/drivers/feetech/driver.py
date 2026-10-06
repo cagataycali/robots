@@ -217,6 +217,30 @@ class FeetechDriver(TeleopMixin):
         self._tool_name = tool_name
         self._data_config = data_config
         context = f"{type(self).__name__}({tool_name!r})"
+        # Named now, before any device opens: :data:`MOTORS` is :data:`SO_ARM_MOTORS`
+        # and the bus accepts those six names, so a robot in
+        # :data:`SUPPORTED_ROBOTS` that carries other actuators (the three
+        # omniwheels on ``lekiwi``'s base; a yet-to-be-mapped hand on
+        # ``hope_jr``) has half the registry's joints unreachable through this
+        # driver. The arm half writes while the base is silently dead until the
+        # first wheel key reaches the bus and gets the inventory refusal below,
+        # which names the bus not the driver/registry mismatch the caller is
+        # hitting. Say so once, up front, and point at the lerobot driver that
+        # does cover the whole robot. ``motor_ids=`` is the documented escape
+        # hatch for addressing the arm half only, so an explicit narrowing is
+        # taken as consent and the guard steps aside.
+        from strands_robots.registry.robots import resolve_name as _resolve_name  # noqa: PLC0415 - avoid import cycle
+
+        _canonical = _resolve_name(tool_name)
+        if _canonical == "lekiwi" and self.MOTORS is SO_ARM_MOTORS and not motor_ids:
+            raise ValueError(
+                f"{context}: this driver's motor map is the six SO-arm joints "
+                f"{sorted(SO_ARM_MOTORS)}; lekiwi carries three omniwheels on top "
+                "of that arm, and the base is unreachable through this bus. Pass "
+                "driver='lerobot' (install 'strands-robots[lerobot]') to reach "
+                "the whole robot, or construct this driver with motor_ids= over "
+                "the arm half only.",
+            )
         # Graded now, opened on connect: a bad entry is refused while the caller
         # holds the traceback that names their keyword, and no device is touched
         # before the bus is (see ``connect_eagerly``).
