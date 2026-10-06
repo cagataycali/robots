@@ -20,6 +20,7 @@ wire converts once at its edge and nothing inside the package sees two orders.
 
 from __future__ import annotations
 
+import difflib
 from dataclasses import dataclass
 
 #: Unitree G1 29 joints in hardware order: the order our MuJoCo model's
@@ -154,12 +155,15 @@ def teleop_layout(name: str) -> Layout:
     """Return the layout registered under ``name``.
 
     Raises:
-        ValueError: ``name`` is not a layout; the message lists the choices.
+        ValueError: ``name`` is not a layout; the message names the closest
+            layouts (compared case- and dash-insensitively) and lists the choices.
     """
     try:
         return _LAYOUTS[name]
     except KeyError:
-        raise ValueError(f"Unknown teleop layout {name!r}. Choose from: {sorted(_LAYOUTS)}") from None
+        close = difflib.get_close_matches(str(name).lower().replace("-", "_"), list(_LAYOUTS), n=2, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
+        raise ValueError(f"Unknown teleop layout {name!r}.{hint} Choose from: {sorted(_LAYOUTS)}") from None
 
 
 def list_layouts() -> tuple[str, ...]:
