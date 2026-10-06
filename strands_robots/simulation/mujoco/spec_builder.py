@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import math
 import os
 from collections.abc import Mapping
 from typing import Any, Final
@@ -218,6 +219,20 @@ _SIZE_LAYOUT: dict[str, tuple[int, str]] = {
 # first three components, so a longer vector carries values no shape can honor.
 _MAX_SIZE_COMPONENTS = 3
 
+# Components a shape carries but does not consume, each paired with the consumed
+# component it would mirror: a sphere is as wide on y and z as on x, a cylinder's
+# y extent is its diameter, and a plane's third slot is builder-owned. Such a
+# component may be ``0`` (the documented "unused" placeholder) or repeat the
+# value it mirrors -- so ``[d, d, d]`` and the 5 cm default stay valid -- but a
+# different value describes geometry the shape cannot compile (an ellipsoid
+# passed as a sphere) and is refused instead of silently dropped.
+_UNCONSUMED_MIRRORS: dict[str, tuple[tuple[int, int], ...]] = {
+    "sphere": ((1, 0), (2, 0)),
+    "cylinder": ((1, 0),),
+    "capsule": ((1, 0),),
+    "plane": ((2, 1),),
+}
+
 
 def _validate_size(shape: str, size: list[float]) -> str | None:
     """Return an error message if ``size`` cannot be honored for ``shape``.
@@ -232,6 +247,10 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
       (nothing consumes a fourth). A short vector used to be replaced wholesale
       by a hardcoded default, so ``size=[0.5]`` on a box compiled a 10 cm cube
       while the call reported success and echoed the requested ``[0.5]``.
+    * A component the shape **does not consume** that contradicts the one it
+      mirrors (:data:`_UNCONSUMED_MIRRORS`). ``size=[0.05, 0.10, 0.20]`` on a
+      sphere used to compile a 5 cm ball and report success; it may be ``0`` or
+      repeat the mirrored value (``[d, d, d]``), nothing else.
     * A **non-positive** value in a component the shape consumes. Only consumed
       components are checked, so a cylinder may legitimately pass
       ``size[1] == 0`` (it is ignored).
@@ -252,6 +271,14 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
             "along each axis (not MuJoCo's half-extent); pass every component the "
             "shape consumes rather than a partial vector."
         )
+    for idx, mirror in _UNCONSUMED_MIRRORS.get(shape, ()):
+        if idx < len(size) and size[idx] != 0 and not math.isclose(size[idx], size[mirror]):
+            hint = " For different extents per axis use shape='ellipsoid'." if shape == "sphere" else ""
+            return (
+                f"add_object: {shape} does not consume size[{idx}]; it must be 0 or repeat "
+                f"size[{mirror}]={size[mirror]}, got {size[idx]} (size={list(size)}, layout "
+                f"{layout}). Dropping it would compile a different object than requested.{hint}"
+            )
     if shape == "mesh":
         return None
     if shape in ("box", "ellipsoid"):

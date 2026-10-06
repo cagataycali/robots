@@ -68,10 +68,10 @@ _CHANNEL_EXTENT = (0.3, 0.4, 0.4)
 _PRIMITIVES: tuple[tuple[str, list[float], tuple[float, float, float]], ...] = (
     ("box", [0.04, 0.08, 0.12], (0.04, 0.08, 0.12)),
     ("ellipsoid", [0.04, 0.08, 0.12], (0.04, 0.08, 0.12)),
-    ("sphere", [0.05, 0.09, 0.2], (0.05, 0.05, 0.05)),
+    ("sphere", [0.05, 0.0, 0.0], (0.05, 0.05, 0.05)),
     ("sphere", [0.06], (0.06, 0.06, 0.06)),
-    ("cylinder", [0.05, 0.1, 0.9], (0.05, 0.05, 0.9)),
-    ("capsule", [0.05, 0.1, 0.9], (0.05, 0.05, 0.95)),
+    ("cylinder", [0.05, 0.0, 0.9], (0.05, 0.05, 0.9)),
+    ("capsule", [0.05, 0.0, 0.9], (0.05, 0.05, 0.95)),
 )
 
 #: The rows above whose request holds a component the geom does not carry.
@@ -236,13 +236,12 @@ class TestAPlaneReportsTheOnlyGeometryItHas:
     """A plane is infinite for collision, so its bounding box describes nothing."""
 
     def test_the_report_names_the_visual_half_widths_not_the_infinite_bound(self, sim) -> None:
-        result = sim.add_object("floor", shape="plane", size=[1.0, 2.0, 3.0], is_static=True)
+        result = sim.add_object("floor", shape="plane", size=[1.0, 2.0, 0.0], is_static=True)
         assert result["status"] == "success", _text(result)
         assert _reported_size(result) == pytest.approx([1.0, 2.0], abs=1e-6)
         assert "visual half-widths" in _text(result)
         assert "infinite for collision" in _text(result)
-        # The discarded third component, and MuJoCo's own 2e10 m plane sentinel.
-        assert "3.0" not in _text(result), _text(result)
+        # MuJoCo's own 2e10 m plane sentinel.
         assert "e+" not in _text(result) and "20000000000" not in _text(result), _text(result)
 
     def test_an_omitted_width_reports_the_one_that_was_compiled_for_it(self, sim) -> None:

@@ -58,12 +58,12 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 |---|---|
 | `box`, `ellipsoid` | `[x, y, z]` full edge lengths |
 | `sphere` | `[diameter]` |
-| `cylinder` | `[diameter, unused, full height]` (three components) |
+| `cylinder` | `[diameter, unused, full height]` |
 | `capsule` | `[diameter, unused, cylinder length]`; total height is `size[2] + size[0]` |
 | `plane` | visual half-widths; infinite for collision, forced static |
 | `mesh` | ignored; the file's units define the extent, `mesh_path` required |
 
-A short vector is refused, not padded: padding would compile a different object and pass. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
+A short vector is refused, not padded; an unused slot must be 0 or repeat its mirror. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
 
 `move_object(name, position, orientation)` places a dynamic object at rest or rebuilds a static one. `remove_object`, `list_objects` and `get_body_state` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current pose.
 

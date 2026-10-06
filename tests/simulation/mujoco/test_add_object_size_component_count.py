@@ -57,6 +57,29 @@ PARTIAL_SIZES = [
     ("plane", []),
 ]
 
+# A component the shape does not consume, holding a value that contradicts the
+# one it mirrors. Each used to compile the leading components and report success.
+CONTRADICTING_SIZES = [
+    ("sphere", [0.05, 0.10, 0.20], 1),
+    ("sphere", [0.05, 0.05, 0.20], 2),
+    ("cylinder", [0.05, 0.10, 0.2], 1),
+    ("capsule", [0.05, 0.10, 0.2], 1),
+    ("plane", [1.0, 2.0, 3.0], 2),
+]
+
+
+@pytest.mark.parametrize(("shape", "size", "index"), CONTRADICTING_SIZES)
+def test_a_component_the_shape_would_drop_is_refused_not_discarded(sim, shape, size, index):
+    """A sphere asked to be 5 x 10 x 20 cm is refused, not compiled as a 5 cm ball."""
+    result = sim.add_object("drop", shape=shape, size=size, is_static=shape == "plane")
+
+    assert result["status"] == "error"
+    message = result["content"][0]["text"]
+    assert f"does not consume size[{index}]" in message
+    assert ("shape='ellipsoid'" in message) == (shape == "sphere")
+    assert "drop" not in sim._world.objects
+    assert _geom_id(sim, "drop_geom") < 0
+
 
 @pytest.mark.parametrize(("shape", "size"), PARTIAL_SIZES)
 def test_partial_size_is_rejected_and_nothing_is_added(sim, shape, size):
@@ -162,7 +185,12 @@ class TestValidateSizeComponentCount:
             ("cylinder", [0.1, 0.0, 0.4]),
             ("capsule", [0.1, 0.0, 0.4]),
             ("sphere", [0.1]),
+            ("sphere", [0.1, 0.1, 0.1]),
+            ("sphere", [0.1, 0.0, 0.0]),
+            ("cylinder", [0.1, 0.1, 0.4]),
             ("plane", [2.0]),
+            ("plane", [2.0, 1.0, 1.0]),
+            ("plane", [2.0, 1.0, 0.0]),
             ("mesh", []),
         ],
     )
