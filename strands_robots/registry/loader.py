@@ -85,7 +85,17 @@ def normalize_robot_name(name: str) -> str:
 
     Returns:
         The lookup key for ``name``.
+
+    Raises:
+        ValueError: ``name`` is not a string. Every registry read
+            (``get_robot``, ``resolve_name``, ``has_sim``, ...) folds its
+            argument here first, so this is the one place a non-name is refused.
     """
+    if not isinstance(name, str):
+        raise ValueError(
+            f"Invalid robot name {name!r} ({type(name).__name__}): a robot name is a string. "
+            "Pass a registered name (see ``list_robots()``)."
+        )
     return name.lower().strip().replace("-", "_")
 
 
