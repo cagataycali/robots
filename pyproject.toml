@@ -1038,6 +1038,17 @@ override-dependencies = [
     "torch>=2.13.0",
     "torchvision>=0.28.0",
     "torchcodec>=0.13.0",
+    # SECURITY: GHSA-379c-qx7v-6h59 / CVE-2026-66007 (MEDIUM, datasets < 5.0.1):
+    # the folder-based builders join an unvalidated ``file_name`` metadata
+    # field onto the dataset directory, so a crafted dataset reads arbitrary
+    # local files into save_to_disk / push_to_hub output. lerobot 0.6.1 (its
+    # newest release, and its main branch) caps datasets < 5.0.0 through the
+    # [dataset] extra, so a plain floor cannot resolve; the override replaces
+    # that cap. strands_robots never touches the folder builders (LeRobotDataset
+    # reads parquet + video), so the only behaviour change 5.0 brings is
+    # IterableDataset.shuffle buffering from several input shards. Drop when
+    # lerobot lifts the cap.
+    "datasets>=5.0.1",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
