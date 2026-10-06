@@ -19,7 +19,8 @@ import pytest
 
 from strands_robots.mesh.security import ValidationError, validate_command
 
-DOCS = Path(__file__).resolve().parents[1] / "docs"
+ROOT = Path(__file__).resolve().parents[1]
+DOCS = ROOT / "docs"
 FLEET = DOCS / "learn" / "mesh" / "fleet.md"
 
 _TELL = re.compile(r"\.tell\((?P<args>(?:[^()]|\([^()]*\))*)\)", re.DOTALL)
@@ -107,3 +108,31 @@ def test_a_local_checkpoint_path_is_refused_on_the_wire():
                 "pretrained_name_or_path": "/tmp/pick_ckpt",
             }
         )
+
+
+_CODE_SPAN = re.compile(r"`([^`\n]*\btell\([^`\n]*)`")
+
+
+def _is_a_callable_tell(span: str) -> bool:
+    """``tell`` lives on ``Robot(mesh=True).mesh``, and the wire refuses it without a provider."""
+    return ".mesh.tell(" in span and "policy_provider=" in span
+
+
+@pytest.mark.parametrize(
+    "span,ok",
+    [
+        ("tell()", False),
+        ("robot.tell(peer, instruction)", False),
+        ("robot.mesh.tell(peer, instruction)", False),
+        ("robot.mesh.tell(peer, instruction, policy_provider=...)", True),
+    ],
+)
+def test_the_reader_tells_a_callable_tell_from_one_that_raises(span: str, ok: bool):
+    assert _is_a_callable_tell(span) is ok
+
+
+def test_every_tell_the_readme_names_is_one_a_reader_can_call():
+    """The README's What-you-get row once said ``tell()`` on "every robot"; ``Robot`` has no ``tell``."""
+    spans = _CODE_SPAN.findall((ROOT / "README.md").read_text())
+    assert spans, "README.md no longer names mesh.tell"
+    assert [s for s in spans if not _is_a_callable_tell(s)] == []
