@@ -93,7 +93,7 @@ class TestARobotCannotTakeAnObjectsName:
     def test_the_duplicate_robot_refusal_still_comes_first(self, sim, tmp_path):
         result = sim.add_robot(name="arm", urdf_path=str(tmp_path / "arm.xml"))
         assert result["status"] == "error"
-        assert "Robot 'arm' already exists" in _text(result)
+        assert "add_robot: robot 'arm' already exists" in _text(result)
 
 
 class TestTheAdvisedRemedyExists:

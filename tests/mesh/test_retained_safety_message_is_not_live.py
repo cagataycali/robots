@@ -14,6 +14,9 @@ safety commands are published as events (``retain=False``), the safety
 subscriptions ask the broker not to send retained messages at subscribe time,
 the transport carries the packet's retain flag on the sample, and the shared
 safety envelope decoder refuses a retained delivery with an audit record.
+The same refusal holds for a ``Mesh.subscribe`` reader, the dashboard and a
+wildcard subscription, an unreadable packet flag reads as retained, and
+``clear_retained_safety_messages`` deletes what an older policy let a peer store.
 """
 
 from __future__ import annotations
@@ -187,3 +190,134 @@ class TestARetainedDeliveryIsRefusedByTheHandler:
         mesh._on_safety_estop(sample)
 
         assert mesh._estop_lockout.is_set()
+
+
+class TestEverySubscriberRefusesARetainedSafetyCommand:
+    """The robot's refusal holds for every first-party reader of the safety topics."""
+
+    @pytest.mark.parametrize(
+        ("topic_filter", "dont_send"),
+        [
+            ("strands/safety/estop", True),
+            ("strands/safety/#", True),
+            ("strands/safety/+", True),
+            ("strands/+/estop", True),
+            ("strands/#", True),
+            ("#", True),
+            ("strands/+/presence", False),
+            ("strands/safety/event", False),
+            ("strands/arm-1/safety/#", False),
+        ],
+    )
+    def test_a_filter_that_delivers_a_safety_command_asks_for_no_retained(
+        self, topic_filter: str, dont_send: bool
+    ) -> None:
+        assert iot_transport._is_safety_command_filter(topic_filter) is dont_send
+
+    @pytest.mark.parametrize(("flag", "retained"), [(True, True), (False, False), (None, True), ("0", True)])
+    def test_a_packet_flag_that_cannot_be_read_is_treated_as_retained(self, flag: Any, retained: bool) -> None:
+        transport = iot_transport.IotMqttTransport.__new__(iot_transport.IotMqttTransport)
+        transport._lock = threading.Lock()
+        seen: list[Any] = []
+        transport._handlers = {"strands/safety/estop": [seen.append]}
+        transport._thing_name = "arm-1"
+        transport._unmatched_inbound = 0
+        attrs: dict[str, Any] = {"topic": "strands/safety/estop", "payload": b"{}"}
+        if flag is not None:
+            attrs["retain"] = flag
+        transport._on_publish_received(SimpleNamespace(publish_packet=SimpleNamespace(**attrs)))
+        assert seen[0].retain is retained
+
+    def test_a_mesh_subscription_drops_a_retained_stop_and_keeps_a_live_one(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        handlers: list[Any] = []
+
+        def declare_subscriber(key: str, handler: Any) -> MagicMock:
+            handlers.append(handler)
+            return MagicMock()
+
+        session = SimpleNamespace(declare_subscriber=declare_subscriber)
+        monkeypatch.setattr("strands_robots.mesh.core.current_session", lambda: session)
+        mesh = Mesh(SimpleNamespace(tool_name_str="agent"), peer_id="agent-1")
+        mesh._running = True
+        assert mesh.subscribe("strands/safety/**", name="safety") == "safety"
+        body = json.dumps({"peer_id": "op-1", "t": time.time()}).encode()
+        retained = _MqttSample("strands/safety/estop", body, retain=True)
+
+        with caplog.at_level("WARNING"):
+            handlers[0](retained)
+            handlers[0](retained)
+        handlers[0](_MqttSample("strands/safety/estop", body))
+
+        assert [key for key, _ in mesh.inbox["safety"]] == ["strands/safety/estop"]
+        assert sum("dropped a retained message" in r.getMessage() for r in caplog.records) == 1
+
+    def test_the_dashboard_does_not_fold_a_retained_stop_into_the_fleet_lockout(self) -> None:
+        from strands_robots.dashboard.mesh_bridge import MeshBridge
+
+        bridge = MeshBridge(peer_id="dash")
+        body = json.dumps({"source": "operator-laptop", "t": time.time()}).encode()
+
+        bridge._on_safety(_MqttSample("strands/safety/estop", body, retain=True))
+        assert bridge._lockout.state != "locked"
+        refused = [e for e in bridge.activity_log() if e["action"] == "estop_refused"]
+        assert refused and refused[0]["detail"]["why"] == "retained"
+
+        bridge._on_safety(_MqttSample("strands/safety/estop", body))
+        assert bridge._lockout.state == "locked"
+
+
+class _RetainedStore:
+    """The ``iot`` and ``iot-data`` clients ``clear_retained_safety_messages`` reaches, holding retained topics."""
+
+    def __init__(self, topics: list[str]) -> None:
+        self.topics = topics
+        self.published: list[dict[str, Any]] = []
+        self.meta = SimpleNamespace(region_name="us-west-2")
+
+    def describe_endpoint(self, endpointType: str) -> dict[str, str]:  # noqa: N803 - boto3 keyword
+        return {"endpointAddress": "abc-ats.iot.us-west-2.amazonaws.com"}
+
+    def list_retained_messages(self, maxResults: int, nextToken: str | None = None) -> dict[str, Any]:  # noqa: N803
+        start = int(nextToken or 0)
+        page: dict[str, Any] = {"retainedTopics": [{"topic": t} for t in self.topics[start : start + 2]]}
+        if start + 2 < len(self.topics):
+            page["nextToken"] = str(start + 2)
+        return page
+
+    def publish(self, **kw: Any) -> dict[str, Any]:
+        self.published.append(kw)
+        return {}
+
+
+class TestClearingRetainedSafetyMessages:
+    TOPICS = ["strands/arm-1/presence", "strands/safety/estop", "strands/arm-1/safety/event", "strands/safety/resume"]
+
+    @pytest.fixture
+    def store(self, monkeypatch: pytest.MonkeyPatch) -> _RetainedStore:
+        store = _RetainedStore(list(self.TOPICS))
+        monkeypatch.setattr(provision, "_require_boto3", lambda: SimpleNamespace(client=lambda *a, **k: store))
+        return store
+
+    def test_a_dry_run_names_the_fleet_safety_topics_and_publishes_nothing(self, store: _RetainedStore) -> None:
+        report = provision.clear_retained_safety_messages()
+        assert report.topics == ("strands/safety/estop", "strands/safety/resume")
+        assert report.applied is False and store.published == []
+
+    def test_apply_clears_each_with_a_zero_byte_retained_publish(self, store: _RetainedStore) -> None:
+        provision.clear_retained_safety_messages(apply=True)
+        assert store.published == [
+            {"topic": t, "qos": 1, "retain": True, "payload": b""}
+            for t in ("strands/safety/estop", "strands/safety/resume")
+        ]
+
+    def test_the_cli_verb_is_a_dry_run_unless_told_to_apply(
+        self, store: _RetainedStore, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from strands_robots.mesh.iot.cli import main
+
+        assert main(["clear-retained-safety"]) == 0
+        assert "strands/safety/estop" in capsys.readouterr().out and store.published == []
+        assert main(["clear-retained-safety", "--apply"]) == 0
+        assert len(store.published) == 2

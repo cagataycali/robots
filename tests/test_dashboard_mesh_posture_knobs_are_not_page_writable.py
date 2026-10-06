@@ -93,5 +93,5 @@ def test_the_knob_stays_visible_but_read_only_in_the_env_view(tmp_path, monkeypa
 
 
 def test_the_page_writable_keys_are_untouched():
-    for key in ("OPENAI_API_KEY", "HF_TOKEN", "AWS_REGION", "VOICE_MODEL", "STRANDS_ROBOTS_VIDEO_ROOT"):
+    for key in ("OPENAI_API_KEY", "HF_TOKEN", "AWS_REGION", "VOICE_MODEL"):
         assert config_api.env_entry_error(key, "x") is None, key

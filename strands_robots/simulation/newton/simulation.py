@@ -675,7 +675,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
+            text = (
+                f"add_robot: robot '{name}' already exists. Pick a different name, or remove it first (remove_robot)."
+            )
+            return {"status": "error", "content": [{"text": text}]}
         # A live recording's schema cannot gain columns for this robot, and the
         # rollout that would discover it either dies inside lerobot or saves the
         # wrong robot's values. Refused in the shared mixin, so every backend
@@ -1731,7 +1734,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if name in self._world.cameras:
             return {
                 "status": "error",
-                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
+                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first (remove_camera)."}],
             }
 
         mount = parent_body or ""

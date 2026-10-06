@@ -21,6 +21,7 @@ from strands_robots import mesh as mesh_mod
 from strands_robots.mesh import Mesh
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import session as mesh_session
+from tests._mesh_reply import reply_sample
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -320,7 +321,7 @@ def test_send_returns_first_response(started_mesh: Mesh, captured_puts) -> None:
         # target the sender originally addressed (otherwise an
         # authenticated peer that observes the turn_id can hijack the
         # response). Include responder_id="peer-b" to match send target.
-        sample = _make_sample({"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
+        sample = reply_sample(started_mesh, {"turn_id": turn, "responder_id": "peer-b", "result": {"ok": 1}})
         started_mesh._on_response(sample)
 
     threading.Thread(target=fake_responder, daemon=True).start()
@@ -351,7 +352,7 @@ def test_broadcast_collects_multiple_responses(started_mesh: Mesh, captured_puts
         else:  # pragma: no cover
             return
         for i in range(3):
-            sample = _make_sample({"turn_id": turn, "responder_id": f"p{i}", "result": {"i": i}})
+            sample = reply_sample(started_mesh, {"turn_id": turn, "responder_id": f"p{i}", "result": {"i": i}})
             started_mesh._on_response(sample)
 
     threading.Thread(target=fake_responders, daemon=True).start()

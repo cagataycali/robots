@@ -87,12 +87,12 @@ def test_deny_wildcard_rule_without_wildcard_subject_is_scoped() -> None:
 
 
 def test_deny_wildcard_subject_without_wildcard_rule_is_scoped() -> None:
-    """A wildcard subject (no interfaces, no CNs) tied only to a narrow,
-    non-``**`` rule is scoped: the rule does not open everything, so the
+    """A wildcard subject (no interfaces, no CNs) tied only to a narrow
+    telemetry rule is scoped: the rule does not open everything, so the
     verdict is False."""
     data = _deny_base()
     data["rules"] = [
-        {"id": "narrow", "key_exprs": ["telemetry/**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"}
+        {"id": "narrow", "key_exprs": ["**/state/**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"}
     ]
     data["subjects"] = [{"id": "any"}]
     data["policies"] = [{"rules": ["narrow"], "subjects": ["any"]}]
@@ -120,7 +120,7 @@ def test_deny_wildcard_rule_and_subject_unlinked_by_policy_is_scoped() -> None:
     data = _deny_base()
     data["rules"] = [
         {"id": "open", "key_exprs": ["**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"},
-        {"id": "narrow", "key_exprs": ["t/**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"},
+        {"id": "narrow", "key_exprs": ["**/state/**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"},
     ]
     data["subjects"] = [
         {"id": "named", "cert_common_names": ["op-1"]},
@@ -199,11 +199,11 @@ def test_deny_non_dict_subject_entry_is_skipped_not_permissive() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _wide_open_with(subject: dict) -> dict:
+def _wide_open_with(subject: dict, messages: tuple[str, ...] = ("put",)) -> dict:
     """deny default + ``**``/allow rule + *subject*, joined by one policy."""
     data = _deny_base()
     data["rules"] = [
-        {"id": "open", "key_exprs": ["**"], "messages": ["put"], "flows": ["egress"], "permission": "allow"}
+        {"id": "open", "key_exprs": ["**"], "messages": list(messages), "flows": ["egress"], "permission": "allow"}
     ]
     data["subjects"] = [subject]
     data["policies"] = [{"rules": ["open"], "subjects": [subject["id"]]}]
@@ -263,13 +263,18 @@ def test_substring_star_is_not_a_wildcard() -> None:
     ``"eth*"`` is not Zenoh's any-link wildcard, so matching on substrings
     would over-fire the gate and refuse to start a genuinely scoped mesh.
     """
-    data = _wide_open_with({"id": "globbed", "interfaces": ["eth*"]})
+    data = _wide_open_with({"id": "globbed", "interfaces": ["eth*"]}, messages=("declare_subscriber",))
     assert _acl_config._is_permissive_acl_shape(data) is False
 
 
-def test_constrained_interface_subject_is_scoped() -> None:
-    """Control: a real NIC name is a genuine constraint, so the verdict is False."""
-    data = _wide_open_with({"id": "lab", "interfaces": ["eth0"]})
+def test_constrained_interface_subject_is_scoped_for_subscribing() -> None:
+    """Control: a real NIC name constrains a subscribe-only ``**`` grant.
+
+    A ``put`` on ``**`` bound to the same subject is refused instead: an
+    interface scopes a link, not a peer (see
+    ``test_acl_glob_over_actuation_plane_is_permissive.py``).
+    """
+    data = _wide_open_with({"id": "lab", "interfaces": ["eth0"]}, messages=("declare_subscriber",))
     assert _acl_config._is_permissive_acl_shape(data) is False
 
 

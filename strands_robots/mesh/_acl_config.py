@@ -14,9 +14,9 @@ Zenoh 1.x quirks (each verified against a live session):
   peer's exact cert CN in ``STRANDS_MESH_ACL_FILE``.
 * Subject ``interfaces`` is OPTIONAL -- omitting it causes the subject
   to match on every link (wildcard). An empty list ``[]`` is rejected.
-* ``key_exprs`` match the user-side key (the namespace prefix is
-  stripped from the matcher's view), so ``**/cmd`` is the robust
-  glob; ``"<namespace>/*/cmd"`` never matches.
+* ``key_exprs`` match the namespaced key: with namespace ``strands`` a
+  command travels as ``strands/strands/<peer>/cmd``, so ``**/cmd`` is the
+  robust glob; ``"<namespace>/*/cmd"`` never matches.
 * Both nodes check every message against the REMOTE peer's subject: a
   ``put`` leaves the publisher as ``egress`` and arrives as ``ingress``,
   a ``declare_subscriber`` travels the other way. A role therefore grants
@@ -34,6 +34,7 @@ don't pay the import cost).
 from __future__ import annotations
 
 import copy
+import functools
 import json
 import logging
 import os
@@ -773,66 +774,111 @@ def _clear_thread_snapshot() -> None:
         _THREAD_SNAPSHOT.value = None
 
 
-#: Concrete user-side keys (namespace prefix already stripped, as the ACL
-#: matcher sees them) standing for the topic classes on which a ``put`` moves
-#: or stops a robot: a command to one peer, the fleet broadcast, and the two
-#: fleet safety commands. An ``allow`` rule whose ``key_exprs`` reach any of
-#: them writes to the actuation plane.
-_ACTUATION_PLANE_CANARIES: tuple[str, ...] = (
-    "peer/cmd",
-    "broadcast",
-    "safety/estop",
-    "safety/resume",
+#: Chunks that name a topic class in the mesh's key schema
+#: (``strands/<peer>/<class>/...``). A peer id, device name or namespace chunk
+#: is never one of these, which is what keeps a telemetry glob such as
+#: ``**/response/**`` or ``**/state/**`` off the actuation plane: the only
+#: command key it could reach belongs to a peer literally named ``response``.
+_TOPIC_CLASS_CHUNKS: frozenset[str] = frozenset(
+    {
+        "broadcast",
+        "camera",
+        "cmd",
+        "hand",
+        "health",
+        "imu",
+        "input",
+        "lidar",
+        "map",
+        "odom",
+        "pose",
+        "presence",
+        "response",
+        "safety",
+        "state",
+        "stream",
+    }
+)
+
+#: Stand-ins for the key chunks of an actuation-plane pattern.
+_NAMES = "<names>"  # zero or more name chunks: the namespace and the ``strands`` topic root
+_NAME = "<name>"  # one name chunk: a peer id, a device name, or a safety command
+
+#: The keys on which a ``put`` moves or stops a robot: a command to one peer,
+#: the fleet broadcast, the fleet safety commands, and a teleop input stream
+#: (``strands/<peer>/input/<device>``, :mod:`strands_robots.mesh.input`). Each
+#: pattern is anchored at its tail and takes any run of name chunks in front,
+#: because the matcher sees the configured namespace ahead of the ``strands/``
+#: root the mesh publishes under (with namespace ``strands`` the command key is
+#: ``strands/strands/<peer>/cmd``). Covering every prefix keeps the check right
+#: for any namespace and for an ACL spelled against either view of the key.
+_ACTUATION_PLANE: tuple[tuple[str, ...], ...] = (
+    (_NAMES, _NAME, "cmd"),
+    (_NAMES, "broadcast"),
+    (_NAMES, "safety", _NAME),
+    (_NAMES, _NAME, "input", _NAME),
 )
 
 
-def _zenoh_key_expr_regex(key_expr: str) -> re.Pattern[str] | None:
-    """Compile a Zenoh key expression to a regex over concrete keys, or ``None``.
+def _chunk_regex(chunk: str) -> re.Pattern[str]:
+    """One key-expression chunk as a regex: ``$*`` is any run of characters, the rest literal."""
+    return re.compile("[^/]*".join(re.escape(piece) for piece in chunk.split("$*")) + r"\Z")
 
-    Zenoh chunks are ``/``-separated; ``**`` matches any number of chunks
-    (including none), ``*`` exactly one chunk, and ``$*`` any run of
-    characters inside a chunk. Everything else is literal. Enough of the
-    grammar to decide whether a glob reaches a topic class; not a full
-    ``keyexpr`` implementation.
+
+def _chunk_meets(chunk: str, slot: str) -> bool:
+    """Whether a single key chunk exists that *chunk* (``*`` or a literal with ``$*``) and *slot* both match."""
+    if chunk in ("*", "**"):
+        return True
+    if slot == _NAME:
+        # A ``$*`` chunk matches infinitely many names, so at least one is not a topic class.
+        return "$*" in chunk or chunk not in _TOPIC_CLASS_CHUNKS
+    return _chunk_regex(chunk).match(slot) is not None
+
+
+def _key_expr_reaches_actuation_plane(key_expr: Any) -> bool:
+    """Whether *key_expr* matches any command, broadcast, safety or teleop input key.
+
+    The answer is structural: the key expression intersects one of the
+    :data:`_ACTUATION_PLANE` patterns for SOME peer, device and namespace, not
+    for one sample key. ``**``, ``**/cmd``, ``**/neon/cmd``, ``neon/cmd``,
+    ``scout-$*/cmd``, ``fleet/*/cmd``, ``**/safety/*``, ``broadcast`` and
+    ``**/input/**`` all reach it; ``**/presence``, ``**/response/**`` and
+    ``arm-1/state`` are telemetry and do not.
+
+    Fails closed: a value that is not a well-formed key expression (not a
+    string, empty, or with an empty chunk) counts as reaching the plane, so a
+    rule the check cannot read is never waved through.
     """
     if not isinstance(key_expr, str) or not key_expr:
-        return None
-    parts: list[str] = []
-    for chunk in key_expr.split("/"):
-        if chunk == "**":
-            parts.append("(?:[^/]+(?:/[^/]+)*)?")
-        elif chunk == "*":
-            parts.append("[^/]+")
-        else:
-            parts.append("[^/]*".join(re.escape(piece) for piece in chunk.split("$*")))
-    # A ``**`` chunk may stand for zero chunks, so the separator around it is
-    # optional too: ``**/cmd`` must match ``cmd`` as well as ``a/b/cmd``.
-    pattern = ""
-    for index, part in enumerate(parts):
-        if index == 0:
-            pattern = part
-        elif parts[index - 1].startswith("(?:[^/]+") or part.startswith("(?:[^/]+"):
-            pattern += "/?" + part
-        else:
-            pattern += "/" + part
-    try:
-        return re.compile("^" + pattern + r"\Z")
-    except re.error:
-        return None
+        return True
+    chunks = tuple(key_expr.split("/"))
+    if "" in chunks:
+        return True
 
+    for pattern in _ACTUATION_PLANE:
 
-def _key_expr_reaches_actuation_plane(key_expr: str) -> bool:
-    """Whether *key_expr* matches a command, broadcast or fleet-safety key.
+        @functools.cache
+        def meets(i: int, j: int, pattern: tuple[str, ...] = pattern) -> bool:
+            if i == len(chunks) and j == len(pattern):
+                return True
+            here = chunks[i] if i < len(chunks) else None
+            slot = pattern[j] if j < len(pattern) else None
+            if here == "**" and meets(i + 1, j):
+                return True
+            if slot == _NAMES and meets(i, j + 1):
+                return True
+            if here is None or slot is None:
+                return False
+            # Both sides produce the same next key chunk; a repeating side stays put.
+            ni = i if here == "**" else i + 1
+            nj = j if slot == _NAMES else j + 1
+            if (ni, nj) == (i, j):
+                return False
+            return _chunk_meets(here, _NAME if slot == _NAMES else slot) and meets(ni, nj)
 
-    ``**`` reaches everything; ``**/cmd``, ``*/cmd`` and ``$*/cmd`` reach a
-    peer's command topic; ``**/safety/**`` and ``safety/*`` reach the two
-    fleet safety commands. ``**/presence`` or ``**/response/**`` do not: they
-    are telemetry, and an ``allow`` on them moves nothing.
-    """
-    regex = _zenoh_key_expr_regex(key_expr)
-    if regex is None:
-        return False
-    return any(regex.match(canary) for canary in _ACTUATION_PLANE_CANARIES)
+        if meets(0, 0):
+            return True
+    return False
 
 
 def _rule_writes_the_actuation_plane(rule: Any) -> bool:
@@ -840,7 +886,8 @@ def _rule_writes_the_actuation_plane(rule: Any) -> bool:
 
     A rule with no ``messages`` list restricts none, so it can ``put``; one
     that names only ``declare_subscriber`` observes the plane rather than
-    writing it and is not counted.
+    writing it and is not counted. A ``key_exprs`` value that is not a list
+    cannot be read, so it counts as writing (fail closed).
     """
     if not isinstance(rule, dict) or rule.get("permission") != "allow":
         return False
@@ -848,79 +895,104 @@ def _rule_writes_the_actuation_plane(rule: Any) -> bool:
     if isinstance(messages, list) and messages and "put" not in messages:
         return False
     kes = rule.get("key_exprs") or []
-    return isinstance(kes, list) and any(_key_expr_reaches_actuation_plane(ke) for ke in kes)
+    return not isinstance(kes, list) or any(_key_expr_reaches_actuation_plane(ke) for ke in kes)
 
 
-def _subjects_without_identity(data: dict[str, Any]) -> set[str]:
-    """Ids of subjects that name no ``cert_common_names`` (interfaces scope a link, not a peer)."""
-    out: set[str] = set()
-    for s in data.get("subjects") or []:
-        if isinstance(s, dict) and not s.get("cert_common_names"):
-            out.add(str(s.get("id")))
+def _dimension_is_unconstrained(value: Any) -> bool:
+    """Return True when a subject dimension restricts no peer.
+
+    Two shapes are wire-identical to Zenoh's ``SubjectProperty::Wildcard``
+    and must both read as unconstrained:
+
+    * absent or empty -- the field was never narrowed;
+    * ``["*"]``, or any list carrying a ``"*"`` member -- the explicit
+      any-link wildcard. Zenoh matches every peer on every link for it, so a
+      ``"*"`` alongside real entries widens the subject back to "everyone"
+      rather than adding one more allowed value.
+
+    Testing truthiness alone read ``["*"]`` as a constraint because the list
+    is non-empty, so the shape :func:`_validate_acl_shape`'s own rejection
+    message recommends as the explicit wildcard slipped the refuse-to-start
+    gate the rejection exists to feed.
+    """
+    if not value:
+        return True
+    if isinstance(value, str):
+        return value == "*"
+    if isinstance(value, (list, tuple, set)):
+        return any(isinstance(v, str) and v == "*" for v in value)
+    return False
+
+
+def _actuation_grants_without_identity(data: dict[str, Any]) -> list[tuple[list[str], list[str]]]:
+    """Per policy, the plane-writing rules it binds to subjects with no certificate constraint.
+
+    ``interfaces`` scopes a link, not a peer: a subject whose
+    ``cert_common_names`` is absent, empty or ``"*"`` admits every CA-signed
+    peer on that link. Returns ``(rule ids, subject ids)`` per offending
+    policy, sorted, for the refuse-to-start gate and the loader warning.
+    """
+    rules = data.get("rules") or []
+    subjects = data.get("subjects") or []
+    policies = data.get("policies") or []
+    if not all(isinstance(x, list) for x in (rules, subjects, policies)):
+        return []
+    writing = {str(r.get("id")) for r in rules if _rule_writes_the_actuation_plane(r)}
+    anonymous = {
+        str(s.get("id"))
+        for s in subjects
+        if isinstance(s, dict) and _dimension_is_unconstrained(s.get("cert_common_names"))
+    }
+    out: list[tuple[list[str], list[str]]] = []
+    for pol in policies:
+        if not isinstance(pol, dict):
+            continue
+        pol_rules = set(map(str, pol.get("rules") or [])) & writing
+        pol_subjects = set(map(str, pol.get("subjects") or [])) & anonymous
+        if pol_rules and pol_subjects:
+            out.append((sorted(pol_rules), sorted(pol_subjects)))
     return out
 
 
 def _warn_actuation_rules_without_identity(data: dict[str, Any], path: Path) -> None:
     """One WARNING per policy that lets a subject with no certificate constraint write the actuation plane.
 
-    The refuse-to-start gate (:func:`_is_permissive_acl_shape`) fires only
-    when the subject is unconstrained on every dimension. A subject scoped by
-    ``interfaces`` alone still lets every CA-signed peer on that link command
-    and stop every robot, which the operator should see even where the gate
-    lets the mesh start.
+    The same shape makes :func:`_is_permissive_acl_shape` refuse to start
+    unless the operator has acknowledged a permissive ACL; the warning names
+    the rule and subject so the operator knows what to fix either way.
     """
-    writing_rules = {str(r.get("id")) for r in (data.get("rules") or []) if _rule_writes_the_actuation_plane(r)}
-    if not writing_rules:
-        return
-    anonymous = _subjects_without_identity(data)
-    for pol in data.get("policies") or []:
-        if not isinstance(pol, dict):
-            continue
-        rules = set(map(str, pol.get("rules") or [])) & writing_rules
-        subjects = set(map(str, pol.get("subjects") or [])) & anonymous
-        if rules and subjects:
-            logger.warning(
-                "[acl] %s: rule(s) %s let subject(s) %s put on the command/safety plane (cmd, broadcast, "
-                "safety/**) with no cert_common_names constraint; an interfaces list scopes a link, not a "
-                "peer, so every CA-signed peer there can command and stop every robot. Enumerate "
-                "cert_common_names on that subject (see examples/mesh/mesh_acl_example.json5).",
-                path,
-                sorted(rules),
-                sorted(subjects),
-            )
+    for rules, subjects in _actuation_grants_without_identity(data):
+        logger.warning(
+            "[acl] %s: rule(s) %s let subject(s) %s put on the command/safety/input plane (cmd, broadcast, "
+            "safety/*, input/*) with no cert_common_names constraint; an interfaces list scopes a link, not a "
+            "peer, so every CA-signed peer there can command and stop every robot. Enumerate "
+            "cert_common_names on that subject (see examples/mesh/mesh_acl_example.json5).",
+            path,
+            rules,
+            subjects,
+        )
 
 
 def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
-    """inspect the resolved ACL *shape* for
-    the permissive pattern, regardless of where the dict came from
-    (built-in default or operator-supplied file).
+    """Whether the resolved ACL is permissive by shape, wherever it came from.
 
-    Two patterns are flagged as permissive-by-shape:
+    Three shapes are permissive:
 
-    1. ``default_permission == "allow"`` AND every explicit
-       rule/subject/policy collection empty. The original built-in
-       ``default_acl()`` shape -- "any CA-signed peer can publish/
-       subscribe everywhere".
+    1. ``default_permission == "allow"`` with every rule, subject and policy
+       collection empty: the built-in :func:`default_acl` ("any CA-signed
+       peer publishes and subscribes everywhere").
+    2. ``default_permission == "deny"`` opened back up by one policy that
+       binds an ``allow`` rule on ``**`` to a subject constrained on neither
+       ``interfaces`` nor ``cert_common_names``.
+    3. ``default_permission == "deny"`` with a policy that binds a rule
+       writing the actuation plane (:func:`_rule_writes_the_actuation_plane`:
+       a peer's ``cmd``, ``broadcast``, ``safety/*`` or a teleop
+       ``input/*``) to a subject with no ``cert_common_names``. An
+       ``interfaces`` list scopes a link, not a peer, so every CA-signed
+       peer on that link can command, stop or teleoperate every robot.
 
-    2. ``default_permission == "deny"`` BUT the operator opens
-       everything back up via a wildcard rule + wildcard subject:
-       a rule whose ``key_exprs`` contains ``"**"`` AND
-       ``permission == "allow"``, AND there exists a subject lacking
-       BOTH ``interfaces`` AND ``cert_common_names`` (i.e.
-       ``SubjectProperty::Wildcard`` on every dimension), AND that
-       subject is referenced by the wildcard rule's policy.
-
-       This is the permissive-bypass gap:
-       ``default_permission: "deny"`` plus a single ``key_exprs:
-       ["**"]/permission: "allow"`` rule plus a wildcard subject
-       ("any CA-signed peer publishes/subscribes everywhere") was
-       wire-effectively permissive but bypassed the previous narrow
-       check.
-
-    Returns True when EITHER pattern matches, so the
-    ``Mesh.start`` refuse-to-start gate triggers on the
-    wire-effective posture, not on the env-var presence or on the
-    superficial ``default_permission`` literal.
+    ``Mesh.start`` refuses to start on a True verdict unless the operator
+    has acknowledged a permissive ACL (:func:`permissive_acl_acknowledged`).
     """
     if not isinstance(data, dict):
         return False
@@ -929,86 +1001,31 @@ def _is_permissive_acl_shape(data: dict[str, Any]) -> bool:
     subjects = data.get("subjects") or []
     policies = data.get("policies") or []
 
-    # Pattern 1: built-in default shape (allow + empty everything else)
     if default_perm == "allow" and not rules and not subjects and not policies:
         return True
-
-    # Pattern 2: deny + wildcard-rule + wildcard-subject + cross-policy
     if default_perm != "deny":
         return False
-    if not isinstance(rules, list) or not isinstance(subjects, list):
+    if not isinstance(rules, list) or not isinstance(subjects, list) or not isinstance(policies, list):
         return False
-    if not isinstance(policies, list):
-        return False
+    if _actuation_grants_without_identity(data):
+        return True
 
-    def _is_wildcard_rule(r: Any) -> bool:
-        if not isinstance(r, dict):
-            return False
-        if r.get("permission") != "allow":
-            return False
-        kes = r.get("key_exprs") or []
-        if isinstance(kes, list) and "**" in kes:
-            return True
-        # The literal ``**`` was the only spelling recognised, while the
-        # module docstring and the shipped template teach ``**/cmd``,
-        # ``**/broadcast`` and ``**/safety/**``: globs that together cover
-        # every topic on which a ``put`` moves or stops a robot. A rule that
-        # can write any of them is wide open where it matters (f023).
-        return _rule_writes_the_actuation_plane(r)
-
-    def _dimension_is_unconstrained(value: Any) -> bool:
-        """Return True when a subject dimension restricts no peer.
-
-        Two shapes are wire-identical to Zenoh's
-        ``SubjectProperty::Wildcard`` and must both read as
-        unconstrained:
-
-        * absent or empty -- the field was never narrowed;
-        * ``["*"]``, or any list carrying a ``"*"`` member -- the
-          explicit any-link wildcard. Zenoh matches every peer on
-          every link for it, so a ``"*"`` alongside real entries
-          widens the subject back to "everyone" rather than adding
-          one more allowed value.
-
-        Testing truthiness alone (the previous behaviour) read
-        ``["*"]`` as a constraint because the list is non-empty, so
-        the shape :func:`_validate_acl_shape`'s own rejection message
-        recommends as the explicit wildcard slipped the
-        refuse-to-start gate the rejection exists to feed.
-        """
-        if not value:
-            return True
-        if isinstance(value, str):
-            return value == "*"
-        if isinstance(value, (list, tuple, set)):
-            return any(isinstance(v, str) and v == "*" for v in value)
-        return False
-
-    def _is_wildcard_subject(s: Any) -> bool:
-        if not isinstance(s, dict):
-            return False
-        # Wildcard on both dimensions: neither ``interfaces`` nor
-        # ``cert_common_names`` narrows the peer set. Each field may be
-        # absent, explicitly empty, or the explicit ``"*"`` wildcard --
-        # all three are SubjectProperty::Wildcard on the wire.
-        return _dimension_is_unconstrained(s.get("interfaces")) and _dimension_is_unconstrained(
-            s.get("cert_common_names")
-        )
-
-    wildcard_rule_ids = {r.get("id") for r in rules if _is_wildcard_rule(r)}
-    if not wildcard_rule_ids:
-        return False
-    wildcard_subject_ids = {s.get("id") for s in subjects if _is_wildcard_subject(s)}
-    if not wildcard_subject_ids:
-        return False
-
-    # Pattern 2 matches iff any policy ties a wildcard rule to a wildcard subject.
+    open_rules = {
+        r.get("id")
+        for r in rules
+        if isinstance(r, dict) and r.get("permission") == "allow" and "**" in (r.get("key_exprs") or [])
+    }
+    open_subjects = {
+        s.get("id")
+        for s in subjects
+        if isinstance(s, dict)
+        and _dimension_is_unconstrained(s.get("interfaces"))
+        and _dimension_is_unconstrained(s.get("cert_common_names"))
+    }
     for pol in policies:
         if not isinstance(pol, dict):
             continue
-        pol_rules = set(pol.get("rules") or [])
-        pol_subjects = set(pol.get("subjects") or [])
-        if pol_rules & wildcard_rule_ids and pol_subjects & wildcard_subject_ids:
+        if set(pol.get("rules") or []) & open_rules and set(pol.get("subjects") or []) & open_subjects:
             return True
     return False
 

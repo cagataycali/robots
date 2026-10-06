@@ -45,10 +45,13 @@ from strands_robots.simulation.safe_output import atomic_write_bytes, resolve_sa
 from strands_robots.utils import (
     BOOLEAN_VECTOR_REASON,
     boolean_flag_error,
+    coerce_pose_vector,
     coerce_rgba,
     is_boolean,
+    orientation_quaternion_error,
     refusal_container_repr,
     refusal_repr,
+    sequence_length,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +61,29 @@ logger = logging.getLogger(__name__)
 #: of the sample is to make the condition recognizable, not to re-list the
 #: request the caller just made.
 _NAME_SAMPLE_LIMIT = 4
+
+#: The joints that own more than one ``qpos`` / ``qvel`` slot, by kind:
+#: ``(qpos layout, qvel layout)``. Every other joint owns one of each.
+_MULTI_COORDINATE_LAYOUT = {
+    "free": ("[x, y, z, qw, qx, qy, qz]", "[vx, vy, vz, wx, wy, wz]"),
+    "ball": ("[qw, qx, qy, qz]", "[wx, wy, wz]"),
+}
+
+
+def _multi_coordinate_kind(model: Any, mj: Any, jnt_id: int) -> str | None:
+    """Name a free or ball joint, the two that own a vector of coordinates."""
+    # Both sides cast: a numpy integer does not compare equal to the enum.
+    jnt_type = int(model.jnt_type[jnt_id])
+    if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
+        return "free"
+    if jnt_type == int(mj.mjtJoint.mjJNT_BALL):
+        return "ball"
+    return None
+
+
+def _shaped_entries(values: dict[str, Any]) -> dict[str, Any]:
+    """The entries of a joint-state map whose value carries a length (a vector)."""
+    return {k: v for k, v in values.items() if not isinstance(v, str | bytes) and sequence_length(v) is not None}
 
 
 def _joint_name_sample(names: list[str]) -> str:
@@ -1874,6 +1900,72 @@ class PhysicsMixin:
             ],
         }
 
+    def _joint_state_vectors(
+        self,
+        joint_ids: dict[str, int],
+        shaped: dict[str, Any],
+        scalars: dict[str, float],
+        name: str,
+        method: str,
+    ) -> tuple[dict[str, list[float]], dict[str, Any] | None]:
+        """Read the whole-joint vectors of a state write, and refuse a value of the wrong shape.
+
+        A free joint owns seven ``qpos`` slots and six ``qvel`` slots, a ball
+        joint four and three; every other joint owns one of each. The shared
+        scalar domain (:meth:`_coerce_joint_state_map`) holds for the one-slot
+        joints, and a free or ball joint takes its whole vector in the layout
+        :data:`_MULTI_COORDINATE_LAYOUT` names. Each side refuses the other's
+        shape: a single number on a free joint used to write ``qpos[adr]`` (its
+        ``x``) and report success with ``y``, ``z`` and the quaternion untouched,
+        and a vector on a hinge has no slot to go to.
+
+        Args:
+            joint_ids: Every key of the write, resolved to its joint id.
+            shaped: The entries whose value carries a length (a vector).
+            scalars: The other entries, already through the shared domain.
+            name: ``"positions"`` or ``"velocities"``, which picks the width.
+            method: Calling method name, used in error text.
+
+        Returns:
+            ``({joint_name: floats}, None)`` for every free or ball joint (a
+            position quaternion normalized), or ``({}, error_dict)``.
+        """
+        mj = _ensure_mujoco()
+        assert self._world is not None  # every caller checked for a world first
+        model = self._world._model
+        positions = name == "positions"
+        vectors: dict[str, list[float]] = {}
+        for jnt_name, jnt_id in joint_ids.items():
+            kind = _multi_coordinate_kind(model, mj, jnt_id)
+            text: str | None = None
+            if kind is None:
+                if jnt_name in shaped:
+                    text = (
+                        f"{method}: '{name}' value for joint '{jnt_name}' must be a number (it owns one slot), "
+                        f"got {refusal_container_repr(shaped[jnt_name])}. Nothing was written."
+                    )
+            elif jnt_name not in shaped:
+                layout = _MULTI_COORDINATE_LAYOUT[kind][0 if positions else 1]
+                text = (
+                    f"{method}: joint '{jnt_name}' is a {kind} joint and takes {layout.count(',') + 1} "
+                    f"'{name}' values {layout}, got the single number {scalars[jnt_name]!r}, which would "
+                    "set only the first. Nothing was written."
+                )
+            else:
+                width = _MULTI_COORDINATE_LAYOUT[kind][0 if positions else 1].count(",") + 1
+                label = f"{name}['{jnt_name}']"
+                floats, text = coerce_pose_vector(method, label, shaped[jnt_name], width)
+                if floats is not None and positions:
+                    quat = floats[-4:]
+                    text = orientation_quaternion_error(method, f"{label} quaternion", quat)
+                    norm = math.sqrt(sum(c * c for c in quat))
+                    floats[-4:] = [c / norm for c in quat] if text is None else quat
+                if floats is not None and text is None:
+                    vectors[jnt_name] = floats
+            if text is not None:
+                return {}, {"status": "error", "content": [{"text": text}]}
+        return vectors, None
+
     def set_joint_positions(
         self,
         positions: dict[str, float] | list[float] | None = None,
@@ -1964,6 +2056,9 @@ class PhysicsMixin:
                 must be converted before it is written here. A value the joint's
                 range does not contain is refused naming that unit, and named as a
                 degree reading when converting it would land inside the range.
+                A free joint's value is its whole ``[x, y, z, qw, qx, qy, qz]``
+                and a ball joint's its ``[qw, qx, qy, qz]`` (the quaternion is
+                normalized on write); a single number for either is refused.
             robot_name: Which robot the ordered form binds to, and whose
                 namespace resolves an unqualified joint name. Optional when the
                 world holds exactly one robot. When given it must name a robot
@@ -2060,13 +2155,21 @@ class PhysicsMixin:
         # this a non-numeric entry raises ValueError past the structured-error
         # contract, and a nan/inf lands in data.qpos where mj_forward propagates
         # it across the whole kinematic state while the tool still reports success.
-        positions, err = self._coerce_joint_state_map(positions, "positions", "set_joint_positions")
+        # A free or ball joint takes its whole vector, every other joint one number.
+        shaped = _shaped_entries(positions)
+        requested = positions
+        positions, err = self._coerce_joint_state_map(
+            {k: v for k, v in requested.items() if k not in shaped}, "positions", "set_joint_positions"
+        )
         if err:
             return err
 
         joint_ids, err = self._resolve_joint_write_targets(
-            positions, "positions", "set_joint_positions", robot_name=robot_name
+            requested, "positions", "set_joint_positions", robot_name=robot_name
         )
+        if err:
+            return err
+        vectors, err = self._joint_state_vectors(joint_ids, shaped, positions, "positions", "set_joint_positions")
         if err:
             return err
 
@@ -2118,9 +2221,9 @@ class PhysicsMixin:
         # mj_checkPos applies to qpos - past it the next step resets every
         # joint and object. Checked after the range so a limited joint keeps
         # the more specific message naming its own range.
-        if ceiling_err := qpos_ceiling_error(
-            "set_joint_positions", ((name, float(v)) for name, v in positions.items())
-        ):
+        coordinates = [(name, float(v)) for name, v in positions.items()]
+        coordinates += [(f"{name}[{i}]", v) for name, vec in vectors.items() for i, v in enumerate(vec)]
+        if ceiling_err := qpos_ceiling_error("set_joint_positions", coordinates):
             return {"status": "error", "content": [{"text": ceiling_err}]}
 
         with self._lock:
@@ -2128,6 +2231,9 @@ class PhysicsMixin:
             moved: list[str] = []
             stale: list[str] = []
             not_a_pose: list[str] = []
+            for jnt_name, vec in vectors.items():
+                qpos_adr = int(model.jnt_qposadr[joint_ids[jnt_name]])
+                data.qpos[qpos_adr : qpos_adr + len(vec)] = vec
             for jnt_name, value in positions.items():
                 jnt_id = joint_ids[jnt_name]
                 qpos_adr = model.jnt_qposadr[jnt_id]
@@ -2148,7 +2254,7 @@ class PhysicsMixin:
 
             mj.mj_forward(model, data)
 
-        count = len(positions)
+        count = len(joint_ids)
         text = f"Set {count}/{count} joint positions, FK updated"
         if hold:
             if moved:
@@ -2181,7 +2287,8 @@ class PhysicsMixin:
         Every value is in its joint's own unit per second -- rad/s for a hinge,
         m/s for a slide, the per-second form of the unit
         :func:`~strands_robots.simulation.mujoco.scene_ops.joint_position_unit`
-        names -- and not degrees per second.
+        names -- and not degrees per second. A free joint takes its whole
+        ``[vx, vy, vz, wx, wy, wz]`` and a ball joint its ``[wx, wy, wz]``.
 
         Every value must be a finite real number (Python or NumPy scalar), and
         must not be a boolean. A
@@ -2296,13 +2403,20 @@ class PhysicsMixin:
         # Validate every value is a finite number before any qvel write (see
         # set_joint_positions): a nan/inf velocity blows up the integrator on the
         # next step and a non-numeric entry escapes the structured-error contract.
-        velocities, err = self._coerce_joint_state_map(velocities, "velocities", "set_joint_velocities")
+        shaped = _shaped_entries(velocities)
+        requested = velocities
+        velocities, err = self._coerce_joint_state_map(
+            {k: v for k, v in requested.items() if k not in shaped}, "velocities", "set_joint_velocities"
+        )
         if err:
             return err
 
         joint_ids, err = self._resolve_joint_write_targets(
-            velocities, "velocities", "set_joint_velocities", robot_name=robot_name
+            requested, "velocities", "set_joint_velocities", robot_name=robot_name
         )
+        if err:
+            return err
+        vectors, err = self._joint_state_vectors(joint_ids, shaped, velocities, "velocities", "set_joint_velocities")
         if err:
             return err
 
@@ -2320,6 +2434,9 @@ class PhysicsMixin:
             mj.mj_getState(model, data, checkpoint, spec)
             for jnt_name, value in velocities.items():
                 data.qvel[model.jnt_dofadr[joint_ids[jnt_name]]] = float(value)
+            for jnt_name, vec in vectors.items():
+                dof_adr = int(model.jnt_dofadr[joint_ids[jnt_name]])
+                data.qvel[dof_adr : dof_adr + len(vec)] = vec
             mj.mj_forward(model, data)
             unstable = any(
                 not np.all(np.isfinite(vec)) or np.any(np.abs(vec) >= mj.mjMAXVAL) for vec in (data.qvel, data.qacc)
@@ -2327,7 +2444,8 @@ class PhysicsMixin:
             if unstable:
                 mj.mj_setState(model, data, checkpoint, spec)
                 mj.mj_forward(model, data)
-                sample = ", ".join(f"{n}={float(v):.3g}" for n, v in list(velocities.items())[:3])
+                written = [f"{n}={float(v):.3g}" for n, v in velocities.items()]
+                sample = ", ".join((written + [f"{n}={v}" for n, v in vectors.items()])[:3])
                 return {
                     "status": "error",
                     "content": [
@@ -2356,7 +2474,7 @@ class PhysicsMixin:
                     # the next step moves the velocity off the one just written.
                     stale.append(jnt_name)
 
-        count = len(velocities)
+        count = len(joint_ids)
         msg = f"Set {count}/{count} joint velocities"
         if stale:
             msg += (
