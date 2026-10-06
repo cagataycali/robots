@@ -79,7 +79,7 @@ strands-robots iot clear-retained-safety --apply
 |---|---|
 | `provision-robot THING [--estop-publish]` | Thing, CSR certificate with `CN=THING`, `strands-robot-no-estop` policy (or `strands-robot`) |
 | `provision-operator THING` | the same, `strands-operator` policy |
-| `reprovision THING [--estop-publish {keep,drop}]` | rotate the certificate (Thing, attributes, policies stay); `strands-robot` needs the flag; restart the peer |
+| `reprovision THING [--estop-publish {keep,drop}]` | rotate the certificate; Thing, attributes and policies stay; a `strands-robot` certificate needs the flag; restart the peer |
 | `withdraw-estop-publish [--keep THING] [--apply]` | move `strands-robot` certificates to `strands-robot-no-estop`, except `--keep`; dry run without `--apply` |
 | `clear-retained-safety [--apply]` | post-rollout, delete retained `strands/safety/` messages; dry run without `--apply` |
 | `teardown THING` | delete the Thing, its certificates and local files |
