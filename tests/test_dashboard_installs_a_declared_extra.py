@@ -299,7 +299,7 @@ class TestTheRoutes:
         hint = "ImportError: 'mujoco' is required for MuJoCo simulation\n  pip install 'strands-robots[sim-mujoco]'"
         spawned: list[tuple[Any, ...]] = []
 
-        def spawn(*args: Any) -> dict[str, Any]:
+        def spawn(*args: Any, **_kwargs: Any) -> dict[str, Any]:
             spawned.append(args)
             return {"peer_id": args[2], "pid": 4242, "mode": args[1]}
 
