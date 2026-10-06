@@ -75,6 +75,14 @@ dependencies = [
     # tests/test_strands_agents_floor_ships_the_imported_api.py, which owns that
     # measurement, grades the members the gate calls, and fails the moment a
     # newer strands symbol is imported without raising this floor.
+    # The distribution name is ``strands-agents``; the import name is
+    # ``strands``. A new reader of README L50 (``from strands import Agent``)
+    # who guesses the distribution from the import hits the same squatter
+    # shape as the ``nvidia-curobo`` warning below: ``pip install strands``
+    # on PyPI is `Toon Baeyens' 2020 2-D Schrödinger-eigenvalue solver
+    # <https://pypi.org/project/strands/>`_ (a C++ build that usually fails
+    # on hosts without CMake+GSL+Eigen), not the agent SDK. README L71-74
+    # names this trap at the point a reader reaches for ``pip install``.
     "strands-agents>=1.57.2,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",

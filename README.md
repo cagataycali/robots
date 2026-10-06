@@ -68,7 +68,12 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install "strands-robots[sim-mujoco]"   # plain pip works too
 ```
 
-Python 3.12+. Everything else is an extra you pull in when you need it -
+Python 3.12+. The hero's `from strands import Agent` is served by the
+`strands-agents` distribution, pulled in as a dependency - **not** by
+`pip install strands`, which is an unrelated 2020
+[Schrödinger-eigenvalue solver](https://pypi.org/project/strands/) that
+reuses the import name. Everything else is an extra you pull in when
+you need it -
 `lerobot` (hardware, local VLA inference, recording), `groot` (GR00T N1.7),
 `cosmos3-service`, `mesh`, `mesh-iot`, `sim-newton`, `sim-isaac`, `wbc` -
 see [Installation](https://strands-labs.github.io/robots/start/install/) for the full table.
