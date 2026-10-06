@@ -58,8 +58,7 @@ export default function PasskeyList({ authRequired }: { authRequired: boolean })
       )}
       {msg && <p className={msg.startsWith('✗') ? 'warn small' : 'hint small'}>{msg}</p>}
       <p className="hint">
-        Removing a passkey takes effect immediately; a browser already signed in keeps its session
-        until it reloads.
+        Removing a passkey signs that device out at once, pages it already has open included.
       </p>
     </div>
   )

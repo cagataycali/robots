@@ -9,9 +9,13 @@ decisions and live here because they concern which route is open:
   the proof itself and never the enrolled passkeys - a route that answers
   whoever the socket lets through publishes the named fields below, not
   whatever the auth module happens to return.
-* A second enrolment needs a session; the first needs the bootstrap proof the
-  auth module checks (``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`` or the ``0600``
-  file it minted beside the store).
+* Every enrolment needs the bootstrap proof (``STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN``
+  or the ``0600`` file the auth module writes beside the store): the first one
+  because nobody owns the dashboard yet, later ones because a session alone is
+  what a copied cookie carries, and a passkey enrolled on a copied cookie
+  outlives the removal of the owner's. Removing the LAST passkey needs it too.
+* Signing out ends the session server-side (``auth.end_sessions``), so a copy
+  of the token taken before is refused as well, not only the cookie forgotten.
 
 A finished ceremony sets the ``strands_dash`` cookie so the browser carries the
 session on every request, ``HttpOnly`` so page scripts cannot read it and
@@ -120,12 +124,12 @@ async def status(request: Request) -> dict[str, Any]:
 
 @router.post("/register/begin")
 async def register_begin(request: Request) -> dict[str, Any]:
-    """Start an enrolment: the first needs the bootstrap proof, later ones a session."""
+    """Start an enrolment. Every one needs the bootstrap proof; a session alone is not enough."""
     body = await _json_body(request)
-    if auth.has_credentials() and access.session_claims(request) is None:
-        raise HTTPException(401, "sign in to add another passkey")
     label = str(body.get("label") or "passkey")[:64]
     bootstrap = str(body.get("bootstrap") or "")
+    if auth.has_credentials() and not access.bootstrap_proof_matches(bootstrap):
+        raise HTTPException(401, "adding a passkey needs the bootstrap proof from this machine")
     return auth.begin_registration(request, label=label, bootstrap=bootstrap)
 
 
@@ -160,15 +164,24 @@ async def login_finish(request: Request, response: Response) -> dict[str, Any]:
 
 
 @router.post("/logout")
-async def logout(response: Response) -> dict[str, Any]:
-    """Drop the session cookie.
+async def logout(request: Request, response: Response) -> dict[str, Any]:
+    """End the presented passkey's sessions server-side, then drop the cookie.
 
-    The token itself lives until its ``exp`` or until the passkey it was minted
-    for is removed (``auth.verify_token`` refuses a token whose passkey is no
-    longer enrolled); to end every session of a device, remove its passkey.
+    Advancing the passkey's session epoch (``auth.end_sessions``) refuses every
+    token minted for it so far - this browser's, a copy taken from it, a
+    handoff - on every route, renewal included, and closes its open sockets
+    within ``access.SOCKET_RECHECK_SECONDS``. A store that cannot be written is
+    a 500 rather than a sign-out reported done.
     """
+    claims = access.session_claims(request)
+    ended = False
+    if claims is not None:
+        try:
+            ended = auth.end_sessions(str(claims.get("sub") or ""))
+        except OSError as exc:
+            raise HTTPException(500, f"could not end the session on the server: {exc}") from exc
     response.delete_cookie(access.COOKIE, path="/")
-    return {"ok": True}
+    return {"ok": True, "sessions_ended": ended}
 
 
 @router.get("/credentials")
@@ -178,11 +191,21 @@ async def credentials(_: dict = Depends(access.require_session)) -> dict[str, An
 
 
 @router.delete("/credentials/{cred_id}")
-async def delete_credential(cred_id: str, who: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Remove a passkey. Only a passkey session may do this, never the static token."""
+async def delete_credential(
+    cred_id: str, request: Request, who: dict = Depends(access.require_session)
+) -> dict[str, Any]:
+    """Remove a passkey. Only a passkey session may do this, never the static token.
+
+    The last passkey is removed only when the body carries the bootstrap proof
+    (``{"bootstrap": ...}``): that is how the owner of a single-passkey
+    dashboard ends a stolen session, and the setup it returns to needs the same
+    proof, so no one else can claim it.
+    """
     if who.get("via") != "passkey":
         raise HTTPException(403, "only a passkey session may remove a passkey")
-    return auth.delete_credential(cred_id)
+    body = await _json_body(request)
+    allow_last = access.bootstrap_proof_matches(str(body.get("bootstrap") or ""))
+    return auth.delete_credential(cred_id, allow_last=allow_last)
 
 
 @router.post("/handoff")
