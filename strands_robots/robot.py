@@ -828,6 +828,24 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     if tool_name_reason is not None:
         raise ValueError(tool_name_reason)
 
+    # ``tool_name`` has been screened; the DERIVED one has not. The sim path
+    # at ``create_simulation(... tool_name=tool_name or f"{name}_sim" ...)``
+    # (and the sibling driver paths) interpolate the raw user ``name`` so an
+    # agent can still address the robot by the alias it typed, but
+    # ``resolve_name`` strips whitespace and casefolds, so an input like
+    # ``" so100 "`` or ``"so100 "`` built a Robot ``status="success"`` with
+    # a derived tool name (``" so100_sim"`` / ``"so100 _sim"``) that no
+    # model provider accepts. The failure surfaced far later on the first
+    # Agent call as a Bedrock ValidationException naming a slot the caller
+    # never set. Screen the derived name here with the same validator so
+    # the refusal is the one at line 244-284 ("use letters, digits, '_' or
+    # '-'"), still named ``Robot(tool_name=...)`` so the remedy is to pass
+    # a clean explicit value.
+    if tool_name is None:
+        derived_tool_name_reason = _tool_name_error(f"{name}_sim")
+        if derived_tool_name_reason is not None:
+            raise ValueError(derived_tool_name_reason)
+
     # Resolve the mesh opt-in. Mesh is OFF by default so a bare
     # ``Robot("so100")`` is quiet and never spins up Zenoh/ACL/e-stop
     # machinery. ``mesh=None`` (the default) means "consult the
