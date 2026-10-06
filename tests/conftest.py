@@ -489,7 +489,7 @@ def _audit_process_state_is_left_as_found() -> Iterator[None]:
 
 #: Every "warn once per process" memo in the package, as ``(module, name)``: a
 #: module-level container of the keys already reported, born empty, whose only
-#: job is to stop a repeat. Seventeen of them across twelve modules. Emptied by
+#: job is to stop a repeat. Nineteen of them across thirteen modules. Emptied by
 #: :func:`_warn_once_memos_are_left_empty` below, and discovered rather than
 #: trusted in ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so
 #: an eighteenth cannot appear without a row here.
@@ -502,11 +502,13 @@ WARN_ONCE_MEMOS: tuple[tuple[str, str], ...] = (
     ("strands_robots.mesh._backend_select", "_UNKNOWN_WARNED"),
     ("strands_robots.mesh._zenoh_config", "_NON_POSIX_TLS_WARNED_KEYS"),
     ("strands_robots.mesh.core", "_POSTURE_WARNINGS_EMITTED"),
+    ("strands_robots.mesh.core", "_bare_allow_warned"),
     ("strands_robots.mesh.iot.provision", "_UNVERIFIED_CA_WARNED"),
     ("strands_robots.mesh.session", "_RETENTION_WARNED"),
     ("strands_robots.mesh.session", "_unencodable_topics_warned"),
     ("strands_robots.mesh.session", "_zenoh_missing_warned"),
     ("strands_robots.mesh.transport.bridge_transport", "_WARNED_HALF_BRIDGED_HEADS"),
+    ("strands_robots.mesh.wire_identity", "_required_warned"),
     ("strands_robots.policies.lerobot_local.embodiment", "_WARNED_STATE_KEY_MISMATCH"),
     ("strands_robots.simulation.mujoco.backend", "_software_render_warned"),
     ("strands_robots.simulation.predicates", "_RESOLUTION_WARNED"),

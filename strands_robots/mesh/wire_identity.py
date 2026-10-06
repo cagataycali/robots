@@ -39,7 +39,6 @@ with certificates gets signed identity without a new setting.
 from __future__ import annotations
 
 import base64
-import binascii
 import datetime as _dt
 import hashlib
 import json
@@ -173,7 +172,7 @@ class WireIdentity:
         """
         try:
             located = _locate_pair()
-        except (ValueError, FileNotFoundError, OSError) as exc:
+        except (ValueError, OSError) as exc:
             return f"wire identity: {exc}"
         if located is None:
             return None
@@ -385,7 +384,7 @@ def _b64decode(text: str, *, urlsafe: bool) -> bytes | None:
     padded = text + "=" * (-len(text) % 4)
     try:
         return base64.urlsafe_b64decode(padded) if urlsafe else base64.b64decode(padded, validate=False)
-    except (binascii.Error, ValueError):
+    except ValueError:
         return None
 
 

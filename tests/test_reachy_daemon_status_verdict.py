@@ -219,6 +219,9 @@ def _authorized(rmd: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     satisfy the failure rows below while the daemon read never ran.
     """
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "operator")
+    # The REST verbs here move the head, so the operator's yes for this caller is
+    # also on the path; it is graded in its own module, this one grades the verdict.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "*@operator")
     monkeypatch.setattr(rmd, "get_rpc_source_device", lambda: "operator")
 
 

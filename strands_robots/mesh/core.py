@@ -1853,12 +1853,17 @@ class Mesh(SensorLoopsMixin):
         )
 
     def _signing_required(self) -> bool:
-        """Whether this peer refuses unsigned identities (:func:`~strands_robots.mesh.wire_identity.signing_required`)."""
-        return _wire_identity.signing_required(self._trust_roots)
+        """Whether this peer refuses unsigned identities (:func:`~strands_robots.mesh.wire_identity.signing_required`).
+
+        Reads the roots through ``getattr`` like the command pacer reads its
+        lock: a ``Mesh`` built without ``__init__`` (the test suites' bare
+        doubles) has none and is a legacy peer.
+        """
+        return _wire_identity.signing_required(getattr(self, "_trust_roots", None))
 
     def _sign(self, body: dict[str, Any]) -> dict[str, Any]:
         """*body* signed by this peer's wire identity, or unchanged when it has none."""
-        identity = self._wire_identity
+        identity = getattr(self, "_wire_identity", None)
         if identity is None:
             return body
         try:
@@ -1870,7 +1875,7 @@ class Mesh(SensorLoopsMixin):
     def _verify_wire(self, data: dict[str, Any]) -> _wire_identity.Verified | str:
         """Who signed *data*, or why it is not trusted, under the mesh's freshness knobs."""
         return _wire_identity.verify(
-            self._trust_roots,
+            getattr(self, "_trust_roots", None),
             data,
             freshness_s=_resume_freshness_window_s(),
             forward_skew_s=_resume_forward_skew_s(),
@@ -1902,12 +1907,13 @@ class Mesh(SensorLoopsMixin):
             return False
         now = time.monotonic()
         with self._rpc_lock:
-            bound = self._peer_certs.get(peer_id)
+            certs = self.__dict__.setdefault("_peer_certs", {})
+            bound = certs.get(peer_id)
             if bound is not None and bound[0] != fingerprint and now - bound[2] <= PEER_TIMEOUT:
                 conflict = True
             else:
                 conflict = False
-                self._peer_certs[peer_id] = (fingerprint, cn, now)
+                certs[peer_id] = (fingerprint, cn, now)
         if conflict:
             logger.warning(
                 "[mesh] %s: dropped presence for %s -- a second certificate (CN %s, %s) claims the id of a peer "
@@ -1948,7 +1954,7 @@ class Mesh(SensorLoopsMixin):
     def peer_cert(self, peer_id: str) -> tuple[str, str] | None:
         """``(cert_sha256, cn)`` of the certificate *peer_id* last announced itself with, or ``None``."""
         with self._rpc_lock:
-            bound = self._peer_certs.get(peer_id)
+            bound = getattr(self, "_peer_certs", {}).get(peer_id)
         return None if bound is None else (bound[0], bound[1])
 
     def _bind_peer_wire_zid(self, peer_id: str, wire_zid: str | None) -> bool:
@@ -2630,7 +2636,7 @@ class Mesh(SensorLoopsMixin):
         # the command as ``signer`` / ``cert_sha256``: an envelope that is
         # unsigned or does not verify carries ``signer=None``, which the motion
         # gate refuses when signatures are required and the audit row records.
-        if _wire_identity.SIG_FIELD in data and self._trust_roots is not None:
+        if _wire_identity.SIG_FIELD in data and getattr(self, "_trust_roots", None) is not None:
             verified = self._verify_wire(data)
             if isinstance(verified, str):
                 logger.warning(
@@ -4019,7 +4025,8 @@ class Mesh(SensorLoopsMixin):
                 why = "the signing certificate's common name does not speak for responder_id"
                 self._refuse_response_identity(turn, responder, verified.cn, why)
                 return
-            if self._replay_guard.seen_before(verified.cert_sha256, verified.nonce):
+            guard = self.__dict__.setdefault("_replay_guard", _wire_identity.ReplayGuard())
+            if guard.seen_before(verified.cert_sha256, verified.nonce):
                 why = "signed reply replayed (nonce already seen for this certificate)"
                 self._refuse_response_identity(turn, responder, verified.cn, why)
                 return
