@@ -463,24 +463,29 @@ def _load() -> dict[str, Any]:
     one - and the store is the record that decides whether this dashboard is
     sealed, so a hit is checked against the file rather than assumed.
     """
-    path = _store_path()
     with _lock:
-        identity = _store_identity(path)
-        if identity is not None:
-            try:
-                raw = path.read_text(encoding="utf-8")
-                cached = _cache.get(identity)
-                if cached is not None and cached.raw == raw:
-                    return cached.store
-                store: dict[str, Any] = _parsed_store(raw)
-            except (OSError, ValueError) as exc:
-                _preserve_corrupt(path, exc)
-            else:
-                _remember_locked(identity, raw, store)
-                return store
-        store = _default_store()
-        _save_locked(store)
-        return store
+        return _load_locked()
+
+
+def _load_locked() -> dict[str, Any]:
+    """:func:`_load` for a caller that already holds :data:`_lock` (a read-modify-write)."""
+    path = _store_path()
+    identity = _store_identity(path)
+    if identity is not None:
+        try:
+            raw = path.read_text(encoding="utf-8")
+            cached = _cache.get(identity)
+            if cached is not None and cached.raw == raw:
+                return cached.store
+            store: dict[str, Any] = _parsed_store(raw)
+        except (OSError, ValueError) as exc:
+            _preserve_corrupt(path, exc)
+        else:
+            _remember_locked(identity, raw, store)
+            return store
+    store = _default_store()
+    _save_locked(store)
+    return store
 
 
 def _save_locked(store: dict[str, Any]) -> None:
@@ -559,20 +564,90 @@ def list_credentials() -> list[dict[str, Any]]:
     ]
 
 
-def delete_credential(cred_id: str) -> dict[str, Any]:
-    """Revoke a passkey. Refuses to remove the LAST one (would re-open the
-    dashboard to anyone via the setup flow)."""
+def delete_credential(cred_id: str, allow_last: bool = False) -> dict[str, Any]:
+    """Revoke a passkey, ending every session minted for it.
+
+    Args:
+        cred_id: The credential id to remove.
+        allow_last: Remove it even when it is the only one. The route sets this
+            only for a caller that presented the bootstrap proof: with no
+            passkey left the dashboard is back at setup, and the first
+            enrollment needs that same proof, so nobody without it can claim
+            the empty dashboard. Without it the last passkey is kept (409),
+            because a compromised single-passkey dashboard is otherwise
+            reset by anyone who holds its session.
+    """
     store = _load()
     creds = store.get("credentials", [])
     if not any(c["id"] == cred_id for c in creds):
         raise HTTPException(404, "credential not found")
-    if len(creds) <= 1:
-        raise HTTPException(409, "cannot remove the last passkey - enroll another first")
+    if len(creds) <= 1 and not allow_last:
+        raise HTTPException(
+            409, "cannot remove the last passkey - enroll another first, or present the bootstrap proof"
+        )
     store["credentials"] = [c for c in creds if c["id"] != cred_id]
     _save(store)
     # Every session minted for that passkey is refused from the next request on:
     # verify_token admits a token only while its ``sub`` is enrolled.
     return {"ok": True, "removed": cred_id, "remaining": len(store["credentials"]), "sessions_ended": True}
+
+
+def _credential(store: Mapping[str, Any], cred_id: Any) -> dict[str, Any] | None:
+    """The enrolled credential record *cred_id* names, or None."""
+    if not isinstance(cred_id, str):
+        return None
+    return next((c for c in store.get("credentials", []) if c.get("id") == cred_id), None)
+
+
+def end_sessions(cred_id: str) -> bool:
+    """End every session minted for *cred_id* so far, on every device that holds one.
+
+    Each credential carries a session epoch, stamped into every token issued
+    for it (``ep``); advancing it makes every earlier token of that passkey
+    fail :func:`verify_token`, and with it renewal, handoff and the live
+    socket re-check. This is what signing out does server-side: deleting the
+    cookie only forgets the token in one browser, and a copy taken before is
+    still a session.
+
+    Returns:
+        True when the epoch was advanced, False when *cred_id* is not enrolled
+        (it has no session to end).
+
+    Raises:
+        OSError: The store could not be written. The caller must not report the
+            sessions ended.
+    """
+    with _lock:
+        store = _load_locked()
+        record = _credential(store, cred_id)
+        if record is None:
+            return False
+        epoch = record.get("epoch", 0)
+        record["epoch"] = (epoch if type(epoch) is int else 0) + 1
+        _save_locked(store)
+    return True
+
+
+def session_revocation(claims: Mapping[str, Any]) -> str | None:
+    """Why a session's claims are no longer admitted, or None while they are.
+
+    The signature and ``exp`` are :func:`verify_token`'s; this is the part that
+    can change under a token already handed out: its passkey removed, or its
+    epoch advanced by a sign-out. A live socket re-runs it on the claims it was
+    admitted with. A check that cannot be made is a refusal: an unreadable
+    store, a token or record without a usable epoch.
+    """
+    try:
+        store = _load()
+    except Exception:  # noqa: BLE001 - a store that cannot be read admits nobody
+        return "session cannot be checked - the credential store is unreadable"
+    record = _credential(store, claims.get("sub"))
+    if record is None:
+        return "session revoked - its passkey is no longer enrolled, sign in again"
+    presented, current = claims.get("ep"), record.get("epoch", 0)
+    if type(presented) is not int or type(current) is not int or presented != current:
+        return "session ended - this passkey signed out, sign in again"
+    return None
 
 
 # --- relying-party id / origin derivation -----------------------------------
@@ -1046,6 +1121,10 @@ def issue_token(
     }
     if via:
         payload["via"] = via
+    # The subject's current session epoch: a sign-out advances it and every
+    # token stamped before stops verifying (see end_sessions).
+    record = _credential(_load(), subject)
+    payload["ep"] = record.get("epoch", 0) if record is not None else 0
     return jwt.encode(payload, _jwt_secret(), algorithm="HS256")
 
 
@@ -1099,13 +1178,14 @@ def renewal_verdict(
 def verify_token(token: str) -> dict[str, Any]:
     """The claims of a session token, or a refusal the caller can return as-is.
 
-    A token is good for as long as the passkey it was minted for is enrolled.
-    Every issuer stamps that passkey's credential id as ``sub`` (registration,
-    authentication, renewal and handoff all carry it), so the claims are
-    admitted only when ``sub`` names a credential in the store now, and the
-    store is the one already loaded for the secret. Removing a passkey thereby
-    ends its sessions at the next request (f016, CWE-613); before, deleting a
-    passkey rotated nothing and its tokens lived on to their ``exp``.
+    A token is good for as long as the passkey it was minted for is enrolled
+    and has not signed out since. Every issuer stamps that passkey's credential
+    id as ``sub`` and its session epoch as ``ep`` (registration,
+    authentication, renewal and handoff all carry both), so the claims are
+    admitted only when ``sub`` names a credential in the store now and ``ep``
+    is that credential's current epoch (:func:`session_revocation`). Removing
+    a passkey or signing out (:func:`end_sessions`) thereby ends its sessions
+    at the next request, wherever a copy of the token went.
 
     Args:
         token: The signed session token the client presented.
@@ -1115,8 +1195,8 @@ def verify_token(token: str) -> dict[str, Any]:
 
     Raises:
         HTTPException: 401, distinguishing an expired session, a revoked one
-            (its passkey is no longer enrolled) and one that does not verify at
-            all, so a reader of the log can tell them apart.
+            (its passkey is no longer enrolled), an ended one (signed out) and
+            one that does not verify at all, so a reader of the log can tell them apart.
     """
     store = _load()
     try:
@@ -1125,9 +1205,9 @@ def verify_token(token: str) -> dict[str, Any]:
         raise HTTPException(401, "session expired")
     except jwt.PyJWTError:
         raise HTTPException(401, "invalid session")
-    subject = claims.get("sub")
-    if not isinstance(subject, str) or not any(c.get("id") == subject for c in store.get("credentials", [])):
-        raise HTTPException(401, "session revoked - its passkey is no longer enrolled, sign in again")
+    refusal = session_revocation(claims)
+    if refusal is not None:
+        raise HTTPException(401, refusal)
     return cast(dict[str, Any], claims)
 
 
@@ -1281,7 +1361,7 @@ def _first_enrollment_refusal(request: Any, source: str) -> str:
 
 def begin_registration(request: Any, label: str = "passkey", bootstrap: str = "") -> dict[str, Any]:
     """Start a passkey enrollment. The FIRST enrollment seals the dashboard;
-    later ones require a valid session (enforced by the route).
+    later ones need the same proof (enforced by the route).
 
     The first enrollment hands out ownership of the fleet rather than merely
     using it, so it is admitted on PROOF and never on topology: *bootstrap*
