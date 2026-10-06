@@ -38,3 +38,5 @@ move the head (`look`, `antennas`, `body`, `enableMotors`, `playMove`, `nod`,
 `shake`, `happy`, `wakeUp`, `sleep`) now run the same operator gate as the
 `execute` RPC with the caller as the actor; stopping and reading are not
 gated, and every RPC on the driver is classified in one of the two sets.
+`STRANDS_DASHBOARD_PEER_ID` pins the dashboard's own mesh peer id to the name
+its certificate speaks for, in place of the per-start `dashboard-<host>-<hex>`.

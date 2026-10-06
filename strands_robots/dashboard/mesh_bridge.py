@@ -140,6 +140,14 @@ def _resolve_mesh_camera_hz() -> float:
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
+#: The dashboard's own mesh peer id. Unset, it is ``dashboard-<host>-<4 hex>``,
+#: different at every start. On a mesh that requires signed identity a peer is
+#: heard only under a name its certificate's common name speaks for, so set
+#: this to the CN of the dashboard's ``STRANDS_MESH_TLS_CERT`` (or a
+#: ``<cn>__<suffix>`` child of it); robots then attribute its commands to it
+#: and spend the approvals it deposits.
+PEER_ID_ENV = "STRANDS_DASHBOARD_PEER_ID"
+
 # : How long a peer may stay quiet before it is dropped from the fleet snapshot : entirely.
 PEER_TTL_S = _env_float("STRANDS_DASHBOARD_PEER_TTL_S", "300")
 
@@ -757,7 +765,8 @@ class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
 
     def __init__(self, peer_id: str | None = None) -> None:
-        self.peer_id = peer_id or f"dashboard-{socket.gethostname().split('.')[0]}-{uuid.uuid4().hex[:4]}"
+        configured = os.getenv(PEER_ID_ENV, "").strip()
+        self.peer_id = peer_id or configured or f"dashboard-{socket.gethostname().split('.')[0]}-{uuid.uuid4().hex[:4]}"
         self._session: Any | None = None
         self._subs: list[Any] = []
         self._running = False
