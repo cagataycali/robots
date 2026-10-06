@@ -24,7 +24,7 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 
 | mode | tool name | actions the model sees |
 |---|---|---|
-| `mode="sim"` (default) | `<name>_sim` | `get_robot_state`, `set_joint_positions`, `move_to`, `run_policy`, `render`, `step` and the world API |
+| `mode="sim"` (default) | `<name>_sim` | all 77 in `tool_spec["description"]`, e.g. `get_robot_state`, `move_to`, `set_gripper`, `rotate_wrist`, `run_policy`, `render`, `start_recording` |
 | `mode="real"` | the robot's name | `get_state`, `get_robot_state`, `list_cameras`, `render`, `execute`, `start`, `status`, `stop` |
 
 `execute` runs one rollout to completion, `start` runs it in the background. Two `Robot("so101")` in one agent collide on `so101_sim`; name them with `tool_name=`.

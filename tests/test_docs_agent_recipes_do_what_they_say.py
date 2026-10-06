@@ -233,3 +233,37 @@ def test_each_tool_in_the_agents_table_imports_from_the_module_its_row_names(too
     lazy = importlib.import_module(module)._LAZY_IMPORTS
     found = any(name.startswith(tool[:-1]) for name in lazy) if tool.endswith("*") else tool in lazy
     assert found, f"agents.md says `{tool}` imports from {module}; it does not"
+
+
+def _mode_row(mode: str) -> str:
+    """The ``actions the model sees`` cell of the agents table row for ``mode``."""
+    rows = [
+        line for line in AGENTS_PAGE.read_text(encoding="utf-8").splitlines() if line.startswith(f'| `mode="{mode}"`')
+    ]
+    assert len(rows) == 1, f"agents.md has {len(rows)} rows for mode={mode!r}"
+    return rows[0].split("|")[3]
+
+
+def _published_actions(mode: str) -> list[str]:
+    if mode == "real":
+        from strands_robots.hardware_robot import _PUBLISHED_ACTIONS
+
+        return list(_PUBLISHED_ACTIONS)
+    from strands_robots.simulation.mujoco.simulation import _TOOL_SPEC_SCHEMA
+
+    return list(_TOOL_SPEC_SCHEMA["properties"]["action"]["enum"])
+
+
+@pytest.mark.parametrize("mode", ["sim", "real"])
+def test_the_agents_table_names_real_actions_and_says_how_many_there_are(mode: str):
+    """Every action a row names is published, and the row either lists them all or states the count.
+
+    A row that names a handful and stops reads as the whole contract; the sim row once
+    named six of 77 and left out ``set_gripper`` and ``rotate_wrist``.
+    """
+    cell, published = _mode_row(mode), _published_actions(mode)
+    named = {name for name in re.findall(r"`([a-z_]+)`", cell)}
+    assert named <= set(published), f"{mode} row names unpublished actions: {sorted(named - set(published))}"
+    assert named == set(published) or f"all {len(published)}" in cell, (
+        f"{mode} row names {len(named)} of {len(published)} actions without saying 'all {len(published)}'"
+    )
