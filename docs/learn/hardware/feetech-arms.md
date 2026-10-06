@@ -15,21 +15,21 @@ python -m serial.tools.list_ports -v          # /dev/ttyACM0 on Linux, /dev/tty.
 ```python title="sketch"
 from strands_robots import Robot
 
-arm = Robot("so101", mode="real", port="/dev/ttyACM0")                     # lerobot driver, the default
-arm = Robot("so101", mode="real", driver="strands", port="/dev/ttyACM0")   # native FeetechDriver
+arm = Robot("so101", mode="real", port="/dev/ttyACM0")                     # strands driver, the default
+arm = Robot("so101", mode="real", driver="lerobot", port="/dev/ttyACM0")   # lerobot so101_follower
 ```
 
 ## Which driver
 
-| | `driver="lerobot"` (default) | `driver="strands"` |
+| | `driver="strands"` (default) | `driver="lerobot"` |
 |---|---|---|
-| class | `hardware_robot.Robot` around lerobot `so101_follower` | `drivers.feetech.FeetechDriver` |
-| needs | `pip install 'strands-robots[lerobot]'` | `pip install pyserial` |
-| units in `send_action` | degrees (`so101_follower` sets `use_degrees=True`); `gripper.pos` 0 to 100 | degrees; `gripper` is percent open |
-| keys | `shoulder_pan.pos` | `shoulder_pan` or `shoulder_pan.pos`, one per motor |
-| policy rollout | yes (`execute`, `start`) | yes, `PolicyRollout` at `control_frequency` 30 Hz |
-| cameras | `cameras={...}` opened by lerobot | not read (`reads_cameras` is not set) |
-| teleop leader | `Teleoperator("so101_leader", port=...)` | same; the leader must report degrees |
+| class | `drivers.feetech.FeetechDriver` | `hardware_robot.Robot` around lerobot `so101_follower` |
+| needs | `pip install pyserial` | `pip install 'strands-robots[lerobot]'` |
+| units in `send_action` | degrees; `gripper` is percent open | degrees (`so101_follower` sets `use_degrees=True`); `gripper.pos` 0 to 100 |
+| keys | `shoulder_pan` or `shoulder_pan.pos`, one per motor | `shoulder_pan.pos` |
+| policy rollout | yes, `PolicyRollout` at `control_frequency` 30 Hz | yes (`execute`, `start`) |
+| cameras | not read (`reads_cameras` is not set) | `cameras={...}` opened by lerobot |
+| teleop leader | `Teleoperator("so101_leader", port=...)`; the leader must report degrees | same |
 
 Both register for `so100`, `so101`, `lekiwi`, `hope_jr` and `open_duck_mini`. `hope_jr` and `open_duck_mini` share the bus protocol but not the six-servo layout; pass `motor_ids=` to the native driver until a joint map for them lands.
 

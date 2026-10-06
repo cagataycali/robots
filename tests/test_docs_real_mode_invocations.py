@@ -173,6 +173,41 @@ def _documented_real_mode_calls() -> list[_Invocation]:
     return found
 
 
+#: A comment on a documented call, or a table header, that names the driver the
+#: call gets when ``driver=`` is not spelled.
+_DEFAULT_CLAIM = re.compile(r"#\s*(\w+) driver, the default|`driver=\"(\w+)\"` \(default\)")
+
+
+def _default_driver_mismatches(text: str, calls: list[tuple[int, str]], page: str = "<page>") -> list[str]:
+    """Return every claim on *text* naming a default driver ``resolve_driver`` does not pick.
+
+    A comment claim binds the driverless call on its own line; a table-header
+    claim compares the two drivers, so it binds every driverless call on the
+    page whose robot has both.
+
+    Args:
+        text: The page source.
+        calls: ``(line, robot name)`` for each documented call that spells no ``driver=``.
+        page: Page path for the failure message.
+
+    Returns:
+        One message per claim the resolver contradicts.
+    """
+    lines = text.splitlines()
+    wrong = []
+    for line, name in calls:
+        claims = [m.group(1) for m in _DEFAULT_CLAIM.finditer(lines[line - 1]) if m.group(1)]
+        if get_native_driver_class(name) is not None:
+            claims += [m.group(2) for m in _DEFAULT_CLAIM.finditer(text) if m.group(2)]
+        actual = resolve_driver(name)
+        wrong += [
+            f"{page}:{line}: says {c!r} is the default for {name!r}, resolve_driver picks {actual!r}"
+            for c in sorted(set(claims))
+            if c != actual
+        ]
+    return wrong
+
+
 #: Names a signature declares for binding rather than for the caller to spell.
 _BINDING_ONLY_NAMES = frozenset({"self", "kwargs", "name", "robot", "tool_name"})
 
@@ -582,3 +617,32 @@ class TestANativeDriverCallIsGradedAgainstWhatTheDriverReads:
             for keywords in (("port",), ("calibration",), ("use_degrees",), ("left_arm_config",))
         }
         assert outcomes == {True, False}
+
+
+class TestADocumentedDefaultDriverIsTheResolvedOne:
+    """A page that names the default driver must name the one ``resolve_driver`` picks."""
+
+    def test_every_default_driver_claim_matches_the_resolver(self) -> None:
+        by_page: dict[str, list[tuple[int, str]]] = {}
+        for call in _documented_real_mode_calls():
+            if call.driver is None:
+                page, line = call.location.rsplit(":", 1)
+                by_page.setdefault(page, []).append((int(line), call.name))
+        wrong = [
+            msg
+            for page, calls in by_page.items()
+            for msg in _default_driver_mismatches((_REPO_ROOT / page).read_text(encoding="utf-8"), calls, page)
+        ]
+        assert not wrong, "documented default drivers the resolver contradicts:\n  " + "\n  ".join(wrong)
+
+    @pytest.mark.parametrize(
+        ("text", "reported"),
+        [
+            ('arm = Robot("so101", mode="real")  # lerobot driver, the default', 1),
+            ('arm = Robot("so101", mode="real")  # strands driver, the default', 0),
+            ('arm = Robot("so101", mode="real")\n| | `driver="lerobot"` (default) | `driver="strands"` |', 1),
+            ('arm = Robot("so101", mode="real")\n| | `driver="strands"` (default) | `driver="lerobot"` |', 0),
+        ],
+    )
+    def test_a_planted_wrong_default_is_reported(self, text: str, reported: int) -> None:
+        assert len(_default_driver_mismatches(text, [(1, "so101")])) == reported
