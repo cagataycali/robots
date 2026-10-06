@@ -877,7 +877,19 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         # agnostic SimEngine ABC methods, so it works for every backend.
         # The sim-mode overloads contract a ``Simulation`` return; create_simulation
         # is typed to the SimEngine ABC, so cast to keep that public contract.
-        sim = cast("Simulation", create_simulation(backend, tool_name=tool_name or f"{name}_sim", **kwargs))
+        # The default tool name keeps the caller's spelling (``Robot("h1")`` is
+        # the tool ``h1_sim``), but the registry lookup above strips and
+        # casefolds, so ``Robot("so100 ")`` resolved fine while its tool name
+        # ``"so100 _sim"`` is one no model provider accepts - a refusal that
+        # only arrived at the first model call. Screened here, naming the name.
+        sim_tool_name = tool_name or f"{name}_sim"
+        if tool_name is None and _tool_name_error(sim_tool_name) is not None:
+            raise ValueError(
+                f"Robot({refusal_repr(name)}) would register as the tool {refusal_repr(sim_tool_name)}, "
+                f"which a model provider rejects: write the name as Robot({refusal_repr(canonical)}) "
+                "or pass tool_name= (letters, digits, '_' or '-', at most 64 characters)."
+            )
+        sim = cast("Simulation", create_simulation(backend, tool_name=sim_tool_name, **kwargs))
 
         try:
             result = sim.create_world()
