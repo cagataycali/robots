@@ -19,6 +19,10 @@
 // with a leading `**/`: on Zenoh 1.x neither `strands/robot-a/state` nor
 // `robot-a/state` matched in a live two-peer run.
 //
+// A Robot(..., mesh=True) also answers as its robot, `<peer>__<robot>`
+// (`robot-a__so101`), from the same session: grant that id its cmd and
+// replies too, or its e-stop acknowledgement never reaches the operator.
+//
 // MAINTENANCE COST
 // ----------------
 // This template grows by one rule + one subject + one policy per robot
@@ -61,6 +65,7 @@
         "**/robot-a/camera/**",
         "**/robot-a/stream",
         "**/response/robot-a/*",
+        "**/response/robot-a__so101/*",
       ],
     },
     {
@@ -97,6 +102,8 @@
         "**/safety/**",
         "**/robot-a/cmd",
         "**/robot-a/response/**",
+        "**/robot-a__so101/cmd",
+        "**/robot-a__so101/response/**",
       ],
     },
     {
@@ -110,6 +117,8 @@
         "**/safety/**",
         "**/robot-a/cmd",
         "**/robot-a/response/**",
+        "**/robot-a__so101/cmd",
+        "**/robot-a__so101/response/**",
       ],
     },
     {
@@ -131,6 +140,7 @@
         "**/robot-b/camera/**",
         "**/robot-b/stream",
         "**/response/robot-b/*",
+        "**/response/robot-b__so101/*",
       ],
     },
     {
@@ -167,6 +177,8 @@
         "**/safety/**",
         "**/robot-b/cmd",
         "**/robot-b/response/**",
+        "**/robot-b__so101/cmd",
+        "**/robot-b__so101/response/**",
       ],
     },
     {
@@ -180,6 +192,8 @@
         "**/safety/**",
         "**/robot-b/cmd",
         "**/robot-b/response/**",
+        "**/robot-b__so101/cmd",
+        "**/robot-b__so101/response/**",
       ],
     },
     {

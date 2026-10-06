@@ -202,7 +202,9 @@ def test_two_mesh_peers_exchange_state_and_rpc(tmp_path: Path, acl: Path | None,
             reverse = beta.ask("send", to=operator, cmd={"action": "status"})
             assert reverse == {"status": "timeout"}, f"a robot certificate commanded the operator: {reverse}"
 
-        assert robot in alpha.ask("estop")
+        # The robot's process answers as itself and as its ``__so101`` child, from one session.
+        acks = alpha.ask("estop")
+        assert {robot, f"{robot}__so101"} <= set(acks), f"an e-stop acknowledgement was dropped: {acks}"
         assert _until(lambda: beta.ask("locked") is True), f"{robot} did not lock out on {operator}'s e-stop"
 
         epoch = beta.ask("epoch")

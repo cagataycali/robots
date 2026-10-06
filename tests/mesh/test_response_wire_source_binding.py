@@ -178,6 +178,18 @@ class TestBroadcastTurn:
         assert len(mesh._responses["t4"]) == 1
         assert [e for e, _ in audits] == ["response_duplicate_rejected"]
 
+    def test_two_peer_ids_on_one_session_each_get_their_reply(self, mesh: Mesh, audits: list) -> None:
+        """A ``Robot`` with ``mesh=True`` announces itself and its ``__<robot>`` child from one session."""
+        mesh._on_presence(_presence("robot-b", zid=_ZID_B))
+        mesh._on_presence(_presence("robot-b__so101", zid=_ZID_B))
+        _register(mesh, "t5", BROADCAST_RESPONDER)
+
+        mesh._on_response(_response("t5", "robot-b__so101", zid=_ZID_B))
+        mesh._on_response(_response("t5", "robot-b", zid=_ZID_B))
+
+        assert [r["responder_id"] for r in mesh._responses["t5"]] == ["robot-b__so101", "robot-b"]
+        assert audits == []
+
     def test_bound_peer_replying_without_a_wire_zid_is_refused(self, mesh: Mesh, audits: list) -> None:
         """A stripped SourceInfo on a peer we know by session is a forgery, not a legacy publisher."""
         mesh._on_presence(_presence("robot-b", zid=_ZID_B))

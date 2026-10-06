@@ -845,7 +845,7 @@ class Mesh(SensorLoopsMixin):
         # by a second session claiming its id; only a peer silent past
         # ``PEER_TIMEOUT`` may come back on a new session. ``_turn_sources``
         # remembers, per open turn, which verified identities already
-        # answered so a broadcast accepts one reply per session.
+        # answered so a broadcast accepts one reply per peer id per session.
         self._peer_wire_zids: dict[str, tuple[str, float]] = {}
         self._turn_sources: dict[str, set[str]] = {}
         # The transport, when it can address ONE peer without a subscription
@@ -3633,10 +3633,15 @@ class Mesh(SensorLoopsMixin):
                 },
             )
             return
-        # One answer per verified identity per turn. The wire zid is the key
-        # when the transport carries one; the responder id only on a backend
-        # whose broker binds it to the topic -- never a body claim on its own.
-        source_key = f"zid:{wire_zid}" if wire_zid is not None else f"id:{responder}"
+        # One answer per verified identity per turn. The identity is the peer
+        # id bound to the wire zid above, so it is keyed by both: one session
+        # may carry several peer ids (a ``Robot`` with ``mesh=True`` announces
+        # itself and its ``<peer>__<robot>`` child from one Zenoh session), and
+        # keying by the zid alone kept the first of them and dropped the
+        # other's e-stop acknowledgement as a duplicate. The responder id alone
+        # is the key only on a backend whose broker binds it to the topic --
+        # never a body claim on its own.
+        source_key = f"zid:{wire_zid}/{responder}" if wire_zid is not None else f"id:{responder}"
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:

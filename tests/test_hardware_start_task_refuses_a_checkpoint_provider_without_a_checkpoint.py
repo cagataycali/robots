@@ -85,6 +85,15 @@ class TestStartTask:
         assert hw._task_claimed is False
         assert hw._task_state.status.name != "RUNNING"
 
+    @pytest.mark.parametrize("provider", ["rsl_rl_onnx", "microduck", "protomotions"])
+    def test_an_onnx_provider_without_its_weights_is_refused_before_the_claim(self, provider):
+        """Every ONNX provider's constructor refuses a build with no ``onnx_path``, so the registry must say so."""
+        hw = _hw()
+        result = hw.start_task("walk", policy_provider=provider, duration=10.0)
+        assert result["status"] == "error"
+        assert "Pass onnx_path=... (a local .onnx path" in _text(result)
+        assert hw._task_claimed is False
+
     def test_the_port_refusal_still_comes_first_for_a_dialing_provider(self):
         hw = _hw()
         result = hw.start_task("pick", policy_provider="moveit2", policy_port=None, duration=1.0)

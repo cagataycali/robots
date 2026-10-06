@@ -57,6 +57,10 @@ robot.add_camera(name="front", position=[0.3, -0.7, 0.45], target=[0.0, -0.2, 0.
 Agent(tools=[robot])("pick up the red cube")
 ```
 
+In MuJoCo the SO-100 jaw cannot squeeze the cube hard enough to lift it, so the
+agent carries it with `attach_bodies(mode="weld")`, a grasp assist that
+`set_gripper` names as soon as the jaw closes.
+
 ## Install
 
 ```bash
