@@ -23,7 +23,7 @@ from typing import Any, cast
 from strands_robots.dashboard import safety_state
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
-from strands_robots.mesh.transport.base import SAMPLE_LEGS, sample_leg
+from strands_robots.mesh.transport.base import SAMPLE_LEGS, retained_delivery, sample_leg
 from strands_robots.utils import finite_number_error, refusal_repr, refusal_str
 
 logger = logging.getLogger(__name__)
@@ -782,6 +782,8 @@ class MeshBridge:
 
         self._lockout = safety_state.Lockout()
         self._lockout_proof: dict[str, float] = {}
+        # Safety topics a retained delivery was already logged for (once each).
+        self._retained_safety_warned: set[str] = set()
         # The one Mesh: signed safety rail + commands (lazy - see _safety_mesh)
         self._safety: Any | None = None
         self._safety_lock = threading.Lock()
@@ -1164,12 +1166,22 @@ class MeshBridge:
                 record["hw"] = hw
             entry["presence"] = record
             entry["presence_source"] = "wire"
-            entry["sim_corroborated"] = self._sim_corroborated(peer_id)
+            corroborated = entry["sim_corroborated"] = self._sim_corroborated(peer_id)
             # Which leg carried this heartbeat: the fleet view's ``reach`` chip (lan / iot /
             # both) is derived from the legs that spoke inside the TTL, never from the body.
             legs = entry.setdefault("legs", {})
             legs[sample_leg(sample)] = time.time()
-        self._emit({"type": "presence", "peer_id": peer_id, "data": record})
+        # The provenance rides along so the browser's run-risk read (``lib/runRisk.ts``) doubts
+        # an unlaunched sim claim between snapshots exactly as ``peer_is_physical`` does.
+        self._emit(
+            {
+                "type": "presence",
+                "peer_id": peer_id,
+                "data": record,
+                "presence_source": "wire",
+                "sim_corroborated": corroborated,
+            }
+        )
 
     def _on_state(self, sample: Any) -> None:
         data = self._decode(sample)
@@ -1388,6 +1400,19 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        if retained_delivery(sample):
+            # A message the broker stored and hands every new subscriber: the
+            # peers refuse it (``Mesh._decode_bound_safety_envelope``), so
+            # folding it would show a stop or a release nobody issued now.
+            if key not in self._retained_safety_warned:
+                self._retained_safety_warned.add(key)
+                logger.warning(
+                    "[safety] %s dropped: delivered as a retained message, not a live publish "
+                    "(clear it with `strands-robots iot clear-retained-safety --apply`)",
+                    kind,
+                )
+            self.record_activity("safety", f"{kind}_refused", detail={"why": "retained"}, ok=False)
+            return
         refusal = safety_state.envelope_refusal(data)
         if refusal is not None:
             # The peers refuse this envelope too, so nothing on the fleet locked or

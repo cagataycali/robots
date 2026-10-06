@@ -42,11 +42,15 @@ from strands_robots.mesh.iot.bootstrap import (
 from strands_robots.mesh.iot.camera_offload import CameraOffloader
 from strands_robots.mesh.iot.camera_offload import enable_for_mesh as enable_camera_offload_for_mesh
 from strands_robots.mesh.iot.provision import (
+    FleetStopGrantReport,
     ProvisionedThing,
+    RetainedSafetyReport,
+    clear_retained_safety_messages,
     provision_operator,
     provision_robot,
     reprovision_thing,
     teardown_thing,
+    withdraw_fleet_stop_grant,
 )
 from strands_robots.mesh.iot.shadow import (
     ShadowMirror,
@@ -62,6 +66,10 @@ __all__ = [
     "provision_operator",
     "reprovision_thing",
     "teardown_thing",
+    "withdraw_fleet_stop_grant",
+    "FleetStopGrantReport",
+    "clear_retained_safety_messages",
+    "RetainedSafetyReport",
     # Bootstrap
     "BootstrappedAccount",
     "bootstrap_account",

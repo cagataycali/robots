@@ -4,7 +4,7 @@ description: Cameras on a real robot for policies and recordings, one frame from
 
 # Cameras
 
-At the end of this page cameras are attached to a real robot so a policy and a recording see them, an agent reads one frame without moving anything, you can discover what is plugged in, and the same camera exists in simulation so one policy runs on both.
+This page attaches cameras to a real robot for policies and recordings, reads one frame without moving, discovers what is plugged in, and mirrors the camera in simulation so one policy runs on both.
 
 This runs without hardware:
 
@@ -39,7 +39,7 @@ arm = Robot(
 
 Every other key must be a declared field of the resolved config class; a typo is refused by name. The camera names become the `observation.images.<name>` columns a recording writes and a policy reads, so match them to the `data_config` you train with (`so100_dualcam` names `front` and `wrist`).
 
-Native drivers address cameras through their own SDK (Reachy Mini, EarthRover `camera` verb, Microduck) and do not read `cameras=`; passing a non-empty dict to one is refused unless the class declares `reads_cameras = True`.
+Native drivers address cameras through their own SDK (Reachy Mini, EarthRover `camera` verb, Microduck) and do not read `cameras=`; passing a non-empty dict to one is refused unless the class declares `reads_cameras = True`. One that does retries a mode that yields no frame without its `fps`, then with no size (some UVC cameras accept a rate they never deliver), and its status row names it `refused_mode`.
 
 ## Look without moving
 
@@ -64,7 +64,7 @@ Actions: `discover`, `list`, `capture`, `capture_batch`, `record`, `preview`, `t
 
 In `mode="sim"` cameras are not a constructor argument; add them afterwards with `add_camera(name, position=, target=, fov=60.0, width=640, height=480)` or through the robot tool's `add_camera` action. `render(camera_name=)` returns the PNG, `render_depth` the depth map, `render_all` every camera, `start_cameras_recording` writes each to an MP4 ([record](../data/record.md)). The `default` camera always exists.
 
-A sim camera named `front` produces `observation.images.front`, the same column a real `front` camera does, which is what lets one policy checkpoint run in both modes.
+A sim camera named `front` produces `observation.images.front`, the same column a real `front` camera does.
 
 ## On the mesh
 

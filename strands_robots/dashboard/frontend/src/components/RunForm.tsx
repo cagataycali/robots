@@ -7,7 +7,7 @@ import CheckpointPicker from './CheckpointPicker'
 import { robotHint } from '../lib/checkpointRobot'
 import { useConfig } from '../lib/useConfig'
 import { peekDeployIntent, clearDeployIntent, type DeployIntent } from '../lib/deployIntent'
-import { runRisk } from '../lib/runRisk'
+import { runRisk, type PresenceProvenance } from '../lib/runRisk'
 import { fieldCopy, requirementSummary, missingSummary, localOnlySummary } from '../lib/policyCopy'
 import { policyLabel, groupPolicies } from '../lib/policyLabels'
 import RunConfirm from './RunConfirm'
@@ -25,6 +25,8 @@ interface Props {
   peerId: string
   /** Judges whether ▶ moves metal - see lib/runRisk.ts. */
   presence: Presence | null | undefined
+  /** Where the server filed `presence` from; an unlaunched sim claim is not believed. */
+  provenance?: PresenceProvenance | null
   running: boolean
   busy: boolean
   disabled?: boolean
@@ -59,7 +61,7 @@ export interface PolicyFit {
 }
 
 /** The run form is *generated from the policy registry*, not hardcoded. */
-export default function RunForm({ peerId, presence, running, busy, disabled, onRun, onStop, onReset }: Props) {
+export default function RunForm({ peerId, presence, provenance, running, busy, disabled, onRun, onStop, onReset }: Props) {
   /** the reset confirm sheet is open (a real arm) */
   const [resetPending, setResetPending] = useState(false)
   const reset = resetVerdict({ running, busy, offline: !!disabled })
@@ -183,7 +185,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
     setValidation(null)
     // A real arm gets a confirmation naming itself first; sim runs stay a
     // single click, because there is nothing to be careful about.
-    if (runRisk(presence).physical) {
+    if (runRisk(presence, provenance).physical) {
       setPending(body)
       return
     }
@@ -220,7 +222,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
       {pending && (
         <RunConfirm
           peerId={peerId}
-          risk={runRisk(presence)}
+          risk={runRisk(presence, provenance)}
           instruction={pending.instruction}
           provider={providerName}
           model={modelValue || null}
@@ -232,7 +234,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
       {resetPending && (
         <RunConfirm
           peerId={peerId}
-          risk={runRisk(presence)}
+          risk={runRisk(presence, provenance)}
           instruction="return every joint to its home pose"
           provider="reset"
           durationS={undefined}
@@ -287,7 +289,7 @@ export default function RunForm({ peerId, presence, running, busy, disabled, onR
             aria-label="reset to home pose"
             title={reset.title}
             disabled={!reset.enabled}
-            onClick={() => (runRisk(presence).physical ? setResetPending(true) : onReset(false))}
+            onClick={() => (runRisk(presence, provenance).physical ? setResetPending(true) : onReset(false))}
           >↺</button>
         )}
         {running

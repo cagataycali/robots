@@ -67,6 +67,12 @@ class CameraSpec:
     fps: float | None = None
 
 
+def _mode_text(width: int | None, height: int | None, fps: int | float | None) -> str:
+    """``640x480@5``; a part the caller left unset reads as the device's own."""
+    size = f"{width}x{height}" if width is not None and height is not None else "the device's own size"
+    return f"{size}@{fps:g}" if fps is not None else f"{size} at the device's own rate"
+
+
 def camera_entry_error(name: object, config: object) -> str | None:
     """Report why ``config`` is not a camera entry, or ``None`` when it is one.
 
@@ -158,6 +164,9 @@ class OpenCVCamera:
         self.spec = spec
         self._capture: Any | None = None
         self._cv2: Any | None = None
+        #: The requested mode the device opened but sent no frame for, when
+        #: :meth:`open` fell back to one that delivers; ``None`` otherwise.
+        self.refused_mode: str | None = None
 
     @property
     def name(self) -> str:
@@ -171,38 +180,65 @@ class OpenCVCamera:
         return capture is not None and bool(capture.isOpened())
 
     def open(self) -> None:
-        """Open the device and apply the requested size and rate.
+        """Open the device, apply the requested size and rate, and wait for one frame.
+
+        Some UVC cameras accept a rate they cannot deliver: AVFoundation takes
+        ``CAP_PROP_FPS=5`` on a camera that idles at 5 fps and then never returns
+        a frame. So a mode that yields no frame is retried without the rate, then
+        with no properties at all, before the camera is given up on; a fallback
+        that delivers is kept and named in :attr:`refused_mode`.
 
         Raises:
-            OSError: When the device does not open or its first frame does not
-                arrive; the message names the camera and its source so a
-                dashboard can print it next to the arm that did connect.
+            OSError: When the device does not open or no attempt yields a frame;
+                the message names the camera, its source and the mode tried, so
+                a dashboard can print it next to the arm that did connect.
         """
         if self.is_open:
             return
         cv2: Any = require_optional("cv2", pip_install="opencv-python-headless", purpose=_OPENCV_PURPOSE)
         self._cv2 = cv2
-        capture = cv2.VideoCapture(self.spec.index_or_path)
-        if not capture.isOpened():
+        spec = self.spec
+        requested = (spec.width, spec.height, spec.fps)
+        attempts = [requested]
+        if spec.fps is not None:
+            attempts.append((spec.width, spec.height, None))
+        if spec.width is not None or spec.height is not None:
+            attempts.append((None, None, None))
+        for width, height, fps in attempts:
+            capture = cv2.VideoCapture(spec.index_or_path)
+            if not capture.isOpened():
+                capture.release()
+                raise OSError(
+                    f"camera {spec.name!r}: could not open {spec.index_or_path!r}; "
+                    "check the index with `strands_robots dashboard` > Devices, or the path"
+                )
+            for prop, value in ((cv2.CAP_PROP_FRAME_WIDTH, width), (cv2.CAP_PROP_FRAME_HEIGHT, height)):
+                if value is not None:
+                    capture.set(prop, value)
+            if fps is not None:
+                capture.set(cv2.CAP_PROP_FPS, fps)
+            if capture.read()[0]:
+                self._capture = capture
+                if (width, height, fps) != requested:
+                    self.refused_mode = _mode_text(*requested)
+                    logger.warning(
+                        "camera %r: no frame at %s, the device refused that mode; opened at %s instead",
+                        spec.name,
+                        self.refused_mode,
+                        _mode_text(width, height, fps),
+                    )
+                return
             capture.release()
+        if len(attempts) == 1:
             raise OSError(
-                f"camera {self.spec.name!r}: could not open {self.spec.index_or_path!r}; "
-                "check the index with `strands_robots dashboard` > Devices, or the path"
-            )
-        if self.spec.width is not None:
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.spec.width)
-        if self.spec.height is not None:
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.spec.height)
-        if self.spec.fps is not None:
-            capture.set(cv2.CAP_PROP_FPS, self.spec.fps)
-        ok, _frame = capture.read()
-        if not ok:
-            capture.release()
-            raise OSError(
-                f"camera {self.spec.name!r}: opened {self.spec.index_or_path!r} but no frame arrived; "
+                f"camera {spec.name!r}: opened {spec.index_or_path!r} but no frame arrived; "
                 "another process may hold the device"
             )
-        self._capture = capture
+        raise OSError(
+            f"camera {spec.name!r}: opened {spec.index_or_path!r} but no frame arrived at "
+            f"{_mode_text(*requested)}, nor without the requested size and rate; "
+            "another process may hold the device"
+        )
 
     def read(self) -> Any:
         """Return the newest frame as an RGB array.
@@ -235,6 +271,7 @@ class OpenCVCamera:
             "height": self.spec.height,
             "fps": self.spec.fps,
             "open": self.is_open,
+            "refused_mode": self.refused_mode,
         }
 
 

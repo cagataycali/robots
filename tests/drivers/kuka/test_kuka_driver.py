@@ -296,7 +296,10 @@ def test_a_target_is_reached_no_faster_than_the_joint_speed_per_cycle(controller
     _settle(lambda: controller.commanded and abs(controller.commanded[-1][3] - target) < 1e-12)
     steps = [abs(b[3] - a[3]) for a, b in zip(controller.commanded, controller.commanded[1:], strict=False)]
     assert max(steps) == pytest.approx(MAX_JOINT_SPEED[3] * SAMPLE_TIME)
-    assert driver.state()["content"][0]["json"]["joints"]["joint4"] == pytest.approx(target)
+    # The controller's command lands in the session process; the driver's state
+    # is the newest frame that process has piped back, one cycle behind it. Wait
+    # for the frame rather than read the cycle before it (a 1-in-15 flake).
+    _settle(lambda: driver.state()["content"][0]["json"]["joints"]["joint4"] == pytest.approx(target))
     driver.cleanup()
 
 

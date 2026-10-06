@@ -57,4 +57,4 @@ Under `STRANDS_MESH_BACKEND=bridge` a topic goes to MQTT only if its suffix is i
 
 ## ACL matching
 
-In an ACL file, `key_exprs` are matched against the key with the namespace stripped, so `**/cmd` is the pattern that admits or denies commands and `strands/*/cmd` matches nothing.
+In an ACL file, `key_exprs` are matched against the namespaced key, so `**/cmd` is the pattern that admits or denies commands and `strands/*/cmd` matches nothing.
