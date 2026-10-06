@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Any
 
 from strands_robots.mesh.session import _report_unencodable_payload
-from strands_robots.mesh.transport.base import DirectResult
+from strands_robots.mesh.transport.base import SAFETY_COMMAND_TOPICS, DirectResult
 from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -445,15 +445,37 @@ _NEVER_BRIDGE_PREFIXES: tuple[str, ...] = (
 )
 
 
-#: MQTT topic filters whose messages are fleet safety COMMANDS (a stop, its
-#: release), as opposed to per-robot safety state. Subscriptions on these ask
-#: the broker not to replay a retained message at subscribe time.
-_SAFETY_COMMAND_FILTERS: frozenset[str] = frozenset({"strands/safety/estop", "strands/safety/resume"})
+def _filter_covers(topic_filter: str, topic: str) -> bool:
+    """Whether the MQTT *topic_filter* (``+`` one level, ``#`` the rest) matches *topic*."""
+    levels = topic.split("/")
+    for i, part in enumerate(topic_filter.split("/")):
+        if part == "#":
+            return True
+        if i >= len(levels) or (part != "+" and part != levels[i]):
+            return False
+    return len(topic_filter.split("/")) == len(levels)
 
 
 def _is_safety_command_filter(topic_filter: str) -> bool:
-    """Whether *topic_filter* names a fleet safety command topic."""
-    return topic_filter in _SAFETY_COMMAND_FILTERS
+    """Whether *topic_filter* would deliver a fleet safety command topic.
+
+    A wildcard counts: ``strands/safety/#`` (what ``strands/safety/**`` becomes)
+    or ``strands/#`` receives the stop as surely as the literal topic does, and
+    with the default retain handling the broker would replay a stored one the
+    moment it is accepted.
+    """
+    return any(_filter_covers(topic_filter, topic) for topic in SAFETY_COMMAND_TOPICS)
+
+
+def _packet_retain(packet: Any) -> bool:
+    """The packet's RETAIN flag; a flag that is not a ``bool`` reads as retained (fail closed).
+
+    awscrt always sets it, so this only decides for a packet whose flag cannot be
+    read: such a message is treated as stored, and every handler that refuses a
+    retained command or safety envelope refuses it too.
+    """
+    retain = getattr(packet, "retain", None)
+    return retain if isinstance(retain, bool) else True
 
 
 class _MqttSample:
@@ -474,8 +496,9 @@ class _MqttSample:
     ``retain`` is the packet's RETAIN flag: ``True`` when the broker delivered
     a stored message at subscribe time rather than a live publish. A
     ``zenoh.Sample`` has no such attribute, and a handler reads it with
-    ``getattr(sample, "retain", False) is True``, so the Zenoh path reads as
-    live rather than unknown. The safety handlers refuse a retained delivery.
+    :func:`~strands_robots.mesh.transport.base.retained_delivery`, so the Zenoh
+    path reads as live rather than unknown. Every handler of a command or a
+    safety topic refuses a retained delivery.
     """
 
     __slots__ = ("correlation_data", "key_expr", "payload", "response_topic", "retain")
@@ -1591,7 +1614,7 @@ class IotMqttTransport:
             topic,
             payload,
             *_mqtt5_reply_properties(data.publish_packet),
-            retain=getattr(data.publish_packet, "retain", False) is True,
+            retain=_packet_retain(data.publish_packet),
         )
         for _filter, handlers in matching:
             for handler in handlers:

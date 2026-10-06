@@ -23,7 +23,7 @@ from typing import Any, cast
 from strands_robots.dashboard import safety_state
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_bytes_cap
-from strands_robots.mesh.transport.base import SAMPLE_LEGS, sample_leg
+from strands_robots.mesh.transport.base import SAMPLE_LEGS, retained_delivery, sample_leg
 from strands_robots.utils import finite_number_error, refusal_repr, refusal_str
 
 logger = logging.getLogger(__name__)
@@ -782,6 +782,8 @@ class MeshBridge:
 
         self._lockout = safety_state.Lockout()
         self._lockout_proof: dict[str, float] = {}
+        # Safety topics a retained delivery was already logged for (once each).
+        self._retained_safety_warned: set[str] = set()
         # The one Mesh: signed safety rail + commands (lazy - see _safety_mesh)
         self._safety: Any | None = None
         self._safety_lock = threading.Lock()
@@ -1388,6 +1390,19 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        if retained_delivery(sample):
+            # A message the broker stored and hands every new subscriber: the
+            # peers refuse it (``Mesh._decode_bound_safety_envelope``), so
+            # folding it would show a stop or a release nobody issued now.
+            if key not in self._retained_safety_warned:
+                self._retained_safety_warned.add(key)
+                logger.warning(
+                    "[safety] %s dropped: delivered as a retained message, not a live publish "
+                    "(clear it with `strands-robots iot clear-retained-safety --apply`)",
+                    kind,
+                )
+            self.record_activity("safety", f"{kind}_refused", detail={"why": "retained"}, ok=False)
+            return
         refusal = safety_state.envelope_refusal(data)
         if refusal is not None:
             # The peers refuse this envelope too, so nothing on the fleet locked or

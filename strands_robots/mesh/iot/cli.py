@@ -12,6 +12,7 @@ and prints the ``export`` lines a process needs afterwards. Exit codes: 0 on suc
     strands-robots iot reprovision watchdog-1 --estop-publish keep   # a safety authority keeps its grant
     strands-robots iot withdraw-estop-publish --keep watchdog-1      # dry run: who still holds the grant
     strands-robots iot withdraw-estop-publish --keep watchdog-1 --apply
+    strands-robots iot clear-retained-safety --apply   # delete stored stops/releases after the rollout
     strands-robots iot teardown so101-arm-01
 """
 
@@ -71,6 +72,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     w.add_argument("--apply", action="store_true", help="change the account; without it the verb only reports")
     w.add_argument("--region", default=None, help="AWS region (default: the boto3 session's)")
+    c = sub.add_parser(
+        "clear-retained-safety",
+        help="delete every retained message under strands/safety/ (a dry run unless --apply is given)",
+    )
+    c.add_argument("--apply", action="store_true", help="clear them; without it the verb only reports")
+    c.add_argument("--region", default=None, help="AWS region (default: the boto3 session's)")
     return parser
 
 
@@ -80,10 +87,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     from strands_robots.mesh.iot import provision as prov
 
     try:
-        if args.verb == "withdraw-estop-publish":
-            report = prov.withdraw_fleet_stop_grant(
-                region=args.region, safety_authorities=args.keep, apply=bool(args.apply)
-            )
+        if args.verb in ("withdraw-estop-publish", "clear-retained-safety"):
+            report: prov.FleetStopGrantReport | prov.RetainedSafetyReport
+            if args.verb == "withdraw-estop-publish":
+                report = prov.withdraw_fleet_stop_grant(
+                    region=args.region, safety_authorities=args.keep, apply=bool(args.apply)
+                )
+            else:
+                report = prov.clear_retained_safety_messages(region=args.region, apply=bool(args.apply))
             for line in report.lines():
                 print(line)
             return 0

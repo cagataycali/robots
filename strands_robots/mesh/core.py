@@ -55,7 +55,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
-from strands_robots.mesh.transport.base import DirectSender
+from strands_robots.mesh.transport.base import SAFETY_COMMAND_TOPICS, DirectSender, retained_delivery
 from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
@@ -2336,7 +2336,7 @@ class Mesh(SensorLoopsMixin):
         sender_id = data.get("sender_id", "")
         if sender_id == self.peer_id:
             return
-        if getattr(sample, "retain", False) is True:
+        if retained_delivery(sample):
             # The broker stored this command and replays it to every new
             # subscription: this peer subscribes ``cmd`` and ``broadcast`` at
             # every start, and the replay cache is per process, so a stored
@@ -3758,7 +3758,7 @@ class Mesh(SensorLoopsMixin):
         # cannot tell the two apart, so the transport's flag decides. Only a
         # real ``True`` counts (a Zenoh sample has no such attribute, a unit
         # fixture's MagicMock attribute is truthy but is not this flag).
-        if getattr(sample, "retain", False) is True:
+        if retained_delivery(sample):
             logger.warning(
                 f"[safety] %s: refusing remote {kind} -- delivered as a RETAINED message at subscribe time, "
                 "not a live publish (broker replay of a stored envelope)",
@@ -4662,6 +4662,20 @@ class Mesh(SensorLoopsMixin):
         def handler(sample: Any) -> None:
             try:
                 key = str(sample.key_expr)
+                if key in SAFETY_COMMAND_TOPICS and retained_delivery(sample):
+                    # A stored stop or release read off a subscription looks
+                    # exactly like a live one to the caller (an agent reading
+                    # its inbox); the safety handlers refuse it, so does this.
+                    if key not in self._retained_cmd_warned:
+                        self._retained_cmd_warned.add(key)
+                        logger.warning(
+                            "[mesh] %s: subscribe(%s) dropped a retained message on %s: a safety command is "
+                            "a live publish or nothing (clear it with `strands-robots iot clear-retained-safety`)",
+                            self.peer_id,
+                            topic,
+                            key,
+                        )
+                    return
                 raw = sample.payload.to_bytes().decode()
                 try:
                     data = json.loads(raw)
