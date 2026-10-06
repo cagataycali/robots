@@ -142,6 +142,33 @@ def test_a_tendon_gripper_names_what_it_closed_on():
         s.cleanup()
 
 
+def test_a_two_sided_squeeze_that_holds_the_weight_adds_no_weld_advice():
+    """A Franka closing both fingers on a free cube grips it; the close must not cry weld.
+
+    The grasp-assist sentence is a measurement - the squeeze of the weaker
+    finger side times friction against the body's weight - so a real pinch
+    stays silent while the SO-100 jaw pushing a cube into the floor does not.
+    """
+    s = Simulation(tool_name="t", mesh=False)
+    s.create_world()
+    s.add_robot("arm", data_config="panda")
+    try:
+        s.add_object("cube", shape="box", size=[0.04] * 3, position=[0.5, 0.0, 0.02], mass=0.05)
+        s.set_gripper(robot_name="arm", state="open", steps=30)
+        down = [0.0, 1.0, 0.0, 0.0]
+        for z in (0.2, 0.125):
+            assert (
+                s.move_to(robot_name="arm", position=[0.5, 0.0, z], orientation=down, tol=0.01)["status"] == "success"
+            )
+
+        text, payload = _parts(s.set_gripper(robot_name="arm", state="close", steps=60))
+        assert payload["holding"] == ["cube"]
+        assert "unpinched" not in payload
+        assert "attach_bodies" not in text
+    finally:
+        s.cleanup()
+
+
 def test_a_drive_that_reaches_no_body_says_nothing_about_holding(tmp_path):
     """Unlocatable fingers report nothing at all, never "nothing is held".
 

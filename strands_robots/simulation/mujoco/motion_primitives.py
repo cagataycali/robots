@@ -914,12 +914,27 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         out: dict[int, np.ndarray] = {}
         for name in held or {}:
             body_id = int(mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name))
-            if body_id < 0:
-                continue
-            adr, num = int(model.body_jntadr[body_id]), int(model.body_jntnum[body_id])
-            if any(int(model.jnt_type[j]) == int(mj.mjtJoint.mjJNT_FREE) for j in range(adr, adr + num)):
+            if self._is_free_body(model, body_id):
                 out[body_id] = np.array(data.xpos[body_id], dtype=float)
         return out
+
+    def _is_free_body(self, model: Any, body_id: int) -> bool:
+        """True when ``body_id`` owns a free joint - an object a grasp could carry."""
+        if body_id < 0:
+            return False
+        free = int(self._mj.mjtJoint.mjJNT_FREE)
+        adr, num = int(model.body_jntadr[body_id]), int(model.body_jntnum[body_id])
+        return any(int(model.jnt_type[j]) == free for j in range(adr, adr + num))
+
+    def _frame_body_name(self, model: Any, frame_name: str, frame_type: str) -> str:
+        """The body carrying the end-effector frame - the parent a grasp-assist weld names."""
+        mj = self._mj
+        frame_body = (
+            int(model.site_bodyid[mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, frame_name)])
+            if frame_type == "site"
+            else int(mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, frame_name))
+        )
+        return mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, frame_body) or frame_name
 
     def _bodies_left_behind(
         self,
@@ -936,9 +951,9 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         A body is left behind when the end effector travelled at least
         :data:`_CARRY_CHECK_MIN_TRAVEL_M` and the body moved less than
         :data:`_CARRY_FOLLOW_FRACTION` of that. The fingers closing on it is
-        not the same as holding it: on a model whose friction pinch does not
-        lift (the SO-100/SO-101 in MuJoCo), ``set_gripper`` reports contacts and
-        the lift reaches its target while the object stays on the table.
+        not the same as holding it: the fingers can squeeze hard enough at the
+        close and still lose the object on the way up, and this is the check
+        that sees it.
 
         Args:
             model: The compiled model.
@@ -957,12 +972,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         if not in_fingers or travel < _CARRY_CHECK_MIN_TRAVEL_M:
             return []
         mj = self._mj
-        frame_body = (
-            int(model.site_bodyid[mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, frame_name)])
-            if frame_type == "site"
-            else int(mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, frame_name))
-        )
-        parent = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, frame_body) or frame_name
+        parent = self._frame_body_name(model, frame_name, frame_type)
         out = []
         for body_id, start in in_fingers.items():
             moved = float(np.linalg.norm(np.array(data.xpos[body_id], dtype=float) - start))
@@ -1078,8 +1088,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         model: Any,
         data: Any,
         gripper_acts: list[int],
-    ) -> dict[str, int] | None:
-        """Bodies outside the robot that touch its fingers, with contact counts.
+    ) -> dict[str, dict[str, Any]] | None:
+        """Bodies outside the robot that the fingers press on, and how hard, per finger side.
 
         The fingers are the bodies the gripper actuators move, resolved through
         the shared transmission reader
@@ -1095,9 +1105,22 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         from the fingers themselves so it holds for any robot, and so that an
         arm link folded against its own gripper is not offered as a grasp.
 
+        Only contacts that push count: admitted to the solver
+        (:func:`mj_contact_is_active`) AND carrying a positive normal force. A
+        pair inside the detection margin, or admitted at zero force, holds
+        nothing, and counting it reported "Closed on 'red_cube' (4 contacts)"
+        for a cube one jaw was pushing into the floor.
+
+        Each contact's normal force is credited to the finger SIDE it came
+        from: a driven finger (an actuator's target body, with its subtree) or
+        the part those fingers hang from (a fixed jaw, a hand), which is what
+        :meth:`_bodies_too_weakly_gripped` weighs against the body's weight.
+
         Returns:
-            Body name to contact count, or ``None`` when the transmission names
-            no body at all. An empty mapping says "nothing is touching the
+            Body name to ``{"contacts": n, "sides": {side body: newtons},
+            "friction": mu}`` (``mu`` the largest sliding friction among its
+            finger contacts), or ``None`` when the transmission names no body
+            at all. An empty mapping says "nothing is touching the
             fingers", which is a measurement; a caller that never located the
             fingers has not made it, and ``None`` keeps that reply silent
             rather than confidently wrong.
@@ -1108,22 +1131,33 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             roots |= {int(b) for b in actuator_target_body_ids(model, int(act_id), mj)}
         if not roots:
             return None
-        fingers: set[int] = set()
+        side_of: dict[int, int] = {}
         machine: set[int] = set()
         for body_id in roots:
-            fingers |= self._subtree(model, body_id)
             parent = int(model.body_parentid[body_id])
             if parent > 0:
-                fingers |= self._subtree(model, parent)
+                side_of.update(dict.fromkeys(self._subtree(model, parent), parent))
             machine |= self._subtree(model, self._root_body(model, body_id))
-        held: dict[str, int] = {}
+        for body_id in roots:  # a driven finger is its own side, inside its parent's
+            side_of.update(dict.fromkeys(self._subtree(model, body_id), body_id))
+        held: dict[str, dict[str, Any]] = {}
+        force = np.zeros(6)
         for i in range(int(data.ncon)):
             con = data.contact[i]
+            if not mj_contact_is_active(con):
+                continue
+            mj.mj_contactForce(model, data, i, force)
+            if force[0] <= 0.0:  # admitted but pushing with nothing: not a grip
+                continue
             b1, b2 = int(model.geom_bodyid[con.geom1]), int(model.geom_bodyid[con.geom2])
             for finger, other in ((b1, b2), (b2, b1)):
-                if finger in fingers and other != 0 and other not in machine:
+                if finger in side_of and other != 0 and other not in machine:
                     name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, other) or f"body {other}"
-                    held[name] = held.get(name, 0) + 1
+                    side = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, side_of[finger]) or f"body {side_of[finger]}"
+                    rec = held.setdefault(name, {"contacts": 0, "sides": {}, "friction": 0.0})
+                    rec["contacts"] += 1
+                    rec["sides"][side] = rec["sides"].get(side, 0.0) + float(force[0])
+                    rec["friction"] = max(rec["friction"], float(con.friction[0]))
                     break
         return held
 
@@ -1169,7 +1203,10 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             grasp that missed does not read like one that landed: ``holding``
             (body names) and ``finger_contacts`` (name to contact count) join
             the payload, and the text names them ("Closed on 'red_cube' (11
-            contacts)") or says a lift would carry nothing. Both keys are
+            contacts)") or says a lift would carry nothing. When the squeeze
+            cannot hold a free body's weight (:meth:`_bodies_too_weakly_gripped`)
+            ``unpinched`` joins the payload and the text names the
+            ``attach_bodies(mode="weld")`` call that would carry it. Both keys are
             absent when the drive's transmission names no body to watch
             (:meth:`_finger_contacts`), rather than reporting an empty grasp
             the backend never looked for.
@@ -1255,8 +1292,12 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             # of a grasp attempt that missed, and the caller's next move (lift)
             # is wrong unless it hears that here.
             held: dict[str, int] | None = None
+            unpinched: list[dict[str, Any]] = []
             if state == "close":
-                held = self._finger_contacts(model, data, gripper_acts)
+                touching = self._finger_contacts(model, data, gripper_acts)
+                if touching is not None:
+                    held = {name: int(rec["contacts"]) for name, rec in touching.items()}
+                    unpinched = self._bodies_too_weakly_gripped(model, touching, namespace)
         return self._set_gripper_result(
             robot_name,
             state,
@@ -1266,7 +1307,55 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             {n: setpoint_sources[a] for n, a in zip(act_names, gripper_acts, strict=True)},
             joint_positions,
             held=held,
+            unpinched=unpinched,
         )
+
+    def _bodies_too_weakly_gripped(
+        self, model: Any, touching: dict[str, dict[str, Any]], namespace: str
+    ) -> list[dict[str, Any]]:
+        """Free bodies the fingers touch but cannot lift, with the weld that would carry them.
+
+        Two opposing faces each squeezed with ``N`` hold at most ``2 * mu * N``
+        by friction, and the squeeze is the WEAKER of the two strongest finger
+        sides - whatever one side pushes beyond that only presses the body into
+        the table. When that is below the body's weight, the lift that follows
+        leaves it behind, so the close says so first. A body only one side
+        touches has no squeeze at all: on the SO-100 the moving jaw pushes the
+        cube into the floor while the fixed jaw never meets it. The weld parent
+        is the end-effector frame's body, the one ``move_to``'s left-behind
+        sentence names.
+
+        Returns:
+            One ``{"body", "finger_force_n", "holds_n", "weight_n",
+            "weld_parent"}`` record per body that cannot be lifted.
+        """
+        from strands_robots.simulation.ik import discover_ee_frame
+
+        frame = discover_ee_frame(model, namespace or None)
+        gravity = float(np.linalg.norm(model.opt.gravity))
+        out: list[dict[str, Any]] = []
+        for name, rec in sorted(touching.items()):
+            body_id = int(mj_name_to_id(model, self._mj.mjtObj.mjOBJ_BODY, name))
+            if not self._is_free_body(model, body_id):
+                continue
+            sides: dict[str, float] = rec["sides"]
+            pushes = sorted(sides.values(), reverse=True)
+            squeeze = pushes[1] if len(pushes) > 1 else 0.0
+            holds = 2.0 * float(rec["friction"]) * squeeze
+            weight = float(model.body_subtreemass[body_id]) * gravity
+            if holds >= weight:
+                continue
+            parent = self._frame_body_name(model, *frame) if frame is not None else next(iter(sides))
+            out.append(
+                {
+                    "body": name,
+                    "finger_force_n": {side: round(f, 3) for side, f in sorted(sides.items())},
+                    "holds_n": round(holds, 3),
+                    "weight_n": round(weight, 3),
+                    "weld_parent": parent,
+                }
+            )
+        return out
 
     def rotate_wrist(
         self,
