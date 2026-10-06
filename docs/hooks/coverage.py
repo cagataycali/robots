@@ -112,6 +112,19 @@ def registry() -> dict[str, dict]:
 
 
 @lru_cache(maxsize=1)
+def removed_providers() -> frozenset[str]:
+    """Providers ``create_policy`` warns are removed in 0.7 (``_REMOVED_IN_0_7``)."""
+    removed = _literal(_PKG / "policies" / "factory.py", "_REMOVED_IN_0_7")
+    assert isinstance(removed, dict)
+    return frozenset(removed)
+
+
+def provider_label(provider: str) -> str:
+    """A provider name as printed in a table or sentence, marked when it is on its way out."""
+    return f"`{provider}` (removed in 0.7)" if provider in removed_providers() else f"`{provider}`"
+
+
+@lru_cache(maxsize=1)
 def providers() -> dict[str, dict]:
     """The policy provider registry, read once per build."""
     return json.loads((_PKG / "registry" / "policies.json").read_text(encoding="utf-8"))["providers"]
@@ -234,7 +247,7 @@ def _matrix() -> str:
         lerobot = f"`{item.lerobot_type}`" if item.lerobot_type else _NONE
         native = f"`{item.native_driver}`" if item.native_driver else _NONE
         asset = f"`{item.asset_dir}`" if item.asset_dir else _NONE
-        policies = ", ".join(f"`{p}`" for p in item.policies) or _NONE
+        policies = ", ".join(provider_label(p) for p in item.policies) or _NONE
         lines.append(
             f"| [`{item.name}`]({item.name}.md) | `{item.category}` | {lerobot} | {native} | {asset} | {policies} |"
         )
