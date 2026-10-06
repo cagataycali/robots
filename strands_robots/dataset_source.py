@@ -191,6 +191,17 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """
     if not isinstance(repo_id, str) or not repo_id.strip():
         raise ValueError(f"The dataset id must be a non-empty string (got {repo_id!r}).")
+    # ``root`` is advertised as ``str | None``. Guard the type here (next to the
+    # ``repo_id`` guard) so start_recording's ``except ValueError`` catches
+    # non-str values with the structured tool envelope the sibling kwargs use,
+    # instead of leaking ``TypeError: argument should be a str or an os.PathLike
+    # object...`` from ``Path(root)`` below. See bugbash: non-str root (int,
+    # bool, bytes, list, dict, float) escaped the envelope even though
+    # repo_id/push_to_hub/overwrite/fps/cameras all return status=error.
+    if root is not None and not isinstance(root, str):
+        raise ValueError(
+            f"The dataset root must be a string path or None (got {root!r}, type={type(root).__name__})."
+        )
     if root:
         directory = Path(root)
     elif (local := local_dataset_dir(repo_id)) is not None:
