@@ -141,6 +141,20 @@ class TestRemovedGrootProviderIsRefused:
         assert kwargs == {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B"}
 
 
+@pytest.mark.parametrize("spelling", ["act", "ACT", "pi0", "smolvla", "diffusion", "molmoact2", " pi05 "])
+def test_a_lerobot_policy_type_named_as_a_provider_is_sent_to_lerobot_local(spelling):
+    """The README lists ACT / Pi0 / SmolVLA / Diffusion / MolmoAct2 by name; each is a policy_type."""
+    policy_type = spelling.strip().lower()
+    sentence = REMOVED_PROVIDERS[policy_type]
+    assert f"policy_provider='lerobot_local' with policy_type={policy_type!r}" in sentence
+    with pytest.raises(ValueError) as excinfo:
+        create_policy(spelling)
+    assert str(excinfo.value) == sentence
+    with pytest.raises(ValueError, match="LeRobot policy type"):
+        resolve_policy(spelling)
+    assert policy_provider_error(spelling) == sentence
+
+
 class TestTrustRemoteCodeGate:
     """STRANDS_TRUST_REMOTE_CODE gate should block lerobot_local without opt-in."""
 

@@ -47,8 +47,8 @@ tests_integ/               # Integration tests (run with: hatch run test-integ)
 ## Development
 
 ```bash
-# Install with all optional deps
-pip install -e ".[all,dev]"
+# Install with all optional deps, plus the hatch task runner (in no extra)
+pip install -e ".[all,dev]" hatch
 
 # Run tests
 hatch run test              # unit tests
