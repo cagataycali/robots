@@ -4876,8 +4876,11 @@ class MuJoCoSimEngine(
                 vector (``size=[0.5]`` on a box) is rejected rather than
                 completed from a backend default, because a completed vector
                 compiles a differently-sized object while reporting success.
-                Every consumed component must be > 0; a non-positive extent is
-                rejected.
+                A component the shape does not consume (``size[1:]`` on a
+                sphere, the middle of a cylinder, a plane's third) must be 0 or
+                repeat the extent it mirrors; ``[0.05, 0.1, 0.2]`` on a sphere
+                is rejected, not compiled as a 5 cm ball. Every consumed
+                component must be > 0; a non-positive extent is rejected.
             color: ``[r, g, b]`` or ``[r, g, b, a]`` in 0..1 (default mid-grey).
                 An RGB triple is completed with an opaque alpha -- the one
                 component the geom's rgba row defines a default for. Any other
