@@ -281,7 +281,7 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
 
     reg = _load("robots")
     entries: dict[str, dict[str, Any]] = dict(reg.get("robots", {}))
-    for urdf_name in list_urdf_only():
+    for urdf_name in list_urdf_only(include_refused=True):
         if urdf_name in entries:  # curated wins; list_urdf_only already excludes these
             continue
         urdf_info = urdf_registry_entry(urdf_name)

@@ -199,7 +199,7 @@ async def camera_modes(request: Request, index: int, _: dict = Depends(access.re
         raise _camera_http_error(index, e) from e
 
 
-async def _spawn(request: Request, body: dict[str, Any], *, remember: bool = True) -> dict[str, Any]:
+async def spawn_and_settle(request: Request, body: dict[str, Any], *, remember: bool = True) -> dict[str, Any]:
     """The one spawn path: validation, the bus-claim gate, the settle window, the audit trail."""
     dm = _devices(request)
     bridge = _bridge(request)
@@ -213,19 +213,19 @@ async def _spawn(request: Request, body: dict[str, Any], *, remember: bool = Tru
     if isinstance(checked, dict):
         _audit(bridge, "spawn", target=str(robot_name), detail=f"refused: {checked['error']}", ok=False)
         raise HTTPException(422, checked)
-    if checked[1] == "real":
-        # The child would die on its first import: refuse now, naming the extra
-        # that supplies it, instead of starting a process that prints the same
-        # ImportError seconds later with no button next to it.
-        gap = await asyncio.to_thread(env_install.spawn_preflight, checked[0], body.get("cameras"))
-        if gap is not None:
-            refusal = {
-                "error": f"this environment cannot run {checked[0]} on the {gap['driver']} driver: "
-                f"missing {', '.join(gap['missing'])}; {gap['remedy']}",
-                **gap,
-            }
-            _audit(bridge, "spawn", target=str(robot_name), detail=f"refused: {refusal['error']}", ok=False)
-            raise HTTPException(412, refusal)
+    # The child would die on its first import: refuse now, naming the extra
+    # that supplies it, instead of starting a process that prints the same
+    # ImportError seconds later with no button next to it.
+    gap = await asyncio.to_thread(env_install.spawn_preflight, checked[0], body.get("cameras"), mode=checked[1])
+    if gap is not None:
+        where = f"on the {gap['driver']} driver" if gap["driver"] else "in simulation"
+        refusal = {
+            "error": f"this environment cannot run {checked[0]} {where}: "
+            f"missing {', '.join(gap['missing'])}; {gap['remedy']}",
+            **gap,
+        }
+        _audit(bridge, "spawn", target=str(robot_name), detail=f"refused: {refusal['error']}", ok=False)
+        raise HTTPException(412, refusal)
     result = await asyncio.to_thread(
         dm.spawn,
         robot_name,
@@ -235,6 +235,7 @@ async def _spawn(request: Request, body: dict[str, Any], *, remember: bool = Tru
         body.get("cameras"),
         body.get("robot_id"),
         remember,
+        network_interface=body.get("network_interface"),
     )
     # A pid is not a running robot.
     peer_id = result.get("peer_id")
@@ -276,7 +277,7 @@ async def _spawn(request: Request, body: dict[str, Any], *, remember: bool = Tru
 @router.post("/devices/spawn")
 async def spawn(request: Request, body: dict[str, Any], _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Start a robot child process (sim or real) and wait for it to join the mesh."""
-    return await _spawn(request, body)
+    return await spawn_and_settle(request, body)
 
 
 @router.post("/devices/spawn-remembered")
@@ -326,8 +327,8 @@ async def spawn_remembered(
     # keeps the ones on file whatever this spawn says.
     recording = [k for k, v in seen.items() if v and not remembered[k]]
     # One spawn path, not two: the settle window, the consent attachment and the audit trail
-    # all live in _spawn, and a second copy of them is a second thing to forget to fix.
-    result = await _spawn(request, payload, remember=bool(recording))
+    # all live in spawn_and_settle, and a second copy of them is a second thing to forget to fix.
+    result = await spawn_and_settle(request, payload, remember=bool(recording))
     result["respawned_from_profile"] = True
     if "error" not in result:
         if mismatch:
@@ -342,15 +343,20 @@ async def spawn_remembered(
     return result
 
 
+async def despawn_and_audit(request: Request, peer_id: str) -> dict[str, Any]:
+    """Stop a managed child and land the despawn in the activity trail."""
+    result = cast("dict[str, Any]", await asyncio.to_thread(_devices(request).despawn, peer_id))
+    _audit(_bridge(request), "despawn", target=peer_id, ok="error" not in result)
+    return result
+
+
 @router.post("/devices/despawn")
 async def despawn(request: Request, body: dict[str, Any], _: dict = Depends(access.require_session)) -> dict[str, Any]:
     """Stop a managed robot's child process."""
-    dm = _devices(request)
     peer_id = body.get("peer_id")
     if not peer_id:
         raise HTTPException(422, "peer_id required")
-    result = await asyncio.to_thread(dm.despawn, str(peer_id))
-    _audit(_bridge(request), "despawn", target=str(peer_id), ok="error" not in result)
+    result = await despawn_and_audit(request, str(peer_id))
     if "error" in result and "unknown" in str(result["error"]):
         raise HTTPException(404, result)
     return cast("dict[str, Any]", result)

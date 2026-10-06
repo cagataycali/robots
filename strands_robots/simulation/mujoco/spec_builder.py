@@ -210,7 +210,7 @@ _SIZE_LAYOUT: dict[str, tuple[int, str]] = {
     "ellipsoid": (3, "[x, y, z] full diameters"),
     "sphere": (1, "[diameter]"),
     "cylinder": (3, "[diameter, unused, full height]"),
-    "capsule": (3, "[diameter, unused, full height]"),
+    "capsule": (3, "[diameter, unused, cylinder length] - the caps add size[0], so it stands size[2] + size[0]"),
     "plane": (1, "[x] or [x, y] visual half-widths"),
     "mesh": (0, "unused - the asset's own units define the extent"),
 }
@@ -285,8 +285,10 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
         used: tuple[tuple[int, str], ...] = ((0, "x"), (1, "y"), (2, "z"))
     elif shape == "sphere":
         used = ((0, "diameter"),)
-    elif shape in ("cylinder", "capsule"):
+    elif shape == "cylinder":
         used = ((0, "diameter"), (2, "height"))
+    elif shape == "capsule":
+        used = ((0, "diameter"), (2, "cylinder length"))
     elif shape == "plane":
         used = ((0, "x"),) if len(size) < 2 else ((0, "x"), (1, "y"))
     else:
@@ -317,7 +319,9 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
 
     Box/ellipsoid use all 3 components as full extents, sphere uses ``size[0]``
     as diameter (MuJoCo halves it to radius), cylinder/capsule use ``size[0]``
-    as diameter and ``size[2]`` as full height (both halved). Plane is the one
+    as diameter and ``size[2]`` as the length MuJoCo's half-length doubles
+    (both halved). For a cylinder that is its full height; a capsule's two
+    hemispherical caps add ``size[0]`` on top, so it stands ``size[2] + size[0]``. Plane is the one
     exception: ``size[0]``/``size[1]`` are passed through unchanged as MuJoCo's
     visual half-widths (a plane is infinite for collision, so only its rendered
     grid extent matters) and ``size[1]`` mirrors ``size[0]`` when omitted.
