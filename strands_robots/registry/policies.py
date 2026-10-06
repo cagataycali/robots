@@ -72,12 +72,42 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
 #: ``create_policy("groot")`` would fall through :func:`resolve_policy`'s last
 #: stage and reach ``lerobot_local`` as a checkpoint id, and the caller's next
 #: report would name a HuggingFace repo it never asked for.
+#:
+#: The second group ("act", "pi0", "pi05", "pi0_fast", "smolvla", "diffusion",
+#: "vqbet", "tdmpc", "molmoact2") covers the model-type names README.md:93
+#: lists under "LeRobot" ("ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7") and
+#: directly ("MolmoAct2"), plus the sibling lerobot architectures README.md:95
+#: credits to "ACT to GR00T N1.7". None of them is a factory provider; they are
+#: the ``policy_type`` string ``lerobot_local`` resolves (see
+#: :data:`strands_robots.policies.lerobot_local.resolution.PARTIAL_IMAGE_POLICY_TYPES`
+#: and the ``lerobot.policies.<policy_type>`` loader at resolution.py:466).
+#: A reader of README.md:93 who tries ``create_policy("act")`` without this
+#: table hits the generic unknown-provider dump at factory.py:453 whose
+#: difflib hint offers nothing (none of the 16 provider names resolve from
+#: those tokens), so the sentence that got GR00T N1.7 across the gap is
+#: offered to the four model types README.md names in the same breath.
+_LEROBOT_TYPE_HINT = (
+    "policy_provider {name!r} is a LeRobot model type, not a factory provider; "
+    "use create_policy('lerobot_local', policy_type={name!r}, "
+    "pretrained_name_or_path='<hf-repo>'). "
+    "The README names ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7 under 'LeRobot'; "
+    "each resolves through lerobot_local(policy_type=...)."
+)
 REMOVED_PROVIDERS: dict[str, str] = {
     "groot": (
         "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
         "lerobot_local(policy_type='groot'); for a remote GPU host run "
         "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
     ),
+    "act": _LEROBOT_TYPE_HINT.format(name="act"),
+    "pi0": _LEROBOT_TYPE_HINT.format(name="pi0"),
+    "pi05": _LEROBOT_TYPE_HINT.format(name="pi05"),
+    "pi0_fast": _LEROBOT_TYPE_HINT.format(name="pi0_fast"),
+    "smolvla": _LEROBOT_TYPE_HINT.format(name="smolvla"),
+    "diffusion": _LEROBOT_TYPE_HINT.format(name="diffusion"),
+    "vqbet": _LEROBOT_TYPE_HINT.format(name="vqbet"),
+    "tdmpc": _LEROBOT_TYPE_HINT.format(name="tdmpc"),
+    "molmoact2": _LEROBOT_TYPE_HINT.format(name="molmoact2"),
 }
 
 

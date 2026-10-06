@@ -141,6 +141,57 @@ class TestRemovedGrootProviderIsRefused:
         assert kwargs == {"pretrained_name_or_path": "nvidia/GR00T-N1.7-3B"}
 
 
+class TestLerobotModelTypeNamesInReadmeAreRedirected:
+    """README.md:93 names 5 LeRobot model types under one bullet.
+
+    "**Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion /
+    GR00T N1.7), Cosmos 3, MolmoAct2, ..."
+
+    ``groot`` has had its own tailored refusal since 1.0 (the sibling test
+    above). The four other names README publishes in the same bullet, plus
+    MolmoAct2 which README names directly on the same line, had none - they
+    fell through ``resolve_policy`` to the generic unknown-provider dump at
+    ``factory.py:453`` whose difflib hint offers nothing (none of the 16
+    provider names resolve from those tokens by cutoff=0.6).
+
+    Each should now report the one sentence that gets a reader of README L93
+    across the gap: "<name> is a LeRobot model type, not a factory provider;
+    use create_policy('lerobot_local', policy_type='<name>', ...)".
+    """
+
+    README_NAMED = ["act", "pi0", "smolvla", "diffusion", "molmoact2"]
+    SIBLING_LEROBOT_TYPES = ["pi05", "pi0_fast", "vqbet", "tdmpc"]
+
+    @pytest.mark.parametrize("spelling", README_NAMED + SIBLING_LEROBOT_TYPES)
+    def test_each_lerobot_model_type_is_redirected_to_lerobot_local(self, spelling):
+        with pytest.raises(ValueError) as excinfo:
+            create_policy(spelling)
+        msg = str(excinfo.value)
+        assert "LeRobot model type" in msg, msg
+        assert f"policy_type={spelling!r}" in msg, msg
+        assert "create_policy('lerobot_local'" in msg, msg
+
+    def test_case_fold_matches_the_groot_entry(self):
+        """Readers who copy the README spelling ("ACT", "Pi0") land in the same table."""
+        with pytest.raises(ValueError) as excinfo:
+            create_policy("ACT")
+        assert "policy_type='act'" in str(excinfo.value)
+
+    def test_lerobot_local_itself_still_resolves_to_the_trust_gate(self, monkeypatch):
+        """The redirect must not shadow lerobot_local's own refusal path."""
+        monkeypatch.delenv("STRANDS_TRUST_REMOTE_CODE", raising=False)
+        with pytest.raises(UntrustedRemoteCodeError):
+            create_policy("lerobot_local")
+
+    def test_groot_entry_is_preserved(self):
+        """The existing groot sentence - the whole point of the table - is unchanged."""
+        with pytest.raises(ValueError) as excinfo:
+            create_policy("groot")
+        msg = str(excinfo.value)
+        assert "GR00T N1.7 runs through" in msg
+        assert "lerobot_local(policy_type='groot')" in msg
+
+
 class TestTrustRemoteCodeGate:
     """STRANDS_TRUST_REMOTE_CODE gate should block lerobot_local without opt-in."""
 
