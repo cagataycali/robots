@@ -30,6 +30,7 @@ full view-dependent color (the SH coefficients are evaluated per-view by
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
 from pathlib import Path
@@ -926,7 +927,12 @@ def download_gsplat_scene(
             than the peer's declared ``Content-Length``).
     """
     if name not in GSPLAT_SCENES:
-        raise KeyError(f"Unknown scene {name!r}. Known: {list(GSPLAT_SCENES)}")
+        # The bare slug ("tabletop") is the form the cache file and the skybox
+        # table are keyed by, so it is offered back as its full preset name.
+        slugs = {key.split(" ")[0]: key for key in GSPLAT_SCENES}
+        close = difflib.get_close_matches(str(name), [*GSPLAT_SCENES, *slugs], n=1)
+        hint = f" Did you mean {slugs.get(close[0], close[0])!r}?" if close else ""
+        raise KeyError(f"Unknown scene {name!r}.{hint} Known: {list(GSPLAT_SCENES)}")
     if error := positive_finite_number_error(timeout, "timeout", "download_gsplat_scene"):
         raise ValueError(error)
     url = GSPLAT_SCENES[name]
