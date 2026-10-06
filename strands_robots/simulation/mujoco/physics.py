@@ -61,6 +61,8 @@ logger = logging.getLogger(__name__)
 #: of the sample is to make the condition recognizable, not to re-list the
 #: request the caller just made.
 _NAME_SAMPLE_LIMIT = 4
+# export_xml without output_path returns at most this much of the MJCF inline.
+_XML_PREVIEW_CHARS = 2000
 
 #: The joints that own more than one ``qpos`` / ``qvel`` slot, by kind:
 #: ``(qpos layout, qvel layout)``. Every other joint owns one of each.
@@ -3348,6 +3350,11 @@ class PhysicsMixin:
         success text reports the RESOLVED path. A destination the filesystem
         cannot accept (a directory, an unwritable parent) is reported the same
         way; a missing parent is created.
+
+        Without ``output_path`` the MJCF comes back inline, capped at
+        ``_XML_PREVIEW_CHARS``. A capped reply is labelled a preview, names both
+        lengths, ends on a complete tag plus ``<!-- truncated -->``, and its
+        json block carries ``{"chars", "shown", "truncated"}``.
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3408,7 +3415,21 @@ class PhysicsMixin:
             # different location, so echoing it would name a file we did not write.
             return {"status": "success", "content": [{"text": f"Model exported to {safe}"}]}
 
+        # Inline, the XML is a preview capped to keep an agent's context small.
+        # A capped preview says so: the header names both lengths and the way
+        # to get the whole file, the cut lands after a complete tag rather than
+        # mid-attribute, and the json block carries ``truncated``. A preview
+        # whose header claimed the full length read as the whole scene.
+        if len(xml) <= _XML_PREVIEW_CHARS:
+            text = f"Model XML ({len(xml)} chars):\n{xml}"
+            shown = len(xml)
+        else:
+            shown = xml.rfind(">", 0, _XML_PREVIEW_CHARS) + 1 or _XML_PREVIEW_CHARS
+            text = (
+                f"Model XML preview (first {shown} of {len(xml)} chars; "
+                f"pass output_path=... for the full MJCF):\n{xml[:shown]}\n<!-- truncated -->"
+            )
         return {
             "status": "success",
-            "content": [{"text": f"Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
+            "content": [{"text": text}, {"json": {"chars": len(xml), "shown": shown, "truncated": shown < len(xml)}}],
         }
