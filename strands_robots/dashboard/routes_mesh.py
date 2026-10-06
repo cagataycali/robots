@@ -263,11 +263,30 @@ async def network_hint(request: Request, _: dict = Depends(access.require_sessio
 
 @router.get("/robots/registry")
 async def registry(_: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Every robot the registry knows, as the spawn form lists them."""
+    """Every robot the registry knows, as the spawn form lists them.
+
+    An entry some driver can build for real carries ``real_transport``, so the form asks for
+    a servo bus or a network address instead of offering a serial picker to a robot on the
+    network. "Some driver" is
+    :func:`~strands_robots.drivers.list_driver_coverage`, which also counts a native driver
+    the registry entry does not declare; the transport is
+    :func:`~strands_robots.dashboard.device_manager.real_transport`.
+    """
+    from strands_robots.dashboard.device_manager import real_transport
+    from strands_robots.drivers import list_driver_coverage
     from strands_robots.registry import list_robots
 
+    def _listed() -> list[dict[str, Any]]:
+        coverage = list_driver_coverage()
+        return [
+            {**row, "real_transport": real_transport(row["name"])}
+            if row.get("has_real") or coverage.get(row["name"])
+            else row
+            for row in list_robots()
+        ]
+
     try:
-        robots = await asyncio.to_thread(list_robots)
+        robots = await asyncio.to_thread(_listed)
     except Exception as exc:  # noqa: BLE001 - registry read is best-effort
         raise HTTPException(500, f"registry unavailable: {exc}") from exc
     return {"robots": robots}
