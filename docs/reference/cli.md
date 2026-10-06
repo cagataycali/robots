@@ -72,10 +72,7 @@ A bind beyond `127.0.0.1`, `::1` or `localhost` is refused with exit 2 until the
 AWS IoT identities for the `iot` and `bridge` mesh backends (`[mesh-iot]` extra, AWS credentials in the environment). Exit 0 on success, 1 when AWS refused or the Thing is missing, 2 on usage error.
 
 ```bash
-strands-robots iot provision-robot so101-arm-01
-strands-robots iot provision-operator ops-console-1
-strands-robots iot reprovision so101-arm-01
-strands-robots iot teardown so101-arm-01
+strands-robots iot clear-retained-safety --apply
 ```
 
 | verb | effect |
@@ -84,6 +81,7 @@ strands-robots iot teardown so101-arm-01
 | `provision-operator THING` | the same, `strands-operator` policy |
 | `reprovision THING [--estop-publish {keep,drop}]` | rotate the certificate; Thing, attributes and policies stay; a `strands-robot` certificate needs the flag; restart the peer |
 | `withdraw-estop-publish [--keep THING] [--apply]` | move `strands-robot` certificates to `strands-robot-no-estop`, except `--keep`; dry run without `--apply` |
+| `clear-retained-safety [--apply]` | post-rollout, delete retained `strands/safety/` messages; dry run without `--apply` |
 | `teardown THING` | delete the Thing, its certificates and local files |
 
 Every verb takes `--region`; Thing verbs take `--cert-dir` (default `~/.strands_robots/iot`) and print `export` lines. `reprovision` gives a pre-CSR robot (certificate CN `AWS IoT Certificate`) the direct-reply grant ([direct messaging](../learn/mesh/direct.md)).

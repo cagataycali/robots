@@ -1470,6 +1470,83 @@ def withdraw_fleet_stop_grant(
     return FleetStopGrantReport(moved=tuple(moved), kept=tuple(kept), unnamed=tuple(unnamed), applied=apply)
 
 
+#: The topic prefix of the fleet-wide safety commands. Nothing under it is ever
+#: legitimately retained: a stop and its release are events, published live.
+_FLEET_SAFETY_PREFIX = "strands/safety/"
+
+
+@dataclass(frozen=True)
+class RetainedSafetyReport:
+    """What :func:`clear_retained_safety_messages` found and, with ``apply``, cleared.
+
+    Attributes:
+        topics: Topics under ``strands/safety/`` that held (or hold, in a dry
+            run) a retained message.
+        applied: Whether a zero-byte retained publish cleared each of them.
+    """
+
+    topics: tuple[str, ...]
+    applied: bool
+
+    def lines(self) -> list[str]:
+        """The report as the lines the CLI prints."""
+        verb = "cleared" if self.applied else "would clear"
+        out = [f"{verb} retained message on: {', '.join(self.topics) or '(none)'}"]
+        if self.topics and not self.applied:
+            out.append("dry run: nothing changed; re-run with --apply (or apply=True) to clear them")
+        return out
+
+
+def clear_retained_safety_messages(*, region: str | None = None, apply: bool = False) -> RetainedSafetyReport:
+    """Clear every retained message the broker holds under ``strands/safety/``.
+
+    A retained stop or release is handed to every client that subscribes
+    later. Strands peers and the dashboard refuse it, but any other subscriber
+    reads a stop nobody pressed now, and an account whose policies once granted
+    ``iot:RetainPublish`` there may still hold one after the policies changed.
+    Run this once after rolling the policies out. It lists the account's
+    retained topics, and with *apply* publishes a zero-byte retained message to
+    each one under ``strands/safety/``, which is how MQTT deletes a retained
+    message. The caller's AWS credentials need ``iot:ListRetainedMessages``,
+    ``iot:Publish`` and ``iot:RetainPublish`` on those topics.
+
+    Args:
+        region: AWS region. Defaults to the default boto3 session region.
+        apply: ``False`` (the default) lists only.
+
+    Returns:
+        A :class:`RetainedSafetyReport`.
+
+    Raises:
+        ValueError: When *apply* is not a boolean.
+    """
+    if flag_error := boolean_flag_error(apply, "apply", "clear_retained_safety_messages"):
+        raise ValueError(flag_error)
+    apply = bool(apply)
+    boto3 = _require_boto3()
+    iot = boto3.client("iot", region_name=region)
+    data = boto3.client("iot-data", region_name=iot.meta.region_name, endpoint_url=f"https://{_discover_endpoint(iot)}")
+    topics: list[str] = []
+    token: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {"maxResults": 200}
+        if token:
+            kwargs["nextToken"] = token
+        page = data.list_retained_messages(**kwargs)
+        for entry in page.get("retainedTopics", []):
+            topic = str(entry.get("topic", ""))
+            if topic.startswith(_FLEET_SAFETY_PREFIX) and topic not in topics:
+                topics.append(topic)
+        token = page.get("nextToken")
+        if not token:
+            break
+    if apply:
+        for topic in topics:
+            data.publish(topic=topic, qos=1, retain=True, payload=b"")
+            logger.info("[provision] cleared the retained message on %s", topic)
+    return RetainedSafetyReport(topics=tuple(topics), applied=apply)
+
+
 def teardown_thing(
     thing_name: str,
     *,
