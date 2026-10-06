@@ -88,7 +88,7 @@ def _warn_posture_once(kind: str, msg: str, *args: Any) -> bool:
     return True
 
 
-#: Why ``Mesh.start`` refuses under mTLS with a permissive ACL, and the four
+#: Why ``Mesh.start`` refuses under mTLS with a permissive ACL, and the three
 #: ways out. Logged by :meth:`Mesh._refuse_under_permissive_default_acl` and
 #: printed by ``strands-robots doctor`` for the same posture, so the two never
 #: name different env vars.
@@ -96,8 +96,6 @@ PERMISSIVE_ACL_REFUSAL = (
     "Mesh did NOT start: it would accept any TLS-signed peer "
     "on every topic (no access-control list configured).\n"
     "  Pick one:\n"
-    "    - Local dev / single machine?  Set STRANDS_MESH_LOCAL_DEV=true "
-    "(turns off mTLS+ACL for localhost experiments).\n"
     "    - Sharing a trusted lab network?  Set "
     "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to accept this posture.\n"
     "    - Production?  Point STRANDS_MESH_ACL_FILE at a role-separated "

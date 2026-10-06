@@ -266,12 +266,13 @@ class TestMeshPosture:
         assert "  PASS  " not in result
         assert "mesh=True would not start" in result
         for env_name in (
-            "STRANDS_MESH_LOCAL_DEV",
             "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL",
             "STRANDS_MESH_ACL_FILE",
             "STRANDS_MESH=false",
         ):
             assert env_name in PERMISSIVE_ACL_REFUSAL and env_name in result, env_name
+        # Turning wire auth off is not a way out of a missing access list.
+        assert "STRANDS_MESH_LOCAL_DEV" not in PERMISSIVE_ACL_REFUSAL
 
     def test_the_refusal_is_a_warning_until_the_operator_turns_the_mesh_on(
         self, monkeypatch: pytest.MonkeyPatch
@@ -361,6 +362,8 @@ class TestMeshPosture:
 
     def test_unreachable_connect_endpoints_are_listed_with_a_deadline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        # Beyond loopback, local dev needs its own acknowledgement to start.
+        monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
         monkeypatch.setenv("ZENOH_CONNECT", "tcp/10.0.0.9:7447, tls/hub.lab:7448")
         seen: list[tuple[str, int, float]] = []
 
@@ -399,6 +402,8 @@ class TestMeshPosture:
     def test_every_exposure_is_reported_not_just_the_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Three notes at once: an early return would have hidden two of them."""
         monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        # Beyond loopback, local dev needs its own acknowledgement to start.
+        monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
         monkeypatch.setenv("STRANDS_MESH_PORT", "abc")
         monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
         monkeypatch.setenv("ZENOH_CONNECT", "tcp/10.0.0.9:7447")
@@ -410,6 +415,8 @@ class TestMeshPosture:
 
     def test_multicast_scouting_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("STRANDS_MESH_LOCAL_DEV", "1")
+        # Beyond loopback, local dev needs its own acknowledgement to start.
+        monkeypatch.setenv("STRANDS_MESH_I_KNOW_THIS_IS_INSECURE", "1")
         monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
         result = doctor.check_mesh()
         assert "  WARN  " in result

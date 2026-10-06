@@ -41,7 +41,7 @@ The mesh is enrichment. A Zenoh session that fails to open leaves the robot work
 | variable | values | effect |
 |---|---|---|
 | `STRANDS_MESH` | unset (default), `true`, `false` | `Robot(mesh=None)` follows this; `false` is a hard kill switch even over `mesh=True` |
-| `STRANDS_MESH_AUTH_MODE` | `mtls` (default), `none` | `none` also needs `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1` or `STRANDS_MESH_LOCAL_DEV=true` |
+| `STRANDS_MESH_AUTH_MODE` | `mtls` (default), `none` | `none` also needs `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or `STRANDS_MESH_LOCAL_DEV=true` on loopback |
 | `STRANDS_MESH_BACKEND` | `zenoh` (default), `iot`, `bridge` | which transport carries the topics; a typo falls back to `zenoh` and is reported once |
 
 `Robot(..., mesh=True)` forces it on for one robot, `mesh=False` off. `init_mesh(robot, peer_id=...)` attaches one to any object with `send_action` and `stop`.

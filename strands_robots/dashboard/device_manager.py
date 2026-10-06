@@ -433,8 +433,8 @@ def scan_camera_names() -> list[dict[str, Any]]:
 
 
 #: The mesh's own acknowledgement that wire auth is off. ``STRANDS_MESH_LOCAL_DEV`` stands in for
-#: it inside ``resolve_auth_mode`` so a localhost sim needs one variable, not two; a real arm does
-#: not get that shortcut here.
+#: it inside ``resolve_auth_mode`` while the mesh stays on loopback, so a localhost sim needs one
+#: variable, not two; a real arm does not get that shortcut here.
 INSECURE_ACK_ENV = "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"
 
 #: The operator's explicit yes to starting REAL hardware from a dashboard whose mesh runs without

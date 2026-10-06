@@ -37,7 +37,6 @@ strands-robots doctor
   SKIP  device-connect extra not installed (device_connect_edge); uv pip install "strands-robots[device-connect]"
   WARN  mesh=True would not start: it would accept any TLS-signed peer on every topic (no access-control list configured).
         Pick one:
-          - Local dev / single machine?  Set STRANDS_MESH_LOCAL_DEV=true (turns off mTLS+ACL for localhost experiments).
           - Sharing a trusted lab network?  Set STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to accept this posture.
           - Production?  Point STRANDS_MESH_ACL_FILE at a role-separated ACL (see examples/mesh/mesh_acl_example.json5).
           - Don't need the mesh?  It is OFF by default now -- just drop mesh=True (or set STRANDS_MESH=false).
