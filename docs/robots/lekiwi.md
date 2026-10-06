@@ -22,8 +22,7 @@ robot.cleanup()
 The base and the arm share one action dict; [worlds and objects](../learn/simulation/worlds-and-objects.md) gives it a room.
 
 ```python title="sketch"
-robot = Robot("lekiwi", mode="real", driver="lerobot", port="/dev/ttyACM0")  # lerobot lekiwi
-robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # FeetechDriver
+robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi
 ```
 
 | Observation key | also accepted by `send_action` |
@@ -42,9 +41,7 @@ Gripper `Jaw`: the low end closes, the high end opens.
 
 ## Hardware
 
-**lerobot.** `Robot("lekiwi", mode="real", driver="lerobot")` builds lerobot's `lekiwi` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict.
-
-**`FeetechDriver`** (the default for this robot) speaks Feetech STS/SMS serial bus: [port, SDK, kwargs and checks](../learn/hardware/drivers.md#feetechdriver).
+**lerobot.** `Robot("lekiwi", mode="real")` builds lerobot's `lekiwi` with `pip install 'strands-robots[lerobot]'`; `port=` is the serial device, `cameras=` the lerobot camera dict. The default when `driver=` is not given.
 
 ## Policies verified on this robot
 

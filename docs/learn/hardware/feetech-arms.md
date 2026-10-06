@@ -31,7 +31,7 @@ arm = Robot("so101", mode="real", driver="lerobot", port="/dev/ttyACM0")   # ler
 | cameras | not read (`reads_cameras` is not set) | `cameras={...}` opened by lerobot |
 | teleop leader | `Teleoperator("so101_leader", port=...)`; the leader must report degrees | same |
 
-Both register for `so100`, `so101`, `lekiwi`, `hope_jr` and `open_duck_mini`. `hope_jr` and `open_duck_mini` share the bus protocol but not the six-servo layout; pass `motor_ids=` to the native driver until a joint map for them lands.
+Both register for `so100`, `so101`, `hope_jr` and `open_duck_mini`; `lekiwi` is lerobot only, since its base is not on the six-motor map. `hope_jr` and `open_duck_mini` share the bus protocol but not the six-servo layout; pass `motor_ids=` to the native driver until a joint map for them lands.
 
 The native driver's six motors, servo ids 1 to 6 in wire order from `shoulder_pan` to `gripper`, are the generated joint table on the [so101 page](../../robots/so101.md).
 

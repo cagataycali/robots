@@ -462,10 +462,10 @@ class TestTheGraderReportsAPlantedMistake:
 
     def test_a_native_serial_call_without_a_port_is_reported(self) -> None:
         """The call the factory refuses, the same call with a port, and the lerobot path."""
-        assert _missing_required_keywords("lekiwi", ()) == ["port"]
-        assert _missing_required_keywords("lekiwi", ("port",)) == []
-        assert _missing_required_keywords("lekiwi", ("transport",)) == []
-        assert _missing_required_keywords("lekiwi", (), "lerobot") == []
+        assert _missing_required_keywords("so100", ()) == ["port"]
+        assert _missing_required_keywords("so100", ("port",)) == []
+        assert _missing_required_keywords("so100", ("transport",)) == []
+        assert _missing_required_keywords("so100", (), "lerobot") == []
 
     def test_the_name_rule_reaches_both_verdicts(self) -> None:
         outcomes = {_names_no_registered_robot(n) for n in ("bi_so", "so101_leader", "so101", "koch")}

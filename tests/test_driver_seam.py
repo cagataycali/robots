@@ -304,9 +304,10 @@ class TestANativeDriverIsTheDefaultWhenRegistered:
     def test_the_shipped_table_makes_the_bench_arms_native(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Against the real shipped table: the arms the dashboard spawns resolve natively."""
         monkeypatch.setattr(drivers_registry_mod, "_NATIVE_DRIVERS", dict(_SHIPPED_TABLE))
-        for name in ("so101", "so100", "lekiwi", "koch", "g1", "ur5e", "reachy_mini"):
+        for name in ("so101", "so100", "koch", "g1", "ur5e", "reachy_mini"):
             assert resolve_driver(name) == NATIVE_DRIVER, name
-        for name in ("reachy2", "omx", "openarm"):
+        # lekiwi's omniwheel base is not on FeetechDriver's six-motor map; lerobot drives all of it.
+        for name in ("reachy2", "omx", "openarm", "lekiwi"):
             assert resolve_driver(name) == DEFAULT_DRIVER, f"{name} has no native driver"
         assert resolve_driver("earthrover") == DEFAULT_DRIVER, "declared lerobot (teleop docs)"
 
