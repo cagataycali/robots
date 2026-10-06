@@ -339,7 +339,7 @@ class TestValidateCommandResume:
 
     Before the prior fix, ``validate_command`` had no ``resume`` clause -- a peer
     sending ``{"action": "resume", "override_code": <non-string>}`` would
-    pass validation and reach ``Mesh._resume_lockout`` where ``.strip()``
+    pass validation and reach ``Mesh.resume`` where ``.strip()``
     raises ``AttributeError`` on a list/dict, surfacing as a generic
     dispatch error rather than a clean ValidationError.
     """
@@ -351,7 +351,7 @@ class TestValidateCommandResume:
 
     def test_resume_empty_override_passes(self):
         # An empty string is the sentinel for "no override supplied" --
-        # validation must let it through; ``_resume_lockout`` then rejects.
+        # validation must let it through; ``resume`` then rejects.
         cmd = {"action": "resume", "override_code": ""}
         out = sec.validate_command(cmd)
         assert out["override_code"] == ""

@@ -13,14 +13,13 @@ The fix in core.py adds:
    sweep + oldest-20%-drop fallback
 """
 
-import hmac
 import json
 import logging
 import time
 import uuid
 from unittest.mock import MagicMock
 
-from strands_robots.mesh.core import Mesh, resume_proof_key
+from strands_robots.mesh.core import Mesh, _fleet_namespace, resume_proof
 
 
 def _make_mesh(peer_id="r-test"):
@@ -38,35 +37,17 @@ def _sample(payload_dict):
     return s
 
 
-def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0):
-    """Mint a valid resume envelope keyed off a specific override code.
+#: The e-stop epoch the receivers in these tests hold; every minted proof binds it.
+EPOCH = "0" * 32
 
-    the HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce)
-    via a deterministic JSON encoding -- we mirror that on the issuing
-    fixture side so the receiver-side compare passes.
-    """
-    import json as _json
 
+def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0, epoch=EPOCH):
+    """Mint a valid resume envelope for a receiver locked under *epoch*."""
     proof_nonce = proof_nonce or uuid.uuid4().hex
     envelope_t = t if t is not None else time.time()
-    mac_input = _json.dumps(
-        {
-            "peer_id": peer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": lockout_elapsed_s,
-            "proof_nonce": proof_nonce,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    proof = hmac.new(resume_proof_key(override_code), mac_input, "sha256").hexdigest()
-    return {
-        "peer_id": peer_id,
-        "t": envelope_t,
-        "lockout_elapsed_s": lockout_elapsed_s,
-        "proof_nonce": proof_nonce,
-        "override_proof": proof,
-    }
+    fields = {"peer_id": peer_id, "t": envelope_t, "lockout_elapsed_s": lockout_elapsed_s, "proof_nonce": proof_nonce}
+    proof = resume_proof(override_code, fleet=_fleet_namespace(), lockout_epoch=epoch, **fields)
+    return {**fields, "override_proof": proof}
 
 
 def test_first_legitimate_resume_clears_lockout(monkeypatch):
@@ -76,7 +57,7 @@ def test_first_legitimate_resume_clears_lockout(monkeypatch):
     m.publish_safety_event = MagicMock()  # stub out audit publishing
 
     # Set lockout
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     assert m._estop_lockout.is_set()
 
     # Send valid resume
@@ -97,12 +78,12 @@ def test_replay_of_same_envelope_is_rejected(monkeypatch):
     env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
 
     # First resume: accepted
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
     assert m._estop_lockout.is_set() is False
 
     # Re-arm lockout
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
 
     # Second resume with SAME envelope: rejected (replay)
     m._on_safety_resume(_sample(env))
@@ -127,7 +108,7 @@ def test_stale_envelope_rejected(monkeypatch):
     # Mint envelope with t = 1 hour ago
     env = _make_envelope("secret-code-1234567890abcdef", t=time.time() - 3600)
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # Lockout should still be set (envelope rejected for staleness)
@@ -143,7 +124,7 @@ def test_future_envelope_rejected_beyond_skew(monkeypatch):
     # Mint envelope with t = 60s in future (beyond default 5s skew)
     env = _make_envelope("secret-code-1234567890abcdef", t=time.time() + 60)
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # Lockout should still be set
@@ -159,7 +140,7 @@ def test_envelope_within_forward_skew_accepted(monkeypatch):
     # Mint envelope with t = 1s in future (within default 5s skew)
     env = _make_envelope("secret-code-1234567890abcdef", t=time.time() + 1.0)
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # Lockout should be cleared
@@ -182,7 +163,7 @@ def test_replay_cache_bounded(monkeypatch):
     # Drive 20 distinct nonces through the resume handler
     for i in range(20):
         env = _make_envelope("secret-code-1234567890abcdef", peer_id=f"op-{i}", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
+        m._estop_lockout.set(EPOCH)
         m._on_safety_resume(_sample(env))
 
     # Cache should be bounded
@@ -199,7 +180,7 @@ def test_envelope_missing_t_field_rejected(monkeypatch):
     env = _make_envelope("secret-code-1234567890abcdef")
     del env["t"]
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # Lockout should still be set
@@ -216,7 +197,7 @@ def test_envelope_invalid_t_type_rejected(monkeypatch):
     env = _make_envelope("secret-code-1234567890abcdef")
     env["t"] = "not-a-number"
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # Lockout should still be set
@@ -233,7 +214,7 @@ def test_replay_emits_audit_event(monkeypatch):
     env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-attacker")
 
     # First resume: accepted
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
     assert m._estop_lockout.is_set() is False
 
@@ -244,7 +225,7 @@ def test_replay_emits_audit_event(monkeypatch):
     assert len(clear_calls) == 1
 
     # Re-arm lockout
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
 
     # Second resume with SAME envelope: replay rejected
     m._on_safety_resume(_sample(env))
@@ -271,7 +252,7 @@ class TestResumeStrictPeerId:
             pass
 
         m = Mesh(robot=StubRobot(), peer_id="robot-test")
-        m._estop_lockout.set()  # lockout is engaged so resume would normally clear it
+        m._estop_lockout.set(EPOCH)  # lockout is engaged so resume would normally clear it
 
         # Forge a resume envelope that's otherwise well-formed but has empty peer_id
         envelope = {
@@ -322,7 +303,7 @@ def test_f18a_captured_envelope_with_mutated_peer_id_rejected(monkeypatch):
     env["peer_id"] = "op-attacker-impersonating"
 
     # 3. Lockout is engaged; receiver sees the mutated envelope.
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     # The lockout MUST stay engaged -- the prior fix rejects mutated envelopes
@@ -344,7 +325,7 @@ def test_f18a_captured_envelope_with_mutated_t_rejected(monkeypatch):
     # Attacker forwards t by 1 second.
     env["t"] = original_t + 1.0
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     assert m._estop_lockout.is_set() is True
@@ -360,7 +341,7 @@ def test_f18a_captured_envelope_with_mutated_lockout_elapsed_rejected(monkeypatc
     env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-legit", lockout_elapsed_s=2.5)
     env["lockout_elapsed_s"] = 9999.0  # attacker rewrites
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     assert m._estop_lockout.is_set() is True
@@ -375,7 +356,7 @@ def test_f18a_envelope_without_lockout_elapsed_s_rejected(monkeypatch):
     env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-legit")
     del env["lockout_elapsed_s"]
 
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
 
     assert m._estop_lockout.is_set() is True
@@ -398,7 +379,7 @@ def test_resume_cache_per_issuer_cap_enforced(monkeypatch):
     # cap = max(1, 8 // 4) == 2
     for _ in range(3):
         env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
+        m._estop_lockout.set(EPOCH)
         m._on_safety_resume(_sample(env))
 
     flooder_slots = sum(1 for k in m._resume_replay_cache if k[0] == ("body", "op-flooder"))
@@ -424,24 +405,24 @@ def test_resume_cache_other_issuer_entries_not_evicted(monkeypatch):
     # A fills its cap of 2.
     for _ in range(2):
         env_a = _make_envelope("secret-code-1234567890abcdef", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
+        m._estop_lockout.set(EPOCH)
         m._on_safety_resume(_sample(env_a))
 
     # B records one legitimate slot.
     env_b = _make_envelope("secret-code-1234567890abcdef", peer_id="op-B", proof_nonce=uuid.uuid4().hex)
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env_b))
     assert ("body", "op-B") in {k[0] for k in m._resume_replay_cache}
 
     # A keeps flooding -- every attempt is refused, none evicts B.
     for _ in range(5):
         env_a = _make_envelope("secret-code-1234567890abcdef", peer_id="op-A", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
+        m._estop_lockout.set(EPOCH)
         m._on_safety_resume(_sample(env_a))
 
     # B's slot survives: replay of B's exact envelope is still rejected.
     m.publish_safety_event.reset_mock()
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env_b))
     audit_types = [c.kwargs.get("event_type") for c in m.publish_safety_event.call_args_list]
     assert "resume_replay_rejected" in audit_types

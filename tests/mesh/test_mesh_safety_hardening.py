@@ -19,7 +19,7 @@ import pytest
 
 from strands_robots.mesh import security as _sec
 from strands_robots.mesh import session as _ses
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, _Lockout
 from strands_robots.mesh.input import InputReceiver, _input_max_hz
 
 
@@ -27,7 +27,7 @@ class _FakeMeshForInput:
     peer_id = "victim"
 
     def __init__(self) -> None:
-        self._estop_lockout = threading.Event()
+        self._estop_lockout = _Lockout()
 
     def subscribe(self, *a, **k):
         return "sub"
@@ -158,7 +158,7 @@ class TestM1ResumeBruteForce:
     def _stub(self):
         m = Mesh.__new__(Mesh)
         m.peer_id = "p"
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = _Lockout()
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
         m.publish_safety_event = lambda **kw: None
@@ -172,9 +172,9 @@ class TestM1ResumeBruteForce:
         m._estop_lockout.set()
         # 3 bad attempts arm the throttle.
         for _ in range(3):
-            assert m._resume_lockout("wrong")["status"] == "error"
+            assert m.resume("wrong")["status"] == "error"
         # Now even the CORRECT code is refused (throttled) and lockout stays.
-        assert m._resume_lockout("the-correct-code-1234567890abcd")["status"] == "error"
+        assert m.resume("the-correct-code-1234567890abcd")["status"] == "error"
         assert m._estop_lockout.is_set()
 
     def test_correct_code_before_threshold_succeeds(self, monkeypatch):
@@ -182,8 +182,8 @@ class TestM1ResumeBruteForce:
         monkeypatch.setenv("STRANDS_MESH_RESUME_MAX_FAILS", "5")
         m = self._stub()
         m._estop_lockout.set()
-        m._resume_lockout("wrong")  # 1 fail, under threshold
-        assert m._resume_lockout("code-xyz-1234567890abcdef0000")["status"] == "ok"
+        m.resume("wrong")  # 1 fail, under threshold
+        assert m.resume("code-xyz-1234567890abcdef0000")["status"] == "ok"
         assert not m._estop_lockout.is_set()
 
 
@@ -196,7 +196,7 @@ class TestH3CmdReplay:
         m.peer_id = "robot-1"
         m._cmd_replay_cache = {}
         m._cmd_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = _Lockout()
         m.dispatched = []
 
         def _fake_dispatch(cmd):
@@ -259,7 +259,7 @@ class TestM5SuccessAudit:
         m.peer_id = "robot-1"
         m._cmd_replay_cache = {}
         m._cmd_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = _Lockout()
         m._dispatch = lambda cmd: {"ok": True}
         m.publish = lambda *a, **k: None
 
@@ -282,7 +282,7 @@ class TestM5SuccessAudit:
         m.peer_id = "robot-1"
         m._cmd_replay_cache = {}
         m._cmd_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = _Lockout()
         m._dispatch = lambda cmd: {"status": "idle"}
         m.publish = lambda *a, **k: None
 

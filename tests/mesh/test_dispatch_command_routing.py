@@ -133,7 +133,7 @@ def test_dispatch_routes_resume_to_lockout_release_even_under_lockout(monkeypatc
     m._estop_lockout.set()
 
     # ``resume`` is not blocked by the lockout gate; it is routed to
-    # ``_resume_lockout``. With no override code configured the release is
+    # ``resume``. With no override code configured the release is
     # rejected, and the response is the generic (oracle-free) shape.
     out = m._dispatch({"action": "resume", "override_code": "wrong-code"})
 

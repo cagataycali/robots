@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from strands_robots.mesh import core
+from tests.mesh.test_resume_replay import EPOCH
 
 
 def _stub_mesh() -> core.Mesh:
@@ -31,7 +32,7 @@ def _stub_mesh() -> core.Mesh:
 
     m._estop_replay_lock = threading.Lock()
     m._resume_replay_lock = threading.Lock()
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = core._Lockout()
     m._last_estop_ts = 0.0
     # publish_safety_event is best-effort and called on accept; stub it.
     m.publish_safety_event = lambda **kwargs: None  # type: ignore[method-assign]
@@ -75,30 +76,23 @@ def test_estop_cache_value_is_monotonic_not_wall_clock() -> None:
 
 def test_resume_cache_value_is_monotonic_not_wall_clock() -> None:
     """Resume cache mirrors estop -- cache value must be monotonic-derived."""
-    import hashlib
-    import hmac as hmac_mod
     import os
 
     m = _stub_mesh()
-    # Resume needs a configured override code on the receiver.
-    # HMAC binds (peer_id, t, lockout_elapsed_s, proof_nonce).
-    import json as _json
-
+    m._estop_lockout.set(EPOCH)
     code = "test-override-code-1234567890"
     proof_nonce = "n1"
     wall_now = time.time()
     lockout_elapsed = 1.0
-    mac_input = _json.dumps(
-        {
-            "peer_id": "alice",
-            "t": wall_now,
-            "lockout_elapsed_s": lockout_elapsed,
-            "proof_nonce": proof_nonce,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    proof = hmac_mod.new(core.resume_proof_key(code), mac_input, hashlib.sha256).hexdigest()
+    proof = core.resume_proof(
+        code,
+        fleet=core._fleet_namespace(),
+        lockout_epoch=EPOCH,
+        peer_id="alice",
+        t=wall_now,
+        lockout_elapsed_s=lockout_elapsed,
+        proof_nonce=proof_nonce,
+    )
 
     with mock.patch.dict(os.environ, {"STRANDS_MESH_OVERRIDE_CODE": code}):
         m._on_safety_resume(

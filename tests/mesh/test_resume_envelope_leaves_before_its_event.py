@@ -6,7 +6,7 @@ Every peer's Zenoh session carries an ingress ``downsampling`` rule on
 concrete key: two ``safety/**`` messages from the same peer inside one period
 lose the second one before any subscriber callback runs, whatever its key.
 
-:meth:`strands_robots.mesh.core.Mesh._resume_lockout` used to publish its
+:meth:`strands_robots.mesh.core.Mesh.resume` used to publish its
 ``resume_ok`` safety event first and the fleet-wide ``strands/safety/resume``
 envelope a few microseconds later. The event took the rule's slot, the envelope
 was dropped at every receiver's ingress (and at the hub's), and nothing was
@@ -51,7 +51,7 @@ def test_resume_envelope_is_the_first_safety_message_of_a_resume(monkeypatch, tm
     mesh._last_estop_ts = core.time.time()
     mesh._last_estop_mono = core.time.monotonic()
 
-    assert mesh._resume_lockout(_CODE) == {"status": "ok"}
+    assert mesh.resume(_CODE) == {"status": "ok"}
 
     safety = _safety_keys(wire)
     assert safety[0] == "strands/safety/resume", safety

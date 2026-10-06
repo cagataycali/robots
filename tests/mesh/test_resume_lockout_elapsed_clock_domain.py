@@ -18,7 +18,7 @@ resumed from suspend, an operator correcting the clock) therefore moved the
 reported duration without any time being held: inflated by a forward step,
 negative by a backward one.
 
-The pins below drive the real ``_resume_lockout`` and read the three places the
+The pins below drive the real ``resume`` and read the three places the
 duration surfaces, plus the two controls that keep the fix honest -- an
 undisturbed clock still reports the time actually held, and ``t`` stays on the
 wall clock.
@@ -34,6 +34,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands_robots.mesh import core
+from tests.mesh.test_resume_replay import EPOCH
 
 _CODE = "operator-secret-1234567890"
 _WALL_AT_ENGAGE = 1_800_000_000.0
@@ -84,14 +85,14 @@ def _engaged_operator(monkeypatch: pytest.MonkeyPatch) -> tuple[core.Mesh, dict[
     published: dict[str, Any] = {}
     monkeypatch.setattr(core, "put", lambda key, payload: published.update(payload))
 
-    mesh._estop_lockout.set()
+    mesh._estop_lockout.set(EPOCH)
     mesh._last_estop_ts = core.time.time()
     mesh._last_estop_mono = core.time.monotonic()
     return mesh, published, audited
 
 
 def _resume(mesh: core.Mesh) -> None:
-    assert mesh._resume_lockout(_CODE) == {"status": "ok"}
+    assert mesh.resume(_CODE) == {"status": "ok"}
 
 
 class TestTheReportedLockoutIsTheTimeTheFleetWasHeld:
@@ -177,20 +178,15 @@ class TestTheEnvelopeInstantStaysOnTheWallClock:
         mesh, published, _ = _engaged_operator(monkeypatch)
         clock.hold(12.5, wall_step=3600.0)
         _resume(mesh)
-        expected = core.hmac.new(
-            core.resume_proof_key(_CODE),
-            json.dumps(
-                {
-                    "peer_id": "operator-1",
-                    "t": published["t"],
-                    "lockout_elapsed_s": published["lockout_elapsed_s"],
-                    "proof_nonce": published["proof_nonce"],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode(),
-            "sha256",
-        ).hexdigest()
+        expected = core.resume_proof(
+            _CODE,
+            fleet=core._fleet_namespace(),
+            lockout_epoch=EPOCH,
+            peer_id="operator-1",
+            t=published["t"],
+            lockout_elapsed_s=published["lockout_elapsed_s"],
+            proof_nonce=published["proof_nonce"],
+        )
         assert published["override_proof"] == expected
 
 
@@ -204,7 +200,7 @@ class TestAResumeIsStillAcceptedEndToEnd:
 
         receiver = core.Mesh(robot=object(), peer_id="robot-1")
         receiver.publish_safety_event = MagicMock()  # type: ignore[method-assign]
-        receiver._estop_lockout.set()
+        receiver._estop_lockout.set(EPOCH)
         sample = MagicMock()
         sample.payload.to_bytes.return_value = json.dumps(published).encode()
         receiver._on_safety_resume(sample)

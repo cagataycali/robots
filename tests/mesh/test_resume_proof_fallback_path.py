@@ -18,6 +18,7 @@ import types
 from unittest.mock import MagicMock
 
 from strands_robots.mesh import core
+from tests.mesh.test_resume_replay import EPOCH
 
 
 def _fallback_sample(payload: dict) -> object:
@@ -50,10 +51,10 @@ def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
     monkeypatch.setattr(core, "put", capture_put)
 
     # Engage the local lockout, then resume with the correct override code.
-    issuer._estop_lockout.set()
+    issuer._estop_lockout.set(EPOCH)
     issuer._last_estop_ts = core.time.time()
     issuer._last_estop_mono = core.time.monotonic()
-    result = issuer._resume_lockout("operator-secret-1234567890")
+    result = issuer.resume("operator-secret-1234567890")
     assert result == {"status": "ok"}
 
     assert published["key"] == "strands/safety/resume"
@@ -66,7 +67,7 @@ def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
     # --- Receiver on the same fallback transport (no wire source_zid). ---
     receiver = core.Mesh(robot=object(), peer_id="receiver")
     receiver.publish_safety_event = MagicMock()
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
     assert receiver._estop_lockout.is_set()
 
     receiver._on_safety_resume(_fallback_sample(envelope))

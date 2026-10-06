@@ -1,6 +1,6 @@
 """Resume-override denial contract: uniform response + no reason leak + audit resilience.
 
-:meth:`strands_robots.mesh.core.Mesh._resume_lockout` is the operator override
+:meth:`strands_robots.mesh.core.Mesh.resume` is the operator override
 path that clears an emergency-stop lockout. Its denial branches are
 security-sensitive: a remote prober must not be able to use the *response* of a
 rejected resume to learn anything about the lockout's internal state. The
@@ -25,17 +25,15 @@ contract these tests pin:
 
 from __future__ import annotations
 
-import threading
-
 import strands_robots.mesh.core as core
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, _Lockout
 
 _GENERIC_ERROR = {"status": "error", "error": "resume rejected"}
 _CODE = "correct-code-1234567890abcdef00"
 
 
 def _stub() -> Mesh:
-    """A Mesh with just enough state for ``_resume_lockout``.
+    """A Mesh with just enough state for ``resume``.
 
     Built via ``__new__`` (bypassing the Zenoh/transport ``__init__``) and given
     a recording ``publish_safety_event`` so tests can assert the exact wire
@@ -43,7 +41,7 @@ def _stub() -> Mesh:
     """
     m = Mesh.__new__(Mesh)
     m.peer_id = "p"
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = _Lockout()
     m._last_estop_ts = 0.0
     m._published_events = []  # type: ignore[attr-defined]
     m.publish_safety_event = lambda **kw: m._published_events.append(kw)  # type: ignore[method-assign, attr-defined]
@@ -57,7 +55,7 @@ class TestResumeDenialUniformResponse:
         m = _stub()
         assert not m._estop_lockout.is_set()
 
-        assert m._resume_lockout(_CODE) == _GENERIC_ERROR
+        assert m.resume(_CODE) == _GENERIC_ERROR
         # Resuming a non-lockout must not flip lockout state either way.
         assert not m._estop_lockout.is_set()
 
@@ -65,19 +63,19 @@ class TestResumeDenialUniformResponse:
         """Not-engaged, not-configured, and wrong-code denials are indistinguishable."""
         # Not engaged (code configured).
         monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
-        not_engaged = _stub()._resume_lockout(_CODE)
+        not_engaged = _stub().resume(_CODE)
 
         # Override code unconfigured, lockout engaged.
         monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
         m_unconfigured = _stub()
         m_unconfigured._estop_lockout.set()
-        not_configured = m_unconfigured._resume_lockout("anything")
+        not_configured = m_unconfigured.resume("anything")
 
         # Wrong code, lockout engaged.
         monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
         m_bad = _stub()
         m_bad._estop_lockout.set()
-        bad_code = m_bad._resume_lockout("definitely-wrong")
+        bad_code = m_bad.resume("definitely-wrong")
 
         assert not_engaged == not_configured == bad_code == _GENERIC_ERROR
         # Wrong code leaves the lockout engaged (denied, not cleared).
@@ -88,7 +86,7 @@ class TestResumeDenialUniformResponse:
         monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
         m = _stub()  # lockout not engaged -> "lockout not engaged" reason internally
 
-        m._resume_lockout(_CODE)
+        m.resume(_CODE)
 
         assert len(m._published_events) == 1
         event = m._published_events[0]
@@ -116,4 +114,4 @@ class TestResumeDenialUniformResponse:
         monkeypatch.setattr(core, "log_safety_event", _raise_os)
         m.publish_safety_event = _raise_wire  # type: ignore[method-assign]
 
-        assert m._resume_lockout(_CODE) == _GENERIC_ERROR
+        assert m.resume(_CODE) == _GENERIC_ERROR

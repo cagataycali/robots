@@ -37,13 +37,13 @@ Both zenoh-absent arms carry a fleet-availability contract on the safety path:
 
 import ast
 import inspect
-import json
 import pathlib
 import sys
 import types
 from unittest.mock import MagicMock
 
 from strands_robots.mesh import core
+from tests.mesh.test_resume_replay import EPOCH
 
 from .test_resume_proof_fallback_path import _fallback_sample
 
@@ -179,10 +179,10 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
 
         monkeypatch.setattr(core, "put", capture_put)
 
-        issuer._estop_lockout.set()
+        issuer._estop_lockout.set(EPOCH)
         issuer._last_estop_ts = core.time.time()
         issuer._last_estop_mono = core.time.monotonic()
-        assert issuer._resume_lockout("operator-secret-1234567890") == {"status": "ok"}
+        assert issuer.resume("operator-secret-1234567890") == {"status": "ok"}
 
         assert published["key"] == RESUME_KEY
         envelope = published["payload"]
@@ -193,7 +193,7 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
         # clears its lockout: issuer and receiver agree on the MAC input.
         receiver = core.Mesh(robot=object(), peer_id="receiver")
         receiver.publish_safety_event = MagicMock()
-        receiver._estop_lockout.set()
+        receiver._estop_lockout.set(EPOCH)
         assert receiver._estop_lockout.is_set()
 
         receiver._on_safety_resume(_fallback_sample(envelope))
@@ -214,26 +214,21 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
         published: dict = {}
         monkeypatch.setattr(core, "put", lambda key, payload: published.update(payload=payload))
 
-        issuer._estop_lockout.set()
+        issuer._estop_lockout.set(EPOCH)
         issuer._last_estop_ts = core.time.time()
         issuer._last_estop_mono = core.time.monotonic()
-        issuer._resume_lockout("operator-secret-1234567890")
+        issuer.resume("operator-secret-1234567890")
 
         envelope = published["payload"]
-        expected = core.hmac.new(
-            core.resume_proof_key("operator-secret-1234567890"),
-            json.dumps(
-                {
-                    "peer_id": "issuer",
-                    "t": envelope["t"],
-                    "lockout_elapsed_s": envelope["lockout_elapsed_s"],
-                    "proof_nonce": envelope["proof_nonce"],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode(),
-            "sha256",
-        ).hexdigest()
+        expected = core.resume_proof(
+            "operator-secret-1234567890",
+            fleet=core._fleet_namespace(),
+            lockout_epoch=EPOCH,
+            peer_id="issuer",
+            t=envelope["t"],
+            lockout_elapsed_s=envelope["lockout_elapsed_s"],
+            proof_nonce=envelope["proof_nonce"],
+        )
         assert envelope["override_proof"] == expected
 
 

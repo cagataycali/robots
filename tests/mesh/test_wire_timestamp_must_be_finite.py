@@ -51,7 +51,7 @@ from strands_robots.mesh import session as session_mod
 from strands_robots.mesh.security import as_wire_timestamp
 from tests._package_ast import parse_file
 from tests.mesh.test_input_stream_lifecycle import _make_receiver
-from tests.mesh.test_resume_replay import _make_envelope, _make_mesh, _sample
+from tests.mesh.test_resume_replay import EPOCH, _make_envelope, _make_mesh, _sample
 
 #: The three non-finite values, each spelled as a Python float and as the JSON
 #: token ``json.loads`` decodes to it - the wire spelling is the reachable one.
@@ -195,7 +195,7 @@ class TestRemoteEstopRefusesANonFiniteEnvelopeTimestamp:
         mesh.peer_id = "receiver"
         mesh._estop_replay_cache = {}
         mesh._estop_replay_lock = threading.Lock()
-        mesh._estop_lockout = threading.Event()
+        mesh._estop_lockout = core_mod._Lockout()
         mesh._last_estop_ts = 0.0
         mesh._last_estop_mono = 0.0
         mesh._running = False
@@ -234,12 +234,12 @@ class TestRemoteResumeRefusesANonFiniteEnvelopeTimestamp:
     gate rather than the signature the thing under test here.
     """
 
-    _CODE = "test-override-code"
+    _CODE = "test-override-code-1234567890"
 
     def _locked_out_receiver(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", self._CODE)
         mesh = _make_mesh()
-        mesh._estop_lockout.set()
+        mesh._estop_lockout.set(EPOCH)
         return mesh
 
     @pytest.mark.parametrize(("value", "token"), _NON_FINITE)

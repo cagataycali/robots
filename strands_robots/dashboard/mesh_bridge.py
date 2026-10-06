@@ -1560,7 +1560,7 @@ class MeshBridge:
         m = self._safety_mesh()
         if m is None:
             return self._rail_unavailable()
-        res = m._resume_lockout(override_code)
+        res = m.resume(override_code)
         return {"signed": True, "issuer": m.peer_id, **(res or {})}
 
     def confirm_resume(self, since: float, *, wait_s: float = 2.0, timeout: float = 2.0) -> list[str]:

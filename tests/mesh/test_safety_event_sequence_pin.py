@@ -4,7 +4,9 @@ One scripted scenario drives the REAL estop/resume handlers of real ``Mesh``
 peers (minus the Zenoh transport) through every branch the two remote
 handlers and the local paths have: engage, redundant engage, replay, a resume
 refused for the wrong code, a resume refused for a malformed envelope, the
-real HMAC resume, its replay, its redundant re-apply, and an audit sink that
+real HMAC resume, its replay to the peer it already cleared (redundant: an
+unlocked peer has nothing to clear and no epoch to check a proof against), its
+redundant re-apply, and an audit sink that
 raises mid-scenario. The test records the exact ordered sequence of
 ``(peer, event_type, severity, payload keys)`` for every mesh-published and
 every local-only audit record, the lockout state after each step, and the
@@ -29,7 +31,7 @@ from strands_robots.mesh import security as mesh_security
 
 ISSUER = "pin-issuer"
 PEER = "pin-peer"
-CODE = "pin-override-code"
+CODE = "pin-override-code-1234567890"
 
 
 class _StoppableRobot:
@@ -117,7 +119,7 @@ EXPECTED_TRACE = [
     ("wire", PEER, "remote_estop_redundant", "info", ("issuer", "issuer_t", "lockout_engaged_since")),
     ("wire", ISSUER, "resume_ok", "info", ("lockout_elapsed_s", "sender_id")),
     ("wire", PEER, "remote_resume_applied", "info", ("issuer", "issuer_t", "trigger")),
-    ("wire", PEER, "resume_replay_rejected", "warning", ("issuer", "proof_nonce_prefix")),
+    ("wire", PEER, "remote_resume_redundant", "info", ("issuer", "issuer_t", "trigger")),
     ("wire", ISSUER, "resume_ok", "info", ("lockout_elapsed_s", "sender_id")),
     ("wire", PEER, "remote_resume_redundant", "info", ("issuer", "issuer_t", "trigger")),
 ]
@@ -134,7 +136,6 @@ EXPECTED_REFUSALS = [
     "[safety] %s: refusing remote resume -- body source_zid present but wire source_zid absent (publisher misconfigured or attacker stripped SourceInfo)",
     "[safety] %s: resume after %.1fs lockout",
     "[safety] %s: lockout cleared via remote resume from %s",
-    "[safety] %s: REJECTED remote resume -- replay of (issuer=%s, proof_nonce=%s) already accepted",
     "[safety] %s: resume after %.1fs lockout",
 ]
 
@@ -194,7 +195,7 @@ def test_safety_path_event_sequence_is_pinned(isolated_audit, monkeypatch, caplo
     issuer._estop_lockout.set()
     issuer._last_estop_ts = time.time()
     issuer._last_estop_mono = time.monotonic()
-    assert issuer._dispatch({"action": "resume", "override_code": CODE}) == {"status": "ok"}
+    assert issuer.resume(CODE) == {"status": "ok"}
     proof = resume_envelope()
     peer._on_safety_resume(_sample(proof))
     lockout.append(peer._estop_lockout.is_set())
@@ -203,7 +204,7 @@ def test_safety_path_event_sequence_is_pinned(isolated_audit, monkeypatch, caplo
     lockout.append(peer._estop_lockout.is_set())
     # 9
     issuer._estop_lockout.set()
-    assert issuer._dispatch({"action": "resume", "override_code": CODE}) == {"status": "ok"}
+    assert issuer.resume(CODE) == {"status": "ok"}
     peer._on_safety_resume(_sample(resume_envelope()))
     lockout.append(peer._estop_lockout.is_set())
 

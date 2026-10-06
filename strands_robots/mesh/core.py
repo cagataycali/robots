@@ -8,6 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
+import collections
 import functools
 import hashlib
 import hmac
@@ -319,41 +320,56 @@ def _resume_backoff_s() -> float:
 
 
 #: Shortest ``STRANDS_MESH_OVERRIDE_CODE`` either side of a resume accepts. The
-#: code is the one secret that clears a fleet lockout, and every field the
-#: proof MAC covers travels on the wire beside the proof, so a captured
-#: envelope is an offline oracle for candidate codes. A code under this length
-#: is treated as unset on both sides (fail closed: remote resume refused, the
-#: reason logged at start) rather than read as a weaker version of the same
-#: authority. Generate one with ``python -c "import secrets;
+#: code is the one secret that clears a fleet lockout, and a captured resume
+#: envelope lets anyone test candidate codes offline, so a code under this
+#: length is treated as unset on both sides (fail closed: remote resume
+#: refused, the reason logged at start) rather than read as a weaker version of
+#: the same authority. Generate one with ``python -c "import secrets;
 #: print(secrets.token_urlsafe(32))"``.
 OVERRIDE_CODE_MIN_LEN = 16
 
-#: Domain-separating salt for :func:`resume_proof_key`. Versioned so a future
-#: change of parameters can be told apart from a wrong code.
-_RESUME_KDF_SALT = b"strands-mesh-resume-proof-v1"
+#: Least estimated entropy, in bits, a usable override code carries: its length
+#: times the Shannon entropy of its own character distribution. A floor against
+#: repeated or short-alphabet codes (``"a" * 40``, ``"passwordpassword"``), not
+#: a strength guarantee; ``secrets.token_urlsafe(32)`` estimates near 200.
+OVERRIDE_CODE_MIN_BITS = 64
+
+#: Version tag of the resume proof key derivation. The fleet namespace is
+#: appended to form the scrypt salt (see :func:`resume_proof_key`), so two
+#: deployments never share a precomputation.
+_RESUME_KDF_SALT_PREFIX = b"strands-mesh-resume-proof-v2:"
+
+
+def _estimated_bits(code: str) -> float:
+    """Length times the Shannon entropy of *code*'s own character counts."""
+    n = len(code)
+    return -sum(c * math.log2(c / n) for c in collections.Counter(code).values())
 
 
 def override_code() -> str | None:
-    """The operator override code, or ``None`` when unset or too short to use.
+    """The operator override code, or ``None`` when unset or too weak to use.
 
-    One reader for both sides of a resume (:meth:`Mesh._resume_lockout` mints
-    the proof, :meth:`Mesh._on_safety_resume` verifies it) so they cannot
-    disagree on what counts as configured. A value shorter than
-    :data:`OVERRIDE_CODE_MIN_LEN` is refused with a once-per-process WARNING
-    that says how to generate a usable one.
+    One reader for both sides of a resume (:meth:`Mesh.resume` mints the proof,
+    :meth:`Mesh._on_safety_resume` verifies it) so they cannot disagree on what
+    counts as configured. A value shorter than :data:`OVERRIDE_CODE_MIN_LEN` or
+    estimated under :data:`OVERRIDE_CODE_MIN_BITS` is refused with a
+    once-per-process WARNING that says how to generate a usable one.
     """
     code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
     if not code:
         return None
-    if len(code) < OVERRIDE_CODE_MIN_LEN:
+    if len(code) < OVERRIDE_CODE_MIN_LEN or _estimated_bits(code) < OVERRIDE_CODE_MIN_BITS:
         _warn_posture_once(
             "override_code_short",
-            "[safety] STRANDS_MESH_OVERRIDE_CODE is too short (%d chars, minimum %d) and is treated as "
-            "unset: remote resume is refused on this peer. A resume proof is checkable offline from one "
-            "captured envelope, so a short code is a guessable one. Generate a code with "
-            "python -c 'import secrets; print(secrets.token_urlsafe(32))' and set the SAME value on every peer.",
+            "[safety] STRANDS_MESH_OVERRIDE_CODE is too short or too repetitive (%d chars, about %d bits; "
+            "minimum %d chars and %d bits) and is treated as unset: remote resume is refused on this peer. "
+            "A resume proof is checkable offline from one captured envelope, so a weak code is a guessable "
+            "one. Generate a code with python -c 'import secrets; print(secrets.token_urlsafe(32))' and set "
+            "the SAME value on every peer.",
             len(code),
+            int(_estimated_bits(code)),
             OVERRIDE_CODE_MIN_LEN,
+            OVERRIDE_CODE_MIN_BITS,
         )
         return None
     return code
@@ -362,18 +378,106 @@ def override_code() -> str | None:
 _configured_override_code = override_code
 
 
+def _fleet_namespace() -> str:
+    """The fleet identity a resume proof is scoped to (``STRANDS_MESH_NAMESPACE``)."""
+    from strands_robots.mesh import _zenoh_config
+
+    return _zenoh_config.resolve_namespace()
+
+
 @functools.lru_cache(maxsize=8)
-def resume_proof_key(code: str) -> bytes:
+def resume_proof_key(code: str, fleet: str) -> bytes:
     """The key the resume proof MAC is computed with, derived from *code*.
 
-    scrypt (memory-hard, 16 MiB, about 50 ms) rather than the code itself:
-    every MAC input is public, so the per-guess cost of the derivation is the
-    whole cost of an offline search against a captured proof. Derived once per
-    process per code; the same parameters on every peer, so a proof minted by
-    one verifies on another. A proof keyed with the raw code, as older peers
-    minted, no longer verifies: the two sides of a fleet must upgrade together.
+    scrypt (memory-hard, 16 MiB, about 50 ms) rather than the code itself, so
+    each offline guess against a captured proof costs one derivation. The salt
+    is the versioned prefix plus the *fleet* namespace: the same code in two
+    deployments yields two keys. Derived once per process per code and fleet.
     """
-    return hashlib.scrypt(code.encode(), salt=_RESUME_KDF_SALT, n=2**14, r=8, p=1, dklen=32)
+    salt = _RESUME_KDF_SALT_PREFIX + fleet.encode()
+    return hashlib.scrypt(code.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
+
+
+def resume_proof(
+    code: str,
+    *,
+    fleet: str,
+    lockout_epoch: str,
+    peer_id: str,
+    t: float,
+    lockout_elapsed_s: float,
+    proof_nonce: str,
+    source_zid: str | None = None,
+) -> str:
+    """The ``override_proof`` a ``strands/safety/resume`` envelope carries.
+
+    One function for both sides: :meth:`Mesh.resume` mints with it and
+    :meth:`Mesh._on_safety_resume` recomputes it. HMAC-SHA256 under
+    :func:`resume_proof_key` over the published fields (``peer_id``, ``t``,
+    ``lockout_elapsed_s``, ``proof_nonce``, ``source_zid`` when the wire carried
+    one) and two the envelope never carries: the *lockout_epoch* of the e-stop
+    being cleared and the *fleet* scope. A verifier supplies those from its own
+    state, so a proof only clears the lockout it was minted for, in the fleet it
+    was minted in.
+    """
+    fields: dict[str, Any] = {
+        "peer_id": peer_id,
+        "t": t,
+        "lockout_elapsed_s": lockout_elapsed_s,
+        "proof_nonce": proof_nonce,
+        "lockout_epoch": lockout_epoch,
+        "scope": fleet,
+    }
+    if source_zid is not None:
+        fields["source_zid"] = source_zid
+    mac_input = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    return hmac.new(resume_proof_key(code, fleet), mac_input, "sha256").hexdigest()
+
+
+#: Most e-stop epochs one lockout remembers. Extra stops arriving while it is
+#: engaged still stop; only their epochs go unrecorded.
+_MAX_LOCKOUT_EPOCHS = 8
+
+#: Shape of a ``lockout_epoch`` an estop envelope may carry (a uuid4 hex).
+_LOCKOUT_EPOCH_RE = re.compile(r"^[0-9a-f]{32}\Z")
+
+
+class _Lockout(threading.Event):
+    """The e-stop lockout flag plus the epochs of the stops that engaged it.
+
+    An epoch names one e-stop: the issuer mints it and the
+    ``strands/safety/estop`` envelope carries it, so every peer that stopped on
+    that envelope holds the same id. A resume proof is bound to its issuer's
+    first epoch and verifies only where that epoch is held, so a proof captured
+    for one lockout cannot clear a later one. Clearing forgets every epoch.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._epoch_lock = threading.Lock()
+        self._epochs: list[str] = []
+
+    def set(self, epoch: str | None = None) -> None:
+        """Engage, recording *epoch* (minted when none is given and none is held)."""
+        with self._epoch_lock:
+            if not self.is_set():
+                self._epochs.clear()
+            if epoch is None and not self._epochs:
+                epoch = uuid.uuid4().hex
+            if epoch is not None and epoch not in self._epochs and len(self._epochs) < _MAX_LOCKOUT_EPOCHS:
+                self._epochs.append(epoch)
+            super().set()
+
+    def clear(self) -> None:
+        with self._epoch_lock:
+            self._epochs.clear()
+            super().clear()
+
+    @property
+    def epochs(self) -> tuple[str, ...]:
+        """Every epoch recorded since the lockout engaged, the first one first."""
+        with self._epoch_lock:
+            return tuple(self._epochs)
 
 
 def _evict_replay_cache[K](
@@ -891,11 +995,11 @@ class Mesh(SensorLoopsMixin):
         self.inbox: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._user_subs: dict[str, Any] = {}
 
-        # Emergency-stop lockout flag. While this Event is set, every
-        # action other than ``status`` and ``resume`` is refused (see
-        # :meth:`_dispatch`). The flag is cleared by :meth:`_resume_lockout`,
-        # which requires the operator-supplied override code.
-        self._estop_lockout = threading.Event()
+        # Emergency-stop lockout flag. While it is set, every action other
+        # than ``security.LOCKOUT_ADMITTED_ACTIONS`` is refused (see
+        # :meth:`_dispatch`). It is cleared by :meth:`resume`, which requires
+        # the operator-supplied override code, or by a verified fleet resume.
+        self._estop_lockout = _Lockout()
         self._last_estop_ts: float = 0.0
         self._last_estop_mono: float = 0.0
         # _on_safety_resume must defend
@@ -1091,7 +1195,7 @@ class Mesh(SensorLoopsMixin):
 
             # H-1: permanent-fleet-lockout footgun warning.
             # STRANDS_MESH_OVERRIDE_CODE is optional and defaults to empty.
-            # When it is unset, _resume_lockout can NEVER succeed (no code
+            # When it is unset, resume can NEVER succeed (no code
             # matches the empty/sentinel digest), so a SINGLE e-stop broadcast
             # permanently locks every robot until a physical restart of each
             # one -- a fleet-wide DoS from one message. We cannot safely
@@ -2853,7 +2957,17 @@ class Mesh(SensorLoopsMixin):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
-            return self._resume_lockout(cmd.get("override_code", ""))
+            # The override code never rides the command topic: every peer the
+            # ACL lets read this robot's commands would learn it. A resume is
+            # issued with :meth:`resume` on the operator's own peer, which
+            # publishes a proof, never the code.
+            self._emit_resume_denied(
+                "resume over the command topic refused"
+                + (" (the command carried an override code)" if cmd.get("override_code") else "")
+                + "; call Mesh.resume on the operator's own peer",
+                "warning",
+            )
+            return {"status": "error", "error": "resume rejected"}
 
         if action == "ping":
             # Reachability only: nothing on the robot is read or moved, so it
@@ -3992,10 +4106,17 @@ class Mesh(SensorLoopsMixin):
             # Lockout engagement happens under the same lock as the cache write so
             # a concurrent resume cannot interleave (see test_estop_lockout_race).
             lockout_was_engaged = self._estop_lockout.is_set()
+            # The issuer's epoch names this stop fleet-wide; an envelope without
+            # one engages under a local epoch no fleet resume can match. A stop
+            # reaching a peer already locked adds its epoch to the held set.
+            epoch = data.get("lockout_epoch")
+            epoch = epoch if isinstance(epoch, str) and _LOCKOUT_EPOCH_RE.fullmatch(epoch) else None
             if not lockout_was_engaged:
-                self._estop_lockout.set()
+                self._estop_lockout.set(epoch)
                 self._last_estop_ts = time.time()
                 self._last_estop_mono = time.monotonic()
+            else:
+                self._estop_lockout.set(epoch)
             lockout_engaged_since = self._last_estop_ts
         sender = issuer_id
         if not lockout_was_engaged:
@@ -4027,16 +4148,20 @@ class Mesh(SensorLoopsMixin):
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout on a fleet ``strands/safety/resume`` broadcast.
 
-        A resume is second-factor gated: the envelope carries an HMAC-SHA256
-        ``override_proof`` keyed with the operator code
+        A resume is second-factor gated: the envelope carries the
+        :func:`resume_proof` ``override_proof`` keyed with the operator code
         (``STRANDS_MESH_OVERRIDE_CODE``, which must also be configured here) over
         ``peer_id``, ``t``, ``lockout_elapsed_s``, ``proof_nonce`` and, when the
-        wire carried one, ``source_zid`` - so a captured proof cannot be
-        mutated or moved to another session. After the shared decode/zid
-        binding and ``t``/``peer_id`` gates and the proof compare, a
+        wire carried one, ``source_zid`` - so a captured proof cannot be mutated
+        or moved to another session - plus two fields this receiver supplies
+        itself: the fleet namespace and the epoch of an e-stop its lockout
+        holds. A proof minted for another fleet or another lockout is refused
+        and counted against the brute-force throttle. After the proof compare, a
         per-receiver replay cache keyed on ``(issuer, proof_nonce)`` refuses the
         same proof twice. Every refusal leaves the lockout engaged; unlike
-        estop, an issuer over the per-issuer cap is refused outright.
+        estop, an issuer over the per-issuer cap is refused outright. A peer
+        that is not locked has nothing to clear and audits the resume as
+        redundant without checking it.
         """
         bound = self._decode_bound_safety_envelope(sample, "resume")
         if bound is None:
@@ -4046,13 +4171,12 @@ class Mesh(SensorLoopsMixin):
         if local_code is None:
             logger.warning(
                 "[safety] %s: refusing remote resume -- STRANDS_MESH_OVERRIDE_CODE "
-                "not configured locally (operator code missing or too short)",
+                "not configured locally (operator code missing, too short or too repetitive)",
                 self.peer_id,
             )
             return
-        # The same brute-force throttle the RPC ``resume`` action honours: this
-        # is the handler that actually clears a lockout, and it had none, so the
-        # wire was a free online oracle for the code.
+        # The same brute-force throttle :meth:`resume` honours: a prober refused
+        # on one path gets no fresh guesses on the other.
         if self._resume_throttled():
             self._emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
             return
@@ -4075,31 +4199,34 @@ class Mesh(SensorLoopsMixin):
                 self.peer_id,
             )
             return
-        # The MAC input is the canonical JSON of the bound fields; wire zid only
-        # when the transport supplied one, so pre-binding issuers still verify.
-        mac_fields: dict[str, Any] = {
-            "peer_id": issuer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": envelope_elapsed,
-            "proof_nonce": proof_nonce,
-        }
-        if wire_zid is not None:
-            mac_fields["source_zid"] = wire_zid
-        mac_input = json.dumps(
-            mac_fields,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        expected_proof = hmac.new(
-            resume_proof_key(local_code),
-            mac_input,
-            "sha256",
-        ).hexdigest()
-        if not hmac.compare_digest(expected_proof, provided_proof):
+        if not self._estop_lockout.is_set():
+            self._audit(
+                event_type="remote_resume_redundant",
+                severity="info",
+                payload={"trigger": "remote", "issuer": issuer_id, "issuer_t": envelope_t},
+            )
+            return
+        fleet = _fleet_namespace()
+        # Every candidate is computed so the refusal takes the same time whichever
+        # epoch (if any) matches.
+        matched = False
+        for epoch in self._estop_lockout.epochs:
+            expected_proof = resume_proof(
+                local_code,
+                fleet=fleet,
+                lockout_epoch=epoch,
+                peer_id=issuer_id,
+                t=envelope_t,
+                lockout_elapsed_s=envelope_elapsed,
+                proof_nonce=proof_nonce,
+                source_zid=wire_zid,
+            )
+            matched |= hmac.compare_digest(expected_proof, provided_proof)
+        if not matched:
             logger.warning(
                 "[safety] %s: refusing remote resume -- override_proof mismatch "
-                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce%s; "
-                "captured-and-mutated replay rejected, constant-time compared)",
+                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce%s and this peer's fleet and "
+                "lockout epoch; a wrong code, another fleet or another lockout, constant-time compared)",
                 self.peer_id,
                 "+source_zid" if wire_zid is not None else "",
             )
@@ -4146,29 +4273,13 @@ class Mesh(SensorLoopsMixin):
             ):
                 return
             self._resume_replay_cache[cache_key] = now_mono
-        sender = issuer_id
-        if self._estop_lockout.is_set():
-            self._estop_lockout.clear()
-            logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
-            self.publish_safety_event(
-                event_type="remote_resume_applied",
-                severity="info",
-                payload={
-                    "trigger": "remote",
-                    "issuer": sender,
-                    "issuer_t": envelope_t,
-                },
-            )
-        else:
-            self._audit(
-                event_type="remote_resume_redundant",
-                severity="info",
-                payload={
-                    "trigger": "remote",
-                    "issuer": sender,
-                    "issuer_t": envelope_t,
-                },
-            )
+        self._estop_lockout.clear()
+        logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, issuer_id)
+        self.publish_safety_event(
+            event_type="remote_resume_applied",
+            severity="info",
+            payload={"trigger": "remote", "issuer": issuer_id, "issuer_t": envelope_t},
+        )
 
     # RPC -- outgoing
     def _cmd_topic_size_problem(self, msg: dict[str, Any]) -> str | None:
@@ -4761,7 +4872,7 @@ class Mesh(SensorLoopsMixin):
         one robot the fanout cannot reach.
 
         After this call the local mesh refuses every action but ``status``,
-        ``resume`` and ``stop`` until :meth:`_resume_lockout` is invoked with
+        ``resume`` and ``stop`` until :meth:`resume` is invoked with
         the operator override code (``STRANDS_MESH_OVERRIDE_CODE``). ``stop``
         stays admitted because it only ever de-energizes: a second e-stop
         reaching an already locked-out peer must halt a rollout the first one
@@ -4793,6 +4904,7 @@ class Mesh(SensorLoopsMixin):
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
+        lockout_epoch = self._estop_lockout.epochs[0]
         # The issuer's own robot first. ``broadcast`` never reaches this
         # process (``_on_cmd`` drops envelopes whose sender_id is ours), so
         # before this line an e-stop halted every robot on the mesh EXCEPT the
@@ -4853,6 +4965,7 @@ class Mesh(SensorLoopsMixin):
             "peers_not_stopped": sorted(not_stopped),
             "peers_silent": silent,
             "lockout_engaged": True,
+            "lockout_epoch": lockout_epoch,
         }
         if local_zid is not None:
             envelope["source_zid"] = local_zid
@@ -4912,21 +5025,23 @@ class Mesh(SensorLoopsMixin):
             payload={"sender_id": self.peer_id, "reason_code": "denied"},
         )
 
-    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
-        """Clear the emergency-stop lockout if *override_code* matches.
+    def resume(self, override_code: str) -> dict[str, Any]:
+        """Clear the e-stop lockout here and on the fleet, given the override code.
 
+        Call it on the operator's own peer (a console or the dashboard), the one
+        place the code is typed: the code never travels, and a ``resume``
+        command arriving on the command topic is refused (see :meth:`_dispatch`).
         The code is compared in constant time against
         ``STRANDS_MESH_OVERRIDE_CODE`` (both sides hashed to a fixed length
         first, so the compare cannot leak the code's length), and repeated
-        failures throttle further attempts. The wire response is one generic
-        shape - ``{"status": "ok"}`` or ``{"status": "error", "error":
-        "resume rejected"}`` for every refusal, including "lockout not
-        engaged" and "code unconfigured" - so a prober gets no oracle on the
-        lockout state, the configuration or how long the fleet was held; the
-        structured reason goes to the local audit log only. On success the
-        fleet-wide ``strands/safety/resume`` envelope carries an HMAC proof over
-        its bound fields (see :meth:`_on_safety_resume`), never the code, and
-        ``lockout_elapsed_s`` is measured on the monotonic clock.
+        failures throttle further attempts. The answer is one generic shape -
+        ``{"status": "ok"}`` or ``{"status": "error", "error": "resume
+        rejected"}`` for every refusal, including "lockout not engaged" and
+        "code unconfigured" - and the structured reason goes to the local audit
+        log only. On success the fleet-wide ``strands/safety/resume`` envelope
+        carries a :func:`resume_proof` bound to this lockout's first e-stop epoch
+        and the fleet namespace, never the code; ``lockout_elapsed_s`` is
+        measured on the monotonic clock.
         """
         _generic_error = {"status": "error", "error": "resume rejected"}
         # The parameter shadows the module-level reader; ``_configured_override_code``
@@ -4960,6 +5075,7 @@ class Mesh(SensorLoopsMixin):
             return _generic_error
         # Success: clear, reset the throttle, and publish the proof-bearing envelope.
         elapsed = time.monotonic() - self._last_estop_mono
+        epochs = self._estop_lockout.epochs
         self._estop_lockout.clear()
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
@@ -4967,30 +5083,21 @@ class Mesh(SensorLoopsMixin):
         proof_nonce = uuid.uuid4().hex
         envelope_t = time.time()
         wire_zid = self._safety_wire_zid("strands/safety/resume")
-        mac_fields: dict[str, Any] = {
-            "peer_id": self.peer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": elapsed,
-            "proof_nonce": proof_nonce,
-        }
-        if wire_zid is not None:
-            mac_fields["source_zid"] = wire_zid
-        mac_input = json.dumps(
-            mac_fields,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        override_proof = hmac.new(
-            resume_proof_key(expected),
-            mac_input,
-            "sha256",
-        ).hexdigest()
         envelope: dict[str, Any] = {
             "peer_id": self.peer_id,
             "t": envelope_t,
             "lockout_elapsed_s": elapsed,
             "proof_nonce": proof_nonce,
-            "override_proof": override_proof,
+            "override_proof": resume_proof(
+                expected,
+                fleet=_fleet_namespace(),
+                lockout_epoch=epochs[0] if epochs else "",
+                peer_id=self.peer_id,
+                t=envelope_t,
+                lockout_elapsed_s=elapsed,
+                proof_nonce=proof_nonce,
+                source_zid=wire_zid,
+            ),
         }
         if wire_zid is not None:
             envelope["source_zid"] = wire_zid
@@ -5034,7 +5141,7 @@ class Mesh(SensorLoopsMixin):
            override-proof bound to one session's wire identity cannot
            be replayed from a different session even if the attacker
            also holds the override code (see
-           :meth:`_resume_lockout`).
+           :meth:`resume`).
 
         Returns ``None`` under ``STRANDS_MESH_BACKEND=iot`` / ``bridge`` and
         when no session is currently open. In that case the safety path

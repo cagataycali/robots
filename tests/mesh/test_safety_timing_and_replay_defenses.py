@@ -18,13 +18,13 @@ from strands_robots.mesh import core
 from strands_robots.mesh.sensors import SensorLoopsMixin
 
 # ---------------------------------------------------------------------------
-# Thread 4: _resume_lockout HMAC compare is constant-time independent of
+# Thread 4: resume HMAC compare is constant-time independent of
 # the byte length of the provided override code.
 # ---------------------------------------------------------------------------
 
 
 class TestResumeLockoutTimingOracleClosed:
-    """The ``hmac.compare_digest`` call in ``_resume_lockout`` must run
+    """The ``hmac.compare_digest`` call in ``resume`` must run
     over fixed-length 32-byte sha256 digests so an attacker probing with
     varying-length override codes cannot use response time to learn
     ``len(STRANDS_MESH_OVERRIDE_CODE)``.
@@ -43,11 +43,10 @@ class TestResumeLockoutTimingOracleClosed:
 
     @pytest.fixture
     def stub_mesh(self):
-        import threading
 
         m = core.Mesh.__new__(core.Mesh)
         m.peer_id = "test-peer"
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
         m.publish_safety_event = lambda **kw: None
@@ -65,10 +64,10 @@ class TestResumeLockoutTimingOracleClosed:
 
         # We do not expose the internal _EXPECTED_HASH; instead, assert
         # the source-level invariant: any call path through
-        # _resume_lockout must always reject when expected is unset, and
+        # resume must always reject when expected is unset, and
         # the rejection must NOT depend on the provided length.
-        result_short = stub_mesh._resume_lockout("ab")
-        result_long = stub_mesh._resume_lockout("a" * 4096)
+        result_short = stub_mesh.resume("ab")
+        result_long = stub_mesh.resume("a" * 4096)
         assert result_short == {"status": "error", "error": "resume rejected"}
         assert result_long == {"status": "error", "error": "resume rejected"}
         # Lockout must not have cleared either way.
@@ -93,7 +92,7 @@ class TestResumeLockoutTimingOracleClosed:
         # over 32 bytes regardless).
         for probe in ["", "a", "ab", "a" * 16, "a" * 32, "a" * 1024, "a" * 65536]:
             stub_mesh._estop_lockout.set()  # re-arm in case any path cleared it
-            result = stub_mesh._resume_lockout(probe)
+            result = stub_mesh.resume(probe)
             assert result == {"status": "error", "error": "resume rejected"}, (
                 f"length-{len(probe)} probe leaked through compare (expected reject)"
             )
@@ -107,7 +106,7 @@ class TestResumeLockoutTimingOracleClosed:
         monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", secret)
         stub_mesh._estop_lockout.set()
 
-        result = stub_mesh._resume_lockout(secret)
+        result = stub_mesh.resume(secret)
         assert result == {"status": "ok"}
         assert not stub_mesh._estop_lockout.is_set()
 
@@ -121,15 +120,13 @@ class TestResumeLockoutTimingOracleClosed:
         """
         import inspect
 
-        source = inspect.getsource(core.Mesh._resume_lockout)
+        source = inspect.getsource(core.Mesh.resume)
         assert "hashlib.sha256(provided.encode()).digest()" in source, (
-            "_resume_lockout must hash provided to a fixed-length digest "
+            "resume must hash provided to a fixed-length digest "
             "before compare_digest -- the prior placeholder approach "
             "left a len(expected)-vs-len(provided) timing oracle."
         )
-        assert "hashlib.sha256(expected.encode()).digest()" in source, (
-            "_resume_lockout must hash expected when configured."
-        )
+        assert "hashlib.sha256(expected.encode()).digest()" in source, "resume must hash expected when configured."
         # The prior placeholder pattern must NOT reappear -- a
         # readback of the form ``b"\x00" * max(1, len(provided))``
         # would re-introduce the length oracle.
@@ -254,7 +251,7 @@ class TestEstopReplayCacheShapeInvariant:
         m.peer_id = "test-receiver"
         m._estop_replay_cache = {}
         m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
 
@@ -302,7 +299,7 @@ class TestEstopLockoutEngagesAtCap:
         m.peer_id = "test-receiver"
         m._estop_replay_cache = {}
         m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
 

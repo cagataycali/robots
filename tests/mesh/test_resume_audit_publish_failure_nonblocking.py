@@ -18,12 +18,11 @@ state: a rejected replay keeps the lockout engaged, and an over-cap resume is
 refused (the resume never clears the lockout).
 """
 
-import hmac
 import json
-import time
 import uuid
 
-from strands_robots.mesh.core import Mesh, resume_proof_key
+from strands_robots.mesh.core import Mesh
+from tests.mesh.test_resume_replay import EPOCH, _make_envelope
 
 
 def _make_mesh(peer_id="r-test"):
@@ -45,30 +44,6 @@ def _sample(payload_dict):
     return s
 
 
-def _make_envelope(override_code, *, t=None, peer_id="op-1", proof_nonce=None, lockout_elapsed_s=1.0):
-    """Mint a valid resume envelope whose HMAC binds the routing fields."""
-    proof_nonce = proof_nonce or uuid.uuid4().hex
-    envelope_t = t if t is not None else time.time()
-    mac_input = json.dumps(
-        {
-            "peer_id": peer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": lockout_elapsed_s,
-            "proof_nonce": proof_nonce,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    proof = hmac.new(resume_proof_key(override_code), mac_input, "sha256").hexdigest()
-    return {
-        "peer_id": peer_id,
-        "t": envelope_t,
-        "lockout_elapsed_s": lockout_elapsed_s,
-        "proof_nonce": proof_nonce,
-        "override_proof": proof,
-    }
-
-
 def test_replay_rejected_audit_oserror_is_swallowed_and_lockout_preserved(monkeypatch):
     """A disk failure while auditing a resume_replay_rejected event must not
     propagate out of the safety handler, and the rejected replay must leave
@@ -88,13 +63,13 @@ def test_replay_rejected_audit_oserror_is_swallowed_and_lockout_preserved(monkey
     env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-1")
 
     # First resume: accepted, clears the lockout.
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))
     assert m._estop_lockout.is_set() is False
 
     # Re-arm and replay the SAME envelope: rejected via the replay cache.
     # The rejection audit raises OSError, which must be swallowed.
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._on_safety_resume(_sample(env))  # must not raise
 
     # Safety intact: the failing audit did not clear the re-armed lockout.
@@ -124,7 +99,7 @@ def test_per_issuer_cap_audit_valueerror_is_swallowed_and_cap_enforced(monkeypat
     # Two accepted resumes fill the issuer's cap; the third trips it.
     for _ in range(3):
         env = _make_envelope("secret-code-1234567890abcdef", peer_id="op-flooder", proof_nonce=uuid.uuid4().hex)
-        m._estop_lockout.set()
+        m._estop_lockout.set(EPOCH)
         m._on_safety_resume(_sample(env))  # third must not raise despite audit ValueError
 
     cap_calls = [c for c in calls if c.get("event_type") == "resume_per_issuer_cap_exceeded"]

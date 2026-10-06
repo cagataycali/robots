@@ -23,7 +23,7 @@ def _stub_mesh() -> core.Mesh:
     m._resume_replay_cache = {}
     m._estop_replay_lock = threading.Lock()
     m._resume_replay_lock = threading.Lock()
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = core._Lockout()
     m._last_estop_ts = 0.0
     m._last_estop_mono = 0.0
     return m
@@ -283,7 +283,7 @@ class TestEstopPerIssuerFairnessBound:
         m.peer_id = "test-peer"
         m._estop_replay_cache = {}
         m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._running = True
         m.publish = lambda key, data: None
@@ -326,7 +326,7 @@ class TestPerIssuerCountFromCache:
         m.peer_id = "test-peer"
         m._estop_replay_cache = {}
         m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._running = True
         m.publish = lambda key, data: None
@@ -377,7 +377,7 @@ class TestF14OverCapStillEngagesLockout:
         m.peer_id = "test-peer"
         m._estop_replay_cache = {}
         m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
+        m._estop_lockout = core._Lockout()
         m._last_estop_ts = 0.0
         m._last_estop_mono = 0.0
         m._running = True

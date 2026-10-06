@@ -34,7 +34,7 @@ def _stub_mesh() -> core.Mesh:
     m._resume_replay_cache = {}
     m._estop_replay_lock = threading.Lock()
     m._resume_replay_lock = threading.Lock()
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = core._Lockout()
     m._last_estop_ts = 0.0
     m._last_estop_mono = 0.0
     return m

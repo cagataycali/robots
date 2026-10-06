@@ -5,7 +5,8 @@ mesh=True)``. They share a CA and nothing else: the robot listens on an
 explicit ``tls/`` endpoint, the operator only dials it (no multicast). Over that
 one link the operator must see the robot in its peer list, receive its state
 samples, get an answer to a ``status`` RPC, and lock it out with an e-stop that
-a wrong resume code does not clear and the right one does. The check runs under
+a resume command on the command topic does not clear (not even with the right
+code), a wrong code does not clear, and the operator's own resume does. The check runs under
 the permissive built-in ACL and under both shipped ACL templates, where a robot
 certificate must also fail to command the operator. Real Zenoh, real TLS, no
 doubles.
@@ -33,9 +34,11 @@ from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 
+from strands_robots.mesh._zenoh_config import DEFAULT_SAFETY_RATE_HZ  # noqa: E402
+
 pytestmark = pytest.mark.timeout(300)
 
-RESUME_CODE = "acceptance-resume"
+RESUME_CODE = "acceptance-resume-1234567890"
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "mesh"
 
 # One peer: answers one JSON request per stdin line with one JSON line.
@@ -61,6 +64,8 @@ for line in sys.stdin:
         out = mesh.send(ask["to"], ask["cmd"], timeout=10)
     elif op == "estop":
         out = [r.get("responder_id") for r in mesh.emergency_stop()]
+    elif op == "resume":
+        out = mesh.resume(ask["code"])
     elif op == "locked":
         out = mesh._estop_lockout.is_set()
     print(json.dumps({"out": out}, default=str), flush=True)
@@ -199,12 +204,21 @@ def test_two_mesh_peers_exchange_state_and_rpc(tmp_path: Path, acl: Path | None,
         assert robot in alpha.ask("estop")
         assert _until(lambda: beta.ask("locked") is True), f"{robot} did not lock out on {operator}'s e-stop"
 
-        wrong = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": "not-the-code"})
-        assert (wrong["result"], beta.ask("locked")) == ({"status": "error", "error": "resume rejected"}, True)
+        # The code never rides the command topic: even the right one is refused there.
+        sent = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": RESUME_CODE})
+        assert (sent["result"], beta.ask("locked")) == ({"status": "error", "error": "resume rejected"}, True)
 
-        right = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": RESUME_CODE})
-        assert right["result"] == {"status": "ok"}, right
-        assert _until(lambda: beta.ask("locked") is False), f"the right resume code did not clear {robot}"
+        assert (alpha.ask("resume", code="not-the-code"), beta.ask("locked")) == (
+            {"status": "error", "error": "resume rejected"},
+            True,
+        )
+        # Every peer's ingress passes one ``**/safety/**`` message per link per
+        # period (STRANDS_MESH_SAFETY_RATE_HZ). The operator's e-stop and its
+        # refusal records were the last ones; a resume inside that period is
+        # dropped before any subscriber runs, so the operator waits it out.
+        time.sleep(1.5 / DEFAULT_SAFETY_RATE_HZ)
+        assert alpha.ask("resume", code=RESUME_CODE) == {"status": "ok"}
+        assert _until(lambda: beta.ask("locked") is False), f"the operator's resume proof did not clear {robot}"
     finally:
         alpha.close()
         beta.close()

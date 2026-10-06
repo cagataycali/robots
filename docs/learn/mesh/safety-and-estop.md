@@ -4,7 +4,7 @@ description: What emergency_stop() does to every robot it reaches, why the fleet
 
 # Safety and e-stop
 
-At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped until an operator with the override code says otherwise, what a resume must prove, and where each event is written down.
+At the end of this page you know what one `emergency_stop()` does to every robot it can reach, why a stopped fleet stays stopped, what a resume must prove, and where each event is written down.
 
 ```python title="sketch"
 # STRANDS_MESH_OVERRIDE_CODE must be the SAME value on every peer, set before Python starts.
@@ -12,7 +12,7 @@ responses = a.mesh.emergency_stop()                 # stops the local robot, the
 print([r["responder_id"] for r in responses])
 print(a.mesh.send("arm-b", {"action": "execute", "instruction": "wave", "policy_provider": "mock"}))
 # {'type': 'error', 'error': 'command rejected', ...}  deliberately generic
-print(a.mesh.send("arm-b", {"action": "resume", "override_code": "<the code>"}))
+print(a.mesh.resume("<the code>"))                  # the code stays here
 # {'status': 'ok'}  or  {'status': 'error', 'error': 'resume rejected'}
 ```
 
@@ -41,10 +41,10 @@ sequenceDiagram
     B-->>A: stopped
     A->>B: strands/safety/estop
     Note over B: lockout
-    O->>B: resume, override_code
-    B-->>O: ok
-    B->>A: strands/safety/resume, override_proof
-    Note over A: lockout cleared
+    O->>A: resume(override_code)
+    A-->>O: ok
+    A->>B: strands/safety/resume, override_proof
+    Note over B: lockout cleared
 ```
 
 The return value is every reply, the local one first. A reply counts as "stopped" only if it says so: a peer whose robot exposes no `stop_task` answers `{"ok": False}`, is logged at CRITICAL and listed in `peers_not_stopped`. Counting it as an acknowledgement would report a halted fleet while a robot still moved. A mesh that is not running raises `RuntimeError` rather than returning `[]`: "asked nobody" cannot look like "asked, nobody answered".
@@ -59,17 +59,17 @@ Replay defence there: the envelope's `t` must be fresh (`STRANDS_MESH_RESUME_FRE
 
 ## Resume
 
-A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` (at least 16 characters, say `secrets.token_urlsafe(32)`) must be set on the resuming peer and on every peer that honours it; a peer without one that long refuses every remote resume and says so at start:
+A resume is second-factor gated. `STRANDS_MESH_OVERRIDE_CODE` (16+ characters, 64+ bits estimated, say `secrets.token_urlsafe(32)`) must be set on the resuming peer and on every peer that honours it; a peer without a usable one refuses every remote resume and says so at start:
 
 ```text
 [safety:arm-a] No emergency-stop resume code set. If any peer broadcasts an e-stop, this robot stays locked until you physically restart it (one message can freeze the whole fleet).
 ```
 
-`{"action": "resume", "override_code": ...}` on one peer compares the code in constant time, throttles after `STRANDS_MESH_RESUME_MAX_FAILS` (default 5) failures for `STRANDS_MESH_RESUME_BACKOFF_S` (default 30 s), and answers one of two shapes: `{"status": "ok"}` or `{"status": "error", "error": "resume rejected"}`. "Lockout not engaged", "code unconfigured" and "wrong code" get the generic shape on the wire; the structured reason goes to the local audit log only, so a prober learns nothing about the fleet's state.
+`mesh.resume(code)` on the operator's own peer compares the code in constant time, throttles after `STRANDS_MESH_RESUME_MAX_FAILS` (default 5) failures for `STRANDS_MESH_RESUME_BACKOFF_S` (default 30 s), and answers `{"status": "ok"}` or, for every refusal, `{"status": "error", "error": "resume rejected"}`; the structured reason stays in the local audit log. A `resume` command is refused even with the right code: every peer that may read the command topic would learn it.
 
 A receiver refuses a resume older than `STRANDS_MESH_RESUME_FRESHNESS_S` (default 60 s; a receiver whose clock is ahead of the operator trips it) and one past `STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5 s, the tight one) in its future, tripped by a receiver behind the operator.
 
-On success the peer publishes `strands/safety/resume` carrying an HMAC-SHA256 `override_proof` keyed with an scrypt-derived key over `peer_id`, `t`, `lockout_elapsed_s`, `proof_nonce` and the TLS session id, never the code itself. Receivers verify the proof under the same throttle, refuse a repeated `(issuer, proof_nonce)`, and only then clear their lockout. Every refusal leaves the lockout engaged.
+On success the peer publishes `strands/safety/resume` with an HMAC-SHA256 `override_proof`, never the code: an scrypt key salted with the fleet namespace, over `peer_id`, `t`, `lockout_elapsed_s`, `proof_nonce`, the TLS session id and the epoch of the e-stop being cleared, which each receiver supplies from `strands/safety/estop`. Receivers verify it under the same throttle, refuse a repeated `(issuer, proof_nonce)`, then clear. Every refusal, including a proof for another lockout or fleet, leaves the lockout engaged.
 
 ## Stopping is never gated
 
@@ -77,6 +77,6 @@ On every surface, stop always runs: the robot tool's `stop`, `robot_mesh(action=
 
 ## Audit
 
-Every event on this page is one JSONL row in `~/.strands_robots/mesh_audit.jsonl` (`STRANDS_MESH_AUDIT_DIR`): `emergency_stop`, `remote_estop_engaged`, `estop_replay_rejected`, `estop_corroborated` (two operators within 0.2 s), `resume_ok`, `resume_denied` with the structured reason, `remote_resume_applied`, `resume_replay_rejected`, `command_rejected_lockout` for a command that arrived under lockout, `command_refused` for one a handler answered with an error. Rows carry `ts`, `event`, `peer_id`, `payload`, a process-monotonic `seq` so a deleted row shows as a gap, and `sig` (HMAC-SHA256) when `STRANDS_MESH_AUDIT_PSK` is set. `verify_audit_integrity()` walks the file and reports broken signatures, sequence gaps and unsigned rows. Rotation: `STRANDS_MESH_AUDIT_MAX_BYTES`, `STRANDS_MESH_AUDIT_MAX_FILES`.
+Every event on this page is one JSONL row in `~/.strands_robots/mesh_audit.jsonl` (`STRANDS_MESH_AUDIT_DIR`): `emergency_stop`, `remote_estop_engaged`, `estop_replay_rejected`, `estop_corroborated` (two operators within 0.2 s), `resume_ok`, `resume_denied` with the structured reason, `remote_resume_applied`, `resume_replay_rejected`, `command_rejected_lockout` for a command that arrived under lockout, `command_refused` for one a handler answered with an error. Rows carry `ts`, `event`, `peer_id`, `payload`, a process-monotonic `seq` so a deleted row shows as a gap, and `sig` (HMAC-SHA256) when `STRANDS_MESH_AUDIT_PSK` is set. `verify_audit_integrity()` reports broken signatures, sequence gaps and unsigned rows. Rotation: `STRANDS_MESH_AUDIT_MAX_BYTES`, `STRANDS_MESH_AUDIT_MAX_FILES`.
 
 See [security](../security.md) for the whole posture on one page.

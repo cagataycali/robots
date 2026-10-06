@@ -330,7 +330,7 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
     estop envelope engages a receiving peer's lockout; a wrong-code resume is
     refused and every non-status/resume action stays refused; only the real
     HMAC override compare clears it."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code-1234567890")
     published = _capturing_bus(monkeypatch)
     issuer = _live_unstarted_mesh(example.COORDINATOR_ID)
     receiver = _live_unstarted_mesh(example.FLEET_PEER_ID)
@@ -361,7 +361,7 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
 
     # Only the correct override code clears it - and then the fleet stop that
     # was refused a moment ago executes.
-    resumed = receiver._dispatch({"action": "resume", "override_code": "drill-override-code"})
+    resumed = receiver.resume("drill-override-code-1234567890")
     assert resumed == {"status": "ok"}
     assert receiver._dispatch({"action": "stop"}) == {"ok": True, "status": "stopped"}
 
@@ -369,7 +369,7 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
 def test_resume_success_publishes_a_proof_other_peers_verify(example, monkeypatch):
     """Fleet-wide resume is second-factor gated: the resume envelope carries
     an HMAC override proof, and a second locked peer clears only on it."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code")
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code-1234567890")
     published = _capturing_bus(monkeypatch)
     issuer = _live_unstarted_mesh(example.COORDINATOR_ID)
     peer_a = _live_unstarted_mesh("evac-peer-a")
@@ -380,7 +380,7 @@ def test_resume_success_publishes_a_proof_other_peers_verify(example, monkeypatc
     peer_a._on_safety_estop(_as_sample(estop))
     peer_b._on_safety_estop(_as_sample(estop))
 
-    assert peer_a._dispatch({"action": "resume", "override_code": "drill-override-code"}) == {"status": "ok"}
+    assert peer_a.resume("drill-override-code-1234567890") == {"status": "ok"}
     resume = next(payload for key, payload in published if key == "strands/safety/resume")
     assert "override_proof" in resume
     peer_b._on_safety_resume(_as_sample(resume))

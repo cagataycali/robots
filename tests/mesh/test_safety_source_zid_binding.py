@@ -32,7 +32,6 @@ These tests pin all four behaviours.
 
 from __future__ import annotations
 
-import hmac
 import json
 import time
 import uuid
@@ -44,6 +43,7 @@ import pytest
 
 from strands_robots.mesh import core as core_module
 from strands_robots.mesh.core import Mesh, _extract_sample_source_zid
+from tests.mesh.test_resume_replay import EPOCH
 
 # Real-format zid: 32 lowercase hex chars
 _LEGIT_ZID = "0123456789abcdef0123456789abcdef"
@@ -258,30 +258,24 @@ def _make_resume_envelope(
     elapsed: float = 1.0,
     proof_nonce: str | None = None,
     source_zid: str | None = None,
+    mac_zid: str | None = None,
 ) -> dict:
-    """Mint a valid resume envelope, optionally including ``source_zid``
-    in both the body and the HMAC input."""
-    if t is None:
-        t = time.time()
-    if proof_nonce is None:
-        proof_nonce = uuid.uuid4().hex
-    mac_fields = {
+    """Mint a valid resume envelope, optionally including ``source_zid`` in the
+    body and (as *mac_zid*, defaulting to the same value) in the MAC input."""
+    fields: dict[str, Any] = {
         "peer_id": peer_id,
-        "t": t,
+        "t": time.time() if t is None else t,
         "lockout_elapsed_s": elapsed,
-        "proof_nonce": proof_nonce,
+        "proof_nonce": proof_nonce or uuid.uuid4().hex,
     }
-    if source_zid is not None:
-        mac_fields["source_zid"] = source_zid
-    mac_input = json.dumps(mac_fields, sort_keys=True, separators=(",", ":")).encode()
-    proof = hmac.new(core_module.resume_proof_key(override_code), mac_input, "sha256").hexdigest()
-    env = {
-        "peer_id": peer_id,
-        "t": t,
-        "lockout_elapsed_s": elapsed,
-        "proof_nonce": proof_nonce,
-        "override_proof": proof,
-    }
+    proof = core_module.resume_proof(
+        override_code,
+        fleet=core_module._fleet_namespace(),
+        lockout_epoch=EPOCH,
+        source_zid=mac_zid or source_zid,
+        **fields,
+    )
+    env = {**fields, "override_proof": proof}
     if source_zid is not None:
         env["source_zid"] = source_zid
     return env
@@ -290,7 +284,7 @@ def _make_resume_envelope(
 def test_resume_body_zid_matches_wire_zid_clears_lockout(receiver, monkeypatch):
     """Happy path: wire and body source_zid agree, MAC verifies."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
     env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=_LEGIT_ZID)
     receiver._on_safety_resume(_make_sample(env, source_zid=_LEGIT_ZID))
@@ -317,7 +311,7 @@ def test_resume_cross_session_forgery_rejected(receiver, monkeypatch, caplog):
     constant-time compare.
     """
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
     # Attacker has legit override code and forges a body claiming legit zid.
     env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=_LEGIT_ZID)
@@ -344,30 +338,13 @@ def test_resume_mac_binds_wire_zid_not_body_zid(receiver, monkeypatch, caplog):
     fails, envelope is rejected.
     """
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
-    # Manual construction: body source_zid = attacker, but MAC was
-    # computed binding source_zid=legit (a captured-and-mutated MAC).
-    proof_nonce = uuid.uuid4().hex
-    envelope_t = time.time()
-    elapsed = 1.0
-    mac_fields = {
-        "peer_id": "op-1",
-        "t": envelope_t,
-        "lockout_elapsed_s": elapsed,
-        "proof_nonce": proof_nonce,
-        "source_zid": _LEGIT_ZID,  # MAC binds legit
-    }
-    mac_input = json.dumps(mac_fields, sort_keys=True, separators=(",", ":")).encode()
-    proof = hmac.new(core_module.resume_proof_key("secret-code-1234567890abcdef"), mac_input, "sha256").hexdigest()
-    env = {
-        "peer_id": "op-1",
-        "t": envelope_t,
-        "lockout_elapsed_s": elapsed,
-        "proof_nonce": proof_nonce,
-        "override_proof": proof,
-        "source_zid": _ATTACKER_ZID,  # body publishes attacker
-    }
+    # Body source_zid = attacker, but the MAC binds source_zid=legit (a
+    # captured-and-mutated MAC).
+    env = _make_resume_envelope(
+        override_code="secret-code-1234567890abcdef", source_zid=_ATTACKER_ZID, mac_zid=_LEGIT_ZID
+    )
     # NOTE: shape check rejects on body!=wire (legit vs attacker),
     # so we set wire == body to specifically test the MAC binding.
     with caplog.at_level("WARNING", logger="strands_robots.mesh.core"):
@@ -386,7 +363,7 @@ def test_resume_replay_cache_keyed_on_wire_zid(receiver, monkeypatch):
     wire-bound zid when available.
     """
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
     nonce = uuid.uuid4().hex
     # Session A
@@ -398,7 +375,7 @@ def test_resume_replay_cache_keyed_on_wire_zid(receiver, monkeypatch):
     )
     receiver._on_safety_resume(_make_sample(env_a, source_zid=_LEGIT_ZID))
     assert not receiver._estop_lockout.is_set()
-    receiver._estop_lockout.set()  # re-lock for observation
+    receiver._estop_lockout.set(EPOCH)  # re-lock for observation
 
     # Session B publishes the SAME nonce + same body peer_id but its
     # OWN session zid. Pre-fix this would have hit the cache (key was
@@ -424,7 +401,7 @@ def test_resume_pre_binding_publisher_rejected_when_wire_has_zid(receiver, monke
     Zenoh session that DOES propagate source_info is rejected so the
     fleet upgrade is atomic."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
     # Old envelope, no source_zid in body or in MAC.
     env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=None)
@@ -440,7 +417,7 @@ def test_resume_bridge_transport_no_zid_either_side_accepted(receiver, monkeypat
     The envelope is accepted via the body-level HMAC binding alone --
     cross-session-forgery defence is Zenoh-specific."""
     monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
-    receiver._estop_lockout.set()
+    receiver._estop_lockout.set(EPOCH)
 
     env = _make_resume_envelope(override_code="secret-code-1234567890abcdef", source_zid=None)
     receiver._on_safety_resume(_make_sample(env, source_zid=None))

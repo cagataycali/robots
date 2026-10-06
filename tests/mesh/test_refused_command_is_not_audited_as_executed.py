@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots.mesh.core import Mesh
+from strands_robots.mesh.core import Mesh, _Lockout
 
 #: The captured ``(event_type, payload)`` pairs a turn wrote to the audit log.
 _Events = list[tuple[str, dict[str, Any]]]
@@ -31,7 +31,7 @@ def _mesh(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> tuple[Mesh
     m.peer_id = "robot-1"
     m._cmd_replay_cache = {}
     m._cmd_replay_lock = threading.Lock()
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = _Lockout()
     monkeypatch.setattr(m, "_dispatch", lambda cmd: result)
     monkeypatch.setattr(m, "publish", lambda *a, **k: None)
     return m, events

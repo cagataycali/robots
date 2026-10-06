@@ -96,7 +96,7 @@ class RecordingMesh:
         RecordingMesh.events.append(("emergency_stop", self.peer_id))
         return []
 
-    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
+    def resume(self, override_code: str) -> dict[str, Any]:
         RecordingMesh.events.append(("resume_lockout", self.peer_id))
         return {"resumed": True}
 

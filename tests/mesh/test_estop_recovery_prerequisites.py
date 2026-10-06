@@ -46,6 +46,7 @@ import pytest
 import strands_robots
 from strands_robots.mesh import core
 from tests._docs_hooks import docs_hook
+from tests.mesh.test_resume_replay import EPOCH
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
@@ -74,12 +75,12 @@ def _mint_resume(*, issuer_clock_offset_s: float = 0.0) -> dict[str, Any]:
     operator = _mesh("operator-1")
     captured: dict[str, Any] = {}
     operator._publish_safety_envelope = lambda key, env: captured.update(env)
-    operator._estop_lockout.set()
+    operator._estop_lockout.set(EPOCH)
     operator._last_estop_ts = time.time() - 3.0
     operator._last_estop_mono = time.monotonic() - 3.0
     real_time = time.time
     with patch.object(core.time, "time", lambda: real_time() + issuer_clock_offset_s):
-        result = operator._resume_lockout(_CODE)
+        result = operator.resume(_CODE)
     assert result["status"] == "ok", result
     assert captured, "the issuer published no resume envelope"
     return captured
@@ -88,7 +89,7 @@ def _mint_resume(*, issuer_clock_offset_s: float = 0.0) -> dict[str, Any]:
 def _deliver(envelope: dict[str, Any]) -> bool:
     """Deliver *envelope* to a locked-out receiver; True if it recovered."""
     robot = _mesh("robot-1")
-    robot._estop_lockout.set()
+    robot._estop_lockout.set(EPOCH)
     sample = MagicMock()
     sample.payload.to_bytes.return_value = json.dumps(envelope).encode()
     robot._on_safety_resume(sample)
@@ -351,9 +352,7 @@ class TestTheRecoveryKnobsAreDocumented:
         """``docs/learn/mesh/safety-and-estop.md`` shows ``emergency_stop()``; it must show the way back."""
         mesh_doc = _SAFETY_PAGE.read_text(encoding="utf-8")
         assert "emergency_stop()" in mesh_doc, "premise: safety-and-estop.md documents emergency_stop"
-        assert '"action": "resume"' in mesh_doc, (
-            "safety-and-estop.md documents how to stop a fleet but not how to resume it"
-        )
+        assert "mesh.resume(" in mesh_doc, "safety-and-estop.md documents how to stop a fleet but not how to resume it"
         for knob in ("STRANDS_MESH_OVERRIDE_CODE", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):
             assert knob in mesh_doc, f"safety-and-estop.md's recovery guidance omits {knob}"
 

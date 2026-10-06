@@ -1738,8 +1738,9 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
                 raise ValidationError("teleop_stop.device_name must be a string or null")
             out["device_name"] = device
     elif action == "resume":
-        # The second factor for clearing a lockout: bounded here so a
-        # non-string or oversized value never reaches Mesh._resume_lockout.
+        # Mesh._dispatch refuses every resume command (the code never rides
+        # this topic); the field is still bounded so a malformed one is
+        # refused as malformed.
         override_code = cmd.get("override_code", "")
         if not isinstance(override_code, str):
             raise ValidationError("resume.override_code must be a string")

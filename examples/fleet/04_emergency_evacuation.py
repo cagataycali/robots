@@ -765,14 +765,14 @@ def _run_lockout_drill(coordinator: Any, target_peer: str) -> None:
     if not _operator_approves(f"resume {target_peer} out of lockout with the override code?"):
         print("  resume declined by the operator; the lockout stays engaged. Rerun to resume.")
         return
-    resumed = coordinator.send(
-        target_peer,
-        {"action": "resume", "override_code": os.environ["STRANDS_MESH_OVERRIDE_CODE"]},
-        timeout=10.0,
-    )
-    resumed_result = resumed.get("result") if isinstance(resumed, dict) else None
-    if not (isinstance(resumed_result, dict) and resumed_result.get("status") == "ok"):
-        raise RuntimeError(f"approved resume was rejected: {resumed!r}")
+    # The code is typed on this peer and never sent: the coordinator clears its
+    # own lockout and publishes a proof every locked peer verifies. Peers pass
+    # one safety message per link per period (STRANDS_MESH_SAFETY_RATE_HZ,
+    # default 2 Hz), so the proof waits out the period the e-stop opened.
+    time.sleep(1.0)
+    resumed_result = coordinator.resume(os.environ["STRANDS_MESH_OVERRIDE_CODE"])
+    if resumed_result.get("status") != "ok":
+        raise RuntimeError(f"approved resume was rejected: {resumed_result!r}")
     print(f"  {target_peer}: resumed via HMAC override (operator approved)")
 
 

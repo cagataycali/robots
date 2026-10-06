@@ -24,12 +24,12 @@ import ast
 import inspect
 import logging
 import textwrap
-import threading
 import time
 
 import pytest
 
 from strands_robots.mesh import input as mesh_input
+from strands_robots.mesh.core import _Lockout
 from strands_robots.mesh.input import InputReceiver
 from tests.mesh.test_input_stream_lifecycle import _make_receiver, _RecvMesh
 
@@ -43,7 +43,7 @@ _BUDGET = 5
 
 def _locked_out_receiver():
     mesh = _RecvMesh()
-    mesh._estop_lockout = threading.Event()
+    mesh._estop_lockout = _Lockout()
     mesh._estop_lockout.set()
     return _make_receiver(mesh)
 

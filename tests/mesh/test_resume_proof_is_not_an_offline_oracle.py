@@ -1,16 +1,14 @@
-"""Regression tests: the resume override proof is not a cheap offline oracle.
+"""The resume override code never travels, and a resume proof clears one lockout.
 
-A fleet resume envelope carries ``override_proof = HMAC(code, fields)`` next
-to every field the MAC covers, so one captured envelope let anyone test
-candidate codes offline at one SHA-256 per guess, and nothing stopped a
-four-character code. The broadcast handler that actually clears a lockout also
-had no brute-force throttle; only the RPC ``resume`` action did.
-
-Now the MAC key is derived from the code with scrypt (memory-hard, one
-derivation per process), a code shorter than ``OVERRIDE_CODE_MIN_LEN`` is
-treated as unset on both sides (fail closed, with the reason logged at start),
-a proof minted with the raw code is refused, and the broadcast handler counts
-proof mismatches against the same throttle as the RPC path and records them.
+The code that clears a fleet e-stop lockout is typed on the operator's own peer
+(:meth:`Mesh.resume`) and never sent: a ``resume`` command on the command
+topic is refused, so no peer the ACL lets read that topic learns the code. The
+fleet envelope carries ``override_proof``, an HMAC under an scrypt key salted
+with the fleet namespace, over the published fields plus two the receiver
+supplies itself: the epoch of the e-stop its lockout holds and the fleet. A
+proof minted with the raw code, in another fleet or for another lockout is
+refused and counted against the same throttle as a wrong code. A code that is
+too short or too repetitive is treated as unset on both sides.
 """
 
 from __future__ import annotations
@@ -26,9 +24,10 @@ from typing import Any
 import pytest
 
 from strands_robots.mesh import core as mesh_core
-from strands_robots.mesh.core import OVERRIDE_CODE_MIN_LEN, Mesh, resume_proof_key
+from strands_robots.mesh.core import OVERRIDE_CODE_MIN_LEN, Mesh, resume_proof, resume_proof_key
 
 CODE = "operator-code-1234567890abcdef"
+EPOCH = "a" * 32
 
 
 class _Robot:
@@ -39,16 +38,22 @@ def _sample(payload: dict[str, Any]) -> Any:
     return SimpleNamespace(payload=SimpleNamespace(to_bytes=lambda: json.dumps(payload).encode()), source_info=None)
 
 
-def _envelope(key: bytes, *, peer_id: str = "op-1", nonce: str | None = None) -> dict[str, Any]:
-    fields = {"peer_id": peer_id, "t": time.time(), "lockout_elapsed_s": 1.0, "proof_nonce": nonce or uuid.uuid4().hex}
-    mac_input = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
-    return {**fields, "override_proof": hmac.new(key, mac_input, "sha256").hexdigest()}
+def _envelope(code: str = CODE, *, epoch: str = EPOCH, fleet: str | None = None) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "peer_id": "op-1",
+        "t": time.time(),
+        "lockout_elapsed_s": 1.0,
+        "proof_nonce": uuid.uuid4().hex,
+    }
+    fleet = mesh_core._fleet_namespace() if fleet is None else fleet
+    return {**fields, "override_proof": resume_proof(code, fleet=fleet, lockout_epoch=epoch, **fields)}
 
 
 @pytest.fixture
-def mesh() -> Mesh:
+def mesh(monkeypatch: pytest.MonkeyPatch) -> Mesh:
+    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
     m = Mesh(_Robot(), peer_id="arm-1")
-    m._estop_lockout.set()
+    m._estop_lockout.set(EPOCH)
     m._last_estop_mono = time.monotonic()
     return m
 
@@ -58,105 +63,134 @@ def _quiet_posture(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mesh_core, "_POSTURE_WARNINGS_EMITTED", set())
 
 
-class TestTheKeyIsDerivedNotTheCode:
-    def test_a_proof_keyed_with_the_raw_code_is_refused(self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
+class TestTheCodeNeverRidesTheCommandTopic:
+    @pytest.mark.parametrize("cmd", [{"action": "resume", "override_code": CODE}, {"action": "resume"}])
+    def test_a_resume_command_is_refused_even_with_the_right_code(
+        self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch, cmd: dict[str, Any]
+    ) -> None:
+        audits: list[tuple[str, dict[str, Any]]] = []
+        monkeypatch.setattr(mesh, "_audit_local", lambda e, p: audits.append((e, p)))
+        monkeypatch.setattr(mesh, "_audit", lambda **kw: None)
 
-        mesh._on_safety_resume(_sample(_envelope(CODE.encode())))
+        assert mesh._dispatch(cmd) == {"status": "error", "error": "resume rejected"}
 
         assert mesh._estop_lockout.is_set()
+        assert [e for e, _ in audits] == ["resume_denied"]
+        assert "command topic" in audits[0][1]["reason"] and CODE not in audits[0][1]["reason"]
 
-    def test_a_proof_keyed_with_the_derived_key_clears_the_lockout(
+    def test_the_operator_resumes_on_its_own_peer_and_publishes_no_code_and_no_epoch(
         self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
-
-        mesh._on_safety_resume(_sample(_envelope(resume_proof_key(CODE))))
-
-        assert not mesh._estop_lockout.is_set()
-
-    def test_the_issuer_signs_with_the_derived_key(self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
         published: list[dict[str, Any]] = []
         monkeypatch.setattr(mesh, "_publish_safety_envelope", lambda topic, env: published.append(env))
         monkeypatch.setattr(mesh, "publish_safety_event", lambda **kw: None)
 
-        assert mesh._resume_lockout(CODE) == {"status": "ok"}
+        assert mesh.resume(CODE) == {"status": "ok"}
 
         env = published[0]
+        assert set(env) == {"peer_id", "t", "lockout_elapsed_s", "proof_nonce", "override_proof"}
         fields = {k: env[k] for k in ("peer_id", "t", "lockout_elapsed_s", "proof_nonce")}
-        mac_input = json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
-        assert env["override_proof"] == hmac.new(resume_proof_key(CODE), mac_input, "sha256").hexdigest()
-        assert env["override_proof"] != hmac.new(CODE.encode(), mac_input, "sha256").hexdigest()
-
-    def test_the_derivation_is_memory_hard_and_deterministic(self) -> None:
-        assert resume_proof_key(CODE) == resume_proof_key(CODE)
-        assert resume_proof_key(CODE) != resume_proof_key(CODE + "x")
-        assert len(resume_proof_key(CODE)) == 32
+        fleet = mesh_core._fleet_namespace()
+        assert env["override_proof"] == resume_proof(CODE, fleet=fleet, lockout_epoch=EPOCH, **fields)
+        assert CODE not in json.dumps(env)
 
 
-class TestAShortCodeIsUnset:
-    @pytest.mark.parametrize("short", ["1234", "secret", "a" * (OVERRIDE_CODE_MIN_LEN - 1)])
-    def test_receiver_refuses_a_resume_under_a_short_code(
-        self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, short: str
+class TestAProofClearsOnlyTheLockoutItWasMintedFor:
+    def test_a_proof_for_the_held_epoch_in_this_fleet_clears(self, mesh: Mesh) -> None:
+        mesh._on_safety_resume(_sample(_envelope()))
+
+        assert not mesh._estop_lockout.is_set()
+
+    @pytest.mark.parametrize(
+        "envelope",
+        [
+            pytest.param(lambda: _envelope(epoch="b" * 32), id="another-lockout"),
+            pytest.param(lambda: _envelope(fleet="another-fleet"), id="another-fleet"),
+            pytest.param(lambda: _envelope("not-the-code-1234567890abcdef"), id="wrong-code"),
+            pytest.param(
+                lambda: {
+                    **(e := _envelope()),
+                    "override_proof": hmac.new(
+                        CODE.encode(),
+                        json.dumps(
+                            {k: e[k] for k in ("peer_id", "t", "lockout_elapsed_s", "proof_nonce")},
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode(),
+                        "sha256",
+                    ).hexdigest(),
+                },
+                id="raw-code-key",
+            ),
+        ],
+    )
+    def test_any_other_proof_is_refused_and_counted(
+        self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch, envelope: Any
     ) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", short)
-
-        with caplog.at_level(logging.WARNING):
-            mesh._on_safety_resume(_sample(_envelope(resume_proof_key(short))))
-
-        assert mesh._estop_lockout.is_set()
-        assert any("OVERRIDE_CODE" in r.message and "short" in r.message for r in caplog.records)
-
-    def test_issuer_refuses_to_resume_under_a_short_code(self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
-
-        assert mesh._resume_lockout("1234") == {"status": "error", "error": "resume rejected"}
-        assert mesh._estop_lockout.is_set()
-
-    def test_the_floor_is_at_least_twelve_characters(self) -> None:
-        assert OVERRIDE_CODE_MIN_LEN >= 12
-
-    def test_startup_names_the_short_code_next_to_the_unset_warning(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "1234")
-
-        with caplog.at_level(logging.WARNING):
-            assert mesh_core.override_code() is None
-
-        assert any("STRANDS_MESH_OVERRIDE_CODE" in r.message and "short" in r.message for r in caplog.records)
-        assert any("secrets.token_urlsafe" in r.message for r in caplog.records)
-
-
-class TestTheBroadcastPathIsThrottled:
-    def test_proof_mismatches_count_against_the_throttle_and_are_audited(
-        self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
-        monkeypatch.setenv("STRANDS_MESH_RESUME_MAX_FAILS", "3")
         audits: list[tuple[str, dict[str, Any]]] = []
         monkeypatch.setattr(mesh, "_audit_local", lambda e, p: audits.append((e, p)))
         monkeypatch.setattr(mesh, "_audit", lambda **kw: None)
-        wrong = resume_proof_key("not-the-code-1234567890abcdef")
 
-        for _ in range(3):
-            mesh._on_safety_resume(_sample(_envelope(wrong)))
+        mesh._on_safety_resume(_sample(envelope()))
 
-        assert [e for e, _ in audits] == ["resume_denied"] * 3
-        assert all("mismatch" in p["reason"] for _, p in audits)
-        assert mesh._resume_locked_until_mono > time.monotonic()
-        # The cooldown holds even a correct proof, exactly as the RPC path does.
-        mesh._on_safety_resume(_sample(_envelope(resume_proof_key(CODE))))
         assert mesh._estop_lockout.is_set()
+        assert mesh._resume_fail_count == 1
+        assert [e for e, _ in audits] == ["resume_denied"]
 
-    def test_a_correct_proof_before_the_threshold_still_clears(
+    def test_the_epoch_travels_on_the_estop_and_a_later_lockout_gets_a_new_one(self, mesh: Mesh) -> None:
+        receiver = Mesh(_Robot(), peer_id="arm-2")
+        estop = {"peer_id": "op-1", "t": time.time(), "lockout_epoch": "c" * 32}
+
+        receiver._on_safety_estop(_sample(estop))
+        held = receiver._estop_lockout.epochs
+        receiver._on_safety_resume(_sample(_envelope(epoch="c" * 32)))
+        cleared = not receiver._estop_lockout.is_set()
+        receiver._estop_lockout.set()
+
+        assert held == ("c" * 32,) and cleared
+        assert receiver._estop_lockout.epochs not in ((), held)
+
+    def test_the_key_depends_on_the_fleet(self) -> None:
+        assert resume_proof_key(CODE, "fleet-a") == resume_proof_key(CODE, "fleet-a")
+        assert resume_proof_key(CODE, "fleet-a") != resume_proof_key(CODE, "fleet-b")
+        assert len(resume_proof_key(CODE, "fleet-a")) == 32
+
+
+class TestAWeakCodeIsUnset:
+    @pytest.mark.parametrize(
+        "weak", ["1234", "secret", "a" * (OVERRIDE_CODE_MIN_LEN - 1), "a" * 40, "ab" * 20, "passwordpassword"]
+    )
+    def test_both_sides_refuse_under_a_weak_code(
+        self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, weak: str
+    ) -> None:
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", weak)
+
+        with caplog.at_level(logging.WARNING):
+            mesh._on_safety_resume(_sample(_envelope(weak)))
+            assert mesh.resume(weak) == {"status": "error", "error": "resume rejected"}
+
+        assert mesh._estop_lockout.is_set()
+        assert any("OVERRIDE_CODE" in r.message and "secrets.token_urlsafe" in r.message for r in caplog.records)
+
+    def test_a_generated_code_is_usable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import secrets
+
+        code = secrets.token_urlsafe(32)
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", code)
+
+        assert mesh_core.override_code() == code
+
+
+class TestTheBroadcastPathIsThrottled:
+    def test_proof_mismatches_engage_the_cooldown_that_holds_a_correct_proof(
         self, mesh: Mesh, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", CODE)
+        monkeypatch.setenv("STRANDS_MESH_RESUME_MAX_FAILS", "3")
         monkeypatch.setattr(mesh, "_audit", lambda **kw: None)
 
-        mesh._on_safety_resume(_sample(_envelope(resume_proof_key("wrong-code-1234567890abcdef"))))
-        mesh._on_safety_resume(_sample(_envelope(resume_proof_key(CODE))))
+        for _ in range(3):
+            mesh._on_safety_resume(_sample(_envelope(epoch="b" * 32)))
 
-        assert not mesh._estop_lockout.is_set()
+        assert mesh._resume_locked_until_mono > time.monotonic()
+        mesh._on_safety_resume(_sample(_envelope()))
+        assert mesh._estop_lockout.is_set()

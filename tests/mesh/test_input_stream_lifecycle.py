@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from strands_robots.mesh import input as mesh_input
+from strands_robots.mesh.core import _Lockout
 from strands_robots.mesh.input import (
     INPUT_AUDIT_EVERY_DEFAULT,
     INPUT_MAX_HZ_DEFAULT,
@@ -244,10 +245,9 @@ class TestReceiverBehavior:
         assert recv._rate_dropped == 19
 
     def test_estop_lockout_rejects_frame(self):
-        import threading
 
         mesh = _RecvMesh()
-        mesh._estop_lockout = threading.Event()
+        mesh._estop_lockout = _Lockout()
         mesh._estop_lockout.set()
         recv, applied = _make_receiver(mesh)
         recv._on_input(recv.topic, {"action": {"j0": 0.1}, "seq": 0, "t": time.time()})

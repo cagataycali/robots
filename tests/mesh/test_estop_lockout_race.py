@@ -38,7 +38,7 @@ def _stub_mesh() -> core.Mesh:
     m._resume_replay_cache = {}
     m._estop_replay_lock = threading.Lock()
     m._resume_replay_lock = threading.Lock()
-    m._estop_lockout = threading.Event()
+    m._estop_lockout = core._Lockout()
     m._last_estop_ts = 0.0
     m._last_estop_mono = 0.0
     # publish_safety_event is gated on self._running; flip it on without
@@ -170,7 +170,7 @@ class TestEstopLockoutLockContainment:
             if indent <= with_indent:
                 # dedented out of the with-block before reaching the set()
                 break
-            if "self._estop_lockout.set()" in line:
+            if "self._estop_lockout.set(" in line:
                 set_idx = i
                 break
 
@@ -188,7 +188,7 @@ class TestEstopLockoutLockContainment:
         lines = source.split("\n")
 
         set_idx = next(
-            (i for i, line in enumerate(lines) if "self._estop_lockout.set()" in line),
+            (i for i, line in enumerate(lines) if "self._estop_lockout.set(" in line),
             None,
         )
         assert set_idx is not None, "engage branch missing _estop_lockout.set()"

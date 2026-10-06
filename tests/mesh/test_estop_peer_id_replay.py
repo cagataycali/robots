@@ -39,7 +39,7 @@ def receiver():
     """A bare ``Mesh`` with the bits ``_on_safety_estop`` actually touches."""
     m = core_module.Mesh.__new__(core_module.Mesh)
     m.peer_id = "receiver-1"
-    m._estop_lockout = core_module.threading.Event()
+    m._estop_lockout = core_module._Lockout()
     m._estop_replay_cache = {}
     m._estop_replay_lock = core_module.threading.Lock()
     m._last_estop_ts = 0.0
