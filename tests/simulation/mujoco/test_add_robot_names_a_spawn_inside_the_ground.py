@@ -96,6 +96,7 @@ def test_a_registry_robot_authored_below_the_plane_spawns_at_its_registry_positi
         result = sim.add_robot(name=name, data_config=name)
         assert result["status"] == "success", result
         assert "inside the ground" not in result["content"][0]["text"], result
+        assert sim._world is not None
         assert sim._world.robots[name].position == [float(v) for v in _SPAWNS[name]]
     finally:
         sim.cleanup()
