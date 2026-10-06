@@ -347,13 +347,16 @@ def _sign_bytes(key: Any, alg: str, message: bytes) -> bytes:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec, padding
 
+    signed: bytes
     if alg == ALG_RSA:
-        return key.sign(
+        signed = key.sign(
             message, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=_PSS_SALT_LEN), hashes.SHA256()
         )
-    if alg == ALG_EC:
-        return key.sign(message, ec.ECDSA(hashes.SHA256()))
-    return key.sign(message)
+    elif alg == ALG_EC:
+        signed = key.sign(message, ec.ECDSA(hashes.SHA256()))
+    else:
+        signed = key.sign(message)
+    return signed
 
 
 def _verify_bytes(public_key: Any, alg: str, signature: bytes, message: bytes) -> bool:
