@@ -69,9 +69,22 @@ class _FakeResponse:
         self._buffer.close()
 
 
-def test_download_gsplat_scene_rejects_unknown_name(tmp_path) -> None:
-    with pytest.raises(KeyError, match="Unknown scene"):
-        download_gsplat_scene("not-a-scene", cache_dir=tmp_path)
+@pytest.mark.parametrize(
+    ("name", "hint"),
+    [
+        ("tabletop", " Did you mean 'tabletop (indoor room)'?"),
+        ("bonsai", " Did you mean 'bonsai (indoor tabletop)'?"),
+        ("tabletp (indoor room)", " Did you mean 'tabletop (indoor room)'?"),
+        ("stupm", " Did you mean 'stump (outdoor)'?"),
+        ("not-a-scene", ""),
+    ],
+)
+def test_download_gsplat_scene_refusal_names_the_closest_preset(tmp_path, name: str, hint: str) -> None:
+    # A bare slug is how the cache file is named, so it is pointed back at its
+    # preset; an unrelated name gets no guess, only the listing.
+    with pytest.raises(KeyError) as refused:
+        download_gsplat_scene(name, cache_dir=tmp_path)
+    assert refused.value.args[0] == f"Unknown scene {name!r}.{hint} Known: {list(GSPLAT_SCENES)}"
 
 
 def test_download_gsplat_scene_returns_cached_file_without_downloading(tmp_path, monkeypatch) -> None:

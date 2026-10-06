@@ -36,13 +36,14 @@ strands-robots verify-dataset ~/.cache/huggingface/lerobot/you/so101_reach --exp
   frames   (parquet): 450
   expected episodes : 5
   info.json episodes: 5
+  info.json frames  : 450
 ```
 
 Exit code 0 on success, 1 on any problem. Flags:
 
 | flag | meaning |
 |---|---|
-| `--expected N` | require exactly N distinct episodes, the number you intended to record |
+| `--expected N` | require exactly N distinct episodes |
 | `--min-frames K` | every episode must hold at least K frames (default 1; `0` disables) |
 | `--no-check-videos` | skip the per-episode video file checks |
 | `--no-check-stats` | skip the dead-control-column check |
