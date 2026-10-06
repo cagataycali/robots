@@ -497,7 +497,8 @@ export default function SettingsDrawer({ open, onClose, mesh, initialTab }: {
                 <div className="explain">
                   <b>What "wire security off" means:</b> robot commands and camera frames travel
                   the mesh unencrypted and unauthenticated (<code>STRANDS_MESH_LOCAL_DEV=1</code>).
-                  That is fine on a trusted home LAN. Before this network is shared or bridged,
+                  That is a one-machine setting: the mesh refuses to start with it once an endpoint
+                  or multicast reaches another machine. Before robots on other machines join,
                   restart the dashboard <em>without</em> that env var so the mesh requires mTLS —
                   then only <code>tls/</code> and <code>quic/</code> endpoints are accepted.
                   This is separate from dashboard login, which already guards the web UI.

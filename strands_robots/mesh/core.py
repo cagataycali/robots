@@ -1154,8 +1154,8 @@ class Mesh(SensorLoopsMixin):
                     "  To allow remote resume: create an operator key with "
                     "python -m strands_robots.mesh.resume_authority keygen <key-file> "
                     "and set STRANDS_MESH_RESUME_PUBLIC_KEY to its public half on every peer.\n"
-                    "  Local dev?  STRANDS_MESH_LOCAL_DEV=true is fine to ignore "
-                    "this.",
+                    "  One machine, no fleet?  Then this only means an e-stop you send yourself "
+                    "is cleared by a restart.",
                     self.peer_id,
                 )
 

@@ -292,8 +292,9 @@ function Dashboard() {
         <div className="toast warn" role="status" data-testid="mesh-not-started">
           <b>Mesh not started.</b> {mesh.error}
           <span className="hint">
-            {' '}No robot can reach this dashboard until it joins. On a laptop or a trusted LAN start it with
-            {' '}<code>STRANDS_MESH_LOCAL_DEV=1</code>; for a shared network set the certificate variables (Settings, mesh).
+            {' '}No robot can reach this dashboard until it joins. Everything on this one machine? Start it with
+            {' '}<code>STRANDS_MESH_LOCAL_DEV=1</code>. Robots on other machines need the certificate variables (Settings, mesh);
+            {' '}the local-dev flag does not reach past this machine.
           </span>
         </div>
       )}
@@ -380,7 +381,8 @@ function Dashboard() {
               </p>
               <p className="hint">{snippet.provenance}</p>
               <p className="hint">
-                Set <code>STRANDS_MESH_LOCAL_DEV=1</code> + <code>STRANDS_MESH_MULTICAST=true</code> for local dev.
+                The sim line needs no mesh setup. On this one machine, <code>STRANDS_MESH_LOCAL_DEV=1</code> lets the real
+                arm join without certificates; from another machine it joins over mTLS (Settings, mesh).
               </p>
               <button className="btn ghost" onClick={() => route('devices')}>spawn one here</button>
             </>
