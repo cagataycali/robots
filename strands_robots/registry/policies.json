@@ -282,7 +282,9 @@
       "module": "strands_robots.policies.protomotions",
       "class": "ProtoMotionsPolicy",
       "description": "ProtoMotions Generalist Tracking Policy (ONNX, BeyondMimic-trained) for the Unitree G1 \u2014 consumes a MotionPlayer reference and emits PD joint targets",
-      "requires": [],
+      "requires": [
+        "onnx_path"
+      ],
       "config_keys": [
         "onnx_path",
         "yaml_path",
@@ -342,7 +344,9 @@
       "module": "strands_robots.policies.microduck",
       "class": "MicroduckPolicy",
       "description": "Pollen Microduck locomotion policy (ONNX, normaliser fused into the graph) for the 14-DOF open biped \u2014 self-configures from ONNX metadata, feeds obs raw, decodes DEFAULT_POSE + action*scale",
-      "requires": [],
+      "requires": [
+        "onnx_path"
+      ],
       "config_keys": [
         "onnx_path",
         "session",
