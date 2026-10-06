@@ -557,7 +557,10 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
     ("spelled", "meant"),
     [
         ("WBC", "'wbc'"),
-        ("cosmos", "'cosmos3'"),
+        # 'composite' auto-discovers under the policies package and joins the
+        # did-you-mean pool next to the registry providers, so a near-miss of
+        # 'cosmos3' names it too.
+        ("cosmos", "'cosmos3', 'composite'"),
         ("lerobot-local", "'lerobot_local'"),
         # An alias match is named by the provider it routes to, once each.
         ("GTP", "'protomotions'"),
@@ -565,6 +568,10 @@ def test_a_dotted_path_does_not_answer_for_the_spelling() -> None:
         ("moveit3", "'moveit2'"),
         ("kimod0", "'kimodo'"),
         ("protomotion", "'protomotions', 'kimodo'"),
+        # Common misspelling of the two auto-discovered wrappers lands on the
+        # right spelling instead of a far-away provider (or on nothing).
+        ("composie", "'composite', 'cosmos3'"),
+        ("persistant", "'persistent'"),
     ],
 )
 def test_an_unknown_provider_names_the_close_spelling(spelled: str, meant: str) -> None:

@@ -32,6 +32,14 @@ from strands_robots.registry.policies import (
 
 logger = logging.getLogger(__name__)
 
+# Spellings that ``create_policy`` resolves via auto-discovery
+# (:func:`import_policy_class` falls back to ``strands_robots.policies.<name>``)
+# but that no public enumeration surface reports -- shipped as prose in
+# :func:`list_aliases`'s docstring and in ``docs/learn/policies/index.md``. They
+# must still join the did-you-mean search pool so a typo of either lands on the
+# right spelling instead of a far-away provider or on nothing at all.
+_AUTO_DISCOVERED_SPELLINGS: tuple[str, ...] = ("composite", "persistent")
+
 #
 # Runtime registration (for user-defined providers not in JSON)
 #
@@ -440,9 +448,14 @@ def import_policy_class(provider: str) -> type:
     # name: case and dash are folded, and 0.6 is Robot()'s cutoff. Aliases are
     # searched but each match is named by the provider it routes to, once, so
     # ``text2motion`` is offered as ``kimodo`` and ``gtp``/``gtp_g1`` as one
-    # ``protomotions``.
+    # ``protomotions``. The two auto-discovered wrappers (``composite``,
+    # ``persistent``) are not reported by ``list_providers`` or ``list_aliases``
+    # (they ship as prose, see ``list_aliases`` docstring) but ``create_policy``
+    # resolves them, so they join the search pool here -- a typo of either
+    # otherwise lands on nothing or on a far-away provider.
     folded = provider.lower().replace("-", "_")
-    matches = difflib.get_close_matches(folded, [*list_providers(), *list_aliases()], n=3, cutoff=0.6)
+    pool = [*list_providers(), *list_aliases(), *_AUTO_DISCOVERED_SPELLINGS]
+    matches = difflib.get_close_matches(folded, pool, n=3, cutoff=0.6)
     close = list(dict.fromkeys(map(_canonical_provider_name, matches)))
     hint = f" Did you mean: {', '.join(map(repr, close))}?" if close else ""
     raise ValueError(f"Unknown policy provider: '{provider}'.{hint} Available: {list_policy_providers()}")
