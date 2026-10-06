@@ -30,7 +30,7 @@ import re
 from collections.abc import AsyncGenerator, Callable, Mapping
 from typing import Any, cast
 
-from strands_robots.dashboard.agent_motion import hardware_evidence, peer_is_physical
+from strands_robots.dashboard.agent_motion import PHYSICAL_MOTION_ACTIONS, hardware_evidence, peer_is_physical
 
 # ── classification ──────────────────────────────────────────────────────────
 
@@ -765,17 +765,19 @@ def motion_actions_for(tools: list[Any], peers: Mapping[str, Mapping[str, Any] |
     the table from the built tools means the gate and the tool surface cannot
     drift apart.
 
-    ``execute`` and ``start`` are the two verbs a hardware peer runs; it refuses
-    ``set_joints``, ``step`` and ``reset`` by name, so those need no row.
+    Every row is the whole of ``agent_motion.PHYSICAL_MOTION_ACTIONS``. A sim
+    proxy offers ``reset`` and ``step``, and on a peer that is really metal
+    those move it too (a reset drives every joint home at once), so a row of
+    just ``execute`` / ``start`` let a forged sim claim be reset with no one
+    asked.
     """
-    motion = frozenset({"execute", "start"})
     table: dict[str, frozenset[str]] = {}
     for t in tools:
         kind = getattr(t, "peer_kind", None)
         if kind == KIND_REAL:
-            table[t.tool_name] = motion
+            table[t.tool_name] = PHYSICAL_MOTION_ACTIONS
         elif kind == KIND_SIM:
             physical, _ = peer_is_physical(peers.get(getattr(t, "peer_id", "")))
             if physical:
-                table[t.tool_name] = motion
+                table[t.tool_name] = PHYSICAL_MOTION_ACTIONS
     return table

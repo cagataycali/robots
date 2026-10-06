@@ -54,7 +54,12 @@ export function mergeMeshEvent(
       // The session was re-pointed under us: the old peer list belongs to the old mesh, so drop
       // it rather than show ghosts.
       return {}
-    case 'presence':
+    case 'presence': {
+      // The server sends the record's provenance beside it; lib/runRisk reads both.
+      if (!id) return peers
+      const provenance = { presence_source: ev.presence_source, sim_corroborated: ev.sim_corroborated === true }
+      return { ...peers, [id]: { ...peers[id], peer_id: id, presence: ev.data, ...provenance, last_seen: nowS, stale: false } }
+    }
     case 'state':
     case 'stream':
     // The SensorLoops topics vouch for a peer exactly as presence/state do: the frame exists

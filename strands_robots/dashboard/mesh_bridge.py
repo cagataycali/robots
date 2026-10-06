@@ -1166,12 +1166,22 @@ class MeshBridge:
                 record["hw"] = hw
             entry["presence"] = record
             entry["presence_source"] = "wire"
-            entry["sim_corroborated"] = self._sim_corroborated(peer_id)
+            corroborated = entry["sim_corroborated"] = self._sim_corroborated(peer_id)
             # Which leg carried this heartbeat: the fleet view's ``reach`` chip (lan / iot /
             # both) is derived from the legs that spoke inside the TTL, never from the body.
             legs = entry.setdefault("legs", {})
             legs[sample_leg(sample)] = time.time()
-        self._emit({"type": "presence", "peer_id": peer_id, "data": record})
+        # The provenance rides along so the browser's run-risk read (``lib/runRisk.ts``) doubts
+        # an unlaunched sim claim between snapshots exactly as ``peer_is_physical`` does.
+        self._emit(
+            {
+                "type": "presence",
+                "peer_id": peer_id,
+                "data": record,
+                "presence_source": "wire",
+                "sim_corroborated": corroborated,
+            }
+        )
 
     def _on_state(self, sample: Any) -> None:
         data = self._decode(sample)

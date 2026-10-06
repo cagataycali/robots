@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands_robots.dashboard import agent_console, peer_tools
+from strands_robots.dashboard import agent_console, agent_motion, peer_tools
 from strands_robots.mesh import security
 
 # ─────────────────────────────────────────── the wire: set_joints ──────────
@@ -332,7 +332,7 @@ def test_console_holds_fleet_and_proxy_tools_only_and_gates_real_motion() -> Non
     from strands_robots.dashboard.peer_tools import build_peer_tools, motion_actions_for
 
     proxies = build_peer_tools(bridge.peers, bridge.send_cmd)
-    assert motion_actions_for(proxies, bridge.peers) == {"arm_1": frozenset({"execute", "start"})}
+    assert motion_actions_for(proxies, bridge.peers) == {"arm_1": agent_motion.PHYSICAL_MOTION_ACTIONS}
 
 
 def test_console_without_a_bridge_holds_only_the_estop() -> None:
