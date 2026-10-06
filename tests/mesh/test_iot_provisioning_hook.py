@@ -505,5 +505,5 @@ def test_the_cn_gate_precedes_the_thing_and_allowlist_lookups():
     assert all(c.args[0] != "iot" for c in fake_boto3.client.call_args_list)
 
 
-def test_the_hook_version_was_bumped_for_the_cn_gate():
-    assert b._PROVISIONING_HOOK_VERSION >= 2
+def test_the_hook_version_was_bumped_for_the_thing_name_gate():
+    assert b._PROVISIONING_HOOK_VERSION >= 3

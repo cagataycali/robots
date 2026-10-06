@@ -18,7 +18,7 @@ class TestMainDispatch:
     """main() - command routing and argv normalisation."""
 
     def test_no_command_prints_usage_and_exits_1(self, monkeypatch, capsys) -> None:
-        """Bare ``python -m strands_robots`` should print usage and exit 1."""
+        """A bare call prints the same usage line as ``--help`` (naming the console script) and exits 1."""
         monkeypatch.setattr("sys.argv", ["strands_robots"])
 
         with pytest.raises(SystemExit) as exc:
@@ -26,7 +26,7 @@ class TestMainDispatch:
 
         assert exc.value.code == 1
         out = capsys.readouterr().out
-        assert "Usage: python -m strands_robots <command>" in out
+        assert out.splitlines()[0] == "Usage: strands-robots <command> [options]"
         assert "doctor" in out
 
     def test_unknown_command_prints_error_and_exits_1(self, monkeypatch, capsys) -> None:
