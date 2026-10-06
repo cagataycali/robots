@@ -31,7 +31,10 @@ from strands_robots.dashboard.cameras import CameraUnavailable
 from strands_robots.dashboard.churn_guard import ChurnGuard
 from strands_robots.dashboard.device_manager import (
     AUTOSPAWN_POLL_S,
+    BOARD_ANCHORS,
     DeviceManager,
+    board_anchors,
+    board_mismatch,
     respawn_payload,
     validate_cameras,
     validate_motor_model,
@@ -196,7 +199,7 @@ async def camera_modes(request: Request, index: int, _: dict = Depends(access.re
         raise _camera_http_error(index, e) from e
 
 
-async def _spawn(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+async def _spawn(request: Request, body: dict[str, Any], *, remember: bool = True) -> dict[str, Any]:
     """The one spawn path: validation, the bus-claim gate, the settle window, the audit trail."""
     dm = _devices(request)
     bridge = _bridge(request)
@@ -231,6 +234,7 @@ async def _spawn(request: Request, body: dict[str, Any]) -> dict[str, Any]:
         body.get("port"),
         body.get("cameras"),
         body.get("robot_id"),
+        remember,
     )
     # A pid is not a running robot.
     peer_id = result.get("peer_id")
@@ -279,20 +283,58 @@ async def spawn(request: Request, body: dict[str, Any], _: dict = Depends(access
 async def spawn_remembered(
     request: Request, body: dict[str, Any], _: dict = Depends(access.require_session)
 ) -> dict[str, Any]:
-    """Spawn the robot a port's remembered USB profile describes."""
+    """Spawn the robot a port's remembered USB profile describes.
+
+    The serial the profile was found by is a string the device chose, so the board must also
+    show the chip and USB location the profile recorded; a mismatch (or one the scan cannot
+    read) is a 409 naming both, unless the body says ``"accept_different_board": true``, which
+    is audited and rebinds the profile to this board. The spawn itself never rewrites them.
+    """
     dm = _devices(request)
+    bridge = _bridge(request)
     port = str(body.get("port") or "").strip()
     if not port:
         raise HTTPException(422, "port required")
-    profile = await asyncio.to_thread(dm.profile_for_port, port)
+    board, profile = await asyncio.to_thread(dm.remembered_board, port)
     payload = respawn_payload(profile, port)
     if payload.get("error"):
         raise HTTPException(404, payload["error"])
+    if profile is None or board is None:  # respawn_payload already refused these; narrows the types
+        raise HTTPException(404, "no saved profile for this board")
+    remembered = {k: profile.get(k) for k in BOARD_ANCHORS}
+    seen = board_anchors(board)
+    mismatch = board_mismatch(profile, board)
+    accepted = body.get("accept_different_board") is True
+    if mismatch and not accepted:
+        error = (
+            f"{port} reports the serial of {payload['peer_id']} but is a different board: {mismatch}. "
+            "Not started. If this really is that robot on a new board or socket, resend with "
+            '"accept_different_board": true and the profile will remember this board instead.'
+        )
+        _audit(bridge, "spawn", target=payload["peer_id"], detail=f"refused: {error}", ok=False)
+        raise HTTPException(409, {"error": error, "remembered": remembered, "seen": seen})
+    if mismatch:
+        _audit(
+            bridge,
+            "spawn_accept_different_board",
+            target=payload["peer_id"],
+            detail=f"operator accepted a different board at {port}: {mismatch}",
+            ok=None,
+        )
     moved = payload.pop("port_moved", None)
+    # Remembering is only the one-time recording of anchors the profile lacks; ProfileStore.save
+    # keeps the ones on file whatever this spawn says.
+    recording = [k for k, v in seen.items() if v and not remembered[k]]
     # One spawn path, not two: the settle window, the consent attachment and the audit trail
     # all live in _spawn, and a second copy of them is a second thing to forget to fix.
-    result = await _spawn(request, payload)
+    result = await _spawn(request, payload, remember=bool(recording))
     result["respawned_from_profile"] = True
+    if "error" not in result:
+        if mismatch:
+            result["board_rebound"] = dm.profiles.rebind_board(str(board["serial_number"]), board)
+        elif recording:
+            # Said out loud: from now on this board is checked against what was just recorded.
+            result["board_recorded"] = {k: seen[k] for k in recording}
     if moved:
         # Said out loud because it is the operator's evidence that the board they are looking
         # at is the board that came up: same serial, new /dev path.
