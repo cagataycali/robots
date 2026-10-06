@@ -85,3 +85,24 @@ class TestExportAfterReplace:
             assert "no world" in result["content"][0]["text"].lower()
         finally:
             sim.cleanup(policy_stop_timeout=0.5)
+
+
+@pytest.mark.parametrize("bodies, truncated", [(1, False), (60, True)])
+def test_inline_export_says_whether_it_is_the_whole_scene(sim: Simulation, bodies: int, truncated: bool) -> None:
+    """An inline export over the preview cap is labelled a preview, not passed off as the full MJCF."""
+    sim.create_world()
+    geoms = "".join(f'<body name="b{i}"><geom type="sphere" size="0.01"/></body>' for i in range(bodies))
+    sim.replace_scene_mjcf(f"<mujoco><worldbody>{geoms}</worldbody></mujoco>")
+    full = sim._world._backend_state["spec"].to_xml()
+    result = sim.export_xml()
+    assert result["status"] == "success", result
+    text, meta = result["content"][0]["text"], result["content"][1]["json"]
+    header, body = text.split("\n", 1)
+    assert meta == {"chars": len(full), "shown": meta["shown"], "truncated": truncated}
+    if truncated:
+        assert header.startswith(f"Model XML preview (first {meta['shown']} of {len(full)} chars")
+        assert body == full[: meta["shown"]] + "\n<!-- truncated -->"
+        assert body[: meta["shown"]].endswith(">")
+    else:
+        assert header == f"Model XML ({len(full)} chars):"
+        assert body == full
