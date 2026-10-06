@@ -114,9 +114,10 @@ def test_the_fall_clause_fires_on_a_folded_go2_and_not_on_either_stance(go2_sim)
     benches = {name: DeclarativeBenchmark.from_dict(spec) for name, spec in GO2_SPECS.items()}
     quiet = dict.fromkeys(GO2_SPECS, False)
 
-    # 1. spawn stance: straight legs, feet down, 0.445 m - not a fall.
+    # 1. spawn stance: straight legs, feet resting on the plane (the authored
+    # 0.445 m plus the registry's 3 mm spawn_position), 0.448 m - not a fall.
     spawn_z = float(data.qpos[2])
-    assert spawn_z == pytest.approx(0.445, abs=1e-3)
+    assert spawn_z == pytest.approx(0.448, abs=1e-3)
     assert {n: b.is_failure(go2_sim) for n, b in benches.items()} == quiet
 
     # 2. the asset's own home keyframe stance, 0.27 m - also not a fall.

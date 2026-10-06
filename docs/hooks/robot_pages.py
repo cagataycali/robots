@@ -696,17 +696,11 @@ def robot_page(name: str) -> str:
                 "",
             ]
         else:
-            # A model authored below the plane (LeKiwi's wheels, a quadruped's
-            # straight-legged zero pose) makes ``add_robot`` warn and name the
-            # ``position=`` that spawns it clear; the registry carries that
-            # position so the first run of the page is a clean one.
-            spawn = spec.get("spawn_position")
-            at = f", position={[float(v) for v in spawn]}" if spawn else ""
             lines += [
                 "```python",
                 "from strands_robots import Robot",
                 "",
-                f'robot = Robot("{name}"{at})',
+                f'robot = Robot("{name}")',
                 f'print(robot.robot_action_keys("{name}"))',
                 "robot.cleanup()",
                 "```",

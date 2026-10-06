@@ -14,7 +14,7 @@ description: "Unitree Go2 Quadruped"
 ```python
 from strands_robots import Robot
 
-robot = Robot("unitree_go2", position=[0.0, 0.0, 0.003])
+robot = Robot("unitree_go2")
 print(robot.robot_action_keys("unitree_go2"))
 robot.cleanup()
 ```

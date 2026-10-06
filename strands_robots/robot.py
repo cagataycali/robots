@@ -694,7 +694,9 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
 
         position: Robot base position in the sim world, ``[x, y, z]``. Passed
             through to the backend's ``add_robot`` verbatim, so the backend's
-            contract governs: omitting it spawns at the origin, and a
+            contract governs: omitting it spawns at the origin (or the
+            registry's ``spawn_position`` for a model authored below the
+            ground), and a
             wrong-length, non-numeric or non-finite vector is refused with an
             actionable message (surfaced here as ``RuntimeError``) instead of
             being replaced by the origin. Only applies to ``mode="sim"``; in
@@ -894,7 +896,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             # actionable message. Membership (``is not None``) is the only
             # correct supplied-test for a vector, and here even that is
             # unnecessary: ``position=None`` is what ``add_robot`` already
-            # documents as "spawn at the origin", so passing it through keeps ONE
+            # documents as "spawn at the default", so passing it through keeps ONE
             # source of truth for that default instead of a copy that can drift.
             # ``orientation`` and ``keyframe`` travel with ``position`` for the
             # same reason it is passed through unmodified: all three are
