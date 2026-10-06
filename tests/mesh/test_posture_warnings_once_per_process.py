@@ -1,10 +1,10 @@
 """The startup posture warnings are said once per process, not once per Mesh.
 
 Observed: ``examples/04_mesh_peer_discovery.py`` printed the four-line
-``No emergency-stop resume code set`` banner twice - once as
+no-resume-credential banner twice - once as
 ``[safety:example-arm-01]`` for the sim, once as
 ``[safety:example-arm-01__so100]`` for its per-robot child peer. Both read the
-same ``STRANDS_MESH_OVERRIDE_CODE``; the second banner carried no new fact.
+same environment; the second banner carried no new fact.
 The multicast warning has the same shape. Same harness as
 ``test_multicast_startup_warning``.
 """
@@ -20,7 +20,9 @@ import pytest
 from strands_robots.mesh import Mesh
 from strands_robots.mesh import core as mesh_core
 
-_OVERRIDE_MARKER = "No emergency-stop resume code set"
+from ._resume import trust_new_key
+
+_NO_KEY_MARKER = "No resume verification key set"
 _MULTICAST_MARKER = "Multicast scouting is ON"
 
 
@@ -61,31 +63,31 @@ def _messages(caplog: pytest.LogCaptureFixture, marker: str) -> list[str]:
 
 
 def test_two_meshes_in_one_process_say_the_override_banner_once(monkeypatch, caplog):
-    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_RESUME_PUBLIC_KEY", raising=False)
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "false")
     _run_start(_make_mesh("parent-sim"), caplog)
     _run_start(_make_mesh("parent-sim__so100"), caplog)
-    banners = _messages(caplog, _OVERRIDE_MARKER)
+    banners = _messages(caplog, _NO_KEY_MARKER)
     assert len(banners) == 1, banners
     assert "[safety:parent-sim]" in banners[0], "the first peer to start names the banner"
 
 
 def test_the_first_mesh_still_warns(monkeypatch, caplog):
-    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_RESUME_PUBLIC_KEY", raising=False)
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "false")
     _run_start(_make_mesh("solo"), caplog)
-    assert len(_messages(caplog, _OVERRIDE_MARKER)) == 1
+    assert len(_messages(caplog, _NO_KEY_MARKER)) == 1
 
 
-def test_a_set_code_keeps_the_banner_silent(monkeypatch, caplog):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
+def test_a_set_key_keeps_the_banner_silent(monkeypatch, caplog):
+    trust_new_key(monkeypatch)
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "false")
     _run_start(_make_mesh("coded"), caplog)
-    assert _messages(caplog, _OVERRIDE_MARKER) == []
+    assert _messages(caplog, _NO_KEY_MARKER) == []
 
 
 def test_multicast_banner_is_also_once_per_process(monkeypatch, caplog):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-1234567890abcdef")
+    trust_new_key(monkeypatch)
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
     _run_start(_make_mesh("mc-a"), caplog)
     _run_start(_make_mesh("mc-b"), caplog)
@@ -93,8 +95,8 @@ def test_multicast_banner_is_also_once_per_process(monkeypatch, caplog):
 
 
 def test_the_two_kinds_are_independent(monkeypatch, caplog):
-    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+    monkeypatch.delenv("STRANDS_MESH_RESUME_PUBLIC_KEY", raising=False)
     monkeypatch.setenv("STRANDS_MESH_MULTICAST", "true")
     _run_start(_make_mesh("both"), caplog)
-    assert len(_messages(caplog, _OVERRIDE_MARKER)) == 1
+    assert len(_messages(caplog, _NO_KEY_MARKER)) == 1
     assert len(_messages(caplog, _MULTICAST_MARKER)) == 1

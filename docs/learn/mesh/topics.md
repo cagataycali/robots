@@ -47,7 +47,7 @@ A sensor topic exists only when the robot exposes the attribute behind it (`_pos
 | key | payload |
 |---|---|
 | `strands/safety/estop` | `{"peer_id", "t", ...}`: every receiver engages its lockout ([safety](safety-and-estop.md)) |
-| `strands/safety/resume` | `{"peer_id", "t", "lockout_elapsed_s", "proof_nonce", "override_proof"}`: receivers verify the HMAC before clearing |
+| `strands/safety/resume` | `{"peer_id", "t", "lockout_elapsed_s", "assertion"}`: receivers verify the operator's signature before clearing |
 
 Both are capped at 2 Hz and 4 KiB per message (`STRANDS_MESH_SAFETY_RATE_HZ`, `STRANDS_MESH_MAX_SAFETY_BYTES`) at the transport, before any deserialisation.
 

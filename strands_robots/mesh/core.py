@@ -8,9 +8,7 @@ Extended sensor loops (pose, IMU, health, etc.) are provided by
 from __future__ import annotations
 
 import base64
-import functools
 import hashlib
-import hmac
 import json
 import logging
 import math
@@ -30,6 +28,7 @@ from strands_robots._pacing import Ticker
 from strands_robots.audit import log_safety_event
 from strands_robots.bus_access import joint_read_source, read_joints, read_observation
 from strands_robots.drivers.cameras import camera_names, camera_read_source, device_camera_names
+from strands_robots.mesh import resume_authority as _resume_authority
 from strands_robots.mesh import security as _security
 from strands_robots.mesh._backend_select import select_backend
 from strands_robots.mesh._kill_switch import mesh_disabled_by_env
@@ -67,7 +66,7 @@ _LOCAL_ROBOTS: dict[str, Mesh] = {}
 _LOCAL_ROBOTS_LOCK = threading.Lock()
 
 #: Startup posture warnings this process has already emitted, by kind.
-#: ``STRANDS_MESH_OVERRIDE_CODE`` and ``STRANDS_MESH_MULTICAST`` describe the
+#: ``STRANDS_MESH_RESUME_PUBLIC_KEY`` and ``STRANDS_MESH_MULTICAST`` describe the
 #: process, not a peer: every :class:`Mesh` in it reads the same environment,
 #: so the second instance (a sim's per-robot child peer, a fleet of arms in
 #: one process) would only repeat the banner under another name. Emit once.
@@ -317,62 +316,25 @@ def _resume_backoff_s() -> float:
     return _parse_positive_float_env("STRANDS_MESH_RESUME_BACKOFF_S", "30")
 
 
-#: Shortest ``STRANDS_MESH_OVERRIDE_CODE`` either side of a resume accepts. The
-#: code is the one secret that clears a fleet lockout, and every field the
-#: proof MAC covers travels on the wire beside the proof, so a captured
-#: envelope is an offline oracle for candidate codes. A code under this length
-#: is treated as unset on both sides (fail closed: remote resume refused, the
-#: reason logged at start) rather than read as a weaker version of the same
-#: authority. Generate one with ``python -c "import secrets;
-#: print(secrets.token_urlsafe(32))"``.
-OVERRIDE_CODE_MIN_LEN = 16
-
-#: Domain-separating salt for :func:`resume_proof_key`. Versioned so a future
-#: change of parameters can be told apart from a wrong code.
-_RESUME_KDF_SALT = b"strands-mesh-resume-proof-v1"
+#: The refusal :meth:`Mesh._admit_resume` gives when there is no lockout to clear.
+_RESUME_NOT_ENGAGED = "lockout not engaged"
 
 
-def override_code() -> str | None:
-    """The operator override code, or ``None`` when unset or too short to use.
+def _resume_verify_keys() -> list[Any]:
+    """The operator public keys a resume must be signed by; empty fails closed.
 
-    One reader for both sides of a resume (:meth:`Mesh._resume_lockout` mints
-    the proof, :meth:`Mesh._on_safety_resume` verifies it) so they cannot
-    disagree on what counts as configured. A value shorter than
-    :data:`OVERRIDE_CODE_MIN_LEN` is refused with a once-per-process WARNING
-    that says how to generate a usable one.
+    Without the ``cryptography`` package no key can be loaded, so no resume
+    is admitted (the lockout holds) and the reason is logged once.
     """
-    code = os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip()
-    if not code:
-        return None
-    if len(code) < OVERRIDE_CODE_MIN_LEN:
+    try:
+        return _resume_authority.verify_keys()
+    except ImportError:
         _warn_posture_once(
-            "override_code_short",
-            "[safety] STRANDS_MESH_OVERRIDE_CODE is too short (%d chars, minimum %d) and is treated as "
-            "unset: remote resume is refused on this peer. A resume proof is checkable offline from one "
-            "captured envelope, so a short code is a guessable one. Generate a code with "
-            "python -c 'import secrets; print(secrets.token_urlsafe(32))' and set the SAME value on every peer.",
-            len(code),
-            OVERRIDE_CODE_MIN_LEN,
+            "resume_crypto_missing",
+            "[safety] the cryptography package is not installed, so no signed resume can be checked and an "
+            "e-stop lockout on this peer can only be cleared by a restart. Install strands-robots[mesh].",
         )
-        return None
-    return code
-
-
-_configured_override_code = override_code
-
-
-@functools.lru_cache(maxsize=8)
-def resume_proof_key(code: str) -> bytes:
-    """The key the resume proof MAC is computed with, derived from *code*.
-
-    scrypt (memory-hard, 16 MiB, about 50 ms) rather than the code itself:
-    every MAC input is public, so the per-guess cost of the derivation is the
-    whole cost of an offline search against a captured proof. Derived once per
-    process per code; the same parameters on every peer, so a proof minted by
-    one verifies on another. A proof keyed with the raw code, as older peers
-    minted, no longer verifies: the two sides of a fleet must upgrade together.
-    """
-    return hashlib.scrypt(code.encode(), salt=_RESUME_KDF_SALT, n=2**14, r=8, p=1, dklen=32)
+        return []
 
 
 def _evict_replay_cache[K](
@@ -904,21 +866,17 @@ class Mesh(SensorLoopsMixin):
         # Emergency-stop lockout flag. While this Event is set, every
         # action other than ``status`` and ``resume`` is refused (see
         # :meth:`_dispatch`). The flag is cleared by :meth:`_resume_lockout`,
-        # which requires the operator-supplied override code.
+        # which requires an assertion signed by the operator's resume key and
+        # naming this peer and ``_lockout_epoch``, the id of the e-stop that
+        # engaged the lockout (``None`` while it is clear).
         self._estop_lockout = threading.Event()
+        self._lockout_epoch: str | None = None
         self._last_estop_ts: float = 0.0
         self._last_estop_mono: float = 0.0
-        # _on_safety_resume must defend
-        # against replay of a previously-observed override-proof envelope.
-        # The receiver caches (proof_nonce, issuer_peer_id) tuples it has
-        # already accepted and refuses duplicates within a bounded window.
-        # Combined with the freshness check on the envelope ``t`` field
-        # this closes the recorded-and-replayed-resume surface even when
-        # an attacker has live ACL access on safety/**.
-        # Key shape: ((domain_tag, issuer), proof_nonce) where domain_tag is
-        # "wire" for TLS-bound Zenoh wire_zid or "body" for app-level issuer_id.
-        # Tuple-of-tuples prevents cross-transport namespace collision (R12).
-        self._resume_replay_cache: dict[tuple[tuple[str, str], str], float] = {}
+        # Nonces of the signed resume assertions this peer admitted, by the
+        # monotonic time it admitted them; an assertion is single use within
+        # its freshness window (see _admit_resume).
+        self._resume_replay_cache: dict[str, float] = {}
         self._resume_replay_lock = threading.Lock()
         # estop replay defense -- mirror of resume cache, keyed on
         # (issuer_peer_id, envelope_t). Closes the captured-estop-replay DoS
@@ -1097,35 +1055,36 @@ class Mesh(SensorLoopsMixin):
             if zenoh_backend_missing():
                 return
 
-            # H-1: permanent-fleet-lockout footgun warning.
-            # STRANDS_MESH_OVERRIDE_CODE is optional and defaults to empty.
-            # When it is unset, _resume_lockout can NEVER succeed (no code
-            # matches the empty/sentinel digest), so a SINGLE e-stop broadcast
-            # permanently locks every robot until a physical restart of each
-            # one -- a fleet-wide DoS from one message. We cannot safely
-            # auto-generate a code (every peer must agree on it), so we emit a
-            # loud startup WARNING describing the consequence + the fix. This
-            # turns a silent operational landmine into an explicit, logged
-            # decision. Operators who genuinely want no remote-resume posture
-            # (e.g. physical-only recovery) see the warning and accept it.
-            # Once per process: the posture is the environment's, and a
-            # second Mesh here (a sim's child peer) reads the same one.
-            if override_code() is None and not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
+            # Without a resume verification key no resume can ever be admitted,
+            # so a single e-stop locks this robot until it is restarted. Said
+            # once per process: the posture is the environment's.
+            # STRANDS_MESH_OVERRIDE_CODE is retired; it is read only to warn that it no longer clears a lockout.
+            if os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
                 _warn_posture_once(
-                    "override_code",
-                    "[safety:%s] No emergency-stop resume code set. If any peer "
+                    "override_code_retired",
+                    "[safety:%s] STRANDS_MESH_OVERRIDE_CODE is no longer read: a shared code let any peer that "
+                    "saw it clear any robot. Resume is now signed by the operator's key; set "
+                    "STRANDS_MESH_RESUME_PUBLIC_KEY on every peer (python -m "
+                    "strands_robots.mesh.resume_authority keygen <key-file>) and unset the old code.",
+                    self.peer_id,
+                )
+            if not _resume_verify_keys():
+                _warn_posture_once(
+                    "resume_public_key",
+                    "[safety:%s] No resume verification key set. If any peer "
                     "broadcasts an e-stop, this robot stays locked until you "
                     "physically restart it (one message can freeze the whole "
                     "fleet).\n"
-                    "  To allow remote resume: set STRANDS_MESH_OVERRIDE_CODE to "
-                    "the SAME value on every peer.\n"
+                    "  To allow remote resume: create an operator key with "
+                    "python -m strands_robots.mesh.resume_authority keygen <key-file> "
+                    "and set STRANDS_MESH_RESUME_PUBLIC_KEY to its public half on every peer.\n"
                     "  Local dev?  STRANDS_MESH_LOCAL_DEV=true is fine to ignore "
                     "this.",
                     self.peer_id,
                 )
 
             # Multicast-scouting fleet-takeover warning.
-            # Twin of the H-1 override-code warning above. STRANDS_MESH_MULTICAST
+            # Twin of the resume-key warning above. STRANDS_MESH_MULTICAST
             # defaults to false (gossip-only scouting). When an operator opts
             # INTO multicast, any device on the LAN can attract the entire fleet
             # in ~15s with zero credentials (unauthenticated UDP 224.0.0.224:7446
@@ -2863,7 +2822,14 @@ class Mesh(SensorLoopsMixin):
             raise _security.LockoutError("command rejected")
 
         if action == "resume":
-            return self._resume_lockout(cmd.get("override_code", ""))
+            if "override_code" in cmd:
+                # A plain code on strands/<robot>/cmd is readable by every peer
+                # the ACL lets subscribe there; it is refused, never compared.
+                self._emit_resume_denied(
+                    "resume carried a plain override_code; a signed assertion is required", "warning"
+                )
+                return {"status": "error", "error": "resume rejected"}
+            return self._resume_lockout(cmd.get("assertion"))
 
         if action == "ping":
             # Reachability only: nothing on the robot is read or moved, so it
@@ -4029,7 +3995,15 @@ class Mesh(SensorLoopsMixin):
                 self._estop_lockout.set()
                 self._last_estop_ts = time.time()
                 self._last_estop_mono = time.monotonic()
+                # The fleet shares the issuer's e-stop id as its lockout epoch so
+                # one signed resume can name it; an envelope without one still
+                # stops, under an epoch only this peer's events announce.
+                estop_id = data.get("estop_id")
+                self._lockout_epoch = (
+                    estop_id if _resume_authority.is_epoch(estop_id) else _resume_authority.new_epoch()
+                )
             lockout_engaged_since = self._last_estop_ts
+            lockout_epoch = getattr(self, "_lockout_epoch", None)
         sender = issuer_id
         if not lockout_was_engaged:
             logger.critical(
@@ -4044,6 +4018,7 @@ class Mesh(SensorLoopsMixin):
                     "trigger": "remote",
                     "issuer": sender,
                     "issuer_t": envelope_t,
+                    "lockout_epoch": lockout_epoch,
                 },
             )
         else:
@@ -4060,150 +4035,42 @@ class Mesh(SensorLoopsMixin):
     def _on_safety_resume(self, sample: Any) -> None:
         """Clear the local lockout on a fleet ``strands/safety/resume`` broadcast.
 
-        A resume is second-factor gated: the envelope carries an HMAC-SHA256
-        ``override_proof`` keyed with the operator code
-        (``STRANDS_MESH_OVERRIDE_CODE``, which must also be configured here) over
-        ``peer_id``, ``t``, ``lockout_elapsed_s``, ``proof_nonce`` and, when the
-        wire carried one, ``source_zid`` - so a captured proof cannot be
-        mutated or moved to another session. After the shared decode/zid
-        binding and ``t``/``peer_id`` gates and the proof compare, a
-        per-receiver replay cache keyed on ``(issuer, proof_nonce)`` refuses the
-        same proof twice. Every refusal leaves the lockout engaged; unlike
-        estop, an issuer over the per-issuer cap is refused outright.
+        The envelope relays the operator's signed assertion (see
+        :mod:`strands_robots.mesh.resume_authority`); the peer that published
+        it needed no secret to do so and could not have forged it. After the
+        shared decode/zid binding and ``t``/``peer_id`` gates,
+        :meth:`_admit_resume` checks the signature against this peer's
+        configured public key, that the assertion names this peer and its
+        current lockout epoch, its freshness and its single use. Every refusal
+        leaves the lockout engaged.
         """
         bound = self._decode_bound_safety_envelope(sample, "resume")
         if bound is None:
             return
-        data, wire_zid = bound
-        local_code = override_code()
-        if local_code is None:
-            logger.warning(
-                "[safety] %s: refusing remote resume -- STRANDS_MESH_OVERRIDE_CODE "
-                "not configured locally (operator code missing or too short)",
-                self.peer_id,
-            )
-            return
-        # The same brute-force throttle the RPC ``resume`` action honours: this
-        # is the handler that actually clears a lockout, and it had none, so the
-        # wire was a free online oracle for the code.
-        if self._resume_throttled():
-            self._emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
-            return
-        proof_nonce = data.get("proof_nonce")
-        provided_proof = data.get("override_proof")
-        if not isinstance(proof_nonce, str) or not isinstance(provided_proof, str):
-            logger.warning(
-                "[safety] %s: refusing remote resume -- envelope missing override_proof / proof_nonce",
-                self.peer_id,
-            )
-            return
+        data, _wire_zid = bound
         timed = self._check_safety_envelope_timing(data, "resume")
         if timed is None:
             return
-        envelope_t, issuer_id, forward_skew_s, freshness_window_s = timed
-        envelope_elapsed = data.get("lockout_elapsed_s")
-        if not isinstance(envelope_elapsed, (int, float)):
-            logger.warning(
-                "[safety] %s: refusing remote resume -- envelope missing/invalid ``lockout_elapsed_s``",
-                self.peer_id,
-            )
-            return
-        # The MAC input is the canonical JSON of the bound fields; wire zid only
-        # when the transport supplied one, so pre-binding issuers still verify.
-        mac_fields: dict[str, Any] = {
-            "peer_id": issuer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": envelope_elapsed,
-            "proof_nonce": proof_nonce,
-        }
-        if wire_zid is not None:
-            mac_fields["source_zid"] = wire_zid
-        mac_input = json.dumps(
-            mac_fields,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        expected_proof = hmac.new(
-            resume_proof_key(local_code),
-            mac_input,
-            "sha256",
-        ).hexdigest()
-        if not hmac.compare_digest(expected_proof, provided_proof):
-            logger.warning(
-                "[safety] %s: refusing remote resume -- override_proof mismatch "
-                "(MAC binds peer_id+t+lockout_elapsed_s+proof_nonce%s; "
-                "captured-and-mutated replay rejected, constant-time compared)",
-                self.peer_id,
-                "+source_zid" if wire_zid is not None else "",
-            )
-            self._note_resume_failure()
-            self._emit_resume_denied("override_proof mismatch on strands/safety/resume", "warning")
-            return
-        # Replay cache keyed per TLS session when known, else per body peer_id;
-        # the tagged tuple keeps the two namespaces from colliding.
-        issuer_key = ("wire", wire_zid) if wire_zid is not None else ("body", issuer_id)
-        cache_key = (issuer_key, proof_nonce)
-        replay_cache_max = _resume_replay_cache_max()
-        with self._resume_replay_lock:
-            if cache_key in self._resume_replay_cache:
-                logger.warning(
-                    "[safety] %s: REJECTED remote resume -- replay of (issuer=%s, proof_nonce=%s) already accepted",
-                    self.peer_id,
-                    issuer_id,
-                    proof_nonce[:16] + "...",
-                )
-                self._audit(
-                    event_type="resume_replay_rejected",
-                    severity="warning",
-                    payload={
-                        "issuer": issuer_id,
-                        "proof_nonce_prefix": proof_nonce[:16],
-                    },
-                )
-                return
-            now_mono = time.monotonic()
-            _evict_replay_cache(
-                self._resume_replay_cache,
-                max_size=replay_cache_max,
-                ttl_s=freshness_window_s + forward_skew_s,
-                now_mono=now_mono,
-            )
-            per_issuer_cap = max(1, replay_cache_max // 4)
-            issuer_slots = sum(1 for k in self._resume_replay_cache if k[0] == issuer_key)
-            if self._per_issuer_cap_exceeded(
-                "resume",
-                issuer_key,
-                issuer_slots,
-                per_issuer_cap,
-                {"issuer": issuer_id, "proof_nonce_prefix": proof_nonce[:16]},
-            ):
-                return
-            self._resume_replay_cache[cache_key] = now_mono
-        sender = issuer_id
-        if self._estop_lockout.is_set():
-            self._estop_lockout.clear()
-            logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, sender)
-            self.publish_safety_event(
-                event_type="remote_resume_applied",
-                severity="info",
-                payload={
-                    "trigger": "remote",
-                    "issuer": sender,
-                    "issuer_t": envelope_t,
-                },
-            )
-        else:
+        envelope_t, issuer_id = timed[0], timed[1]
+        reason = self._admit_resume(data.get("assertion"))
+        if reason == _RESUME_NOT_ENGAGED:
             self._audit(
                 event_type="remote_resume_redundant",
                 severity="info",
-                payload={
-                    "trigger": "remote",
-                    "issuer": sender,
-                    "issuer_t": envelope_t,
-                },
+                payload={"trigger": "remote", "issuer": issuer_id, "issuer_t": envelope_t},
             )
+            return
+        if reason is not None:
+            logger.warning("[safety] %s: refusing remote resume from %s -- %s", self.peer_id, issuer_id, reason)
+            self._emit_resume_denied(f"{reason} (strands/safety/resume from {issuer_id})", "warning")
+            return
+        logger.warning("[safety] %s: lockout cleared via remote resume from %s", self.peer_id, issuer_id)
+        self.publish_safety_event(
+            event_type="remote_resume_applied",
+            severity="info",
+            payload={"trigger": "remote", "issuer": issuer_id, "issuer_t": envelope_t},
+        )
 
-    # RPC -- outgoing
     def _cmd_topic_size_problem(self, msg: dict[str, Any]) -> str | None:
         """Report why *msg* would be dropped by the cmd-topic byte cap.
 
@@ -4808,8 +4675,9 @@ class Mesh(SensorLoopsMixin):
         one robot the fanout cannot reach.
 
         After this call the local mesh refuses every action but ``status``,
-        ``resume`` and ``stop`` until :meth:`_resume_lockout` is invoked with
-        the operator override code (``STRANDS_MESH_OVERRIDE_CODE``). ``stop``
+        ``resume`` and ``stop`` until :meth:`_resume_lockout` admits an
+        assertion signed by the operator's resume key naming this peer and the
+        lockout epoch (the ``estop_id`` this call publishes). ``stop``
         stays admitted because it only ever de-energizes: a second e-stop
         reaching an already locked-out peer must halt a rollout the first one
         missed rather than be rejected. The event is also published on
@@ -4837,6 +4705,11 @@ class Mesh(SensorLoopsMixin):
                 f"mesh not running: {self.peer_id} cannot emergency_stop -- no peer was told to stop; "
                 "use the robot's local stop and fix the mesh start refusal it logged"
             )
+        # A new lockout gets a new epoch; pressing the button again while
+        # locked keeps the one the fleet already holds.
+        lockout_epoch = getattr(self, "_lockout_epoch", None)
+        if not self._estop_lockout.is_set() or lockout_epoch is None:
+            lockout_epoch = self._lockout_epoch = _resume_authority.new_epoch()
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
@@ -4900,6 +4773,7 @@ class Mesh(SensorLoopsMixin):
             "peers_not_stopped": sorted(not_stopped),
             "peers_silent": silent,
             "lockout_engaged": True,
+            "estop_id": lockout_epoch,
         }
         if local_zid is not None:
             envelope["source_zid"] = local_zid
@@ -4913,6 +4787,7 @@ class Mesh(SensorLoopsMixin):
                 "peers_not_stopped": sorted(not_stopped),
                 "peers_silent": silent,
                 "lockout_engaged": True,
+                "lockout_epoch": lockout_epoch,
             },
         )
         logger.critical("[safety] %s: EMERGENCY STOP engaged -- lockout active", self.peer_id)
@@ -4959,85 +4834,133 @@ class Mesh(SensorLoopsMixin):
             payload={"sender_id": self.peer_id, "reason_code": "denied"},
         )
 
-    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
-        """Clear the emergency-stop lockout if *override_code* matches.
+    def _admit_resume(self, assertion: Any) -> str | None:
+        """Clear the lockout if *assertion* may; otherwise say why not.
 
-        The code is compared in constant time against
-        ``STRANDS_MESH_OVERRIDE_CODE`` (both sides hashed to a fixed length
-        first, so the compare cannot leak the code's length), and repeated
-        failures throttle further attempts. The wire response is one generic
-        shape - ``{"status": "ok"}`` or ``{"status": "error", "error":
-        "resume rejected"}`` for every refusal, including "lockout not
-        engaged" and "code unconfigured" - so a prober gets no oracle on the
-        lockout state, the configuration or how long the fleet was held; the
-        structured reason goes to the local audit log only. On success the
-        fleet-wide ``strands/safety/resume`` envelope carries an HMAC proof over
-        its bound fields (see :meth:`_on_safety_resume`), never the code, and
-        ``lockout_elapsed_s`` is measured on the monotonic clock.
+        One gate for both resume paths, the RPC ``resume`` action and the
+        ``strands/safety/resume`` relay: the brute-force throttle, an engaged
+        lockout, :func:`~strands_robots.mesh.resume_authority.check_assertion`
+        (a configured public key, a valid signature, this peer among the
+        targets, the current lockout epoch), the assertion's ``t`` within the
+        freshness window and its ``nonce`` not seen before. The epoch compare
+        and the clear happen under the lock a remote e-stop engages under, so
+        an assertion for one lockout cannot clear the next.
+
+        Returns:
+            ``None`` once the lockout was cleared; otherwise the refusal
+            reason (:data:`_RESUME_NOT_ENGAGED` when there was nothing to clear).
         """
-        _generic_error = {"status": "error", "error": "resume rejected"}
-        # The parameter shadows the module-level reader; ``_configured_override_code``
-        # is that reader under a name the signature cannot hide.
-        expected = _configured_override_code() or ""
-        provided = (override_code or "").strip()
-        lockout_engaged = self._estop_lockout.is_set()
-        # Fixed-length digests on both sides; an unconfigured code still runs the
-        # compare so the refusal takes the same time.
-        _PROVIDED_HASH = hashlib.sha256(provided.encode()).digest()
-        if expected:
-            _EXPECTED_HASH = hashlib.sha256(expected.encode()).digest()
-        else:
-            _EXPECTED_HASH = hashlib.sha256(b"\x00" * 32).digest()
-        compare_ok = hmac.compare_digest(_EXPECTED_HASH, _PROVIDED_HASH)
-        _throttled = self._resume_throttled()
-        _emit_resume_denied = self._emit_resume_denied
-
-        if _throttled:
-            _emit_resume_denied("resume rate-limited (brute-force throttle)", "warning")
-            return _generic_error
-        if not lockout_engaged:
-            _emit_resume_denied("lockout not engaged", "info")
-            return _generic_error
-        if not expected:
-            _emit_resume_denied("STRANDS_MESH_OVERRIDE_CODE not configured", "warning")
-            return _generic_error
-        if not compare_ok:
+        if self._resume_throttled():
+            return "resume rate-limited (brute-force throttle)"
+        # Tunables are resolved before any lock is taken: an env parse inside
+        # the lock would stall every other safety handler behind it.
+        keys = _resume_verify_keys()
+        window_s, skew_s = _resume_freshness_window_s(), _resume_forward_skew_s()
+        cache_max = _resume_replay_cache_max()
+        reason: str | None = None
+        with self._estop_replay_lock:
+            if not self._estop_lockout.is_set():
+                return _RESUME_NOT_ENGAGED
+            reason = _resume_authority.check_assertion(
+                assertion, keys=keys, peer_id=self.peer_id, epoch=getattr(self, "_lockout_epoch", None)
+            )
+            if reason is None:
+                assert isinstance(assertion, dict)  # check_assertion admitted it
+                age = time.time() - float(assertion["t"])
+                if age > window_s or -age > skew_s:
+                    reason = f"assertion is {age:.1f}s old (window {window_s:.0f}s, forward skew {skew_s:.0f}s)"
+            if reason is None:
+                nonce = str(assertion["nonce"])
+                with self._resume_replay_lock:
+                    now_mono = time.monotonic()
+                    _evict_replay_cache(
+                        self._resume_replay_cache,
+                        max_size=cache_max,
+                        ttl_s=window_s + skew_s,
+                        now_mono=now_mono,
+                    )
+                    if nonce in self._resume_replay_cache:
+                        reason = "assertion already used"
+                    else:
+                        self._resume_replay_cache[nonce] = now_mono
+            if reason is None:
+                self._estop_lockout.clear()
+                self._lockout_epoch = None
+        if reason is not None:
             self._note_resume_failure()
-            _emit_resume_denied("bad override code", "warning")
-            return _generic_error
-        # Success: clear, reset the throttle, and publish the proof-bearing envelope.
-        elapsed = time.monotonic() - self._last_estop_mono
-        self._estop_lockout.clear()
+            return reason
+        self._ensure_resume_throttle_state()
         with self._resume_bruteforce_lock:
             self._resume_fail_count = 0
             self._resume_locked_until_mono = 0.0
-        proof_nonce = uuid.uuid4().hex
-        envelope_t = time.time()
+        return None
+
+    @property
+    def lockout_epoch(self) -> str | None:
+        """The id of the e-stop holding this peer's lockout, or ``None`` while clear.
+
+        Every peer locked by one fleet e-stop holds the same id (the issuer's
+        ``estop_id``); a signed resume names it, so it clears that lockout and
+        no later one.
+        """
+        return getattr(self, "_lockout_epoch", None) if self._estop_lockout.is_set() else None
+
+    def resume(self, signing_key: Any, *, targets: list[str] | None = None) -> dict[str, Any]:
+        """Clear this peer's e-stop lockout, and the fleet's, with the operator's key.
+
+        Signs an assertion for this peer's current lockout epoch naming
+        *targets* (default: this peer and every reachable peer on the roster),
+        admits it here and relays it on ``strands/safety/resume`` so each named
+        peer locked by the same e-stop clears too. Only the operator's machine
+        holds *signing_key*; every peer verifies with its public half.
+
+        Args:
+            signing_key: The Ed25519 private key from
+                :func:`~strands_robots.mesh.resume_authority.load_signing_key`.
+            targets: Peer ids the resume is for. This peer is always included.
+
+        Returns:
+            ``{"status": "ok"}``, or ``{"status": "error", "error": "resume rejected"}``
+            with the reason in the local audit log.
+        """
+        epoch = getattr(self, "_lockout_epoch", None)
+        if not self._estop_lockout.is_set() or epoch is None:
+            self._emit_resume_denied(_RESUME_NOT_ENGAGED, "info")
+            return {"status": "error", "error": "resume rejected"}
+        if targets is None:
+            targets = [str(p.get("peer_id")) for p in self.peers if p.get("reachable", True) and p.get("peer_id")]
+        try:
+            assertion = _resume_authority.sign_assertion(signing_key, epoch=epoch, targets=[self.peer_id, *targets])
+        except ValueError as exc:
+            self._emit_resume_denied(f"resume not signed: {exc}", "warning")
+            return {"status": "error", "error": "resume rejected"}
+        return self._resume_lockout(assertion)
+
+    def _resume_lockout(self, assertion: Any) -> dict[str, Any]:
+        """Clear the emergency-stop lockout if *assertion* is admitted.
+
+        *assertion* is the operator's signed resume (see
+        :mod:`strands_robots.mesh.resume_authority`); :meth:`_admit_resume`
+        decides. The wire response is one generic shape - ``{"status": "ok"}``
+        or ``{"status": "error", "error": "resume rejected"}`` for every
+        refusal, including "lockout not engaged" and "no key configured" - so a
+        prober gets no oracle on the lockout state or the configuration; the
+        structured reason goes to the local audit log only. On success the
+        same assertion is relayed on ``strands/safety/resume`` so every other
+        peer it names clears too, and ``lockout_elapsed_s`` is measured on the
+        monotonic clock.
+        """
+        elapsed = time.monotonic() - self._last_estop_mono
+        reason = self._admit_resume(assertion)
+        if reason is not None:
+            self._emit_resume_denied(reason, "info" if reason == _RESUME_NOT_ENGAGED else "warning")
+            return {"status": "error", "error": "resume rejected"}
         wire_zid = self._safety_wire_zid("strands/safety/resume")
-        mac_fields: dict[str, Any] = {
-            "peer_id": self.peer_id,
-            "t": envelope_t,
-            "lockout_elapsed_s": elapsed,
-            "proof_nonce": proof_nonce,
-        }
-        if wire_zid is not None:
-            mac_fields["source_zid"] = wire_zid
-        mac_input = json.dumps(
-            mac_fields,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        override_proof = hmac.new(
-            resume_proof_key(expected),
-            mac_input,
-            "sha256",
-        ).hexdigest()
         envelope: dict[str, Any] = {
             "peer_id": self.peer_id,
-            "t": envelope_t,
+            "t": time.time(),
             "lockout_elapsed_s": elapsed,
-            "proof_nonce": proof_nonce,
-            "override_proof": override_proof,
+            "assertion": assertion,
         }
         if wire_zid is not None:
             envelope["source_zid"] = wire_zid

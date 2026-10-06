@@ -165,8 +165,8 @@ STRANDS_MESH_AUDIT_PSK=demo-psk python examples/fleet/03_failover_and_degraded_o
 ```
 
 Two live-mode notes. The estop drill leaves the surviving robots in safety
-lockout by design; resuming needs the operator override code
-(`STRANDS_MESH_OVERRIDE_CODE`). And the estop broadcast logs a CRITICAL
+lockout by design; resuming needs a resume signed by the operator key
+(`STRANDS_MESH_RESUME_PUBLIC_KEY` on every peer). And the estop broadcast logs a CRITICAL
 `peers_not_stopped` line for sim peers - `Simulation` exposes no `stop_task`,
 so the mesh honestly refuses to report those peers as halted; the asserted
 property here is the lockout propagation, which engages regardless.
@@ -347,7 +347,7 @@ with the network off, given cached robot assets).
 | `MUJOCO_GL` | GL backend for headless rendering (the examples default it to `egl`). |
 | `STRANDS_MESH_AUDIT_PSK` | HMAC-sign every audit record; `verify_audit_integrity()` then attests the trail. |
 | `STRANDS_MESH_AUDIT_DIR` | Relocate the audit log (default `~/.strands_robots/`). Point the dashboard and the examples at the same directory. |
-| `STRANDS_MESH_OVERRIDE_CODE` | Operator override code required to resume a peer out of estop lockout. |
+| `STRANDS_MESH_RESUME_PUBLIC_KEY` | Public half of the operator key that signs a resume out of estop lockout. |
 | `STRANDS_MESH_LOCAL_DEV=1` | Skip TLS for local development (defaulted by the examples). |
 | `STRANDS_MESH_MULTICAST=true` | Enable multicast scouting so separate processes (e.g. the dashboard and an example) discover each other. Off by default; trusted networks only. |
 | `STRANDS_MESH=0` | Disable the mesh entirely; use `--dry-run` in that posture. |

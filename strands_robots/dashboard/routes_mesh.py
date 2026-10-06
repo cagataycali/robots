@@ -704,14 +704,14 @@ async def estop(request: Request, _: dict = Depends(access.require_session)) -> 
 
 @router.post("/mesh/safety/resume")
 async def safety_resume(request: Request, _: dict = Depends(access.require_session)) -> dict[str, Any]:
-    """Clear the fleet e-stop lockout with the operator override code."""
+    """Clear the fleet e-stop lockout with the passphrase of the operator's resume key."""
     body = await _json_body(request)
-    code = str(body.get("override_code") or "").strip()
-    if not code:
-        raise HTTPException(422, "override_code required")
+    passphrase = str(body.get("passphrase") or "")
+    if not passphrase:
+        raise HTTPException(422, "passphrase required (it opens the resume signing key on this host)")
     bridge = _bridge(request)
     sent_at = time.time()
-    result = await asyncio.to_thread(bridge.signed_resume, code)
+    result = await asyncio.to_thread(bridge.signed_resume, passphrase)
     if result.get("status") == "ok":
         # The resume is a request; the peers that answer a read afterwards are the proof it landed.
         result["confirmed_clear"] = await asyncio.to_thread(bridge.confirm_resume, sent_at)

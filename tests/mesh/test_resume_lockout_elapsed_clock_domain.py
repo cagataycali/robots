@@ -32,10 +32,13 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from strands_robots.mesh import core
+from strands_robots.mesh import core, resume_authority
 
-_CODE = "operator-secret-1234567890"
+from ._resume import lock
+
+_KEY = Ed25519PrivateKey.generate()
 _WALL_AT_ENGAGE = 1_800_000_000.0
 _MONO_AT_ENGAGE = 500_000.0
 
@@ -64,7 +67,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     clk = _Clock()
     monkeypatch.setattr(core.time, "time", clk.time)
     monkeypatch.setattr(core.time, "monotonic", clk.monotonic)
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+    monkeypatch.setenv(resume_authority.PUBLIC_KEY_ENV, resume_authority.public_key_text(_KEY.public_key()))
     return clk
 
 
@@ -84,14 +87,14 @@ def _engaged_operator(monkeypatch: pytest.MonkeyPatch) -> tuple[core.Mesh, dict[
     published: dict[str, Any] = {}
     monkeypatch.setattr(core, "put", lambda key, payload: published.update(payload))
 
-    mesh._estop_lockout.set()
+    lock(mesh)
     mesh._last_estop_ts = core.time.time()
     mesh._last_estop_mono = core.time.monotonic()
     return mesh, published, audited
 
 
 def _resume(mesh: core.Mesh) -> None:
-    assert mesh._resume_lockout(_CODE) == {"status": "ok"}
+    assert mesh.resume(_KEY, targets=["robot-1"]) == {"status": "ok"}
 
 
 class TestTheReportedLockoutIsTheTimeTheFleetWasHeld:
@@ -168,31 +171,6 @@ class TestTheEnvelopeInstantStaysOnTheWallClock:
         _resume(mesh)
         assert published["t"] == pytest.approx(clock.wall)
 
-    def test_the_proof_binds_the_duration_the_envelope_carries(
-        self, clock: _Clock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The override proof is recomputed by every receiver over the body it
-        actually sees, so the duration the issuer measured is the duration
-        bound into the MAC."""
-        mesh, published, _ = _engaged_operator(monkeypatch)
-        clock.hold(12.5, wall_step=3600.0)
-        _resume(mesh)
-        expected = core.hmac.new(
-            core.resume_proof_key(_CODE),
-            json.dumps(
-                {
-                    "peer_id": "operator-1",
-                    "t": published["t"],
-                    "lockout_elapsed_s": published["lockout_elapsed_s"],
-                    "proof_nonce": published["proof_nonce"],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode(),
-            "sha256",
-        ).hexdigest()
-        assert published["override_proof"] == expected
-
 
 class TestAResumeIsStillAcceptedEndToEnd:
     """A receiver clears its lockout from the envelope the issuer minted."""
@@ -200,11 +178,12 @@ class TestAResumeIsStillAcceptedEndToEnd:
     def test_a_receiver_recovers_from_the_minted_envelope(self, clock: _Clock, monkeypatch: pytest.MonkeyPatch) -> None:
         mesh, published, _ = _engaged_operator(monkeypatch)
         clock.hold(12.5, wall_step=-7200.0)
+        epoch = mesh._lockout_epoch
         _resume(mesh)
 
         receiver = core.Mesh(robot=object(), peer_id="robot-1")
         receiver.publish_safety_event = MagicMock()  # type: ignore[method-assign]
-        receiver._estop_lockout.set()
+        lock(receiver, epoch)
         sample = MagicMock()
         sample.payload.to_bytes.return_value = json.dumps(published).encode()
         receiver._on_safety_resume(sample)

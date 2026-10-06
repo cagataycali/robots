@@ -24,11 +24,9 @@ makes it unreachable, so it acquires a behavioural test the day that changes).
 
 Both zenoh-absent arms carry a fleet-availability contract on the safety path:
 
-* ``_safety_wire_zid`` must answer ``None`` so an issuer binds the resume
-  override proof to the zid-less body the fallback path actually publishes. Its
-  own docstring records the alternative: a proof bound to
-  ``_local_session_zid`` while the envelope ships stripped "never verifies --
-  leaving the fleet stuck in lockout".
+* ``_safety_wire_zid`` must answer ``None`` so an issuer's resume body carries
+  no ``source_zid`` the fallback path would strip, and a receiver on the same
+  zid-less transport still clears on the operator's signed assertion it relays.
 * ``_publish_safety_envelope`` must still publish, with ``source_zid`` removed
   from the body. ``_strip_wire_zid``'s docstring records why: a body that still
   advertises ``source_zid`` with no wire ``SourceInfo`` behind it is
@@ -37,7 +35,6 @@ Both zenoh-absent arms carry a fleet-availability contract on the safety path:
 
 import ast
 import inspect
-import json
 import pathlib
 import sys
 import types
@@ -45,6 +42,7 @@ from unittest.mock import MagicMock
 
 from strands_robots.mesh import core
 
+from ._resume import lock, trust_new_key
 from .test_resume_proof_fallback_path import _fallback_sample
 
 ESTOP_KEY = "strands/safety/estop"
@@ -160,7 +158,7 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
     install must be clearable, or the fleet stays e-stopped forever."""
 
     def test_resume_proof_verifies_end_to_end(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
+        key = trust_new_key(monkeypatch)
 
         issuer = core.Mesh(robot=object(), peer_id="issuer")
         issuer.publish_safety_event = MagicMock()
@@ -179,62 +177,26 @@ class TestRemoteResumeStillVerifiesWhenZenohIsAbsent:
 
         monkeypatch.setattr(core, "put", capture_put)
 
-        issuer._estop_lockout.set()
+        epoch = lock(issuer)
         issuer._last_estop_ts = core.time.time()
         issuer._last_estop_mono = core.time.monotonic()
-        assert issuer._resume_lockout("operator-secret-1234567890") == {"status": "ok"}
+        assert issuer.resume(key, targets=["receiver"]) == {"status": "ok"}
 
         assert published["key"] == RESUME_KEY
         envelope = published["payload"]
         assert "source_zid" not in envelope, "the fallback path publishes a zid-less body"
-        assert "override_proof" in envelope
+        assert envelope["assertion"]["targets"] == ["issuer", "receiver"]
 
-        # A receiver on the same zenoh-free transport accepts the proof and
-        # clears its lockout: issuer and receiver agree on the MAC input.
+        # A receiver on the same zenoh-free transport accepts the relayed
+        # assertion and clears its lockout.
         receiver = core.Mesh(robot=object(), peer_id="receiver")
         receiver.publish_safety_event = MagicMock()
-        receiver._estop_lockout.set()
+        lock(receiver, epoch)
         assert receiver._estop_lockout.is_set()
 
         receiver._on_safety_resume(_fallback_sample(envelope))
 
         assert receiver._estop_lockout.is_set() is False, "the fleet would stay e-stopped"
-
-    def test_the_proof_is_bound_to_the_published_body(self, monkeypatch):
-        """The MAC input must be the exact bytes the receiver recomputes over:
-        a proof bound to a zid the body does not carry never verifies."""
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
-
-        issuer = core.Mesh(robot=object(), peer_id="issuer")
-        issuer.publish_safety_event = MagicMock()
-        monkeypatch.setattr(issuer, "_local_session_zid", lambda: "deadbeefdeadbeef")
-        monkeypatch.setattr(issuer, "_safety_publisher_for", lambda key: _RecordingPublisher())
-        _hide_zenoh(monkeypatch)
-
-        published: dict = {}
-        monkeypatch.setattr(core, "put", lambda key, payload: published.update(payload=payload))
-
-        issuer._estop_lockout.set()
-        issuer._last_estop_ts = core.time.time()
-        issuer._last_estop_mono = core.time.monotonic()
-        issuer._resume_lockout("operator-secret-1234567890")
-
-        envelope = published["payload"]
-        expected = core.hmac.new(
-            core.resume_proof_key("operator-secret-1234567890"),
-            json.dumps(
-                {
-                    "peer_id": "issuer",
-                    "t": envelope["t"],
-                    "lockout_elapsed_s": envelope["lockout_elapsed_s"],
-                    "proof_nonce": envelope["proof_nonce"],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode(),
-            "sha256",
-        ).hexdigest()
-        assert envelope["override_proof"] == expected
 
 
 class TestTheSessionModuleArmsAreDefenceInDepth:

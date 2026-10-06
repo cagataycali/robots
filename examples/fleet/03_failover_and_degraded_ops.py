@@ -24,8 +24,8 @@ Runtime: ~5 seconds with --dry-run; under ~90 seconds live (the presence
          timeout is honoured in full, twice).
 
 Note: The live estop drill leaves the surviving robots in safety lockout by
-      design; resuming needs the operator override code
-      (STRANDS_MESH_OVERRIDE_CODE). Set STRANDS_MESH_AUDIT_PSK to sign audit
+      design; resuming needs a resume signed by the operator key
+      (STRANDS_MESH_RESUME_PUBLIC_KEY on every peer). Set STRANDS_MESH_AUDIT_PSK to sign audit
       records and STRANDS_MESH_AUDIT_DIR to relocate the log.
       Set STRANDS_MESH_LOCAL_DEV=1 (defaulted below) to skip TLS locally.
 

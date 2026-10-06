@@ -24,6 +24,8 @@ import pytest
 from strands_robots.mesh import Mesh
 from strands_robots.mesh.transport.iot_transport import _MqttSample
 
+from ._resume import trust_new_key
+
 
 @pytest.fixture
 def mesh(monkeypatch: pytest.MonkeyPatch):
@@ -40,7 +42,7 @@ def _estop(t: float) -> _MqttSample:
 
 
 def _resume(t: float) -> _MqttSample:
-    env = {"peer_id": "ac-ops-01", "t": t, "override_code": "x" * 32}
+    env = {"peer_id": "ac-ops-01", "t": t, "assertion": {}}
     return _MqttSample("strands/safety/resume", json.dumps(env).encode())
 
 
@@ -68,7 +70,7 @@ class TestAnEarlyEstopStillStops:
 
     def test_a_resume_from_the_future_stays_refused(self, mesh, monkeypatch, caplog):
         m, _audits = mesh
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "x" * 32)
+        trust_new_key(monkeypatch)
         m._on_safety_estop(_estop(time.time()))
         assert m._estop_lockout.is_set()
         with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):

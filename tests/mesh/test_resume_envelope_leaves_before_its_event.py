@@ -23,11 +23,10 @@ from __future__ import annotations
 
 from strands_robots.mesh import core
 
-_CODE = "operator-secret-1234567890"
+from ._resume import lock, trust_new_key
 
 
 def _issuer(monkeypatch, tmp_path) -> tuple[core.Mesh, list[str]]:
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
     monkeypatch.setenv("STRANDS_MESH_AUDIT_DIR", str(tmp_path))
     mesh = core.Mesh(robot=object(), peer_id="issuer")
     # ``publish_safety_event`` is a no-op on a Mesh that is not running; the
@@ -46,12 +45,13 @@ def _safety_keys(wire: list[str]) -> list[str]:
 
 
 def test_resume_envelope_is_the_first_safety_message_of_a_resume(monkeypatch, tmp_path):
+    key = trust_new_key(monkeypatch)
     mesh, wire = _issuer(monkeypatch, tmp_path)
-    mesh._estop_lockout.set()
+    lock(mesh)
     mesh._last_estop_ts = core.time.time()
     mesh._last_estop_mono = core.time.monotonic()
 
-    assert mesh._resume_lockout(_CODE) == {"status": "ok"}
+    assert mesh.resume(key, targets=[]) == {"status": "ok"}
 
     safety = _safety_keys(wire)
     assert safety[0] == "strands/safety/resume", safety

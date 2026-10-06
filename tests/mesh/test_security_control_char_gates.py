@@ -3,7 +3,7 @@
 Pins the fix for 5 review threads (2026-05-27T03:38:41Z) that flagged:
 1. policy_host preserving CRLF/NUL/control bytes (wire-injection vector)
 2. turn_id/sender_id passthrough accepting non-string / control bytes
-3. resume.override_code accepting control characters
+3. (retired: resume carries a signed assertion, not a code)
 4. server_address preserving CRLF/NUL/control bytes
 5. _POLICY_HOST_ENTRY_RE admitting dead bracket chars
 
@@ -118,41 +118,6 @@ class TestTurnIdSenderIdValidation:
         assert out["sender_id"] == "node-123-abc"
 
 
-# --- 3. resume.override_code charset gate ---
-
-
-class TestOverrideCodeCharsetGate:
-    """resume.override_code must reject control characters."""
-
-    def _cmd(self, code: str) -> dict:
-        return {"action": "resume", "override_code": code}
-
-    def test_rejects_nul(self):
-        with pytest.raises(ValidationError, match="control characters"):
-            validate_command(self._cmd("\x00\x01\x02secret"))
-
-    def test_rejects_crlf(self):
-        # R7: ``is_safe_policy_host`` now applies the same charset
-        # gate before its internal strip, so allowlist-shaped errors
-        # are also acceptable for these inputs (control bytes that
-        # ``str.strip()`` would have dropped).
-        with pytest.raises(ValidationError, match="not in allowlist|control characters"):
-            validate_command(self._cmd("secret\r\nINJECT"))
-
-    def test_rejects_bell(self):
-        with pytest.raises(ValidationError, match="control characters"):
-            validate_command(self._cmd("abc\x07def"))
-
-    def test_accepts_printable_ascii(self):
-        out = validate_command(self._cmd("S3cret-C0de_123!"))
-        assert out["override_code"] == "S3cret-C0de_123!"
-
-    def test_accepts_empty_string(self):
-        """Empty override_code is valid (no gate needed for empty)."""
-        out = validate_command(self._cmd(""))
-        assert out["override_code"] == ""
-
-
 # --- 4. server_address control-character gate ---
 
 
@@ -231,7 +196,7 @@ class TestInstructionControlCharGate:
     """``instruction`` must refuse the control bytes its siblings refuse.
 
     ``validate_command`` charset-gates ``policy_host``, ``server_address``,
-    ``turn_id``/``sender_id``, ``override_code`` and ``robot_name``, and the
+    ``turn_id``/``sender_id`` and ``robot_name``, and the
     comment introducing the sim-targeted block names the threat as a peer
     smuggling "control-byte instruction strings". ``instruction`` itself was
     bounded only by type and length, so a remote ``execute`` payload could

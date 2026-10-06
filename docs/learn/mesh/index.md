@@ -67,7 +67,7 @@ Presence at 2 Hz, state at 10 Hz, camera off until `STRANDS_MESH_CAMERA_HZ` is s
 ## Pages
 
 - [fleet](fleet.md): join, discover, `tell`, `send`, `broadcast`, RPC, the `robot_mesh` tool.
-- [safety and e-stop](safety-and-estop.md): `emergency_stop`, the lockout, the override code, the audit trail.
+- [safety and e-stop](safety-and-estop.md): `emergency_stop`, the lockout, the signed resume, the audit trail.
 - [topics](topics.md): every key and its rate.
 - [bridges](bridges.md): the IoT and bridge transports, the ACL file.
 - [direct messaging](direct.md): point-to-point commands over AWS IoT Core.

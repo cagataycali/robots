@@ -303,7 +303,7 @@ def _looks_like_an_identifier(word: str) -> bool:
     """A token a drawing must not invent: snake_case, a digit or a CamelCase name.
 
     Plain prose ("underneath", "grows") and the uppercased section captions are the drawing's own
-    voice and are not graded; the names it draws (run_policy, EmbodimentMap, STRANDS_MESH_OVERRIDE_CODE,
+    voice and are not graded; the names it draws (run_policy, EmbodimentMap, STRANDS_MESH_RESUME_PUBLIC_KEY,
     so101) must exist somewhere in the docs.
     """
     if "_" in word or any(ch.isdigit() for ch in word):

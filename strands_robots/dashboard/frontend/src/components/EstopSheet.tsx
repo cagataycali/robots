@@ -9,7 +9,7 @@ export interface SimLockout { state: 'clear' | 'locked' | 'unknown' | string; re
 
 /**
  * Which rail a stop goes to. Two exist on the server: the mesh-backed signed rail at
- * /api/mesh/safety/* (fleet-wide lockout, per-peer answers, override code to resume)
+ * /api/mesh/safety/* (fleet-wide lockout, per-peer answers, signed resume)
  * and the sim-only lockout at /api/safety/* (this process's simulated robots). The
  * fleet view says which one is live: with the mesh bridge up, the stop fires BOTH -
  * a stop is never refused and never too wide - and the resume clears both.
@@ -48,9 +48,9 @@ export default function EstopSheet({
     setResuming(true); setResumeMsg(null)
     try {
       if (meshBacked) {
-        const r = await post<{ status?: string; error?: string }>(paths.resume[0], { override_code: code })
+        const r = await post<{ status?: string; error?: string }>(paths.resume[0], { passphrase: code })
         if (r.status === 'ok') { setResumeMsg('✓ lockout cleared - fleet accepting commands again'); setCode('') }
-        else setResumeMsg(`✗ ${r.error ?? 'resume rejected'} (wrong code? brute-force cooldown?)`)
+        else setResumeMsg(`✗ ${r.error ?? 'resume rejected'} (wrong passphrase? brute-force cooldown?)`)
       }
       // The sim rail: a resume leaves the lockout `unknown` until the next accepted command proves it clear.
       const sim = await post<{ lockout: SimLockout }>('/api/safety/resume')
@@ -108,8 +108,8 @@ export default function EstopSheet({
             {meshBacked && <p className="hint">
               Fires BOTH rails: per-peer stop commands (answered individually below) and the
               signed <code>strands/safety/estop</code> envelope, which engages a fleet-wide
-              LOCKOUT - every listening peer refuses further commands until a resume with the
-              operator override code. A peer that is wedged or fully off the mesh still needs
+              LOCKOUT - every listening peer refuses further commands until a resume signed with the
+              operator's key. A peer that is wedged or fully off the mesh still needs
               the hardware e-stop. The simulated robots of this dashboard are frozen too.
             </p>}
             {linkWarning && (
@@ -225,7 +225,7 @@ export default function EstopSheet({
                 <div className="resume-row">
                   <input
                     type="password"
-                    placeholder="operator override code" aria-label="operator override code"
+                    placeholder="resume key passphrase" aria-label="resume key passphrase"
                     value={code}
                     onChange={e => setCode(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && resume()}
@@ -237,9 +237,9 @@ export default function EstopSheet({
                 </div>
                 {resumeMsg && <div className="hint">{resumeMsg}</div>}
                 <p className="hint">
-                  The code is verified locally and an HMAC proof is broadcast — the code itself
-                  never crosses the wire. Set <code>STRANDS_MESH_OVERRIDE_CODE</code> identically
-                  on every peer.
+                  The passphrase opens the resume signing key on this host; a signed resume
+                  naming each peer and this lockout is broadcast. Peers hold only the public key
+                  (<code>STRANDS_MESH_RESUME_PUBLIC_KEY</code>).
                 </p>
               </div>
               )

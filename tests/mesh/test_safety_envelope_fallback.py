@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from ._resume import trust_new_key
+
 
 def test_estop_fallback_strips_source_zid(monkeypatch):
     from strands_robots.mesh import core
@@ -75,13 +77,13 @@ def test_bridge_backend_delivers_safety_envelopes_to_the_iot_leg(monkeypatch, to
     mesh._running = True
     monkeypatch.setattr(mesh, "broadcast", lambda cmd, timeout=5.0: [])
     monkeypatch.setattr(mesh, "publish_safety_event", lambda *a, **k: None)
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "secret-code-1234567890abcdef")
+    key = trust_new_key(monkeypatch)
 
     mesh.emergency_stop()
     if topic.endswith("resume"):
         iot.put.reset_mock()
         lan.put.reset_mock()
-        assert mesh._resume_lockout("secret-code-1234567890abcdef") == {"status": "ok"}
+        assert mesh.resume(key, targets=[]) == {"status": "ok"}
 
     sent = [c.args for c in iot.put.call_args_list if c.args[0] == topic]
     assert len(sent) == 1, iot.put.call_args_list

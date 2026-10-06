@@ -8,7 +8,7 @@ guard the handler entry, each of which must leave the lockout engaged:
 * a payload that parses as JSON but is not an object (e.g. a list),
 * a body that advertises ``source_zid`` while the wire carries none
   (publisher misconfigured, or an attacker stripped the TLS-bound SourceInfo),
-* an envelope missing the ``override_proof`` / ``proof_nonce`` strings,
+* an envelope missing the operator's signed ``assertion``,
 * an envelope missing a valid issuer ``peer_id``.
 
 Each refuse-path returns without clearing the lockout and without polluting the
@@ -21,13 +21,14 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
 from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
 
 from strands_robots.mesh.core import Mesh
+
+from ._resume import lock, trust_new_key
 
 
 def _make_mesh(peer_id: str = "r-test") -> Mesh:
@@ -56,9 +57,9 @@ def _sample(payload: object) -> MagicMock:
 @pytest.fixture
 def engaged_mesh(monkeypatch: pytest.MonkeyPatch) -> Iterator[Mesh]:
     """A mesh with the e-stop lockout engaged, ready to (refuse to) resume."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
+    trust_new_key(monkeypatch)
     m = _make_mesh()
-    m._estop_lockout.set()
+    lock(m)
     assert m._estop_lockout.is_set()
     yield m
 
@@ -81,8 +82,7 @@ def test_body_source_zid_without_wire_zid_rejected(engaged_mesh: Mesh, caplog: p
         "peer_id": "op-1",
         "t": time.time(),
         "lockout_elapsed_s": 1.0,
-        "proof_nonce": uuid.uuid4().hex,
-        "override_proof": "x" * 64,
+        "assertion": {},
         "source_zid": "deadbeef",  # body claims a wire identity the sample lacks
     }
     with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
@@ -94,18 +94,18 @@ def test_body_source_zid_without_wire_zid_rejected(engaged_mesh: Mesh, caplog: p
 
 
 def test_missing_proof_fields_rejected(engaged_mesh: Mesh, caplog: pytest.LogCaptureFixture) -> None:
-    """An envelope without override_proof / proof_nonce strings is refused."""
+    """An envelope without the operator's signed assertion is refused."""
     envelope = {
         "peer_id": "op-1",
         "t": time.time(),
         "lockout_elapsed_s": 1.0,
-        # proof_nonce + override_proof deliberately omitted
+        # assertion deliberately omitted
     }
     with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
         engaged_mesh._on_safety_resume(_sample(envelope))
-    assert engaged_mesh._estop_lockout.is_set(), "missing proof fields must not clear the lockout"
-    assert any("missing override_proof / proof_nonce" in r.getMessage() for r in caplog.records), (
-        f"expected a missing-proof warning; got {[r.getMessage() for r in caplog.records]}"
+    assert engaged_mesh._estop_lockout.is_set(), "a missing assertion must not clear the lockout"
+    assert any("no signed assertion" in r.getMessage() for r in caplog.records), (
+        f"expected a missing-assertion warning; got {[r.getMessage() for r in caplog.records]}"
     )
 
 
@@ -120,8 +120,7 @@ def test_missing_peer_id_rejected(engaged_mesh: Mesh, caplog: pytest.LogCaptureF
         # peer_id deliberately omitted
         "t": time.time(),
         "lockout_elapsed_s": 1.0,
-        "proof_nonce": "n" * 32,
-        "override_proof": "x" * 64,
+        "assertion": {},
     }
     with caplog.at_level(logging.WARNING, logger="strands_robots.mesh.core"):
         engaged_mesh._on_safety_resume(_sample(envelope))
