@@ -126,7 +126,7 @@ def fleet(require_signatures: EphemeralCA, tmp_path: Path, monkeypatch: pytest.M
     ca = require_signatures
     roots = roots_for(ca)
     leaves = tmp_path / "leaves"
-    idents = {cn: identity_for(ca, cn, leaves) for cn in ("op", "robot-a", "attacker")}
+    idents = {cn: identity_for(ca, cn, leaves) for cn in ("op", "robot-a", "robot-b", "attacker")}
     port = _free_port()
     sessions: dict[str, Any] = {}
     peers: dict[str, _Peer] = {}
@@ -134,6 +134,7 @@ def fleet(require_signatures: EphemeralCA, tmp_path: Path, monkeypatch: pytest.M
         for cn, mesh in (
             ("op", Mesh(_Arm(), peer_id="op", peer_type="operator")),
             ("robot-a", Mesh(_Arm(), peer_id="robot-a", peer_type="robot")),
+            ("robot-b", Mesh(_Arm(), peer_id="robot-b", peer_type="robot")),
             ("attacker", Mesh(_Arm(), peer_id="attacker", peer_type="robot")),
         ):
             cert, key = leaves / cn / f"{cn}.crt", leaves / cn / f"{cn}.key"
@@ -149,9 +150,11 @@ def fleet(require_signatures: EphemeralCA, tmp_path: Path, monkeypatch: pytest.M
         # The robot answers commands on its own cmd key; the operator hears replies.
         subs = [
             sessions["robot-a"].declare_subscriber("strands/robot-a/cmd", peers["robot-a"].mesh._on_cmd),
+            sessions["robot-b"].declare_subscriber("strands/robot-b/cmd", peers["robot-b"].mesh._on_cmd),
             sessions["op"].declare_subscriber("strands/op/response/**", peers["op"].mesh._on_response),
             sessions["op"].declare_subscriber("strands/*/presence", peers["op"].mesh._on_presence),
             sessions["robot-a"].declare_subscriber("strands/*/presence", peers["robot-a"].mesh._on_presence),
+            sessions["robot-b"].declare_subscriber("strands/*/presence", peers["robot-b"].mesh._on_presence),
         ]
         time.sleep(0.6)  # let the declarations settle across the links
         # Everyone announces itself, signed, the way the heartbeat does.
@@ -161,6 +164,7 @@ def fleet(require_signatures: EphemeralCA, tmp_path: Path, monkeypatch: pytest.M
             )
         assert _wait_for(lambda: peers["op"].mesh.peer_cert("robot-a") is not None)
         assert _wait_for(lambda: peers["robot-a"].mesh.peer_cert("op") is not None)
+        assert _wait_for(lambda: peers["robot-b"].mesh.peer_cert("op") is not None)
         yield {"peers": peers, "subs": subs, "ca": ca}
     finally:
         for s in sessions.values():
@@ -179,6 +183,11 @@ def _open_turn(op: Mesh, expected: str) -> tuple[str, threading.Event]:
     return turn, event
 
 
+def _cmd(sender: str, target: str, turn: str, command: dict[str, Any]) -> dict[str, Any]:
+    """The command body ``Mesh.send`` signs: it names its target."""
+    return {"sender_id": sender, "target_id": target, "turn_id": turn, "command": command, "timestamp": time.time()}
+
+
 def _responses(op: Mesh, turn: str) -> list[dict[str, Any]]:
     with op._rpc_lock:
         return list(op._responses.get(turn, []))
@@ -187,7 +196,7 @@ def _responses(op: Mesh, turn: str) -> list[dict[str, Any]]:
 def test_a_signed_command_and_its_signed_reply_cross_the_mtls_link(fleet: dict[str, Any]) -> None:
     op, robot = fleet["peers"]["op"], fleet["peers"]["robot-a"]
     turn, event = _open_turn(op.mesh, "robot-a")
-    msg = op.mesh._sign({"sender_id": "op", "turn_id": turn, "command": {"action": "status"}, "timestamp": time.time()})
+    msg = op.mesh._sign(_cmd("op", "robot-a", turn, {"action": "status"}))
     assert "sig" in msg
 
     op.session.put("strands/robot-a/cmd", json.dumps(msg).encode())
@@ -254,18 +263,12 @@ def test_an_unsigned_or_misattributed_motion_command_does_not_move_the_robot(
     # Unsigned, claiming to be the operator.
     attacker.session.put(
         "strands/robot-a/cmd",
-        json.dumps(
-            {"sender_id": "op", "turn_id": "a" * 32, "command": {"action": "reset"}, "timestamp": time.time()}
-        ).encode(),
+        json.dumps(_cmd("op", "robot-a", "a" * 32, {"action": "reset"})).encode(),
     )
     # Signed by the attacker's own valid certificate, claiming to be the operator.
     attacker.session.put(
         "strands/robot-a/cmd",
-        json.dumps(
-            attacker.mesh._sign(
-                {"sender_id": "op", "turn_id": "b" * 32, "command": {"action": "reset"}, "timestamp": time.time()}
-            )
-        ).encode(),
+        json.dumps(attacker.mesh._sign(_cmd("op", "robot-a", "b" * 32, {"action": "reset"}))).encode(),
     )
     assert _wait_for(lambda: len([e for e, _ in robot.audits if e == "wire_motion_refused"]) == 2)
     assert arm.resets == 0
@@ -277,11 +280,39 @@ def test_an_unsigned_or_misattributed_motion_command_does_not_move_the_robot(
     turn, event = _open_turn(op.mesh, "robot-a")
     op.session.put(
         "strands/robot-a/cmd",
-        json.dumps(
-            op.mesh._sign(
-                {"sender_id": "op", "turn_id": turn, "command": {"action": "reset"}, "timestamp": time.time()}
-            )
-        ).encode(),
+        json.dumps(op.mesh._sign(_cmd("op", "robot-a", turn, {"action": "reset"}))).encode(),
     )
     assert event.wait(5.0), robot.audits
     assert arm.resets == 1
+
+
+def test_a_captured_signed_command_republished_on_another_robots_topic_is_refused(
+    fleet: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The target is inside the signed body, so a genuine command cannot be pointed at a different robot."""
+    op, robot_b, attacker = (fleet["peers"][k] for k in ("op", "robot-b", "attacker"))
+    # robot-b pre-approves the operator's reset: exactly the approval a replay would spend.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@op")
+    arm_b = robot_b.mesh.robot
+
+    # The operator's reset for robot-a, signed; the attacker captured it off robot-a's
+    # cmd topic and republishes it unchanged on robot-b's within the freshness window.
+    captured = json.dumps(op.mesh._sign(_cmd("op", "robot-a", "c" * 32, {"action": "reset"}))).encode()
+    attacker.session.put("strands/robot-b/cmd", captured)
+
+    assert _wait_for(lambda: any(e == "command_refused" for e, _ in robot_b.audits)), robot_b.audits
+    assert arm_b.resets == 0
+    refused = [p for e, p in robot_b.audits if e == "command_refused"]
+    assert refused[0]["reason"] == "signed_for_another_peer"
+    assert refused[0]["signer"] == "op" and refused[0]["target_id"] == "robot-a"
+    assert refused[0]["topic"] == "strands/robot-b/cmd"
+    # Refused before the motion gate: the approval is not consulted, let alone spent.
+    assert [e for e, _ in robot_b.audits if e == "wire_motion_refused"] == []
+
+    # The operator's own reset FOR robot-b proceeds on the same approval.
+    turn, event = _open_turn(op.mesh, "robot-b")
+    op.session.put(
+        "strands/robot-b/cmd", json.dumps(op.mesh._sign(_cmd("op", "robot-b", turn, {"action": "reset"}))).encode()
+    )
+    assert event.wait(5.0), robot_b.audits
+    assert arm_b.resets == 1

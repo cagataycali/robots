@@ -24,9 +24,14 @@ binds its `robot_id` to the signing certificate (the CN must be the id, or its
 parent for a `<peer>__<robot>` child; a second certificate claiming a live
 name is dropped and audited, and silence does not open the name), a reply is
 accepted once per nonce from a certificate whose CN speaks for its
-`responder_id`, and a motion command is attributed to its signer. The legacy
-session-id path no longer accepts an unattributed reply on a Zenoh leg of the
-`bridge` backend.
+`responder_id`, and a motion command is attributed to its signer. A command
+also names its target inside the signed body (`target_id`: the peer, or the
+broadcast sentinel), so a genuine signed command captured off one robot's
+`cmd` topic and republished unchanged on another's is refused before the
+motion gate and audited as `command_refused` / `signed_for_another_peer`,
+instead of running there and spending that robot's own approval for its
+sender. The legacy session-id path no longer accepts an unattributed reply on
+a Zenoh leg of the `bridge` backend.
 
 Approvals are scoped to the verified actor. A dashboard grant records the
 peer it was given for (the dashboard's own mesh peer id for a proxy tool;

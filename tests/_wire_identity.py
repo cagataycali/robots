@@ -94,14 +94,24 @@ def signed_cmd_sample(
     *,
     turn: str | None = None,
     zid: str | None = None,
+    signed_for: str | None = None,
+    name_target: bool = True,
 ) -> Any:
-    """A command envelope from *sender* to *target*, signed by *identity* (unsigned when ``None``)."""
+    """A command envelope from *sender* to *target*, signed by *identity* (unsigned when ``None``).
+
+    The signed body names its target the way ``Mesh.send`` does. ``signed_for``
+    makes it a command captured from *another* robot's topic and republished
+    on *target*'s unchanged; ``name_target=False`` leaves the field out, the
+    shape of a signed command that predates target binding.
+    """
     payload: dict[str, Any] = {
         "sender_id": sender,
         "turn_id": turn or uuid.uuid4().hex,
         "command": cmd,
         "timestamp": time.time(),
     }
+    if name_target:
+        payload["target_id"] = signed_for or target
     if identity is not None:
         payload = wi.sign(identity, payload)
     return sample(payload, key=f"strands/{target}/cmd", zid=zid)

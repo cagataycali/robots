@@ -270,3 +270,91 @@ class TestStep3ANameCannotBeTakenOverByAnotherCertificate:
 
         assert robot.peer_cert("leader-1") == (reissued.cert_sha256, "leader-1")
         assert world["audits"] == []
+
+
+class TestStep4ASignedCommandIsForOneTarget:
+    """``target_id`` is inside the signed body, so a captured command cannot be pointed at another robot."""
+
+    def test_the_leaders_reset_for_another_robot_replayed_here_is_refused_before_the_gate(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # so101-1 pre-approves the leader's reset: exactly the approval a replay would spend.
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@leader-1")
+
+        # The leader's genuine reset for so101-2, captured off its topic and republished on ours unchanged.
+        replayed = signed_cmd_sample(world["leader"], "leader-1", "so101-1", RESET, signed_for="so101-2")
+        _deliver(world["robot"], replayed, monkeypatch)
+
+        assert world["arm"].resets == 0
+        refused = [p for e, p in world["audits"] if e == "command_refused"]
+        assert len(refused) == 1
+        assert refused[0]["reason"] == "signed_for_another_peer"
+        assert refused[0]["signer"] == "leader-1" and refused[0]["target_id"] == "so101-2"
+        assert refused[0]["action"] == "reset" and refused[0]["topic"] == "strands/so101-1/cmd"
+        # Never reached the motion gate, so the approval was neither consulted nor spent.
+        assert [e for e, _ in world["audits"] if e == "wire_motion_refused"] == []
+
+        # The same leader's reset FOR so101-1 proceeds on that approval.
+        _deliver(world["robot"], signed_cmd_sample(world["leader"], "leader-1", "so101-1", RESET), monkeypatch)
+        assert world["arm"].resets == 1
+
+    def test_a_signed_command_that_names_no_target_is_refused(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@leader-1")
+
+        unbound = signed_cmd_sample(world["leader"], "leader-1", "so101-1", RESET, name_target=False)
+        _deliver(world["robot"], unbound, monkeypatch)
+
+        assert world["arm"].resets == 0
+        refused = [p for e, p in world["audits"] if e == "command_refused"]
+        assert [p["reason"] for p in refused] == ["signed_for_another_peer"]
+        assert refused[0]["target_id"] is None
+
+    def test_a_broadcast_is_signed_for_every_peer_and_admitted(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@leader-1")
+
+        fleet_wide = signed_cmd_sample(
+            world["leader"], "leader-1", "so101-1", RESET, signed_for=mesh_core.BROADCAST_RESPONDER
+        )
+        _deliver(world["robot"], fleet_wide, monkeypatch)
+
+        assert world["arm"].resets == 1
+        assert [e for e, _ in world["audits"] if e == "command_refused"] == []
+
+    def test_an_unsigned_command_is_judged_by_the_gate_not_by_a_target_it_cannot_name(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Legacy envelopes carry no target; they are refused for lacking a signature, with that reason."""
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@leader-1")
+
+        _deliver(world["robot"], signed_cmd_sample(None, "leader-1", "so101-1", RESET, name_target=False), monkeypatch)
+
+        assert world["arm"].resets == 0
+        assert [p["reason"] for e, p in world["audits"] if e == "wire_motion_refused"] == [
+            "the command carries no verifiable signature"
+        ]
+        assert "signed_for_another_peer" not in [p.get("reason") for e, p in world["audits"] if e == "command_refused"]
+
+    def test_send_and_broadcast_name_their_target_inside_the_signed_body(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        leader = Mesh(_HardwareArm(), peer_id="leader-1", peer_type="operator")
+        leader._wire_identity = world["leader"]
+        leader._running = True
+        published: list[tuple[str, dict[str, Any]]] = []
+        monkeypatch.setattr(leader, "publish", lambda key, payload: published.append((key, payload)))
+        monkeypatch.setattr(leader, "_pace_cmd_publish", lambda: None)
+
+        leader.send("so101-1", RESET, timeout=0.05)
+        leader.broadcast(RESET, timeout=0.05)
+
+        assert [k for k, _ in published] == ["strands/so101-1/cmd", "strands/broadcast"]
+        sent, fleet_wide = (p for _, p in published)
+        assert sent["target_id"] == "so101-1" and fleet_wide["target_id"] == mesh_core.BROADCAST_RESPONDER
+        # Both are signed over the target: altering it breaks the signature.
+        roots = world["robot"]._trust_roots
+        assert not isinstance(mesh_core._wire_identity.verify(roots, sent), str)
+        assert isinstance(mesh_core._wire_identity.verify(roots, {**sent, "target_id": "so101-2"}), str)

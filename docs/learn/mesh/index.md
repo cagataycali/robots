@@ -32,7 +32,7 @@ print(a.mesh.tell("arm-b", "wave", policy_provider="mock", duration=1.0)["result
 a.mesh.stop(); b.mesh.stop()
 ```
 
-A simulation appears twice: the session peer (`arm-b`) and one child peer per robot in its world (`arm-b__so101`). If another mesh process is running on this machine, its peers show up too.
+A simulation appears twice: the session peer (`arm-b`) and one child peer per robot in its world (`arm-b__so101`). Another mesh process on this machine shows its peers too.
 
 ## What it is
 
@@ -40,7 +40,7 @@ A simulation appears twice: the session peer (`arm-b`) and one child peer per ro
 
 Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers RPC commands, and relays teleoperation frames. The wire is Zenoh on the LAN, optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
 
-The mesh is enrichment. A Zenoh session that fails to open leaves the robot working without it; the mesh never crashes the host.
+The mesh is enrichment: a Zenoh session that fails to open leaves the robot working without it; the mesh never crashes the host.
 
 ## Three switches
 
@@ -50,7 +50,7 @@ The mesh is enrichment. A Zenoh session that fails to open leaves the robot work
 | `STRANDS_MESH_AUTH_MODE` | `mtls` (default), `none` | `none` also needs `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE=1`, or `STRANDS_MESH_LOCAL_DEV=true` on loopback |
 | `STRANDS_MESH_BACKEND` | `zenoh` (default), `iot`, `bridge` | which transport carries the topics; a typo falls back to `zenoh` and is reported once |
 
-`Robot(..., mesh=True)` forces it on for one robot, `mesh=False` off. `init_mesh(robot, peer_id=...)` attaches one to any object with `send_action` and `stop`.
+`Robot(..., mesh=True)` forces it on for one robot, `mesh=False` off; `init_mesh(robot, peer_id=...)` attaches one to any object with `send_action` and `stop`.
 
 ## Postures
 
@@ -60,17 +60,17 @@ The mesh is enrichment. A Zenoh session that fails to open leaves the robot work
 | trusted lab | `STRANDS_MESH_AUTH_MODE=mtls`, `STRANDS_MESH_TLS_CA`, `_TLS_CERT`, `_TLS_KEY`, `STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1` | any CA-signed peer may publish anywhere; `Mesh.start` refuses without the acknowledgement |
 | production | the mTLS trio plus `STRANDS_MESH_ACL_FILE` with `default_permission: "deny"` | role-separated operators and robots ([bridges](bridges.md) covers the ACL file) |
 
-Under `mtls` with no ACL file and no acknowledgement, `Mesh.start` refuses and prints the four ways out. `strands-robots doctor` prints the same text for the same posture.
+Under `mtls` with no ACL file and no acknowledgement, `Mesh.start` refuses and prints the four ways out; `strands-robots doctor` prints the same text.
 
-The mTLS trio is required together: with any of the three unset or pointing at a missing file or a symlink, session open refuses with the variable names; the loader never downgrades to plain TCP. The key file must be mode `0600` on POSIX, checked on the real file. On Windows the mode check is skipped and the loader logs one WARNING per key file, so restrict the key with an NTFS ACL instead.
+The mTLS trio is required together: with any of the three unset or pointing at a missing file or a symlink, session open refuses naming the variables; the loader never downgrades to plain TCP. The key file must be mode `0600` on POSIX, checked on the real file. On Windows the mode check is skipped and the loader logs one WARNING per key file, so restrict the key with an NTFS ACL instead.
 
-Discovery: the first process on a host listens on `tls/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447) and later ones connect to it, so every mesh process on one machine sees every other, forgotten dashboards included. Across hosts set `ZENOH_CONNECT=tls/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
+Discovery: the first process on a host listens on `tls/127.0.0.1:<STRANDS_MESH_PORT>` (default 7447), later ones connect to it, so every mesh process on one machine sees every other, forgotten dashboards included. Across hosts set `ZENOH_CONNECT=tls/10.0.0.1:7447` (comma-separated) or `ZENOH_LISTEN`. `STRANDS_MESH_MULTICAST=true` opens UDP `224.0.0.224:7446` so any device on the LAN can find your fleet; it is off by default and logs a warning when on.
 
 ## Signed wire identity
 
-mTLS admits a peer; it does not say which peer wrote a message. The Zenoh `SourceInfo` label is the publisher's own, so an admitted peer could copy a robot's label and answer an e-stop in its name. A peer with a certificate signs what it publishes (`strands_robots.mesh.wire_identity`): a `sig` block with its DER leaf, a time, a nonce and the signature over the canonical body. The mTLS pair signs under `mtls`, the IoT device certificate on `iot` and `bridge`.
+mTLS admits a peer; it does not say which peer wrote a message. The Zenoh `SourceInfo` label is the publisher's own, so an admitted peer could copy a robot's label and answer an e-stop as it. A peer with a certificate signs what it publishes (`strands_robots.mesh.wire_identity`): a `sig` block with its DER leaf, time, nonce and the signature over the body. The mTLS pair signs under `mtls`, the IoT device certificate on `iot` and `bridge`.
 
-`STRANDS_MESH_REQUIRE_SIGNED_IDENTITY`: `auto` (default) requires a signature when the auth mode is `mtls` and `STRANDS_MESH_TLS_CA` loads; `1` always; `0` keeps the session-id path. When required, a presence binds `robot_id` to a leaf whose common name is that id (or its parent, for a `<peer>__<robot>` child), a reply counts once per nonce from a leaf speaking for its `responder_id`, and a motion command is attributed to its signer. Approvals name that signer: `STRANDS_ROBOT_COMMAND_ALLOW=reset@lab-op` pre-approves one verified peer, `*@lab-op` every verb for it; a bare verb admits any verified peer, with one warning. A peer without a certificate is dropped from the roster and its replies and motion commands refused; it can still stop a robot and read state.
+`STRANDS_MESH_REQUIRE_SIGNED_IDENTITY`: `auto` (default) requires a signature when the auth mode is `mtls` and `STRANDS_MESH_TLS_CA` loads; `1` always; `0` keeps the session-id path. When required, a presence binds `robot_id` to a leaf whose common name is that id (or its parent, for a `<peer>__<robot>` child), a reply counts once per nonce from a leaf speaking for its `responder_id`, a command names its target inside what is signed (one captured off another robot's topic is refused), and a motion command is attributed to its signer. Approvals name that signer: `STRANDS_ROBOT_COMMAND_ALLOW=reset@lab-op` pre-approves one verified peer, `*@lab-op` every verb for it; a bare verb admits any verified peer, warning once. A peer without a certificate is dropped from the roster, its replies and motion commands refused; it can still stop a robot and read state.
 
 ## Rates and caps
 

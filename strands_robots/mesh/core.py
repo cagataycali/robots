@@ -58,7 +58,7 @@ from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
 from strands_robots.mesh.transport.base import SAFETY_COMMAND_TOPICS, DirectSender, retained_delivery, sample_leg
-from strands_robots.utils import partial_construction_repr, positive_finite_number_error
+from strands_robots.utils import partial_construction_repr, positive_finite_number_error, refusal_repr
 
 logger = logging.getLogger(__name__)
 
@@ -2645,6 +2645,16 @@ class Mesh(SensorLoopsMixin):
                     sender_id,
                     verified,
                 )
+            elif data.get("target_id") not in (self.peer_id, BROADCAST_RESPONDER):
+                # Signed, genuine, and for somebody else: a peer that can
+                # subscribe ``**/cmd`` captured another robot's signed command
+                # and republished it here unchanged (same signature, same
+                # nonce window). The target is part of what was signed, so it
+                # cannot be rewritten to this peer without breaking the
+                # signature; refuse and audit instead of dispatching it (and
+                # spending this robot's own ``verb@sender`` approval on it).
+                self._refuse_retargeted_command(sample, data, verified.cn)
+                return
             else:
                 exec_kwargs["signer"] = verified.cn
                 exec_kwargs["cert_sha256"] = verified.cert_sha256
@@ -2657,6 +2667,33 @@ class Mesh(SensorLoopsMixin):
             name=f"mesh-exec-{self.peer_id}",
             daemon=True,
         ).start()
+
+    def _refuse_retargeted_command(self, sample: Any, data: dict[str, Any], signer: str) -> None:
+        """Audit and WARN a verified command whose signed ``target_id`` is not this peer."""
+        topic = str(getattr(sample, "key_expr", "") or "")
+        command = data.get("command")
+        action = command.get("action", "") if isinstance(command, dict) else ""
+        target = data.get("target_id")
+        self._audit_local(
+            "command_refused",
+            {
+                "action": str(action)[:64],
+                "reason": "signed_for_another_peer",
+                "sender": str(data.get("sender_id", ""))[:128],
+                "signer": signer[:128],
+                "target_id": None if target is None else str(target)[:128],
+                "turn_id": str(data.get("turn_id", ""))[:128],
+                "topic": topic[:256],
+            },
+        )
+        logger.warning(
+            "[mesh] %s: refused a command signed by %s for %s that arrived on %s (a signed command "
+            "names its target; this one was captured from another robot's topic or predates signing)",
+            self.peer_id,
+            signer,
+            refusal_repr(target),
+            topic or "this peer's cmd topic",
+        )
 
     def _refuse_retained_command(self, sample: Any, data: dict[str, Any]) -> None:
         """Audit and WARN (once per topic) a command the broker delivered from storage."""
@@ -4666,7 +4703,19 @@ class Mesh(SensorLoopsMixin):
                 self._responses.pop(turn, None)
                 raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
-        msg = self._sign({"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()})
+        # ``target_id`` is inside the signed body: a captured signed command
+        # republished verbatim on another robot's ``cmd`` topic still verifies,
+        # so without it the receiver could not tell the command was never for
+        # it (``_on_cmd`` refuses a signed command naming another peer).
+        msg = self._sign(
+            {
+                "sender_id": self.peer_id,
+                "target_id": target,
+                "turn_id": turn,
+                "command": cmd,
+                "timestamp": time.time(),
+            }
+        )
         # An over-cap command is dropped by the transport with no diagnostics,
         # so report it here instead of publishing into the filter.
         size_problem = self._cmd_topic_size_problem(msg)
@@ -4880,7 +4929,18 @@ class Mesh(SensorLoopsMixin):
             self._responses[turn] = []
             # Sentinel -- broadcast accepts responses from any peer.
             self._expected_responders[turn] = BROADCAST_RESPONDER
-        msg = self._sign({"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()})
+        # Signed for every peer: ``_on_cmd`` admits the sentinel on any topic
+        # (a broadcast republished on one robot's ``cmd`` topic changes nothing,
+        # every peer was going to run it).
+        msg = self._sign(
+            {
+                "sender_id": self.peer_id,
+                "target_id": BROADCAST_RESPONDER,
+                "turn_id": turn,
+                "command": cmd,
+                "timestamp": time.time(),
+            }
+        )
         # ``strands/broadcast`` shares the cmd-topic byte cap with ``**/cmd``
         # (one ``strands_cmd_size_cap`` rule), so an over-cap broadcast is
         # dropped by the filter and returns the same empty list a broadcast

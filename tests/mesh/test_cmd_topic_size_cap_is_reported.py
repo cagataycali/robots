@@ -147,9 +147,9 @@ class TestNothingElseChanges:
         assert isinstance(result, dict)
         assert result["status"] == "error"
         encoded = len(
-            json.dumps({"sender_id": "op", "turn_id": "x" * 32, "command": _OVER_CAP_CMD, "timestamp": 0.0}).encode(
-                "utf-8"
-            )
+            json.dumps(
+                {"sender_id": "op", "target_id": "r1", "turn_id": "x" * 32, "command": _OVER_CAP_CMD, "timestamp": 0.0}
+            ).encode("utf-8")
         )
         assert result["error"].startswith("command message is "), result["error"]
         assert result["error"].endswith("Shrink world_update/instruction or raise the cap on BOTH peers."), result[
