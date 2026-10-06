@@ -76,7 +76,7 @@ SITES = [
     ),
     (
         "pose_tool",
-        lambda ctx: pose_gate("move_motor", {"port": "/dev/ttyACM0", "motor_name": "elbow"}, ctx),
+        lambda ctx: pose_gate("move_motor", {"port": "/dev/ttyACM0", "motor_name": "elbow"}, ctx, None),
         POSE_ALLOW_ENV,
         "move_motor",
     ),
