@@ -798,6 +798,13 @@ class RenderingMixin:
             if pycam_name not in cameras_to_render:
                 cameras_to_render.append(pycam_name)
 
+        # A robot's camera is keyed twice - by its namespaced model name and by
+        # the short name ``add_robot`` registers - and both keys resolve to one
+        # compiled camera. Render each (camera, size) once and publish that frame
+        # under every key that names it: two renders of one camera are not
+        # guaranteed to be byte-identical, so two keys for one view could carry
+        # two different images into a recorded dataset, at twice the cost.
+        rendered: dict[tuple[int, int, int], np.ndarray] = {}
         for cname in cameras_to_render:
             if not cname:
                 continue
@@ -826,13 +833,16 @@ class RenderingMixin:
                 continue
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
+            if (cam_id, w, h) in rendered:
+                obs[cname] = rendered[(cam_id, w, h)].copy()
+                continue
             try:
                 renderer = self._get_renderer(w, h)
                 if renderer is None:
                     continue
                 viz_option = self._get_viz_option()
                 renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
-                obs[cname] = renderer.render().copy()
+                obs[cname] = rendered[(cam_id, w, h)] = renderer.render().copy()
             except (RuntimeError, ValueError) as e:
                 # Individual camera failure shouldn't stop joint state collection.
                 # Common cause: camera ID invalid after scene recompile.
