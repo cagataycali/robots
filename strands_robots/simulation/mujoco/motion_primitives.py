@@ -105,6 +105,9 @@ _CARRY_CHECK_MIN_TRAVEL_M = 0.02
 #: A held body that moved less than this fraction of the end effector's travel
 #: was left behind. A carried body follows the fingers almost one to one.
 _CARRY_FOLLOW_FRACTION = 0.5
+#: A loose body the arm touched during ``move_to`` and that ended at least this
+#: far from where it started was pushed: it is no longer where the caller aimed.
+_PUSHED_MIN_M = 0.005
 
 
 class MotionPrimitivesMixin(MotionPrimitivesCore):
@@ -845,6 +848,17 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         with self._lock:
             ee_start, _ = self._frame_world_pose(model, data, frame_name, frame_type)
             in_fingers = self._free_bodies_in_fingers(model, data, grip_acts)
+            # Every other loose object, so the reply can say which ones the
+            # arm pushed on the way: the descent is not collision-aware, and a
+            # cube shoved off the target makes "reached" true of the end
+            # effector and false of the task.
+            arm_bodies = self._commanded_robot_body_ids(model, arm_jact)
+            loose = {
+                b: np.array(data.xpos[b], dtype=float)
+                for b in range(1, int(model.nbody))
+                if b not in arm_bodies and b not in in_fingers and self._is_free_body(model, b)
+            }
+            touched: set[int] = set()
         for _ in range(max_steps):
             with self._lock:
                 abort = self._primitive_abort_reason("move_to", robot_name, model)
@@ -853,6 +867,8 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 if (diverged := self._primitive_tick(model, data, ctrl_targets, "move_to")) is not None:
                     return diverged
                 ee_pos, ee_quat = self._frame_world_pose(model, data, frame_name, frame_type)
+                if loose:
+                    touched |= self._bodies_touching(model, data, arm_bodies, loose)
             steps_used += 1
             position_error = float(np.linalg.norm(ee_pos - target))
             # Convergence is measured on EVERY component the caller asked for.
@@ -875,6 +891,13 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
                 obstruction = self._servo_obstruction(model, data, arm_jact)
         with self._lock:
             left_behind = self._bodies_left_behind(model, data, in_fingers, ee_start, ee_pos, frame_name, frame_type)
+            pushed = []
+            for body_id in sorted(touched):
+                now = np.array(data.xpos[body_id], dtype=float)
+                moved = float(np.linalg.norm(now - loose[body_id]))
+                if moved >= _PUSHED_MIN_M:
+                    name = self._mj.mj_id2name(model, self._mj.mjtObj.mjOBJ_BODY, body_id) or f"body {body_id}"
+                    pushed.append({"body": name, "moved_m": moved, "position": [float(v) for v in now]})
 
         return self._move_to_result(
             robot_name,
@@ -894,7 +917,63 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             ik_orientation_residual=ik_orientation_residual,
             obstruction=obstruction,
             left_behind=left_behind,
+            pushed=pushed,
         )
+
+    def _bodies_touching(self, model: Any, data: Any, robot_bodies: set[int], candidates: Iterable[int]) -> set[int]:
+        """The ``candidates`` that an active contact joins to a body in ``robot_bodies`` right now."""
+        wanted = set(candidates)
+        out: set[int] = set()
+        for i in range(int(data.ncon)):
+            con = data.contact[i]
+            if not mj_contact_is_active(con):
+                continue
+            b1, b2 = int(model.geom_bodyid[con.geom1]), int(model.geom_bodyid[con.geom2])
+            for mine, other in ((b1, b2), (b2, b1)):
+                if mine in robot_bodies and other in wanted:
+                    out.add(other)
+        return out
+
+    def _nearest_loose_body(
+        self, model: Any, data: Any, gripper_acts: list[int], namespace: str
+    ) -> dict[str, Any] | None:
+        """The free body closest to the end effector, where it is now and how far away.
+
+        Distance is measured from the end-effector frame ``move_to`` drives
+        (:func:`strands_robots.simulation.ik.discover_ee_frame`), else from the
+        gripper actuators' target bodies; the robot those fingers belong to is
+        excluded. Read when a close touched nothing, so the reply can point at
+        where the object IS rather than where the caller last aimed.
+
+        Returns:
+            ``{"body", "position", "distance_m"}``, or ``None`` when the fingers
+            cannot be located or the scene has no loose object.
+        """
+        mj = self._mj
+        fingers = {int(b) for a in gripper_acts for b in actuator_target_body_ids(model, int(a), mj)}
+        if not fingers:
+            return None
+        machine: set[int] = set()
+        for body_id in fingers:
+            machine |= self._subtree(model, self._root_body(model, body_id))
+        from strands_robots.simulation.ik import discover_ee_frame
+
+        frame = discover_ee_frame(model, namespace or None)
+        tip = (
+            self._frame_world_pose(model, data, *frame)[0]
+            if frame is not None
+            else np.mean([np.array(data.xpos[b], dtype=float) for b in fingers], axis=0)
+        )
+        best: dict[str, Any] | None = None
+        for body_id in range(1, int(model.nbody)):
+            if body_id in machine or not self._is_free_body(model, body_id):
+                continue
+            pos = np.array(data.xpos[body_id], dtype=float)
+            dist = float(np.linalg.norm(pos - tip))
+            if best is None or dist < best["distance_m"]:
+                name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id) or f"body {body_id}"
+                best = {"body": name, "position": [float(v) for v in pos], "distance_m": dist}
+        return best
 
     def _free_bodies_in_fingers(self, model: Any, data: Any, gripper_acts: Iterable[int]) -> dict[int, np.ndarray]:
         """Free-floating bodies touching the fingers now, with their world positions.
@@ -1293,11 +1372,14 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             # is wrong unless it hears that here.
             held: dict[str, int] | None = None
             unpinched: list[dict[str, Any]] = []
+            nearest: dict[str, Any] | None = None
             if state == "close":
                 touching = self._finger_contacts(model, data, gripper_acts)
                 if touching is not None:
                     held = {name: int(rec["contacts"]) for name, rec in touching.items()}
                     unpinched = self._bodies_too_weakly_gripped(model, touching, namespace)
+                    if not held:
+                        nearest = self._nearest_loose_body(model, data, gripper_acts, namespace)
         return self._set_gripper_result(
             robot_name,
             state,
@@ -1308,6 +1390,7 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
             joint_positions,
             held=held,
             unpinched=unpinched,
+            nearest=nearest,
         )
 
     def _bodies_too_weakly_gripped(

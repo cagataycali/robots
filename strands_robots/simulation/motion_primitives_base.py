@@ -592,6 +592,7 @@ class MotionPrimitivesCore:
         ik_orientation_residual: float | None = None,
         obstruction: dict[str, Any] | None = None,
         left_behind: list[dict[str, Any]] | None = None,
+        pushed: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Success / not-reached envelope for ``move_to``, shared across backends.
 
@@ -615,6 +616,13 @@ class MotionPrimitivesCore:
         "body_moved_m", "weld_parent"}``). ``None`` means the backend did not
         check. Each one adds a sentence naming the grasp assist that carries it,
         and the records travel in the payload, on either path.
+
+        ``pushed`` lists loose bodies the arm touched on the way and moved
+        (``{"body", "moved_m", "position"}``, ``position`` where it is now).
+        The descent is not collision-aware, so the end effector can arrive
+        while the object it was aimed at has been shoved off the target:
+        ``reached`` stays a statement about the end effector, and each record
+        adds a sentence saying the object is no longer where it was.
         """
         payload: dict[str, Any] = {
             "reached": reached,
@@ -645,6 +653,15 @@ class MotionPrimitivesCore:
                     "the grasp does not hold it. To carry it, go back down to it, close, then call "
                     f"attach_bodies(parent='{rec['weld_parent']}', child='{rec['body']}', mode='weld') "
                     "before the lift - a grasp assist, not a physical grasp."
+                )
+        if pushed:
+            payload["pushed"] = pushed
+            for rec in pushed:
+                where = [round(float(v), 4) for v in rec["position"]]
+                carry_note += (
+                    f" The arm pushed '{rec['body']}' {rec['moved_m']:.3f} m on the way (move_to is not "
+                    f"collision-aware): it is now at {where}, not where move_to aimed. Read it again with "
+                    "get_body_state before the next move."
                 )
         if reached:
             return {
@@ -879,6 +896,7 @@ class MotionPrimitivesCore:
         *,
         held: dict[str, int] | None = None,
         unpinched: list[dict[str, Any]] | None = None,
+        nearest: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Success envelope for ``set_gripper``, shared across backends.
 
@@ -897,6 +915,11 @@ class MotionPrimitivesCore:
         each adds a sentence that a lift will leave it behind and names the
         grasp-assist weld that would carry it, so the caller hears it before
         the lift rather than after it.
+
+        ``nearest`` is the loose body closest to the fingers after a close that
+        touched nothing (``{"body", "position", "distance_m"}``). It names where
+        the object is NOW: the approach may have pushed it, and advice to go
+        back to where it was would repeat the push.
         """
         payload: dict[str, Any] = {
             "state": state,
@@ -923,10 +946,16 @@ class MotionPrimitivesCore:
                 if unpinched:
                     payload["unpinched"] = unpinched
             else:
-                text += (
-                    " Closed on nothing: no object is touching the fingers, so a lift now carries nothing - "
-                    "move_to the object first (get_body_state gives its position)."
-                )
+                text += " Closed on nothing: no object is touching the fingers, so a lift now carries nothing."
+                if nearest is not None:
+                    payload["nearest_object"] = nearest
+                    where = [round(float(v), 4) for v in nearest["position"]]
+                    text += (
+                        f" The nearest object, '{nearest['body']}', is {nearest['distance_m']:.3f} m from the end "
+                        f"effector, at {where} - if the approach pushed it, that is where it went."
+                    )
+                else:
+                    text += " Find the object with get_body_state, open, then move_to it."
         return {
             "status": "success",
             "content": [{"text": text}, {"json": payload}],
