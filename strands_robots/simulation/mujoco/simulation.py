@@ -6460,6 +6460,18 @@ class MuJoCoSimEngine(
                 )
             ]
 
+            # Carry the registry's ``joint_labels`` into the sidecar when the
+            # robot has them, mirroring ``get_robot_state`` (which already
+            # ships ``joint_labels`` in its JSON block). ``get_features``'s
+            # per-robot sidecar is pure discovery metadata -- it is not
+            # consumed by any recorder or ``Policy.set_robot_state_keys``
+            # binding (those read :meth:`robot_action_keys`) so the aliasing
+            # concern that keeps the observation / action key list numeric on
+            # so101 (harness#712, harness#768) does not apply here. A robot
+            # without a ``joint_labels`` registry entry gets ``{}``, so the
+            # legacy shape is preserved byte-for-byte for every arm the
+            # upstream MJCF already names semantically (so100, panda, g1, ...).
+            robot_labels = self._robot_joint_labels(robot)
             robots_info = {
                 robot_name: {
                     "joint_names": robot.joint_names,
@@ -6467,6 +6479,7 @@ class MuJoCoSimEngine(
                     "n_actuators": len(robot.actuator_ids),
                     "data_config": robot.data_config,
                     "source": os.path.basename(robot.urdf_path),
+                    "joint_labels": robot_labels,
                 }
             }
         else:
@@ -6482,6 +6495,7 @@ class MuJoCoSimEngine(
                     "n_actuators": len(robot.actuator_ids),
                     "data_config": robot.data_config,
                     "source": os.path.basename(robot.urdf_path),
+                    "joint_labels": self._robot_joint_labels(robot),
                 }
 
         features = {
@@ -6517,7 +6531,20 @@ class MuJoCoSimEngine(
             f"Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
+            # Annotate joints with their registry labels when present, mirroring
+            # ``_world_readiness_sentence`` (harness#758) and ``get_robot_state``
+            # which already render ``'1 (shoulder_pan): …'`` on the same object.
+            # ``rinfo['joint_labels']`` is ``{}`` on robots without a registry
+            # entry (panda, g1, ...), so the output below is byte-identical to
+            # the legacy format for them.
+            r_labels = rinfo.get("joint_labels") or {}
             lines.append(f"{rname}: {rinfo['n_joints']} joints, {rinfo['n_actuators']} actuators ({rinfo['source']})")
+            if r_labels:
+                annotated = ", ".join(
+                    f"{jnt} ({r_labels[jnt]})" if jnt in r_labels else jnt
+                    for jnt in rinfo["joint_names"]
+                )
+                lines.append(f"  joint_labels: {annotated}")
 
         return {
             "status": "success",
