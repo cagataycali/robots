@@ -196,7 +196,8 @@ class OpenCVCamera:
 
         Raises:
             OSError: When the device does not open or no attempt yields a frame;
-                the message names the camera, its source and the mode tried, so
+                the message names the camera, its source, the mode tried and the
+                mode the device answered with, so
                 a dashboard can print it next to the arm that did connect.
         """
         if self.is_open:
@@ -210,7 +211,8 @@ class OpenCVCamera:
             attempts.append((spec.width, spec.height, None))
         if spec.width is not None or spec.height is not None:
             attempts.append((None, None, None))
-        for width, height, fps in attempts:
+        answer, refused = "an unknown mode", list[str]()
+        for attempt, (width, height, fps) in enumerate(attempts):
             capture = cv2.VideoCapture(spec.index_or_path)
             if not capture.isOpened():
                 capture.release()
@@ -218,11 +220,13 @@ class OpenCVCamera:
                     f"camera {spec.name!r}: could not open {spec.index_or_path!r}; "
                     "check the index with `strands_robots dashboard` > Devices, or the path"
                 )
-            for prop, value in ((cv2.CAP_PROP_FRAME_WIDTH, width), (cv2.CAP_PROP_FRAME_HEIGHT, height)):
-                if value is not None:
-                    capture.set(prop, value)
-            if fps is not None:
-                capture.set(cv2.CAP_PROP_FPS, fps)
+            mode = (
+                ("width", cv2.CAP_PROP_FRAME_WIDTH, width),
+                ("height", cv2.CAP_PROP_FRAME_HEIGHT, height),
+                ("fps", cv2.CAP_PROP_FPS, fps),
+            )
+            # ``set`` answers False when the backend rejects the value outright.
+            rejected = [name for name, prop, value in mode if value is not None and capture.set(prop, value) is False]
             if capture.read()[0]:
                 self._capture = capture
                 if (width, height, fps) != requested:
@@ -234,16 +238,21 @@ class OpenCVCamera:
                         _mode_text(width, height, fps),
                     )
                 return
+            if attempt == 0:
+                # Read the device's answer to the requested mode before releasing
+                # it: a mode the device does not offer and a device another
+                # process holds both end here, and the mode it settled on is what
+                # tells the two apart.
+                w, h, rate = (capture.get(prop) for _name, prop, _value in mode)
+                answer = _mode_text(int(w) if w > 0 else None, int(h) if h > 0 else None, rate if rate > 0 else None)
+                refused = rejected
             capture.release()
-        if len(attempts) == 1:
-            raise OSError(
-                f"camera {spec.name!r}: opened {spec.index_or_path!r} but no frame arrived; "
-                "another process may hold the device"
-            )
+        also = ", nor without the requested size and rate" if len(attempts) > 1 else ""
+        hint = f"the device refused {', '.join(refused)}; " if refused else ""
         raise OSError(
             f"camera {spec.name!r}: opened {spec.index_or_path!r} but no frame arrived at "
-            f"{_mode_text(*requested)}, nor without the requested size and rate; "
-            "another process may hold the device"
+            f"{_mode_text(*requested)}{also}; the device answers {answer}; {hint}pick a mode the device "
+            "lists (the dashboard's cameras sheet probes them), or free it if another process holds it"
         )
 
     def read(self) -> Any:
