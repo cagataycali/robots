@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 _COMMANDS = ("doctor", "verify-dataset", "dashboard", "iot")
+_USAGE = f"Usage: strands-robots <command> [options]\nCommands: {', '.join(_COMMANDS)}"
 
 
 def main() -> None:
@@ -15,16 +16,14 @@ def main() -> None:
     on a missing or unknown command.
     """
     if len(sys.argv) < 2:
-        print("Usage: python -m strands_robots <command>")
-        print(f"Commands: {', '.join(_COMMANDS)}")
+        print(_USAGE)
         sys.exit(1)
 
     cmd = sys.argv[1]
     # The two flags every console script is tried with first. Answering them
     # with "Unknown command" and exit 1 makes a fresh install look broken.
     if cmd in ("-h", "--help"):
-        print("Usage: strands-robots <command> [options]")
-        print(f"Commands: {', '.join(_COMMANDS)}")
+        print(_USAGE)
         return
     if cmd in ("-V", "--version"):
         from importlib.metadata import version

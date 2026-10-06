@@ -39,10 +39,16 @@ class _Capture:
         self.released = True
 
 
-def _cv2(capture: _Capture) -> types.ModuleType:
+def _cv2(captures: list[_Capture], refuses: set[int]) -> types.ModuleType:
+    """Every ``VideoCapture`` call opens a fresh handle on the same device, as a real backend does."""
+
+    def video_capture(_source: Any) -> _Capture:
+        captures.append(_Capture({3: 1280.0, 4: 720.0, 5: 30.0}, refuses))
+        return captures[-1]
+
     cv2 = types.ModuleType("cv2")
     cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS = 3, 4, 5  # type: ignore[attr-defined]
-    cv2.VideoCapture = lambda _source: capture  # type: ignore[attr-defined]
+    cv2.VideoCapture = video_capture  # type: ignore[attr-defined]
     return cv2
 
 
@@ -53,20 +59,25 @@ def _cv2(capture: _Capture) -> types.ModuleType:
         (
             {"width": 640, "height": 480, "fps": 5.0},
             set(),
-            ["asking for 640x480 at 5 fps", "the device answers 1280x720 at 30 fps", "pick a mode the device lists"],
+            ["no frame arrived at 640x480@5", "the device answers 1280x720@30", "pick a mode the device lists"],
             ["refused"],
         ),
         # A backend that rejects the value outright is named for the field it rejected.
-        ({"fps": 5.0}, {5}, ["asking for 5 fps,", "the device refused fps;"], []),
+        ({"fps": 5.0}, {5}, ["the device refused fps;"], []),
         # Nothing asked: the device's own mode is what failed, and the message says so.
-        ({}, set(), ["asking for its default mode", "the device answers 1280x720 at 30 fps"], ["refused"]),
+        (
+            {},
+            set(),
+            ["no frame arrived at the device's own size at the device's own rate;", "answers 1280x720@30"],
+            ["refused", "nor without"],
+        ),
     ],
 )
 def test_the_message_names_the_mode_tried_and_the_mode_the_device_answers(
     monkeypatch: pytest.MonkeyPatch, spec: dict[str, Any], refuses: set[int], says: list[str], never: list[str]
 ) -> None:
-    capture = _Capture({3: 1280.0, 4: 720.0, 5: 30.0}, refuses)
-    monkeypatch.setitem(sys.modules, "cv2", _cv2(capture))
+    captures: list[_Capture] = []
+    monkeypatch.setitem(sys.modules, "cv2", _cv2(captures, refuses))
     camera = OpenCVCamera(CameraSpec(name="wrist", index_or_path=0, **spec))
 
     with pytest.raises(OSError) as raised:
@@ -78,4 +89,4 @@ def test_the_message_names_the_mode_tried_and_the_mode_the_device_answers(
         assert fragment in message
     for fragment in never:
         assert fragment not in message
-    assert capture.released and not camera.is_open
+    assert captures and all(c.released for c in captures) and not camera.is_open

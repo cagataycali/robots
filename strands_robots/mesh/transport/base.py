@@ -196,6 +196,22 @@ def sample_leg(sample: Any) -> str:
     return leg if leg in SAMPLE_LEGS else "lan"
 
 
+#: The two fleet safety COMMAND topics (a stop and its release). A retained message on
+#: either is a stored command, never an operator acting now: every subscriber refuses it.
+SAFETY_COMMAND_TOPICS: frozenset[str] = frozenset({"strands/safety/estop", "strands/safety/resume"})
+
+
+def retained_delivery(sample: Any) -> bool:
+    """Whether the broker handed *sample* over from storage rather than as a live publish.
+
+    Only a real ``True`` counts: a ``zenoh.Sample`` has no ``retain`` attribute (Zenoh
+    stores nothing), and a unit fixture's ``MagicMock`` attribute is truthy but is not
+    the flag. The IoT transport resolves an unreadable packet flag to ``True`` when it
+    builds the sample, so the fail-closed reading happens where the wire is read.
+    """
+    return getattr(sample, "retain", False) is True
+
+
 @runtime_checkable
 class SubHandle(Protocol):
     """Opaque subscription handle - must support ``undeclare()`` for teardown.

@@ -478,6 +478,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
             <RunForm
               peerId={peer.peer_id}
               presence={p}
+              provenance={peer}
               running={running}
               busy={busy}
               disabled={offline}
