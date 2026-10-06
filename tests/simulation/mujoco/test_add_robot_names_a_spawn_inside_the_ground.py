@@ -5,8 +5,10 @@ left alone and a fixed-base arm is never moved, so an asset authored for a
 recessed floor (LeKiwi's wheels sit 34.6 mm below its root) started the episode
 inside the plane and the contact solver ejected it on the first step, behind a
 plain ``success``. The result now names the depth and the ``position=`` that
-spawns the robot clear, and following that advice silences it. A registry entry
-that carries that position as ``spawn_position`` spawns there by default.
+spawns the robot clear, and following that advice silences it - on a
+``keyframe=`` spawn too, whose free-joint pose is placed inside the
+``position=`` frame rather than over it. A registry entry that carries that
+position as ``spawn_position`` spawns there by default.
 
 Inline MJCF in ``tmp_path`` plus the registry's own models, ``mesh=False``, no rendering.
 """
@@ -44,13 +46,22 @@ _FIXED = """
 """
 
 
-def _add(tmp_path, xml: str, position: list[float] | None = None) -> str:
+#: The floating base again, posed by a ``<key>`` that writes the free joint's
+#: seven qpos values: the key puts the box bottom 20 mm under the plane.
+_KEYED = (
+    _FLOATING.replace("<freejoint/>", '<freejoint name="root"/>').replace(
+        "</mujoco>", '<keyframe><key name="stand" qpos="0.1 0 0.03 1 0 0 0 0" ctrl="0"/></keyframe></mujoco>'
+    )
+).format(z=0.5)
+
+
+def _add(tmp_path, xml: str, position: list[float] | None = None, keyframe: str | None = None) -> str:
     model = tmp_path / "robot.xml"
     model.write_text(xml)
     sim = Simulation(tool_name="test_spawn_burial", mesh=False)
     try:
         sim.create_world(gravity=[0, 0, -9.81])
-        result = sim.add_robot(name="bot", urdf_path=str(model), position=position)
+        result = sim.add_robot(name="bot", urdf_path=str(model), position=position, keyframe=keyframe)
         assert result["status"] == "success", result
         return result["content"][0]["text"]
     finally:
@@ -81,6 +92,27 @@ def test_the_named_position_spawns_the_robot_clear(tmp_path, caplog) -> None:
     assert "Pass position=[0.2, 0.0, 0.05]" in text, text
     assert any("50.0 mm inside the ground" in r.getMessage() for r in caplog.records), "Robot() returns no envelope"
     assert "inside the ground" not in _add(tmp_path, _FIXED.format(z=0.07), [0.2, 0.0, 0.05])
+
+
+def test_a_keyframe_spawn_follows_the_named_position(tmp_path) -> None:
+    text = _add(tmp_path, _KEYED, keyframe="stand")
+    assert "Pass position=[0.0, 0.0, 0.02]" in text, text
+    # Before the key was placed in the position= frame it overwrote it, so this
+    # advice reported the same 20 mm and a larger position=, forever.
+    assert "inside the ground" not in _add(tmp_path, _KEYED, [0.0, 0.0, 0.02], keyframe="stand")
+    model = tmp_path / "robot.xml"
+    sim = Simulation(tool_name="test_spawn_burial", mesh=False)
+    try:
+        sim.create_world(gravity=[0, 0, -9.81])
+        sim.add_robot(name="bot", urdf_path=str(model), position=[1.0, 2.0, 0.02], keyframe="stand")
+        world = sim._world
+        assert world is not None
+        for _ in range(2):  # the spawn, then reset() restoring the stored home
+            base = world._data.xpos[world._model.body("bot/base").id]
+            assert base.tolist() == pytest.approx([1.1, 2.0, 0.05]), base
+            sim.reset()
+    finally:
+        sim.cleanup()
 
 
 _ROBOTS = json.loads((Path(registry.__file__).parent / "robots.json").read_text(encoding="utf-8"))["robots"]
