@@ -54,6 +54,7 @@ INTERESTING_ENV = [
     "STRANDS_ROBOTS_VIDEO_ROOT",
     "STRANDS_ROBOTS_NO_DYLD_SHIM",
     "STRANDS_DASH_TASK_REQUIRES_CONFIRM",
+    "STRANDS_DASH_RECORD_CRUMB",
 ]
 
 
@@ -106,17 +107,24 @@ def is_displayable(key: str) -> bool:
 # grant, the remote-code opt-in - so holding a session became holding every gate.
 #: Keys the page may show and edit. Add a key here only if a client changing it
 #: cannot move a containment home, weaken auth or consent, or opt code execution in.
+#: A literal set, not built from ``INTERESTING_ENV``: showing a key never makes it writable.
+#: ``STRANDS_DASH_RECORD_CRUMB`` and ``STRANDS_ROBOTS_VIDEO_ROOT`` are shown, not written:
+#: each names where files are created, so each is set on the host.
 ALLOWED_ENV_KEYS: frozenset[str] = frozenset(
-    (
-        *INTERESTING_ENV,
-        "STRANDS_MODEL_ID",
+    {
+        "OPENAI_API_KEY",
+        "HF_TOKEN",
+        "AWS_REGION",
         "AWS_DEFAULT_REGION",
-        "OPENAI_BASE_URL",
+        "AWS_PROFILE",
+        "VOICE_MODEL",
         "VOICE_PROVIDER",
         "VOICE_NAME",
+        "STRANDS_MODEL_ID",
+        "OPENAI_BASE_URL",
         "DASHBOARD_VOICE_PROMPT",
-        "STRANDS_DASH_RECORD_CRUMB",
-    )
+        "STRANDS_ROBOTS_NO_DYLD_SHIM",
+    }
 )
 #: Never dashboard-managed, whatever the allowlist says later: each of these is a gate
 #: some other route reads live from ``os.environ``. Kept as a second fence so that adding
@@ -145,6 +153,8 @@ GATE_BEARING_ENV_KEYS: frozenset[str] = frozenset(
         "HF_HUB_CACHE",
         "STRANDS_TRAIN_OUTPUT_DIR",
         "STRANDS_ROBOTS_DATA_DIRS",
+        "STRANDS_ROBOTS_VIDEO_ROOT",
+        "STRANDS_DASH_RECORD_CRUMB",
         "DASHBOARD_ENV_FILE",
         "DASHBOARD_AUTH_TOKEN",
         "BYPASS_TOOL_CONSENT",
