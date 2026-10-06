@@ -41,7 +41,11 @@ def test_box_full_extent_compiles_to_half(sim):
 
 def test_sphere_size_is_diameter(sim):
     """``size[0]`` is the sphere diameter; the compiled radius is half of it."""
-    result = sim.add_object("ball", shape="sphere", size=[0.1, 0.1, 0.1])
+    # Sphere consumes ``size[0]`` only (``_SIZE_LAYOUT["sphere"] = (1, ...)``),
+    # so a surplus vector is refused symmetric with the partial-vector rule
+    # (see ``test_add_object_size_component_count.py``). Pass the shape's
+    # documented one-component form, and read the compiled radius back.
+    result = sim.add_object("ball", shape="sphere", size=[0.1])
     assert result["status"] == "success"
     radius = _geom_size(sim._world, "ball_geom")[0]
     assert radius == pytest.approx(0.05)

@@ -63,12 +63,16 @@ _CHANNEL_EXTENT = (0.3, 0.4, 0.4)
 
 #: ``(shape, request, compiled extent)`` per primitive, with the compiled column
 #: measured off ``geom_aabb`` rather than restated from the request -- the whole
-#: point being that the two differ for four of the five rows. A row where they
+#: point being that the two differ for three of the four rows. A row where they
 #: differ is a row the pre-fix report got wrong.
+#:
+#: ``sphere`` is pinned to its one-component form here because
+#: ``_validate_size`` now rejects a surplus vector; the "sphere ignores
+#: trailing components" misreporting the report-pin exists to catch is pinned
+#: on the surplus-refusal side in ``test_add_object_size_component_count.py``.
 _PRIMITIVES: tuple[tuple[str, list[float], tuple[float, float, float]], ...] = (
     ("box", [0.04, 0.08, 0.12], (0.04, 0.08, 0.12)),
     ("ellipsoid", [0.04, 0.08, 0.12], (0.04, 0.08, 0.12)),
-    ("sphere", [0.05, 0.09, 0.2], (0.05, 0.05, 0.05)),
     ("sphere", [0.06], (0.06, 0.06, 0.06)),
     ("cylinder", [0.05, 0.1, 0.9], (0.05, 0.05, 0.9)),
     ("capsule", [0.05, 0.1, 0.9], (0.05, 0.05, 0.95)),
@@ -236,14 +240,27 @@ class TestAPlaneReportsTheOnlyGeometryItHas:
     """A plane is infinite for collision, so its bounding box describes nothing."""
 
     def test_the_report_names_the_visual_half_widths_not_the_infinite_bound(self, sim) -> None:
-        result = sim.add_object("floor", shape="plane", size=[1.0, 2.0, 3.0], is_static=True)
+        # A plane consumes ``size[0]`` and (optionally) ``size[1]`` -- the third
+        # slot used to be silently discarded, now it is refused symmetric with
+        # the partial-vector rule (``test_add_object_size_component_count.py``).
+        # Pass the shape's documented two-component form so this test is
+        # pinning the compiled read-back, not the dropped surplus.
+        result = sim.add_object("floor", shape="plane", size=[1.0, 2.0], is_static=True)
         assert result["status"] == "success", _text(result)
         assert _reported_size(result) == pytest.approx([1.0, 2.0], abs=1e-6)
         assert "visual half-widths" in _text(result)
         assert "infinite for collision" in _text(result)
-        # The discarded third component, and MuJoCo's own 2e10 m plane sentinel.
-        assert "3.0" not in _text(result), _text(result)
+        # MuJoCo's own 2e10 m plane sentinel must not surface in the report.
         assert "e+" not in _text(result) and "20000000000" not in _text(result), _text(result)
+
+    def test_a_surplus_third_component_is_rejected_rather_than_silently_dropped(self, sim) -> None:
+        """The grid-spacing slot is builder-owned; a caller cannot supply it."""
+        result = sim.add_object("floor", shape="plane", size=[1.0, 2.0, 3.0], is_static=True)
+        assert result["status"] == "error", _text(result)
+        assert "plane" in _text(result)
+        assert "at most 2" in _text(result)
+        # Atomic refusal: the plane is not half-added.
+        assert "floor" not in sim._world.objects
 
     def test_an_omitted_width_reports_the_one_that_was_compiled_for_it(self, sim) -> None:
         """``size[1]`` mirrors ``size[0]``, which only the compiled geom knows."""

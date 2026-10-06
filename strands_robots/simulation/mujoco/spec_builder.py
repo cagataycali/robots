@@ -218,6 +218,22 @@ _SIZE_LAYOUT: dict[str, tuple[int, str]] = {
 # first three components, so a longer vector carries values no shape can honor.
 _MAX_SIZE_COMPONENTS = 3
 
+# A shape that consumes fewer than three components cannot honor the trailing
+# ones either; the pre-existing rule ``len(size) < required`` catches the
+# missing-component class of mistake (``size=[0.5]`` on a box), but the
+# symmetric case -- a 3-vector on a sphere, or a 3-vector on a plane -- was
+# accepted silently. ``_normalize_size`` reads only the slots the shape owns,
+# so the trailing components would compile a differently-sized object while
+# reporting success -- the exact class of mistake the partial-vector rule
+# exists to prevent. ``_SIZE_LAYOUT["cylinder"]`` and ``["capsule"]`` carry a
+# documented "unused middle component", so they still accept three; every
+# other named shape caps at its consumed-count. ``mesh`` is handled on its
+# own path (``_normalize_size`` refuses it) and so is unaffected.
+_MAX_SIZE_PER_SHAPE: dict[str, int] = {
+    "sphere": 1,
+    "plane": 2,
+}
+
 
 def _validate_size(shape: str, size: list[float]) -> str | None:
     """Return an error message if ``size`` cannot be honored for ``shape``.
@@ -251,6 +267,21 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
             f"{len(size)} (size={list(size)}). 'size' is the full extent in meters "
             "along each axis (not MuJoCo's half-extent); pass every component the "
             "shape consumes rather than a partial vector."
+        )
+    # Symmetric with the ``< required`` branch above: a shape that consumes
+    # fewer than three components (sphere / plane -- see ``_MAX_SIZE_PER_SHAPE``)
+    # cannot honor the trailing ones either. ``_normalize_size`` reads only the
+    # slots the shape owns, so a sphere given ``size=[0.05, 0.10, 0.20]``
+    # compiled as a 5 cm ball while the request echoed three different numbers.
+    # Named here rather than inferred from ``layout`` because cylinder/capsule
+    # carry a documented "unused middle" and still need all three.
+    max_components = _MAX_SIZE_PER_SHAPE.get(shape, _MAX_SIZE_COMPONENTS)
+    if len(size) > max_components:
+        return (
+            f"add_object: {shape} takes at most {max_components} 'size' component(s) "
+            f"{layout}, got {len(size)} (size={list(size)}). 'size' is the full extent "
+            "in meters along each axis (not MuJoCo's half-extent); pass only the "
+            "components the shape consumes rather than a surplus vector."
         )
     if shape == "mesh":
         return None

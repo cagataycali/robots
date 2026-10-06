@@ -25,7 +25,7 @@ def sim():
     "shape,size,name",
     [
         ("box", [0.02, 0.02, 0.02], "a_box"),
-        ("sphere", [0.025, 0.025, 0.025], "a_ball"),
+        ("sphere", [0.025], "a_ball"),
         ("cylinder", [0.02, 0.02, 0.06], "a_rod"),
         ("capsule", [0.02, 0.02, 0.06], "a_capsule"),
     ],
@@ -49,7 +49,7 @@ def test_plane_object_auto_static(sim):
     """T29: shape='plane' auto-sets is_static=True; add_object no longer
     errors on plane shapes since they're now routed as static bodies
     automatically."""
-    r = sim.add_object(name="floor_mat", shape="plane", size=[0.5, 0.5, 0.001], position=[0, 0, 0.001])
+    r = sim.add_object(name="floor_mat", shape="plane", size=[0.5, 0.5], position=[0, 0, 0.001])
     assert r["status"] == "success", r
     assert sim._world.objects["floor_mat"].is_static is True
 

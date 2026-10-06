@@ -102,7 +102,7 @@ def _build_pour_scene(sim) -> None:
     positions = [[0.53, 0.0, 0.19], [0.57, 0.0, 0.19], [0.53, 0.0, 0.22], [0.57, 0.0, 0.22]]
     for name, pos in zip(BEADS, positions, strict=True):
         assert (
-            sim.add_object(name=name, shape="sphere", size=[0.024] * 3, position=pos, mass=0.05)["status"] == "success"
+            sim.add_object(name=name, shape="sphere", size=[0.024], position=pos, mass=0.05)["status"] == "success"
         )
     assert sim.step(200)["status"] == "success"
 

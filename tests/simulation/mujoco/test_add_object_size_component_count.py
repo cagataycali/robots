@@ -175,3 +175,108 @@ class TestValidateSizeComponentCount:
             _normalize_size("box", [0.5])
         with pytest.raises(ValueError, match=r"needs 3 'size' component"):
             _normalize_size("ellipsoid", [])
+
+
+# Shapes/lengths that previously returned success while compiling a geom read
+# only off the leading one-or-two components: the caller's trailing extents
+# were silently discarded while the request reported success. Symmetric with
+# ``PARTIAL_SIZES`` -- the same class of mistake, now caught at both ends.
+# cylinder/capsule are deliberately absent: their ``_SIZE_LAYOUT`` is
+# ``(3, "[diameter, unused, full height]")``, so a 3-vector is the shape's
+# own positional form and must keep passing.
+SURPLUS_SIZES = [
+    ("sphere", [0.05, 0.05, 0.05]),   # README-shaped surplus (ellipsoid-like)
+    ("sphere", [0.05, 0.10, 0.20]),   # user intent not expressible: ignored
+    ("sphere", [0.20, 0.05, 0.05]),   # the leading one wins silently
+    ("sphere", [0.05, 0.10]),         # two is still one too many for a sphere
+    ("plane",  [1.0, 2.0, 3.0]),      # third slot is the grid spacing, builder-owned
+]
+
+
+@pytest.mark.parametrize(("shape", "size"), SURPLUS_SIZES)
+def test_surplus_size_is_rejected_and_nothing_is_added(sim, shape, size):
+    """A size longer than the shape consumes is refused, symmetric with partial."""
+    result = sim.add_object(
+        "surplus", shape=shape, size=size, is_static=shape == "plane"
+    )
+
+    assert result["status"] == "error"
+    message = result["content"][0]["text"]
+    assert "size" in message
+    assert "at most" in message  # names the exact cap the shape honors
+    assert str(len(size)) in message  # echoes the count it actually got
+    # The refusal must not half-apply: no registry entry, no compiled geom.
+    assert "surplus" not in sim._world.objects
+    assert _geom_id(sim, "surplus_geom") < 0
+
+
+def test_surplus_sphere_size_error_names_the_shape_and_cap(sim):
+    """The message is self-correcting: shape, max count, layout, convention."""
+    result = sim.add_object("ball", shape="sphere", size=[0.05, 0.10, 0.20])
+
+    message = result["content"][0]["text"]
+    assert "sphere" in message
+    assert "at most 1" in message
+    assert "[diameter]" in message
+    assert "full extent in meters" in message
+    assert "[0.05, 0.1, 0.2]" in message  # echoes what was passed
+
+
+def test_surplus_plane_size_error_names_the_cap_as_two(sim):
+    """Plane consumes [x, y] half-widths; the grid-spacing slot is builder-owned."""
+    result = sim.add_object("pad", shape="plane", size=[1.0, 2.0, 3.0], is_static=True)
+
+    message = result["content"][0]["text"]
+    assert "plane" in message
+    assert "at most 2" in message
+    assert "visual half-widths" in message
+    assert "pad" not in sim._world.objects
+
+
+def test_cylinder_three_component_size_still_passes(sim):
+    """The documented ``[diameter, unused, full height]`` form must not regress."""
+    assert sim.add_object(
+        "can", shape="cylinder", size=[0.08, 0.0, 0.2]
+    )["status"] == "success"
+    can = _half_extents(sim, "can_geom")
+    assert can[0] == pytest.approx(0.04)
+    assert can[1] == pytest.approx(0.1)
+
+
+def test_capsule_three_component_size_still_passes(sim):
+    """Same as cylinder: the middle slot stays documented-unused."""
+    assert sim.add_object(
+        "pill", shape="capsule", size=[0.05, 0.0, 0.2]
+    )["status"] == "success"
+
+
+class TestValidateSizeSurplusComponentCount:
+    """Unit-level contract of the surplus-component guard."""
+
+    @pytest.mark.parametrize(("shape", "size"), SURPLUS_SIZES)
+    def test_surplus_vectors_report_an_error(self, shape, size):
+        msg = _validate_size(shape, size)
+        assert msg is not None
+        assert "at most" in msg
+
+    def test_sphere_surplus_names_the_one_component_cap(self):
+        msg = _validate_size("sphere", [0.1, 0.1, 0.1]) or ""
+        assert "sphere" in msg and "at most 1" in msg
+
+    def test_plane_surplus_names_the_two_component_cap(self):
+        msg = _validate_size("plane", [1.0, 2.0, 3.0]) or ""
+        assert "plane" in msg and "at most 2" in msg
+
+    def test_cylinder_three_components_still_pass(self):
+        # Documented ``[diameter, unused, full height]`` form; must not regress.
+        assert _validate_size("cylinder", [0.1, 0.0, 0.4]) is None
+
+    def test_capsule_three_components_still_pass(self):
+        assert _validate_size("capsule", [0.1, 0.0, 0.4]) is None
+
+    def test_normalize_raises_instead_of_dropping_a_surplus_component(self):
+        """Direct builder callers get a loud ValueError, not a silent discard."""
+        with pytest.raises(ValueError, match=r"at most 1 'size' component"):
+            _normalize_size("sphere", [0.1, 0.1, 0.1])
+        with pytest.raises(ValueError, match=r"at most 2 'size' component"):
+            _normalize_size("plane", [1.0, 2.0, 3.0])

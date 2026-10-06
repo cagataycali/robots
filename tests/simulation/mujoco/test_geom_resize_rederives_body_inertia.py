@@ -266,7 +266,7 @@ def test_the_resize_means_the_same_thing_whether_or_not_anything_follows_it():
             _scene(sim, _ONE_GEOM.format(gtype="box", size="0.05 0.05 0.05"))
             assert sim.set_geom_properties(geom_name="obj_g", size=[0.2, 0.2, 0.2])["status"] == "success"
         assert (
-            followed.add_object(name="unrelated", shape="sphere", size=[0.02] * 3, position=[2.0, 2.0, 2.0])["status"]
+            followed.add_object(name="unrelated", shape="sphere", size=[0.02], position=[2.0, 2.0, 2.0])["status"]
             == "success"
         )
 
