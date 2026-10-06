@@ -41,8 +41,8 @@ import math
 import pathlib
 import threading
 import time
-import uuid
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -50,8 +50,8 @@ from strands_robots.mesh import core as core_mod
 from strands_robots.mesh import session as session_mod
 from strands_robots.mesh.security import as_wire_timestamp
 from tests._package_ast import parse_file
+from tests.mesh._resume import lock, resume_sample, sign_for, trust_new_key
 from tests.mesh.test_input_stream_lifecycle import _make_receiver
-from tests.mesh.test_resume_replay import _make_envelope, _make_mesh, _sample
 
 #: The three non-finite values, each spelled as a Python float and as the JSON
 #: token ``json.loads`` decodes to it - the wire spelling is the reachable one.
@@ -89,10 +89,8 @@ class TestTheHelperNamesTheDomain:
 
     @pytest.mark.parametrize("value", [0, 1, 1.5, _A_WALL_CLOCK_STAMP, -1.0, 10**9])
     def test_a_finite_number_is_returned_as_it_arrived(self, value):
-        # Identity, not equality: ``_on_safety_resume`` verifies an HMAC whose
-        # input binds ``t`` through ``json.dumps``, which writes ``1`` and
-        # ``1.0`` differently, so widening an integer stamp here would refuse a
-        # correctly signed envelope.
+        # Identity, not equality: the gate reports what arrived and never
+        # rewrites it, so ``1`` and ``1.0`` stay the values the issuer sent.
         returned = as_wire_timestamp(value)
         assert returned is value
         assert type(returned) is type(value)
@@ -227,37 +225,32 @@ class TestRemoteEstopRefusesANonFiniteEnvelopeTimestamp:
 
 
 class TestRemoteResumeRefusesANonFiniteEnvelopeTimestamp:
-    """The signed path too: a valid HMAC over a ``nan`` lifts no lockout.
-
-    The MAC binds ``t``, and ``json.dumps`` writes ``NaN`` for it, so an issuer
-    holding the override code can sign one - which is what makes the freshness
-    gate rather than the signature the thing under test here.
-    """
-
-    _CODE = "test-override-code"
+    """The signed path too: a valid operator assertion relayed under a ``nan``
+    envelope ``t`` lifts no lockout, so the freshness gate rather than the
+    signature is the thing under test here."""
 
     def _locked_out_receiver(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", self._CODE)
-        mesh = _make_mesh()
-        mesh._estop_lockout.set()
-        return mesh
+        key = trust_new_key(monkeypatch)
+        mesh = core_mod.Mesh(MagicMock(), "r-test")
+        mesh.publish_safety_event = MagicMock()
+        lock(mesh)
+        return mesh, key
 
     @pytest.mark.parametrize(("value", "token"), _NON_FINITE)
     def test_the_lockout_is_not_lifted(self, value, token, monkeypatch):
         for supplied in (value, _decoded_from_the_wire(token)):
-            mesh = self._locked_out_receiver(monkeypatch)
-            envelope = _make_envelope(self._CODE, t=supplied, proof_nonce=uuid.uuid4().hex)
-            mesh._on_safety_resume(_sample(envelope))
+            mesh, key = self._locked_out_receiver(monkeypatch)
+            mesh._on_safety_resume(resume_sample(sign_for(key, mesh), t=supplied))
             assert mesh._estop_lockout.is_set() is True
 
     def test_a_fresh_envelope_still_lifts_the_lockout(self, monkeypatch):
-        mesh = self._locked_out_receiver(monkeypatch)
-        mesh._on_safety_resume(_sample(_make_envelope(self._CODE, t=time.time())))
+        mesh, key = self._locked_out_receiver(monkeypatch)
+        mesh._on_safety_resume(resume_sample(sign_for(key, mesh), t=time.time()))
         assert mesh._estop_lockout.is_set() is False
 
     def test_a_stale_envelope_is_still_refused(self, monkeypatch):
-        mesh = self._locked_out_receiver(monkeypatch)
-        mesh._on_safety_resume(_sample(_make_envelope(self._CODE, t=time.time() - _STALE_AGE_S)))
+        mesh, key = self._locked_out_receiver(monkeypatch)
+        mesh._on_safety_resume(resume_sample(sign_for(key, mesh), t=time.time() - _STALE_AGE_S))
         assert mesh._estop_lockout.is_set() is True
 
 

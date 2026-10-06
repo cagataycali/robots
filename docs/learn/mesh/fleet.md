@@ -38,7 +38,7 @@ Every command is a JSON dict whose `action` is in `ALLOWED_ACTIONS`; `strands_ro
 | `step`, `reset`, `set_joints`, `call`, `describe_tool` | step once; reset; write `target_joints`; one advertised function (`function`, `params`); the served spec (simulation peers) |
 | `stop` | halt the rollout; admitted under lockout |
 | `teleop_status`, `teleop_receive`, `teleop_stop` | follow a remote input stream ([teleoperation](../hardware/teleoperation.md)) |
-| `resume` | clear the e-stop lockout with the override code ([safety](safety-and-estop.md)) |
+| `resume` | clear the e-stop lockout with an operator-signed assertion ([safety](safety-and-estop.md)) |
 
 Three allowlists guard what an `execute` may name: `STRANDS_MESH_POLICY_TYPE_ALLOW` (providers), `STRANDS_MESH_POLICY_HOST_ALLOW` (a policy server's `server_address`), `STRANDS_MESH_HF_REPO_ALLOW` (Hub orgs). Local checkpoint paths are refused on the wire; checkpoints travel as `lerobot/...` ids.
 

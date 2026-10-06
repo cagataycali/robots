@@ -25,9 +25,9 @@ fault to chase.
 ``signed_estop`` got both. ``signed_resume`` -- the same rail, the same
 operator, 38 lines down the same file -- got only the first, and answered
 ``"safety mesh unavailable"`` in the one state this file spends 30 lines proving
-is not a fault. Every documented cause of a refused resume is about
-``override_code``, so "unavailable" sends the operator to a code that is fine
-rather than to the switch they set.
+is not a fault. Every documented cause of a refused resume is about the resume
+key, so "unavailable" sends the operator to a key that is fine rather than to
+the switch they set.
 
 These pin, for both consequences:
 
@@ -96,8 +96,11 @@ class RecordingMesh:
         RecordingMesh.events.append(("emergency_stop", self.peer_id))
         return []
 
-    def _resume_lockout(self, override_code: str) -> dict[str, Any]:
-        RecordingMesh.events.append(("resume_lockout", self.peer_id))
+    def _resume_throttled(self) -> bool:
+        return False
+
+    def resume(self, signing_key: Any, *, targets: list[str] | None = None) -> dict[str, Any]:
+        RecordingMesh.events.append(("resume", self.peer_id))
         return {"resumed": True}
 
 
@@ -164,8 +167,8 @@ def test_a_resume_under_the_kill_switch_reports_the_switch_not_a_fault(value, re
 
     Same rail, same operator and the same two answers as the e-stop half, which
     has pointed at the switch since it was written. Reading "unavailable" here
-    sends the operator to the two ``override_code`` causes the troubleshooting
-    sheet documents for a refused resume -- and to a code that is fine.
+    sends the operator to the resume-key causes the troubleshooting sheet
+    documents for a refused resume -- and to a key that is fine.
     """
     monkeypatch.setenv("STRANDS_MESH", value)
     bridge = MeshBridge(peer_id="dash")
@@ -195,15 +198,20 @@ def test_a_broken_rail_still_reports_unavailable_on_the_resume_path(recorder, mo
 
 
 @pytest.mark.parametrize("value", ALLOWED)
-def test_with_the_switch_clear_a_resume_reaches_the_rail(value, recorder, monkeypatch):
+def test_with_the_switch_clear_a_resume_reaches_the_rail(value, recorder, monkeypatch, tmp_path):
     """A gate, not a mute: the resume verb still does its work when allowed."""
+    from strands_robots.mesh import resume_authority
+
+    key_file = tmp_path / "resume_key.pem"
+    resume_authority.generate_signing_key(key_file, "Correct-Horse-Battery-9")
+    monkeypatch.setenv(resume_authority.SIGNING_KEY_FILE_ENV, str(key_file))
     monkeypatch.setenv("STRANDS_MESH", value)
     bridge = MeshBridge(peer_id="dash")
 
-    out = bridge.signed_resume("operator-code")
+    out = bridge.signed_resume("Correct-Horse-Battery-9")
 
     assert out["signed"] is True
-    assert ("resume_lockout", "dash-safety") in recorder.events, recorder.events
+    assert ("resume", "dash-safety") in recorder.events, recorder.events
 
 
 def test_every_rail_unavailable_answer_asks_the_kill_switch():

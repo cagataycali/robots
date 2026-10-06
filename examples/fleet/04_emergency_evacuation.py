@@ -30,14 +30,15 @@ deadline.
 Dependencies: pip install "strands-robots[sim-mujoco,mesh]"
               (--dry-run needs only the base package: no simulator, no Zenoh)
 Expected output: alarm -> abort (timed) -> ordered retreat with live corridor
-                 clearances -> lockout engaged at muster -> a wrong-code
-                 resume refused with the lockout intact -> benchmark verdict
+                 clearances -> lockout engaged at muster -> a resume signed
+                 by an untrusted key refused with the lockout intact -> benchmark verdict
                  as the proxy traverses -> incident report from the signed
                  audit log -> HITL-approved resume.
 Runtime: ~5 seconds with --dry-run; under ~90 seconds live.
 
-Note: The live lockout drill needs `STRANDS_MESH_OVERRIDE_CODE`; when unset,
-      the example generates a single-run code and says so loudly. Interactive
+Note: The live lockout drill signs its resume with a single-run operator key
+      it generates (STRANDS_MESH_RESUME_PUBLIC_KEY is set to its public half
+      for this process) and says so loudly. Interactive
       operator approval is the default; set `STRANDS_MESH_HITL_ACTIONS=none`
       for unattended runs (CI posture). Set STRANDS_MESH_AUDIT_PSK to sign the
       audit trail the incident report is built from.
@@ -58,7 +59,6 @@ os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", "1")
 os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")
 
 import argparse
-import secrets
 import time
 from collections.abc import Callable
 from typing import Any
@@ -732,9 +732,13 @@ def _operator_approves(prompt: str) -> bool:
     return reply in ("y", "yes", "approve")
 
 
-def _run_lockout_drill(coordinator: Any, target_peer: str) -> None:
+def _run_lockout_drill(coordinator: Any, target_peer: str, signing_key: Any) -> None:
     """Phase 3 live: engage the lockout at muster, prove a bad resume holds it,
-    then resume through the HMAC override protocol with operator approval."""
+    then resume with an assertion signed by the operator key, with approval."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from strands_robots.mesh.resume_authority import sign_assertion
+
     print("\nphase 3 - lockout at muster + HITL resume")
     coordinator.emergency_stop()
     probe = coordinator.send(
@@ -746,10 +750,12 @@ def _run_lockout_drill(coordinator: Any, target_peer: str) -> None:
         raise RuntimeError(f"lockout did not engage: execute was not refused: {probe!r}")
     print(f"  {target_peer}: lockout engaged (execute refused, status/resume only)")
 
-    denied = coordinator.send(target_peer, {"action": "resume", "override_code": "not-the-code"}, timeout=10.0)
+    epoch = coordinator.lockout_epoch
+    untrusted = sign_assertion(Ed25519PrivateKey.generate(), epoch=epoch, targets=[target_peer])
+    denied = coordinator.send(target_peer, {"action": "resume", "assertion": untrusted}, timeout=10.0)
     denied_result = denied.get("result") if isinstance(denied, dict) else None
     if not (isinstance(denied_result, dict) and denied_result.get("status") == "error"):
-        raise RuntimeError(f"the wrong-code resume was not refused: {denied!r}")
+        raise RuntimeError(f"the untrusted-key resume was not refused: {denied!r}")
     probe = coordinator.send(target_peer, {"action": "status"}, timeout=10.0)
     if not isinstance(probe, dict) or probe.get("type") != "response":
         raise RuntimeError(f"{target_peer} stopped answering status during lockout: {probe!r}")
@@ -760,20 +766,20 @@ def _run_lockout_drill(coordinator: Any, target_peer: str) -> None:
     )
     if not (isinstance(still_refused, dict) and still_refused.get("type") == "error"):
         raise RuntimeError(f"a rejected resume cleared the lockout: {still_refused!r}")
-    print(f"  wrong-code resume refused ({denied_result.get('error', 'resume rejected')!s}); lockout intact")
+    print(f"  untrusted-key resume refused ({denied_result.get('error', 'resume rejected')!s}); lockout intact")
 
-    if not _operator_approves(f"resume {target_peer} out of lockout with the override code?"):
+    if not _operator_approves(f"resume {target_peer} out of lockout with the operator key?"):
         print("  resume declined by the operator; the lockout stays engaged. Rerun to resume.")
         return
     resumed = coordinator.send(
         target_peer,
-        {"action": "resume", "override_code": os.environ["STRANDS_MESH_OVERRIDE_CODE"]},
+        {"action": "resume", "assertion": sign_assertion(signing_key, epoch=epoch, targets=[target_peer])},
         timeout=10.0,
     )
     resumed_result = resumed.get("result") if isinstance(resumed, dict) else None
     if not (isinstance(resumed_result, dict) and resumed_result.get("status") == "ok"):
         raise RuntimeError(f"approved resume was rejected: {resumed!r}")
-    print(f"  {target_peer}: resumed via HMAC override (operator approved)")
+    print(f"  {target_peer}: resumed via the operator-signed assertion (operator approved)")
 
 
 def _build_live_world() -> tuple[MujocoEvacuationWorld, Any, Callable[[], None]]:
@@ -884,10 +890,13 @@ def _wait_for(predicate: Callable[[], bool], *, timeout_s: float, what: str, pol
 
 
 def _run_live(trace: EvacuationTrace) -> dict[str, Any]:
-    if not os.getenv("STRANDS_MESH_OVERRIDE_CODE", "").strip():
-        code = secrets.token_urlsafe(9)
-        os.environ["STRANDS_MESH_OVERRIDE_CODE"] = code
-        print(f"STRANDS_MESH_OVERRIDE_CODE was unset; using a single-run code for this demo: {code}")
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from strands_robots.mesh.resume_authority import PUBLIC_KEY_ENV, public_key_text
+
+    signing_key = Ed25519PrivateKey.generate()
+    os.environ[PUBLIC_KEY_ENV] = public_key_text(signing_key.public_key())
+    print(f"using a single-run operator resume key for this demo ({PUBLIC_KEY_ENV} set for this process)")
 
     world, coordinator, cleanup = _build_live_world()
     try:
@@ -917,7 +926,7 @@ def _run_live(trace: EvacuationTrace) -> dict[str, Any]:
 
         summary = run_evacuation(world, on_tick=on_tick)
 
-        _run_lockout_drill(coordinator, FLEET_PEER_ID)
+        _run_lockout_drill(coordinator, FLEET_PEER_ID, signing_key)
 
         print("\nscoring: proxy traversal against the declarative benchmark")
         register_evacuation_predicates()

@@ -13,7 +13,7 @@ values go. Every knob ``_parse_positive_float_env`` serves is one side of
 a comparison on the safety path, so a ``nan`` does not widen the bound but
 removes it: the presence stale/future test is ``False`` for every envelope,
 the replay-cache TTL purge keeps every stale entry, and the resume
-brute-force cooldown - the throttle over the E-stop override code - is
+brute-force cooldown - the throttle over E-stop resume attempts - is
 armed to an instant no ``now < locked_until`` test can satisfy. ``inf``
 fails open on the first two and closed on the third.
 
@@ -132,7 +132,7 @@ class TestTheResumeBruteForceCooldownEngagesAndExpires:
         backoff = core_mod._resume_backoff_s()
         locked_until = time.monotonic() + backoff
         # Engages: a nan backoff made this comparison False, so the throttle
-        # over the E-stop override code never took effect.
+        # over E-stop resume attempts never took effect.
         assert time.monotonic() < locked_until, f"cooldown never engaged under {raw!r}"
         # Expires: an inf backoff made it True forever, so a resume could
         # never be granted again.

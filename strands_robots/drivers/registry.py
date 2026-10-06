@@ -167,6 +167,39 @@ def get_native_driver_class(canonical: str) -> type | None:
     return _NATIVE_DRIVERS.get(resolve_name(canonical))
 
 
+#: What a robot's ``port=`` names, as :func:`port_kind` answers it.
+PORT_KINDS: tuple[str, ...] = ("serial", "address")
+
+
+def port_kind(canonical: str) -> str:
+    """Say what ``port=`` names for the driver that builds ``canonical`` for real.
+
+    ``port`` is polymorphic across drivers by contract: a servo bus takes a
+    serial device path on the machine running the driver, while a networked
+    robot (G1, Go2, UR, Spot, Kinova, xArm ...) takes where it is on the
+    network - an IP, a ``host[:port]`` or a URI. A caller that builds a form or
+    validates an input before any driver exists needs that fact without
+    importing a vendor SDK.
+
+    A native driver declares a serial bus with a ``PORT_KIND = "serial"`` class
+    attribute; every other native driver is addressed over a link. lerobot's
+    robots are servo buses.
+
+    Args:
+        canonical: Canonical robot name (or any alias).
+
+    Returns:
+        One of :data:`PORT_KINDS`.
+    """
+    canonical = resolve_name(canonical)
+    if resolve_driver(canonical) != NATIVE_DRIVER:
+        return "serial"
+    driver_cls = get_native_driver_class(canonical)
+    if driver_cls is None:
+        return "serial"
+    return "serial" if getattr(driver_cls, "PORT_KIND", None) == "serial" else "address"
+
+
 def list_native_drivers() -> dict[str, str]:
     """Report which robots have a native driver.
 

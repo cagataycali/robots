@@ -62,9 +62,16 @@ def test_every_name_a_setting_may_export_is_reviewed():
         assert config_api.env_key_gate_bearing(env_name), env_name
 
 
-@pytest.mark.parametrize("key", ["STRANDS_DASH_RECORD_CRUMB", "STRANDS_ROBOTS_VIDEO_ROOT"])
-def test_a_key_that_names_a_write_path_is_shown_but_not_page_writable(key):
-    assert config_api.env_entry_error(key, "/tmp/chosen") is not None
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("STRANDS_DASH_RECORD_CRUMB", "/tmp/chosen"),
+        ("STRANDS_ROBOTS_VIDEO_ROOT", "/tmp/chosen"),
+        ("OPENAI_BASE_URL", "https://chosen.example/v1"),
+    ],
+)
+def test_a_key_that_names_where_data_goes_is_shown_but_not_page_writable(key, value):
+    assert config_api.env_entry_error(key, value) is not None
     assert key in config_api.SHOWN_ENV_KEYS
 
 

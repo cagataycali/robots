@@ -11,9 +11,9 @@ Phase 3 (lockout + HITL resume) is asserted through the REAL mesh safety
 handlers, the same pattern the failover example's test uses: a real ``Mesh``
 peer minus the Zenoh transport receives the real estop envelope captured from
 the issuer's own publish path, refuses everything but ``status``/``resume``
-while locked, refuses a wrong-code resume WITHOUT clearing the lockout - the
-acceptance criterion this issue names - and resumes only on the real HMAC
-override compare.
+while locked, refuses a resume signed by an untrusted key WITHOUT clearing the
+lockout - the acceptance criterion this issue names - and resumes only on an
+assertion signed by the operator key.
 
 The audit log is redirected to ``tmp_path`` (never the developer's real
 ``~/.strands_robots/mesh_audit.jsonl``) and signed with a test PSK so
@@ -29,9 +29,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh import security as mesh_security
+from strands_robots.mesh.resume_authority import sign_assertion
+from tests.mesh._resume import trust_new_key
 
 _FLEET_DIR = Path(__file__).resolve().parent.parent / "examples" / "fleet"
 _EXAMPLE_PATH = _FLEET_DIR / "04_emergency_evacuation.py"
@@ -290,7 +293,7 @@ def test_the_report_attests_the_records_it_shows_and_not_the_whole_log(example):
     assert unscoped["ok"] is False
 
 
-# Phase 3 -- lockout + HMAC resume, asserted through the real safety handlers.
+# Phase 3 -- lockout + signed resume, asserted through the real safety handlers.
 
 
 class _StoppableRobot:
@@ -327,10 +330,10 @@ def _live_unstarted_mesh(peer_id: str) -> mesh_core.Mesh:
 
 def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
     """The acceptance criterion, end to end through the real handlers: the
-    estop envelope engages a receiving peer's lockout; a wrong-code resume is
-    refused and every non-status/resume action stays refused; only the real
-    HMAC override compare clears it."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code")
+    estop envelope engages a receiving peer's lockout; a resume signed by an
+    untrusted key is refused and every non-status/resume action stays refused;
+    only the operator-signed assertion clears it."""
+    key = trust_new_key(monkeypatch)
     published = _capturing_bus(monkeypatch)
     issuer = _live_unstarted_mesh(example.COORDINATOR_ID)
     receiver = _live_unstarted_mesh(example.FLEET_PEER_ID)
@@ -347,7 +350,8 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
         receiver._dispatch({"action": "execute", "instruction": "resume the route"})
 
     # The declined resume: refused, and the lockout is INTACT afterwards.
-    denied = receiver._dispatch({"action": "resume", "override_code": "not-the-code"})
+    untrusted = sign_assertion(Ed25519PrivateKey.generate(), epoch=receiver.lockout_epoch, targets=[receiver.peer_id])
+    denied = receiver._dispatch({"action": "resume", "assertion": untrusted})
     assert denied == {"status": "error", "error": "resume rejected"}
     assert receiver._estop_lockout.is_set()
     with pytest.raises(mesh_security.LockoutError):
@@ -359,17 +363,18 @@ def test_declined_resume_does_not_clear_the_lockout(example, monkeypatch):
     denials = [r for r in read_audit_log() if r.get("event") == "resume_denied"]
     assert denials, "a refused resume must leave a resume_denied audit record"
 
-    # Only the correct override code clears it - and then the fleet stop that
+    # Only the operator's signature clears it - and then the fleet stop that
     # was refused a moment ago executes.
-    resumed = receiver._dispatch({"action": "resume", "override_code": "drill-override-code"})
+    signed = sign_assertion(key, epoch=receiver.lockout_epoch, targets=[receiver.peer_id])
+    resumed = receiver._dispatch({"action": "resume", "assertion": signed})
     assert resumed == {"status": "ok"}
     assert receiver._dispatch({"action": "stop"}) == {"ok": True, "status": "stopped"}
 
 
 def test_resume_success_publishes_a_proof_other_peers_verify(example, monkeypatch):
-    """Fleet-wide resume is second-factor gated: the resume envelope carries
-    an HMAC override proof, and a second locked peer clears only on it."""
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "drill-override-code")
+    """Fleet-wide resume is signed: the resume envelope relays the operator's
+    assertion, and a second locked peer named in it clears on it."""
+    key = trust_new_key(monkeypatch)
     published = _capturing_bus(monkeypatch)
     issuer = _live_unstarted_mesh(example.COORDINATOR_ID)
     peer_a = _live_unstarted_mesh("evac-peer-a")
@@ -380,12 +385,13 @@ def test_resume_success_publishes_a_proof_other_peers_verify(example, monkeypatc
     peer_a._on_safety_estop(_as_sample(estop))
     peer_b._on_safety_estop(_as_sample(estop))
 
-    assert peer_a._dispatch({"action": "resume", "override_code": "drill-override-code"}) == {"status": "ok"}
-    resume = next(payload for key, payload in published if key == "strands/safety/resume")
-    assert "override_proof" in resume
+    assertion = sign_assertion(key, epoch=peer_a.lockout_epoch, targets=["evac-peer-a", "evac-peer-b"])
+    assert peer_a._dispatch({"action": "resume", "assertion": assertion}) == {"status": "ok"}
+    resume = next(payload for topic, payload in published if topic == "strands/safety/resume")
+    assert resume["assertion"] == assertion
     peer_b._on_safety_resume(_as_sample(resume))
-    # peer_b never saw the code itself - only the verified proof - and is out
-    # of lockout.
+    # peer_b holds no secret - only the public key that verified the
+    # assertion - and is out of lockout.
     assert peer_b._dispatch({"action": "stop"}) == {"ok": True, "status": "stopped"}
 
 
