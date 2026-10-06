@@ -10,7 +10,7 @@ After this page you can pick a provider for what you have, build one with `creat
 
 | you have | start with | because |
 |---|---|---|
-| nothing yet, a laptop | `mock` | no download; it proves the loop and its report says it did not read the instruction |
+| nothing yet, a laptop | `mock` | no download; it proves the loop and its report says it ignored the instruction |
 | a Hub checkpoint for your arm (ACT, SmolVLA, Pi0, MolmoAct2) | [`lerobot_local`](lerobot-local.md) with `embodiment=` | runs in this process; the [embodiment map](../../concepts/embodiments.md) speaks sim and real |
 | a GPU on another machine | [`remote`](remote.md), `create_policy("ws://gpu:8765")` | the robot host keeps the loop and the gate, the GPU host runs the model |
 | a G1 or another humanoid | [`wbc`](wbc.md), [`holosoma`](holosoma.md) | velocity commands in, whole-body joint targets out |
@@ -53,7 +53,7 @@ class Policy(ABC):
     def provider_name(self) -> str: ...
 ```
 
-Abridged ([API reference](../../reference/api/policies.md)). `get_actions` returns the chunk: one dict per control tick, joint name to a `float`. Planners read `target_pose` or `target_joints`, not the instruction.
+[API reference](../../reference/api/policies.md). `get_actions` returns the chunk: one dict per control tick, joint name to a `float`. Planners read `target_pose` or `target_joints`, not the instruction.
 
 ## Providers
 
@@ -133,6 +133,6 @@ freeze success 0.501
 Note: HoldPolicy does not read the instruction. Its actions - a fixed pose on every joint - were commanded to the robot whatever the task says; nothing above means the task was performed.
 ```
 
-The notes come from `reads_instruction = False`: a policy that never reads the words says so in every report, so an agent cannot relay a test motion as done.
+The notes come from `reads_instruction = False`: a policy that never reads the words says so, so an agent cannot relay a test motion as done. Registering a built-in name needs `overwrite=True`.
 
 On hardware, `start_task(instruction, policy_provider=..., **policy_config)` takes the provider string and `run_policy(create_policy(...))` a built object; [the operator gate](../agents.md#the-operator-gate) sits in front of both.
