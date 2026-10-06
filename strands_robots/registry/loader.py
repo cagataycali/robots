@@ -85,7 +85,25 @@ def normalize_robot_name(name: str) -> str:
 
     Returns:
         The lookup key for ``name``.
+
+    Raises:
+        ValueError: *name* is not a string. ``Robot(name)`` is already guarded
+            at the door with the same wording (see ``strands_robots/robot.py``
+            at the ``isinstance(name, str)`` check), and the public read API
+            exported by :mod:`strands_robots.registry` goes through this fold
+            first - so a non-string reaching ``get_robot``/``resolve_name``/
+            ``has_sim``/``has_hardware``/``joint_labels``/``get_driver``/
+            ``get_hardware_type`` / ``is_discoverable`` / ``is_urdf_only``
+            used to escape as a raw ``AttributeError`` (``.lower()`` on
+            ``None``/``int``/``list``/...) or a ``TypeError`` (``bytes``
+            through ``.replace("-", "_")``). The guard here is the one place
+            that leak can be stopped for every sibling at once.
     """
+    if not isinstance(name, str):
+        raise ValueError(
+            f"Invalid robot name {name!r} ({type(name).__name__}): a robot name is a string. "
+            "Pass a registered name (see ``list_robots()``) or supply ``urdf_path=``."
+        )
     return name.lower().strip().replace("-", "_")
 
 
