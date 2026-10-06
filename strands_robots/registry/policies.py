@@ -263,6 +263,7 @@ def policy_requires_error(
         "pretrained_name_or_path": "a Hub id like 'lerobot/smolvla_base' or a local checkpoint directory",
         "policy_type": "the checkpoint's policy type, e.g. 'smolvla' or 'act'",
         "port": "the port the policy server listens on",
+        "onnx_path": "a shipped ONNX weight name like 'alpha_walking.onnx' (fetched from pollen-robotics/microduck-policies on first use), or a local .onnx path",
     }
     asks = "; ".join(f"{k}=... ({hints[k]})" if k in hints else f"{k}=..." for k in missing)
     return (
