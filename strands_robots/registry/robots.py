@@ -308,6 +308,15 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
                 "has_sim": _has_sim,
                 "has_real": _has_real,
                 "source": info.get("source", "curated"),
+                # Carry the declared aliases through so a reader of this
+                # listing can map the ``Robot("g1")`` spelling from docs back
+                # to the ``unitree_g1`` row. The footer in
+                # :func:`format_robot_table` already reports a non-zero
+                # alias total; without this field the body row count never
+                # explains it. URDF-only entries have no aliases declared;
+                # the ``get("aliases", [])`` keeps them a well-typed empty
+                # list rather than a missing key.
+                "aliases": list(info.get("aliases", [])),
             }
         )
     return results
