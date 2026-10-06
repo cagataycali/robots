@@ -713,6 +713,8 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
 
     def actuator_ranges(self, robot_name: str) -> dict[str, tuple[float, float]]:
         """``{action_key: (lo, hi)}`` from the MJCF ctrlrange (unbounded when unlimited)."""
+        if registry_entry(self._robots, robot_name) is None:
+            raise ValueError(self._unknown_robot_msg(robot_name))
         with self._lock:
             robot_name = self._default_robot(robot_name)
             self._ensure_built()

@@ -3648,7 +3648,9 @@ class MuJoCoSimEngine(
         Overrides :meth:`SimEngine.actuator_ranges`. ``ctrlrange="0 0"`` reads
         ``ctrllimited`` false in MuJoCo and is therefore absent, not zero-width.
         """
-        if self._world is None or self._world._model is None or not registered(self._world.robots, robot_name):
+        if self._world is None or not registered(self._world.robots, robot_name):
+            raise ValueError(self._unknown_robot_msg(robot_name))
+        if self._world._model is None:
             return {}
         model = self._world._model
         pfx = self._world.robots[robot_name].namespace or ""
@@ -3668,7 +3670,9 @@ class MuJoCoSimEngine(
         force exactly, so a pinned actuator reads its bound; the tolerance only
         absorbs float noise.
         """
-        if self._world is None or self._world._model is None or not registered(self._world.robots, robot_name):
+        if self._world is None or not registered(self._world.robots, robot_name):
+            raise ValueError(self._unknown_robot_msg(robot_name))
+        if self._world._model is None:
             return None
         model, data = self._world._model, self._world._data
         pfx = self._world.robots[robot_name].namespace or ""
