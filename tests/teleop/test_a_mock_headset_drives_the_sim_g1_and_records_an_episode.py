@@ -181,6 +181,25 @@ def test_encoder_and_layout_must_agree() -> None:
         teleop_layout("blog_66_31")
 
 
+@pytest.mark.parametrize(
+    ("typed", "suggested"),
+    [
+        ("g1_joint_28", "'g1_joint_29'"),
+        ("lerobot_tokens_64", "'lerobot_token_64'"),
+        ("blog_66_31", "'blog_31_66'"),
+        ("G1_JOINT_29", "'g1_joint_29'"),
+        ("blog-31-66", "'blog_31_66'"),
+        ("teleop", None),
+    ],
+)
+def test_an_unknown_layout_names_the_closest_spelling(typed: str, suggested: str | None) -> None:
+    """A near-miss layout name is answered with the layout it meant; a far one gets only the list."""
+    with pytest.raises(ValueError, match="Choose from") as refused:
+        teleop_layout(typed)
+    hint = str(refused.value).partition("Did you mean: ")[2].partition("?")[0]
+    assert (suggested in hint) if suggested else not hint
+
+
 def test_a_stale_frame_sends_nothing() -> None:
     """A source whose last frame is older than the budget yields an empty action, so the follower holds."""
 
