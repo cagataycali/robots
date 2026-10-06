@@ -101,8 +101,10 @@ def test_a_keyframe_spawn_follows_the_named_position(tmp_path) -> None:
     try:
         sim.create_world(gravity=[0, 0, -9.81])
         sim.add_robot(name="bot", urdf_path=str(model), position=[1.0, 2.0, 0.02], keyframe="stand")
+        world = sim._world
+        assert world is not None
         for _ in range(2):  # the spawn, then reset() restoring the stored home
-            base = sim._world._data.xpos[sim._world._model.body("bot/base").id]
+            base = world._data.xpos[world._model.body("bot/base").id]
             assert base.tolist() == pytest.approx([1.1, 2.0, 0.05]), base
             sim.reset()
     finally:
