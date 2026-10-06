@@ -115,7 +115,8 @@ start with the [Quickstart](docs/start/first-robot.md) and [Architecture](docs/c
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[all,dev]"
-hatch run test && hatch run lint   # pytest; ruff + mypy
+uv pip install hatch                # task runner for `hatch run ...`; not in [dev]
+hatch run test && hatch run lint    # pytest; ruff + mypy
 ```
 
 Conventions and review learnings are in [AGENTS.md](AGENTS.md);
