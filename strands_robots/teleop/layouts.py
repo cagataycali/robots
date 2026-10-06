@@ -154,12 +154,22 @@ def teleop_layout(name: str) -> Layout:
     """Return the layout registered under ``name``.
 
     Raises:
-        ValueError: ``name`` is not a layout; the message lists the choices.
+        ValueError: ``name`` is not a layout; the message lists the choices
+            and, if the input is a near-miss, names the closest spellings the
+            way :func:`strands_robots.policies.factory.create_policy` does for
+            provider names.
     """
     try:
         return _LAYOUTS[name]
     except KeyError:
-        raise ValueError(f"Unknown teleop layout {name!r}. Choose from: {sorted(_LAYOUTS)}") from None
+        import difflib
+
+        folded = name.lower().replace("-", "_") if isinstance(name, str) else ""
+        matches = difflib.get_close_matches(folded, list(_LAYOUTS), n=3, cutoff=0.6)
+        hint = f" Did you mean: {', '.join(map(repr, matches))}?" if matches else ""
+        raise ValueError(
+            f"Unknown teleop layout {name!r}.{hint} Choose from: {sorted(_LAYOUTS)}"
+        ) from None
 
 
 def list_layouts() -> tuple[str, ...]:
