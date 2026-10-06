@@ -3271,6 +3271,9 @@ class PolicyRunner:
         # the operational no-drive fail-fast without asserting that physical
         # state is known.
         if _total_failure_steps >= step_count and step_count > 0:
+            # status is "error": lead with the same words the in-window fail-fast uses.
+            if text.startswith(prefix):
+                text = "Policy failed" + text[len(prefix) :]
             if _coarse_failure_steps:
                 text += (
                     f"\n\nALL {step_count} action steps failed to confirm an applied actuator; "
@@ -3307,6 +3310,9 @@ class PolicyRunner:
         # tolerance is unchanged.
         if step_count > 0 and _actions_commanding == 0:
             _n_keys = len(_robot_actuators)
+            # status is "error": the header must not read as a completed rollout.
+            if text.startswith(prefix):
+                text = "Policy failed" + text[len(prefix) :]
             text += (
                 f"\n\nALL {step_count} action steps commanded no actuator "
                 f"-- the robot did not move. Every action the policy emitted named "
