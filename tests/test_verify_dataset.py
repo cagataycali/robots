@@ -167,6 +167,29 @@ class TestCLI:
         assert rc == 1
         assert "FAIL" in capsys.readouterr().out
 
+    @pytest.mark.parametrize(
+        ("frames", "info", "shown", "hidden"),
+        [
+            ([0], {"total_episodes": 1, "total_frames": 0}, ["frames   (parquet): 0", "info.json frames  : 0"], []),
+            (
+                [90, 90, 90],
+                {"total_episodes": 3, "total_frames": 450},
+                ["frames   (parquet): 270", "info.json frames  : 450"],
+                [],
+            ),
+            ([4], None, ["frames   (parquet): 4"], ["info.json frames"]),
+        ],
+        ids=["zero_frames", "header_drift", "no_header"],
+    )
+    def test_human_report_prints_every_frame_count(
+        self, tmp_path: Path, capsys, frames: list[int | None], info: dict | None, shown: list[str], hidden: list[str]
+    ) -> None:
+        _write_dataset(tmp_path, episode_indices=list(range(len(frames))), frames_per_episode=frames, info=info)
+        verify_main([str(tmp_path)])
+        out = capsys.readouterr().out
+        assert all(line in out for line in shown), out
+        assert not any(line in out for line in hidden), out
+
     def test_cli_json_output_parses(self, tmp_path: Path, capsys) -> None:
         _write_dataset(tmp_path, episode_indices=[0, 1, 2], frames_per_episode=[3, 3, 3])
         rc = verify_main([str(tmp_path), "--json"])
