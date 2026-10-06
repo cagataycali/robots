@@ -1,5 +1,5 @@
 ---
-description: Simulation vs SimEngine, the three backends and what each needs, a verified MuJoCo session from create_simulation to a policy rollout.
+description: Simulation vs SimEngine, the four backends and what each needs, a verified MuJoCo session from create_simulation to a policy rollout.
 ---
 
 # Simulation
@@ -40,7 +40,7 @@ Every call returns an agent-tool envelope: `{"status": "success" | "error", "con
 
 `SimEngine` (`strands_robots/simulation/base.py`) is the abstract contract: world lifecycle (`create_world`, `reset`, `step`, `destroy`), entities (`add_robot`, `add_object`), observation (`get_observation`, `render`, `get_contacts`), actuation (`send_action`), and the policy orchestration that is implemented once on the base and inherited by every backend: `run_policy`, `run_multi_policy`, `eval_policy`, `evaluate_benchmark`, `start_policy` / `stop_policy`, `replay_episode`, dataset recording.
 
-Cameras are per backend: MuJoCo, Newton and Isaac each define `add_camera`, and the base class does not, so a third-party engine adds its own.
+Cameras are per backend: each built-in defines `add_camera`, and the base class does not, so a third-party engine adds its own.
 
 `Simulation` is the MuJoCo engine under its historical name. `from strands_robots.simulation import Simulation` and `create_simulation("mujoco")` give the same `MuJoCoSimEngine`. `create_simulation` is the door: it resolves an alias, imports the backend lazily and passes the remaining keywords to the constructor. `Robot("so101")` calls it for you and adds the robot; use the factory when you want an empty world, another backend or constructor keywords.
 
@@ -60,6 +60,7 @@ You should see `MuJoCoSimEngine True True`.
 | [`mujoco`](mujoco.md) | `mj`, `mjc`, `mjx` | `strands-robots[sim-mujoco]` | a CPU; offscreen rendering via `MUJOCO_GL` | everything on this site, the default |
 | [`newton`](newton.md) | `nt` | `strands-robots[sim-newton]` | an NVIDIA GPU with Warp; same MJCF assets | GPU stepping, ray-traced tiled cameras |
 | [`isaac`](isaac.md) | `isaac_sim`, `isaacsim`, `nvidia` | `strands-robots[sim-isaac]` plus Isaac Sim 6.0 | Isaac Sim on Python 3.12, an RTX GPU | photoreal rendering, USD scenes, batched envs |
+| [`mjlab`](mjlab.md) | `mjl`, `mujoco_warp` | `strands-robots[sim-mjlab]` | an NVIDIA GPU, MuJoCo-Warp | thousands of MuJoCo worlds, rsl_rl training |
 
 Built-ins win over entry-point plugins of the same name. A third-party package registers a backend under the `strands_robots.backends` entry-point group; `register_backend("my_sim", lambda: MySimEngine, aliases=["custom"])` does so at runtime. An unknown name is a `ValueError` listing what is available and, for `newton`, `warp` and `mjwarp`, the install line.
 
