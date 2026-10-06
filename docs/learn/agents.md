@@ -24,7 +24,7 @@ print(sorted(agent.tool_names))   # ['pose_tool', 'robot_mesh', 'so101_sim']
 
 | mode | tool name | actions the model sees |
 |---|---|---|
-| `mode="sim"` (default) | `<name>_sim` | `get_robot_state`, `set_joint_positions`, `move_to`, `run_policy`, `render`, `step` and the world API |
+| `mode="sim"` (default) | `<name>_sim` | 77 actions grouped as `[World]` (`create_world`, `load_scene`, `reset`, `get_state`, `destroy`, `export_xml`), `[Robots]` (`add_robot`, `remove_robot`, `list_robots`, `get_robot_state`, `list_bodies`), `[Objects]` (`add_object`, `remove_object`, `move_object`, `list_objects`), `[Cameras]` (`add_camera`, `remove_camera`, `list_cameras`), `[Policy]` (`run_policy`, `start_policy`, `stop_policy`, `eval_policy`, `replay_episode`, `list_policies_running`), `[Rendering]` (`render`, `render_depth`, `render_all`, `get_world_point`, `open_viewer`, `close_viewer`), `[Physics]` (`step`, `set_gravity`, `set_timestep`, `set_joint_positions`, `set_joint_velocities`, `apply_force`, `get_contacts`, ...), `[Motion primitives]` (`move_to`, `set_gripper`, `rotate_wrist`), `[Recording]` (`start_recording`, `stop_recording`, `get_recording_status`, ...), plus `[Scene MJCF]`, `[Randomize]`, `[Benchmark]`, `[Registry]`. The full enum is in the tool's own description — print `robot.tool_spec["description"]`. |
 | `mode="real"` | the robot's name | `get_state`, `get_robot_state`, `list_cameras`, `render`, `execute`, `start`, `status`, `stop` |
 
 `execute` runs one rollout to completion, `start` runs it in the background. Two `Robot("so101")` in one agent collide on `so101_sim`; name them with `tool_name=`.
