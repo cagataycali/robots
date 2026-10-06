@@ -651,7 +651,7 @@
    "base_url": null,
    "category": "mobile",
    "description": "EarthRover Mini Plus (mobile outdoor navigation)",
-   "driver": null,
+   "driver": "lerobot",
    "joints": null,
    "lfs_url": null,
    "model": null,
@@ -2277,8 +2277,6 @@
   },
   "so100": {
    "aliases": [
-    "so100_4cam",
-    "so100_dualcam",
     "so100_follower",
     "so_arm100",
     "trs_so_arm100"
@@ -2304,9 +2302,7 @@
   "so101": {
    "aliases": [
     "robotstudio_so101",
-    "so101_dualcam",
     "so101_follower",
-    "so101_tricam",
     "so_arm101"
    ],
    "base_url": "https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@c96a32d28fb5da84da38c1da4d749e7a13212855/robotstudio_so101/",

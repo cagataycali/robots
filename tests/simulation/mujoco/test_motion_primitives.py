@@ -640,14 +640,14 @@ class TestGripperRegistryMetadata:
         )
 
     def test_alias_data_config_resolves_metadata(self, tmp_path):
-        """data_config aliases (e.g. multi-cam configs) resolve to the canonical
-        registry entry - so100_dualcam must not silently lose the metadata."""
+        """A data_config alias (so100_follower) resolves to the canonical
+        registry entry and keeps its gripper metadata."""
         path = tmp_path / "hint_collider_arm.xml"
         path.write_text(HINT_COLLIDER_XML)
         s = Simulation(tool_name="test_gripper_metadata_alias", mesh=False)
         try:
             assert s.create_world(gravity=[0, 0, 0])["status"] == "success"
-            assert s.add_robot("arm", urdf_path=str(path), data_config="so100_dualcam")["status"] == "success"
+            assert s.add_robot("arm", urdf_path=str(path), data_config="so100_follower")["status"] == "success"
             result = _dispatch(s, "set_gripper", robot_name="arm", state="open", steps=5)
             assert result["status"] == "success", result
             assert _json_block(result)["actuators"] == ["Jaw"]

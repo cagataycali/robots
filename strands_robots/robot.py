@@ -700,8 +700,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             being replaced by the origin. Only applies to ``mode="sim"``; in
             ``mode="real"`` it is ignored and reported at debug level.
         data_config: Data configuration name for observation/action schema.
-                     For multi-camera setups, specify explicitly:
-                     ``data_config="so100_dualcam"``. Honoured in both modes:
+                     Honoured in both modes:
                      ``mode="sim"`` defaults it to the canonical robot name,
                      and ``mode="real"`` forwards it verbatim to
                      ``strands_robots.hardware_robot.Robot``, which carries it

@@ -37,7 +37,7 @@ arm = Robot(
 | `opencv` | `OpenCVCameraConfig` | USB and built-in cameras; `index_or_path` is an index or a device path |
 | `intelrealsense` | `RealSenseCameraConfig` | `serial_number_or_name`; needs the Intel SDK on top of lerobot. The spelling `realsense` is refused with a hint |
 
-Every other key must be a declared field of the resolved config class; a typo is refused by name. The camera names become the `observation.images.<name>` columns a recording writes and a policy reads, so match them to the `data_config` you train with (`so100_dualcam` names `front` and `wrist`).
+Every other key must be a declared field of the resolved config class; a typo is refused by name. The camera names become the `observation.images.<name>` columns a recording writes and a policy reads, so match them to the camera names the policy was trained with.
 
 Native drivers address cameras through their own SDK (Reachy Mini, EarthRover `camera` verb, Microduck) and do not read `cameras=`; passing a non-empty dict to one is refused unless the class declares `reads_cameras = True`. One that does retries a mode that yields no frame without its `fps`, then with no size (some UVC cameras accept a rate they never deliver), and its status row names it `refused_mode`.
 

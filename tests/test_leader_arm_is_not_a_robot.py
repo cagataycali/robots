@@ -116,7 +116,6 @@ def test_a_leader_is_refused_in_every_mode(mode: str, name: str, monkeypatch: py
 def test_follower_names_still_resolve() -> None:
     """The follower aliases this fix did not touch keep resolving."""
     assert resolve_name("so101_follower") == "so101"
-    assert resolve_name("so101_dualcam") == "so101"
     assert get_hardware_type("so101") == "so101_follower"
 
 

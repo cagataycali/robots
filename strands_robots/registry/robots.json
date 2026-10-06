@@ -279,8 +279,6 @@
       },
       "legacy_urdf": "so100/so100.urdf",
       "aliases": [
-        "so100_4cam",
-        "so100_dualcam",
         "so100_follower",
         "so_arm100",
         "trs_so_arm100"
@@ -316,9 +314,7 @@
       },
       "aliases": [
         "robotstudio_so101",
-        "so101_dualcam",
         "so101_follower",
-        "so101_tricam",
         "so_arm101"
       ]
     },

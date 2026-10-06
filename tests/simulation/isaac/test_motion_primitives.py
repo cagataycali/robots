@@ -468,13 +468,13 @@ class TestGripperRegistryMetadata:
 
     def test_alias_data_config_resolves_metadata(self):
         # data_config aliases resolve to the canonical registry entry through
-        # the REAL registry (no patching): so100_dualcam -> so100, whose
+        # the REAL registry (no patching): so100_follower -> so100, whose
         # gripper metadata names 'Jaw'. The hint-colliding pan joint proves
         # the metadata (not the heuristic) did the resolution - the heuristic
         # would have picked both.
         sim, _ = _make_sim(
             joint_names=["finger_camera_pan", "shoulder_lift", "elbow", "wrist_roll", "Jaw"],
-            data_config="so100_dualcam",
+            data_config="so100_follower",
         )
         result = sim.set_gripper(robot_name="arm", state="open", steps=5)
         assert result["status"] == "success", result
