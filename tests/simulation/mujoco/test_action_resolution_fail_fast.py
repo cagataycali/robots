@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
@@ -253,6 +254,38 @@ class TestFailFastOnDictVectorValuedKey:
         assert "scalar number" in text
         assert "Explicit unresolved keys: []" in text
         assert "get_features" in text
+
+
+class TestDictVectorValuedKeyRefusalNamesTheUnwrap:
+    """The scalar refusal names the one-element unwrap it sits behind.
+
+    ``[0.5]`` is accepted (unwrapped to its scalar), so a refusal for
+    ``[0.5, 0.6]`` that only says "got list" hides the rule from the caller.
+    A value with no length (a mapping, a string) gets no length hint.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "hint"),
+        [
+            pytest.param([0.1, 0.2], "It carries 2 elements", id="list"),
+            pytest.param((0.1, 0.2, 0.3), "It carries 3 elements", id="tuple"),
+            pytest.param(np.zeros(4), "It carries 4 elements", id="ndarray"),
+            pytest.param([], "It carries 0 elements", id="empty-list"),
+            pytest.param([[0.5]], "It carries 1 element;", id="nested-twice"),
+            pytest.param({"v": 0.5}, None, id="dict"),
+            pytest.param("hello", None, id="str"),
+        ],
+    )
+    def test_refusal_hint_follows_the_value_shape(self, sim, value, hint):
+        result = sim.send_action({"1": value}, robot_name="so101")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "scalar number" in text
+        if hint is None:
+            assert "unwrapped" not in text
+        else:
+            assert hint in text
+            assert "a one-element sequence ([v], (v,), np.array([v])) is unwrapped once" in text
 
 
 class TestObserverPreflight:

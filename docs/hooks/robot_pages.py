@@ -725,7 +725,8 @@ def robot_page(name: str) -> str:
         lines += ["Aliases: " + ", ".join(f"`{a}`" for a in aliases) + ".", ""]
     labels = spec.get("joint_labels")
     if labels:
-        lines += ["| Observation key | `send_action` label |", "|---|---|"]
+        # The fence above prints actuator names; the labels are aliases on top of them.
+        lines += ["| Observation key | also accepted by `send_action` |", "|---|---|"]
         lines += [f"| `{k}` | `{v}` |" for k, v in labels.items()]
         lines.append("")
     gripper = spec.get("gripper")

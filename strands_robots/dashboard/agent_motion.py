@@ -16,15 +16,24 @@ from typing import Any
 
 from strands_robots.utils import boolean_flag_error
 
-__all__ = ["MOTION_ENV", "GATED_ACTIONS", "agent_motion_allowed", "peer_is_physical"]
+__all__ = ["MOTION_ENV", "GATED_ACTIONS", "PHYSICAL_MOTION_ACTIONS", "agent_motion_allowed", "peer_is_physical"]
 
 #: The grant. Set on the dashboard's process (or via the consent screen) to let the agent start
 #: physical tasks by itself.
 MOTION_ENV = "STRANDS_DASH_AGENT_PHYSICAL_MOTION"
 
-#: Actions that can put a real robot in motion. Everything else -- including every way of STOPPING
-#: one -- is deliberately outside this set.
-GATED_ACTIONS: frozenset[str] = frozenset({"task", "teleop_receive", "reset"})
+#: The wire verbs that move a real robot: a policy rollout (``execute`` / ``start``), following a
+#: leader's stream (``teleop_receive``), and the sim family's ``reset`` and ``step``, which a
+#: hardware peer that implements them runs on its joints (``mesh.core`` dispatches both to the
+#: robot when it has them). The one definition the agent's per-peer proxy tools
+#: (``peer_tools.motion_actions_for``) and this module's gate read; the mesh's own wire gate
+#: (``mesh.core.WIRE_MOTION_ACTIONS``) may gate fewer, never more. Every way of STOPPING a robot is
+#: deliberately outside it.
+PHYSICAL_MOTION_ACTIONS: frozenset[str] = frozenset({"execute", "start", "teleop_receive", "reset", "step"})
+
+#: Actions that can put a real robot in motion: the wire verbs above, plus ``task``, which is how the
+#: dashboard's HTTP route and fleet tool name a rollout.
+GATED_ACTIONS: frozenset[str] = PHYSICAL_MOTION_ACTIONS | {"task"}
 
 #: How each gated action reads in a refusal: pointing a follower at a live leader stream is
 #: immediate motion (the follower snaps to the leader's pose the moment the command lands),
@@ -34,6 +43,7 @@ _ACTION_PHRASE: dict[str, str] = {
     "teleop_receive": "pointing the follower {shown} at a live leader stream",
     # A reset drives every joint back to the home pose at once: motion, gated like a task.
     "reset": "returning {shown} to its home pose",
+    "step": "stepping {shown}",
 }
 
 _TRUE = ("1", "true", "yes", "on")
