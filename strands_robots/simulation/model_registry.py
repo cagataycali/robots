@@ -165,6 +165,23 @@ def registry_entry_key(name: str) -> str | None:
     return None
 
 
+def registry_spawn_position(key: str | None) -> list[float] | None:
+    """The ``spawn_position`` the registry entry *key* declares, or ``None``.
+
+    A model authored below the ground plane (LeKiwi's wheels, a quadruped's
+    straight-legged zero pose) carries the attach offset that rests its zero
+    pose on the ground; ``add_robot`` spawns there when no ``position`` is given.
+
+    Args:
+        key: A registry key, as :func:`registry_entry_key` returns it.
+
+    Returns:
+        ``[x, y, z]`` as floats, or ``None`` when the entry declares none.
+    """
+    spawn = (get_robot(key) or {}).get("spawn_position") if key and _HAS_REGISTRY else None
+    return [float(v) for v in spawn] if spawn else None
+
+
 def resolve_urdf(data_config: str) -> str | None:
     """Resolve a data_config name to a URDF file path.
 

@@ -106,6 +106,7 @@ from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
     registry_entry_key,
+    registry_spawn_position,
     resolve_model,
 )
 from strands_robots.simulation.model_registry import (
@@ -2445,6 +2446,13 @@ class MuJoCoSimEngine(
         did not land where it was asked is visible in the result instead of
         having to be measured with :meth:`get_body_state`.
 
+        Omitting ``position`` spawns a registry model at the entry's
+        ``spawn_position`` when it declares one (LeKiwi, the Unitree
+        quadrupeds, ur10e: models authored below the ground plane), so its zero
+        pose rests on the ground; otherwise at the origin. A ``urdf_path`` or a
+        ``keyframe`` pose keeps the origin, since the offset was measured on the
+        registry model's zero pose.
+
         The summary's last line names the next step THIS robot can take, which
         is ``run_policy`` only when the model compiled with actuators. A model
         with none (a bare URDF arm, or a registry pack whose only document
@@ -2667,6 +2675,12 @@ class MuJoCoSimEngine(
         # instance label a recording would fall back to.
         if registry_key:
             registry_key = registry_entry_key(registry_key) or registry_key
+
+        # A registry model authored below the plane declares the offset that
+        # rests its zero pose on the ground; omitting ``position`` spawns it
+        # there. A caller's own file or keyframe pose is not what it measured.
+        if position is None and not urdf_path and keyframe is None:
+            position = registry_spawn_position(registry_key)
 
         mj = self._mj
 

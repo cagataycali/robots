@@ -5,19 +5,23 @@ left alone and a fixed-base arm is never moved, so an asset authored for a
 recessed floor (LeKiwi's wheels sit 34.6 mm below its root) started the episode
 inside the plane and the contact solver ejected it on the first step, behind a
 plain ``success``. The result now names the depth and the ``position=`` that
-spawns the robot clear, and following that advice silences it.
+spawns the robot clear, and following that advice silences it. A registry entry
+that carries that position as ``spawn_position`` spawns there by default.
 
-Hermetic: inline MJCF in ``tmp_path``, ``mesh=False``, no rendering.
+Inline MJCF in ``tmp_path`` plus the registry's own models, ``mesh=False``, no rendering.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("mujoco")
 
+from strands_robots import registry  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 #: A floating box base whose bottom face sits at ``z = root - 0.05``, and a
@@ -77,3 +81,21 @@ def test_the_named_position_spawns_the_robot_clear(tmp_path, caplog) -> None:
     assert "Pass position=[0.2, 0.0, 0.05]" in text, text
     assert any("50.0 mm inside the ground" in r.getMessage() for r in caplog.records), "Robot() returns no envelope"
     assert "inside the ground" not in _add(tmp_path, _FIXED.format(z=0.07), [0.2, 0.0, 0.05])
+
+
+_ROBOTS = json.loads((Path(registry.__file__).parent / "robots.json").read_text(encoding="utf-8"))["robots"]
+_SPAWNS = {name: spec["spawn_position"] for name, spec in _ROBOTS.items() if "spawn_position" in spec}
+
+
+@pytest.mark.parametrize("name", sorted(_SPAWNS))
+def test_a_registry_robot_authored_below_the_plane_spawns_at_its_registry_position(name) -> None:
+    """Omitting ``position`` reads the entry's ``spawn_position``: no burial, no number to retype."""
+    sim = Simulation(tool_name="test_spawn_burial", mesh=False)
+    try:
+        sim.create_world(gravity=[0, 0, -9.81])
+        result = sim.add_robot(name=name, data_config=name)
+        assert result["status"] == "success", result
+        assert "inside the ground" not in result["content"][0]["text"], result
+        assert sim._world.robots[name].position == [float(v) for v in _SPAWNS[name]]
+    finally:
+        sim.cleanup()
