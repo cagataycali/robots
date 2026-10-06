@@ -28,6 +28,7 @@ Environment variables:
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import math
 import os
@@ -4207,9 +4208,11 @@ class IsaacSimulation(
             valid_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
             if shape not in valid_shapes:
                 accepted = valid_shapes + tuple(_SHAPE_ALIASES)
+                close = difflib.get_close_matches(str(shape).lower(), accepted, n=1, cutoff=0.6)
+                hint = f" Did you mean {close[0]!r}?" if close else ""
                 return {
                     "status": "error",
-                    "content": [{"text": f"Unknown shape: {shape!r}. Valid: {accepted}"}],
+                    "content": [{"text": f"Unknown shape: {shape!r}.{hint} Valid: {accepted}"}],
                 }
 
             if name in self._objects:

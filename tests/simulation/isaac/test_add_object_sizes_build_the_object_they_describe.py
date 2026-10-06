@@ -119,3 +119,22 @@ class TestThePrimIsBuiltWithTheResolvedDims:
         )
         assert seen["radius"] == pytest.approx(0.02) and seen["height"] == pytest.approx(0.06)
         assert resolved == pytest.approx([0.02, 0.06])
+
+
+@pytest.mark.parametrize(
+    ("shape", "hint"),
+    [
+        ("spehre", " Did you mean 'sphere'?"),
+        ("Cilinder", " Did you mean 'cylinder'?"),
+        ("cuboi", " Did you mean 'cuboid'?"),
+        ("zz", ""),
+    ],
+)
+def test_an_unknown_shape_names_the_closest_one(shape: str, hint: str) -> None:
+    stub, seen = _isaac_recording()
+    result = IsaacSimulation.add_object(stub, "thing", shape=shape)
+    assert result["status"] == "error"
+    assert _text(result) == (
+        f"Unknown shape: {shape!r}.{hint} Valid: ('box', 'sphere', 'capsule', 'cylinder', 'mesh', 'cuboid')"
+    )
+    assert seen["construct"] == 0
