@@ -26,7 +26,7 @@ import pathlib
 import pytest
 
 from strands_robots.registry import get_robot
-from strands_robots.simulation.base import close_match_hint
+from strands_robots.simulation.base import _SUGGESTION_RATIO, close_match_hint
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
 # Concrete registry subjects, one per ``auto_download`` posture. Their posture
@@ -178,7 +178,7 @@ class TestCloseMatchHintNeverEchoesTheRequestedName:
         # Compared against the plain three-match call this helper made before
         # the self-match filter, rather than a hand-written expectation, so the
         # control cannot encode a difflib ordering of its own.
-        unchanged = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+        unchanged = difflib.get_close_matches(requested, known, n=3, cutoff=_SUGGESTION_RATIO)
         assert _offered(close_match_hint(requested, known)) == unchanged
 
     def test_a_non_string_or_empty_known_set_still_yields_nothing(self) -> None:

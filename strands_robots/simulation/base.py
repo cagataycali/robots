@@ -291,6 +291,13 @@ def _add_robot_hint(requested: object, known: Sequence[str]) -> str:
     )
 
 
+#: :func:`close_match_hint` cutoff - difflib's own default. Below it a short
+#: name scores against unrelated ones on shared letters (``pick`` ->
+#: ``stop_policy``, ``grab`` -> ``set_gravity``), and a wrong suggestion is
+#: worse than none: every caller still appends its discovery pointer.
+_SUGGESTION_RATIO = 0.6
+
+
 def close_match_hint(requested: object, known: Sequence[str], same: Callable[[str], str] | None = None) -> str:
     """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
 
@@ -342,7 +349,10 @@ def close_match_hint(requested: object, known: Sequence[str], same: Callable[[st
     # whose known set cannot contain ``requested``.
     target = same(requested) if same is not None else None
     aliases = [k for k in known if same is not None and k != requested and same(k) == target]
-    close = difflib.get_close_matches(requested, list(known), n=4, cutoff=0.4)
+    close = difflib.get_close_matches(requested, list(known), n=4, cutoff=_SUGGESTION_RATIO)
+    # A known name that starts with ``requested`` is a match however long it
+    # is; the ratio alone scores ``policy`` -> ``policy_provider`` below it.
+    close += [k for k in known if requested and k.startswith(requested)]
     matches = list(dict.fromkeys(m for m in aliases + close if m != requested))[:3]
     if not matches:
         return ""
