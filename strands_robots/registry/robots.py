@@ -264,11 +264,14 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
             - ``"both"``: robots that have BOTH sim and real.
 
     Returns:
-        List of dicts with name, description, category, joints, has_sim,
-        has_real and source (``"curated"`` for a ``robots.json`` entry,
-        ``"urdf"`` for a ``robot_descriptions`` URDF-only robot the MuJoCo
+        List of dicts with name, aliases, description, category, joints,
+        has_sim, has_real and source. ``aliases`` is every spelling
+        :func:`list_aliases` maps to the row (sorted, empty for a robot that
+        declares none), so ``Robot("g1")`` is traceable to its
+        ``unitree_g1`` row. ``source`` is ``"curated"`` for a ``robots.json``
+        entry and ``"urdf"`` for a ``robot_descriptions`` URDF-only robot the MuJoCo
         backend compiles on first use; a URDF robot whose description does
-        not build is listed with ``has_sim`` false).
+        not build is listed with ``has_sim`` false.
 
     Raises:
         ValueError: If ``mode`` is not one of :data:`LIST_ROBOTS_MODES`. An
@@ -287,6 +290,9 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
         urdf_info = urdf_registry_entry(urdf_name)
         if urdf_info is not None:
             entries[urdf_name] = urdf_info
+    aliases_of: dict[str, list[str]] = {}
+    for alias, canonical in sorted(list_aliases().items()):
+        aliases_of.setdefault(canonical, []).append(alias)
     results = []
     for name, info in sorted(entries.items()):
         _has_sim = "asset" in info and (info["asset"].get("auto_download") is not False or has_sim(name))
@@ -302,6 +308,7 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
         results.append(
             {
                 "name": name,
+                "aliases": aliases_of.get(name, []),
                 "description": info.get("description", ""),
                 "category": info.get("category", ""),
                 "joints": info.get("joints"),
