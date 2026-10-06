@@ -6206,6 +6206,8 @@ class SimEngine(ABC):
         policy_object: Policy | None = None,
         video: dict[str, Any] | None = None,
         wbc_install_torque_control: bool = True,
+        async_rtc: bool = False,
+        rtc_inference_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         """Run a registered :class:`BenchmarkProtocol` against the current sim.
 
@@ -6336,6 +6338,16 @@ class SimEngine(ABC):
                 the controller yourself or to drive a torque-actuated scene
                 directly. No-op for non-WBC policies and on backends without the
                 hook.
+            async_rtc: Accepted for the same shape as :meth:`eval_policy`, but
+                only ``False`` runs: a benchmark rollout stays synchronous so
+                its success rate is bit-stable. ``True`` is refused before any
+                policy is built, with the reason and the sibling that does
+                overlap inference (:meth:`run_policy`). A non-boolean is
+                refused like every other posture flag.
+            rtc_inference_timeout_s: The async prefetch deadline of
+                :meth:`eval_policy`, checked against the same domain (``None``
+                or a positive finite number). The synchronous benchmark path
+                has no prefetch, so a valid value changes nothing.
 
         Returns:
             Standard status dict. On success, carries per-episode cumulative
@@ -6406,8 +6418,14 @@ class SimEngine(ABC):
         if hook_error := optional_callable_error(on_frame, "on_frame", "evaluate_benchmark"):
             return {"status": "error", "content": [{"text": hook_error}]}
         if err := self._validate_posture_flags(
-            "evaluate_benchmark", wbc_install_torque_control=wbc_install_torque_control
+            "evaluate_benchmark", async_rtc=async_rtc, wbc_install_torque_control=wbc_install_torque_control
         ):
+            return err
+        if async_rtc:
+            from strands_robots.simulation.policy_runner import SPEC_PATH_ASYNC_RTC_REFUSAL
+
+            return {"status": "error", "content": [{"text": SPEC_PATH_ASYNC_RTC_REFUSAL}]}
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "evaluate_benchmark"):
             return err
         if err := self._validate_rollout_target(robot_name, instruction, "evaluate_benchmark"):
             return err

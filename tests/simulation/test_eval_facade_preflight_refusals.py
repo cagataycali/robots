@@ -216,3 +216,35 @@ class TestOneRuleWordedOncePerSurface:
         under_eval = _text(engine._validate_policy_mapping("host=1", param, "eval_policy"))
         under_run = _text(engine._validate_policy_mapping("host=1", param, "run_policy"))
         assert under_eval.removeprefix("eval_policy: ") == under_run.removeprefix("run_policy: ")
+
+
+class TestEvaluateBenchmarkTakesTheRtcKnobsOfItsSiblings:
+    """``eval_policy`` takes both RTC knobs; the benchmark facade names why it differs.
+
+    Before, ``async_rtc=`` was a bare ``TypeError`` and the reason (a benchmark
+    stays synchronous for a bit-stable success rate) sat one layer down where no
+    caller could reach it.
+    """
+
+    @pytest.mark.parametrize(
+        ("kwargs", "verdict"),
+        [
+            ({"async_rtc": True}, None),
+            ({"async_rtc": "yes"}, lambda e: e._validate_posture_flags("evaluate_benchmark", async_rtc="yes")),
+            ({"rtc_inference_timeout_s": 0}, lambda e: e._validate_rtc_inference_timeout(0, "evaluate_benchmark")),
+        ],
+        ids=["async-refused", "non-bool", "bad-deadline"],
+    )
+    def test_each_value_gets_its_verdict(self, engine, kwargs: dict[str, Any], verdict: Any) -> None:
+        result = _benchmark_eval(engine, **kwargs)
+        assert result["status"] == "error"
+        if verdict is None:
+            text = _text(result)
+            assert "bit-stable reproducibility" in text and "run_policy(async_rtc=...)" in text
+        else:
+            assert result == verdict(engine)
+
+    def test_the_synchronous_values_reach_the_benchmark_lookup(self, engine) -> None:
+        """Without this, refusing every value would satisfy the test above."""
+        result = _benchmark_eval(engine, async_rtc=False, rtc_inference_timeout_s=5.0)
+        assert "no benchmark registered" in _text(result)
