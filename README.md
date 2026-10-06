@@ -71,7 +71,7 @@ uv pip install "strands-robots[sim-mujoco]"   # plain pip works too
 Python 3.12+. Everything else is an extra you pull in when you need it -
 `lerobot` (hardware, local VLA inference, recording), `groot` (GR00T N1.7),
 `cosmos3-service`, `mesh`, `mesh-iot`, `sim-newton`, `sim-isaac`, `wbc` -
-see [Installation](docs/start/install.md) for the full table.
+see [Installation](https://strands-labs.github.io/robots/start/install/) for the full table.
 
 ## How it works
 
@@ -89,14 +89,14 @@ in sim runs on the metal by changing `mode`.
 
 | | Read |
 |---|---|
-| **150+ robots across 8 categories** - arms, bimanual, hands and grippers, humanoids, mobile bases, mobile manipulators, aerial, expressive - from one registry with asset auto-download | [Robots](docs/robots/index.md) |
-| **Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7), Cosmos 3, MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](docs/learn/policies/index.md) |
-| **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](docs/learn/hardware/teleoperation.md), [Recording](docs/learn/data/record.md) |
-| **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](docs/learn/training/lerobot.md) |
-| **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](docs/learn/simulation/index.md) |
-| **Mesh** every robot as a Zenoh peer: `tell()` another robot what to do, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](docs/learn/mesh/fleet.md) |
-| **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](docs/learn/ros2.md) |
-| **Configure** every environment variable the package reads, with its default and its guard | [Configuration](docs/reference/configuration.md) |
+| **150+ robots across 8 categories** - arms, bimanual, hands and grippers, humanoids, mobile bases, mobile manipulators, aerial, expressive - from one registry with asset auto-download | [Robots](https://strands-labs.github.io/robots/robots/) |
+| **Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7), Cosmos 3, MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](https://strands-labs.github.io/robots/learn/policies/) |
+| **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](https://strands-labs.github.io/robots/learn/hardware/teleoperation/), [Recording](https://strands-labs.github.io/robots/learn/data/record/) |
+| **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](https://strands-labs.github.io/robots/learn/training/lerobot/) |
+| **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](https://strands-labs.github.io/robots/learn/simulation/) |
+| **Mesh** every robot as a Zenoh peer: `tell()` another robot what to do, broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](https://strands-labs.github.io/robots/learn/mesh/fleet/) |
+| **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](https://strands-labs.github.io/robots/learn/ros2/) |
+| **Configure** every environment variable the package reads, with its default and its guard | [Configuration](https://strands-labs.github.io/robots/reference/configuration/) |
 
 <p align="center">
   <img src="docs/assets/mesh_network.svg" alt="Strands Robots mesh: every Robot(mesh=True) is a Zenoh peer; an agent lists peers, tells one what to do, and an emergency stop reaches all of them" width="100%">
@@ -108,7 +108,7 @@ Real servos never move by accident: `mode="real"` is an explicit opt-in.
 
 Full guide, API reference and per-robot pages:
 **[strands-labs.github.io/robots](https://strands-labs.github.io/robots)** -
-start with the [Quickstart](docs/start/first-robot.md) and [Architecture](docs/concepts/architecture.md).
+start with the [Quickstart](https://strands-labs.github.io/robots/start/first-robot/) and [Architecture](https://strands-labs.github.io/robots/concepts/architecture/).
 
 ## Development
 
@@ -119,7 +119,7 @@ hatch run test && hatch run lint       # pytest; ruff + mypy
 ```
 
 Conventions and review learnings are in [AGENTS.md](AGENTS.md);
-[CONTRIBUTING](docs/reference/project/contributing.md) covers the workflow. Work is tracked on the
+[CONTRIBUTING](https://strands-labs.github.io/robots/reference/project/contributing/) covers the workflow. Work is tracked on the
 [project board](https://github.com/orgs/strands-labs/projects/2).
 
 ## Security
@@ -127,8 +127,8 @@ Conventions and review learnings are in [AGENTS.md](AGENTS.md);
 Found a vulnerability? **Do not** open a public issue - follow
 [SECURITY.md](SECURITY.md). The `trust_remote_code` gate on `lerobot_local`, the
 mesh CA-pinning controls and the ordered
-[CA Pin Rotation Runbook](docs/reference/configuration.md#ca-pin-rotation-runbook)
-are documented in the [Configuration](docs/reference/configuration.md) matrix.
+[CA Pin Rotation Runbook](https://strands-labs.github.io/robots/reference/configuration/#ca-pin-rotation-runbook)
+are documented in the [Configuration](https://strands-labs.github.io/robots/reference/configuration/) matrix.
 
 ## License
 
