@@ -1,16 +1,10 @@
-"""Regression: remote lockout resume must verify on the SourceInfo-less
+"""Regression: a remote lockout resume must clear peers on the SourceInfo-less
 fallback publish path.
 
-The resume override proof is an ``HMAC(override_code, <envelope fields>)``.
 When a Zenoh build lacks ``SourceInfo`` (or no session/publisher is available)
 the safety envelope is published on the fallback ``put()`` path, which strips
-``source_zid`` from the body. If the issuer binds ``source_zid`` into the MAC
-while the published body has it stripped, every receiver recomputes the proof
-over a different byte string -- the proof never verifies and the fleet stays
-e-stopped forever.
-
-This pins the round trip: an issuer that publishes on the fallback path
-produces an envelope that a receiver accepts and that clears the lockout.
+``source_zid`` from the body. The relayed assertion must still clear a receiver
+on that transport, or the fleet stays e-stopped forever.
 """
 
 import json
@@ -18,6 +12,8 @@ import types
 from unittest.mock import MagicMock
 
 from strands_robots.mesh import core
+
+from ._resume import lock, trust_new_key
 
 
 def _fallback_sample(payload: dict) -> object:
@@ -30,7 +26,7 @@ def _fallback_sample(payload: dict) -> object:
 
 
 def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
-    monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "operator-secret-1234567890")
+    key = trust_new_key(monkeypatch)
 
     # --- Issuer: an open session (so _local_session_zid resolves a real zid)
     # but the native SourceInfo path is unavailable, so the envelope is
@@ -49,35 +45,34 @@ def test_resume_proof_verifies_when_published_on_fallback_path(monkeypatch):
 
     monkeypatch.setattr(core, "put", capture_put)
 
-    # Engage the local lockout, then resume with the correct override code.
-    issuer._estop_lockout.set()
+    # Engage the local lockout, then resume with the operator's key.
+    epoch = lock(issuer)
     issuer._last_estop_ts = core.time.time()
     issuer._last_estop_mono = core.time.monotonic()
-    result = issuer._resume_lockout("operator-secret-1234567890")
+    result = issuer.resume(key, targets=["receiver"])
     assert result == {"status": "ok"}
 
     assert published["key"] == "strands/safety/resume"
     envelope = published["payload"]
     # Fallback path stripped source_zid from the body...
     assert "source_zid" not in envelope
-    # ...and the proof is bound to that exact (zid-less) body.
-    assert "override_proof" in envelope
+    # ...and still relays the signed assertion.
+    assert envelope["assertion"]["epoch"] == epoch
 
     # --- Receiver on the same fallback transport (no wire source_zid). ---
     receiver = core.Mesh(robot=object(), peer_id="receiver")
     receiver.publish_safety_event = MagicMock()
-    receiver._estop_lockout.set()
-    assert receiver._estop_lockout.is_set()
+    lock(receiver, epoch)
 
     receiver._on_safety_resume(_fallback_sample(envelope))
 
-    # The proof verified against the published body -> lockout cleared.
+    # The assertion verified on the zid-less transport -> lockout cleared.
     assert receiver._estop_lockout.is_set() is False
 
 
 def test_safety_wire_zid_none_when_source_info_unavailable(monkeypatch):
     """_safety_wire_zid returns None on a zenoh build lacking SourceInfo, so
-    the proof is bound to the zid-less body that the fallback path publishes."""
+    the resume body carries no zid the fallback path would strip."""
     import sys
 
     m = core.Mesh(robot=object(), peer_id="t1")

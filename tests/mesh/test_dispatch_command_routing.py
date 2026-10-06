@@ -127,15 +127,15 @@ def test_dispatch_allows_status_while_estop_lockout_engaged() -> None:
 
 
 def test_dispatch_routes_resume_to_lockout_release_even_under_lockout(monkeypatch) -> None:
-    # No override code configured -> the release is rejected deterministically.
-    monkeypatch.delenv("STRANDS_MESH_OVERRIDE_CODE", raising=False)
+    # No resume verification key configured -> the release is rejected deterministically.
+    monkeypatch.delenv("STRANDS_MESH_RESUME_PUBLIC_KEY", raising=False)
     m = Mesh(_StatusRobot(), peer_id="p")
     m._estop_lockout.set()
 
     # ``resume`` is not blocked by the lockout gate; it is routed to
-    # ``_resume_lockout``. With no override code configured the release is
+    # ``_resume_lockout``. With no verification key configured the release is
     # rejected, and the response is the generic (oracle-free) shape.
-    out = m._dispatch({"action": "resume", "override_code": "wrong-code"})
+    out = m._dispatch({"action": "resume", "assertion": {}})
 
     assert out.get("status") == "error"
     assert out.get("error") == "resume rejected"

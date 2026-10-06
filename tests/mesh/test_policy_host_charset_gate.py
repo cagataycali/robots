@@ -1,8 +1,8 @@
-"""is_safe_policy_host standalone charset gate + override-code-len constant.
+"""is_safe_policy_host standalone charset gate.
 
 Origin: PR #223 R7 review concerns.
 
-Two concerns addressed in R7:
+The concern addressed in R7:
 
 1. ``is_safe_policy_host`` defence-in-depth gap (Thread 6FB7U1).
    When called outside :func:`validate_command` (e.g. from PR-7 tools
@@ -12,12 +12,6 @@ Two concerns addressed in R7:
    injection-shaped bytes for the caller. R7 adds a
    :data:`_SAFE_PASSTHROUGH_RE` charset gate before the strip so the
    function is safe in isolation.
-
-2. Magic-number cleanup (Thread 6FB7VU). The 256-char cap on
-   ``resume.override_code`` is now a named module-level constant
-   :data:`MAX_OVERRIDE_CODE_LEN`, consistent with ``MAX_INSTRUCTION_LEN``,
-   ``MAX_MODEL_PATH_LEN``, ``MAX_SERVER_ADDRESS_LEN``, ``MAX_PEER_ID_LEN``,
-   ``MAX_PASSTHROUGH_LEN``.
 """
 
 from __future__ import annotations
@@ -26,7 +20,6 @@ import pytest
 
 from strands_robots.mesh import security
 from strands_robots.mesh.security import (
-    MAX_OVERRIDE_CODE_LEN,
     ValidationError,
     is_safe_policy_host,
     validate_command,
@@ -231,35 +224,3 @@ class TestThePostCheckHoldsWhenTheMembershipGateIsWidened:
         _widen_membership_gate(monkeypatch)
         out = validate_command(_execute_with_host("localhost"))
         assert out["policy_host"] == "localhost"
-
-
-class TestMaxOverrideCodeLenConstant:
-    """Pin: ``MAX_OVERRIDE_CODE_LEN`` is a named module-level constant.
-
-    Regression for the magic-number cleanup. The 256-char cap on
-    ``resume.override_code`` should be a named constant in ``__all__``
-    so consumers and tests import it rather than recomputing.
-    """
-
-    def test_value_is_256(self) -> None:
-        assert MAX_OVERRIDE_CODE_LEN == 256
-
-    def test_in_module_all(self) -> None:
-        assert "MAX_OVERRIDE_CODE_LEN" in security.__all__
-
-    def test_validate_command_uses_constant_for_length_cap(self) -> None:
-        """At-cap value passes; one-over-cap raises ValidationError."""
-        # at the cap: passes
-        out = validate_command({"action": "resume", "override_code": "a" * MAX_OVERRIDE_CODE_LEN})
-        assert len(out["override_code"]) == MAX_OVERRIDE_CODE_LEN
-
-        # one-over: raises
-        with pytest.raises(ValidationError) as exc:
-            validate_command(
-                {
-                    "action": "resume",
-                    "override_code": "a" * (MAX_OVERRIDE_CODE_LEN + 1),
-                }
-            )
-        # Error message references the constant value, not a hardcoded 256.
-        assert str(MAX_OVERRIDE_CODE_LEN) in str(exc.value)

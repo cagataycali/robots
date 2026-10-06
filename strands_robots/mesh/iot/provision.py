@@ -261,8 +261,8 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             # fleet-wide stop is the one that may clear it, and a cert that may
             # not originate a stop must not lift a lockout it could not have
             # engaged. Publishing a resume peers will honour additionally needs
-            # the HMAC ``_on_safety_resume`` recomputes over
-            # ``STRANDS_MESH_OVERRIDE_CODE``.
+            # an assertion signed by the operator key ``_on_safety_resume``
+            # checks against ``STRANDS_MESH_RESUME_PUBLIC_KEY``.
             # ``iot:Publish`` only: a fleet stop is an event, not a state
             # the broker should hand to every robot that subscribes later. A
             # retained stop, refreshed once a freshness window, kept every

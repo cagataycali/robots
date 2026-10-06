@@ -10494,11 +10494,11 @@ function EstopSheet({
     setResumeMsg(null);
     try {
       if (meshBacked) {
-        const r = await post(paths.resume[0], { override_code: code });
+        const r = await post(paths.resume[0], { passphrase: code });
         if (r.status === "ok") {
           setResumeMsg("✓ lockout cleared - fleet accepting commands again");
           setCode("");
-        } else setResumeMsg(`✗ ${r.error ?? "resume rejected"} (wrong code? brute-force cooldown?)`);
+        } else setResumeMsg(`✗ ${r.error ?? "resume rejected"} (wrong passphrase? brute-force cooldown?)`);
       }
       const sim = await post("/api/safety/resume");
       setSimLockout(sim.lockout);
@@ -10543,7 +10543,7 @@ function EstopSheet({
       meshBacked && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
         "Fires BOTH rails: per-peer stop commands (answered individually below) and the signed ",
         /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "strands/safety/estop" }),
-        " envelope, which engages a fleet-wide LOCKOUT - every listening peer refuses further commands until a resume with the operator override code. A peer that is wedged or fully off the mesh still needs the hardware e-stop. The simulated robots of this dashboard are frozen too."
+        " envelope, which engages a fleet-wide LOCKOUT - every listening peer refuses further commands until a resume signed with the operator's key. A peer that is wedged or fully off the mesh still needs the hardware e-stop. The simulated robots of this dashboard are frozen too."
       ] }),
       linkWarning && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint warn", children: [
         "⚠ ",
@@ -10622,8 +10622,8 @@ function EstopSheet({
               "input",
               {
                 type: "password",
-                placeholder: "operator override code",
-                "aria-label": "operator override code",
+                placeholder: "resume key passphrase",
+                "aria-label": "resume key passphrase",
                 value: code,
                 onChange: (e) => setCode(e.target.value),
                 onKeyDown: (e) => e.key === "Enter" && resume(),
@@ -10634,9 +10634,9 @@ function EstopSheet({
           ] }),
           resumeMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hint", children: resumeMsg }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "hint", children: [
-            "The code is verified locally and an HMAC proof is broadcast — the code itself never crosses the wire. Set ",
-            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "STRANDS_MESH_OVERRIDE_CODE" }),
-            " identically on every peer."
+            "The passphrase opens the resume signing key on this host; a signed resume naming each peer and this lockout is broadcast. Peers hold only the public key (",
+            /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "STRANDS_MESH_RESUME_PUBLIC_KEY" }),
+            ")."
           ] })
         ] });
       })(),

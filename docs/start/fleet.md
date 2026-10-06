@@ -4,7 +4,7 @@ description: "Stage 5, a week: several robots on one mesh, a dashboard that sees
 
 # Fleet
 
-At the end of this rung two or more robots on two machines see each other on the mesh, an agent drives any of them through one tool with approvals in place, a dashboard shows the fleet live, and one e-stop stops every robot and keeps it stopped until an operator with the override code says otherwise.
+At the end of this rung two or more robots on two machines see each other on the mesh, an agent drives any of them through one tool with approvals in place, a dashboard shows the fleet live, and one e-stop stops every robot and keeps it stopped until the operator's signed resume says otherwise.
 
 {{drawing:d06_mesh_topology}}
 
@@ -22,7 +22,7 @@ At the end of this rung two or more robots on two machines see each other on the
 
 ## 4. Stop everything
 
-[Safety and e-stop](../learn/mesh/safety-and-estop.md). `emergency_stop()` on any peer, or the dashboard's button, locks the local robot, stops it, broadcasts stop, publishes `strands/safety/estop` so every peer locks itself, and audits. Under lockout a peer answers only `status`, `resume` and `stop`. Set `STRANDS_MESH_OVERRIDE_CODE` (sixteen characters or more) before you need it: a peer without one stays locked until someone restarts it.
+[Safety and e-stop](../learn/mesh/safety-and-estop.md). `emergency_stop()` on any peer, or the dashboard's button, locks the local robot, stops it, broadcasts stop, publishes `strands/safety/estop` so every peer locks itself, and audits. Under lockout a peer answers only `status`, `resume` and `stop`. Set `STRANDS_MESH_RESUME_PUBLIC_KEY` (the operator key's public half) before you need it: a peer without one stays locked until someone restarts it.
 
 {{drawing:d07_estop}}
 

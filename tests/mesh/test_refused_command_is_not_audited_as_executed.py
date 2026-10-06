@@ -1,7 +1,7 @@
 """A handler that refuses a command returns a result instead of raising.
 
 ``_exec_cmd`` used to audit every non-raising dispatch as ``command_executed``,
-so a resume with a bad override code left ``resume_denied`` and
+so a resume with a bad signature left ``resume_denied`` and
 ``command_executed action=resume`` in the same audit trail while the lockout
 stayed engaged. A refusal is now recorded as ``command_refused`` carrying the
 handler's error, and only a real success is ``command_executed``.
@@ -38,12 +38,12 @@ def _mesh(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> tuple[Mesh
 
 
 def _resume(m: Mesh, turn: str = "t1") -> None:
-    """Send the drill's own command: a resume carrying a bad override code."""
+    """Send the drill's own command: a resume carrying an assertion that does not verify."""
     m._exec_cmd(
         {
             "sender_id": "op",
             "turn_id": turn,
-            "command": {"action": "resume", "override_code": "wrong"},
+            "command": {"action": "resume", "assertion": {"sig": "wrong"}},
         }
     )
 
@@ -55,7 +55,7 @@ def _resume(m: Mesh, turn: str = "t1") -> None:
         pytest.param({"error": "unknown action: resume"}, "unknown action: resume", id="bare-error"),
         pytest.param({"ok": False}, "ok=False", id="ok-false"),
         pytest.param(
-            {"status": "error", "content": [{"text": "resume rejected: bad override code"}]},
+            {"status": "error", "content": [{"text": "resume rejected: bad signature"}]},
             "status=error",
             id="tool-envelope-carries-no-error-key",
         ),

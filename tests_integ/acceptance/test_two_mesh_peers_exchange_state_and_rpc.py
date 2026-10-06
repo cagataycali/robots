@@ -5,7 +5,8 @@ mesh=True)``. They share a CA and nothing else: the robot listens on an
 explicit ``tls/`` endpoint, the operator only dials it (no multicast). Over that
 one link the operator must see the robot in its peer list, receive its state
 samples, get an answer to a ``status`` RPC, and lock it out with an e-stop that
-a wrong resume code does not clear and the right one does. The check runs under
+a plain code and a resume signed by an untrusted key do not clear and one signed
+by the operator's key does. The check runs under
 the permissive built-in ACL and under both shipped ACL templates, where a robot
 certificate must also fail to command the operator. Real Zenoh, real TLS, no
 doubles.
@@ -31,11 +32,14 @@ pytest.importorskip("mujoco")
 x509 = pytest.importorskip("cryptography.x509")
 from cryptography.hazmat.primitives import hashes, serialization  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
+
+from strands_robots.mesh import resume_authority  # noqa: E402
 
 pytestmark = pytest.mark.timeout(300)
 
-RESUME_CODE = "acceptance-resume"
+OPERATOR_KEY = Ed25519PrivateKey.generate()
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "mesh"
 
 # One peer: answers one JSON request per stdin line with one JSON line.
@@ -63,6 +67,8 @@ for line in sys.stdin:
         out = [r.get("responder_id") for r in mesh.emergency_stop()]
     elif op == "locked":
         out = mesh._estop_lockout.is_set()
+    elif op == "epoch":
+        out = mesh.lockout_epoch
     print(json.dumps({"out": out}, default=str), flush=True)
 robot.destroy()
 """
@@ -119,7 +125,7 @@ class _Peer:
             STRANDS_MESH_TLS_CA=str(root / "ca.pem"),
             STRANDS_MESH_TLS_CERT=str(root / f"{name}.pem"),
             STRANDS_MESH_TLS_KEY=str(root / f"{name}.key"),
-            STRANDS_MESH_OVERRIDE_CODE=RESUME_CODE,
+            STRANDS_MESH_RESUME_PUBLIC_KEY=resume_authority.public_key_text(OPERATOR_KEY.public_key()),
             STRANDS_MESH_AUDIT_DIR=str(root / f"audit-{name}"),
             **endpoints,
         )
@@ -199,12 +205,19 @@ def test_two_mesh_peers_exchange_state_and_rpc(tmp_path: Path, acl: Path | None,
         assert robot in alpha.ask("estop")
         assert _until(lambda: beta.ask("locked") is True), f"{robot} did not lock out on {operator}'s e-stop"
 
-        wrong = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": "not-the-code"})
+        epoch = beta.ask("epoch")
+        assert epoch == alpha.ask("epoch"), "one e-stop, one lockout epoch"
+        plain = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": "a-plain-code"})
+        assert ("result" not in plain, beta.ask("locked")) == (True, True), plain
+
+        forged = resume_authority.sign_assertion(Ed25519PrivateKey.generate(), epoch=epoch, targets=[robot])
+        wrong = alpha.ask("send", to=robot, cmd={"action": "resume", "assertion": forged})
         assert (wrong["result"], beta.ask("locked")) == ({"status": "error", "error": "resume rejected"}, True)
 
-        right = alpha.ask("send", to=robot, cmd={"action": "resume", "override_code": RESUME_CODE})
+        signed = resume_authority.sign_assertion(OPERATOR_KEY, epoch=epoch, targets=[robot])
+        right = alpha.ask("send", to=robot, cmd={"action": "resume", "assertion": signed})
         assert right["result"] == {"status": "ok"}, right
-        assert _until(lambda: beta.ask("locked") is False), f"the right resume code did not clear {robot}"
+        assert _until(lambda: beta.ask("locked") is False), f"the operator-signed resume did not clear {robot}"
     finally:
         alpha.close()
         beta.close()

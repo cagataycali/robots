@@ -5544,6 +5544,7 @@ all = [
     { name = "bosdyn-client" },
     { name = "boto3" },
     { name = "botocore" },
+    { name = "cryptography" },
     { name = "device-connect-agent-tools" },
     { name = "device-connect-edge" },
     { name = "diffusers" },
@@ -5658,6 +5659,7 @@ lerobot = [
     { name = "psutil" },
 ]
 mesh = [
+    { name = "cryptography" },
     { name = "eclipse-zenoh" },
     { name = "json5" },
 ]
@@ -5666,6 +5668,7 @@ mesh-iot = [
     { name = "awsiotsdk" },
     { name = "boto3" },
     { name = "botocore" },
+    { name = "cryptography" },
     { name = "eclipse-zenoh" },
     { name = "json5" },
 ]
@@ -5811,6 +5814,9 @@ requires-dist = [
     { name = "botocore", marker = "extra == 'all'", specifier = ">=1.43.17,<2.0.0" },
     { name = "botocore", marker = "extra == 'mesh-iot'", specifier = ">=1.43.17,<2.0.0" },
     { name = "cflib", marker = "extra == 'crazyflie'", specifier = ">=0.1.25,<0.2.0" },
+    { name = "cryptography", marker = "extra == 'all'", specifier = ">=50.0.0" },
+    { name = "cryptography", marker = "extra == 'mesh'", specifier = ">=50.0.0" },
+    { name = "cryptography", marker = "extra == 'mesh-iot'", specifier = ">=50.0.0" },
     { name = "cyclonedds", marker = "extra == 'ros2'", specifier = ">=0.10.2,<12" },
     { name = "device-connect-agent-tools", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "device-connect-agent-tools", marker = "extra == 'device-connect'", specifier = ">=0.1.0" },

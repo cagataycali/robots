@@ -2,10 +2,10 @@
 
 Covers the Zenoh/SDK in this change:
 - E-stop lockout bypass via input path
-- Permanent-lockout startup warning (override code unset)
+- Permanent-lockout startup warning (no resume verification key)
 - Teleop value bound tightened + apply-rate cap
 - CMD replay dedup
-- Resume override-code brute-force throttle
+- Resume brute-force throttle
 - Peer registry cap
 - Presence freshness check
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import threading
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,6 +22,8 @@ from strands_robots.mesh import security as _sec
 from strands_robots.mesh import session as _ses
 from strands_robots.mesh.core import Mesh
 from strands_robots.mesh.input import InputReceiver, _input_max_hz
+
+from ._resume import lock, sign_for, trust_new_key
 
 
 class _FakeMeshForInput:
@@ -155,35 +158,30 @@ class TestM3PresenceFreshness:
 
 # --------------------------------------------------------------------------- M-1
 class TestM1ResumeBruteForce:
-    def _stub(self):
-        m = Mesh.__new__(Mesh)
-        m.peer_id = "p"
-        m._estop_lockout = threading.Event()
-        m._last_estop_ts = 0.0
-        m._last_estop_mono = 0.0
+    def _stub(self, monkeypatch):
+        key = trust_new_key(monkeypatch)
+        m = Mesh(MagicMock(), "p")
         m.publish_safety_event = lambda **kw: None
-        return m
+        m._publish_safety_envelope = lambda *a: None
+        lock(m)
+        return m, key
 
     def test_throttle_engages_after_threshold(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "the-correct-code-1234567890abcd")
         monkeypatch.setenv("STRANDS_MESH_RESUME_MAX_FAILS", "3")
         monkeypatch.setenv("STRANDS_MESH_RESUME_BACKOFF_S", "60")
-        m = self._stub()
-        m._estop_lockout.set()
-        # 3 bad attempts arm the throttle.
+        m, key = self._stub(monkeypatch)
+        # 3 refused assertions arm the throttle.
         for _ in range(3):
-            assert m._resume_lockout("wrong")["status"] == "error"
-        # Now even the CORRECT code is refused (throttled) and lockout stays.
-        assert m._resume_lockout("the-correct-code-1234567890abcd")["status"] == "error"
+            assert m._resume_lockout({"sig": "wrong"})["status"] == "error"
+        # Now even a correctly signed one is refused (throttled) and lockout stays.
+        assert m._resume_lockout(sign_for(key, m))["status"] == "error"
         assert m._estop_lockout.is_set()
 
-    def test_correct_code_before_threshold_succeeds(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", "code-xyz-1234567890abcdef0000")
+    def test_correct_signature_before_threshold_succeeds(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_RESUME_MAX_FAILS", "5")
-        m = self._stub()
-        m._estop_lockout.set()
-        m._resume_lockout("wrong")  # 1 fail, under threshold
-        assert m._resume_lockout("code-xyz-1234567890abcdef0000")["status"] == "ok"
+        m, key = self._stub(monkeypatch)
+        m._resume_lockout({"sig": "wrong"})  # 1 fail, under threshold
+        assert m._resume_lockout(sign_for(key, m))["status"] == "ok"
         assert not m._estop_lockout.is_set()
 
 

@@ -7,8 +7,8 @@ resume depends on is a precondition for recovering the fleet at all.
 
 Two of those preconditions are invisible until the fleet is already locked out:
 
-1. ``STRANDS_MESH_OVERRIDE_CODE`` must be set on every peer. The mesh already
-   logs a WARNING at startup when it is unset.
+1. ``STRANDS_MESH_RESUME_PUBLIC_KEY`` (the operator key's public half) must be
+   set on every peer. The mesh already logs a WARNING at startup when it is unset.
 2. Fleet clocks must agree. A resume envelope carries the issuer's wall clock and
    a receiver refuses one that is stale (older than
    ``STRANDS_MESH_RESUME_FRESHNESS_S``) or future-dated (more than
@@ -44,15 +44,20 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import strands_robots
-from strands_robots.mesh import core
+from strands_robots.mesh import core, resume_authority
 from tests._docs_hooks import docs_hook
+
+from ._resume import lock, trust_new_key
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _CONFIGURATION = _REPO_ROOT / "docs" / "reference" / "configuration.md"
 _SAFETY_PAGE = _REPO_ROOT / "docs" / "learn" / "mesh" / "safety-and-estop.md"
 
-#: Long enough to be a realistic operator secret rather than a crackable PIN.
-_CODE = "operator-code-1234567890abcdef"
+#: The lockout one fleet e-stop engaged on the operator and the robot alike.
+_EPOCH = resume_authority.new_epoch()
+
+#: The operator signing key the current test trusts (set by each class's fixture).
+_KEY: list[Any] = []
 
 
 def _mesh(peer_id: str) -> Any:
@@ -74,12 +79,12 @@ def _mint_resume(*, issuer_clock_offset_s: float = 0.0) -> dict[str, Any]:
     operator = _mesh("operator-1")
     captured: dict[str, Any] = {}
     operator._publish_safety_envelope = lambda key, env: captured.update(env)
-    operator._estop_lockout.set()
+    lock(operator, _EPOCH)
     operator._last_estop_ts = time.time() - 3.0
     operator._last_estop_mono = time.monotonic() - 3.0
     real_time = time.time
     with patch.object(core.time, "time", lambda: real_time() + issuer_clock_offset_s):
-        result = operator._resume_lockout(_CODE)
+        result = operator.resume(_KEY[0], targets=["robot-1"])
     assert result["status"] == "ok", result
     assert captured, "the issuer published no resume envelope"
     return captured
@@ -88,7 +93,7 @@ def _mint_resume(*, issuer_clock_offset_s: float = 0.0) -> dict[str, Any]:
 def _deliver(envelope: dict[str, Any]) -> bool:
     """Deliver *envelope* to a locked-out receiver; True if it recovered."""
     robot = _mesh("robot-1")
-    robot._estop_lockout.set()
+    lock(robot, _EPOCH)
     sample = MagicMock()
     sample.payload.to_bytes.return_value = json.dumps(envelope).encode()
     robot._on_safety_resume(sample)
@@ -99,8 +104,8 @@ class TestClockSkewBlocksEstopRecovery:
     """A receiver behind the operator refuses a resume it should honour."""
 
     @pytest.fixture(autouse=True)
-    def _code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+    def _operator_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _KEY[:] = [trust_new_key(monkeypatch)]
 
     def test_a_receiver_within_the_forward_bound_recovers(self) -> None:
         """Control: with clocks in sync the correct code clears the lockout."""
@@ -153,8 +158,8 @@ class TestTheFreshnessBoundGovernsAReceiverAheadOfTheOperator:
     """
 
     @pytest.fixture(autouse=True)
-    def _code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+    def _operator_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _KEY[:] = [trust_new_key(monkeypatch)]
 
     def test_a_receiver_ahead_of_the_operator_is_refused_as_stale(self, caplog: pytest.LogCaptureFixture) -> None:
         """A negative issuer offset models a receiver whose clock leads."""
@@ -298,7 +303,7 @@ class TestTheRecoveryKnobsAreDocumented:
         }
         assert documented, "found no env-var rows in docs/reference/configuration.md; the scan is broken"
         required = (
-            "STRANDS_MESH_OVERRIDE_CODE",
+            "STRANDS_MESH_RESUME_PUBLIC_KEY",
             "STRANDS_MESH_RESUME_FRESHNESS_S",
             "STRANDS_MESH_RESUME_FORWARD_SKEW_S",
         )
@@ -354,7 +359,7 @@ class TestTheRecoveryKnobsAreDocumented:
         assert '"action": "resume"' in mesh_doc, (
             "safety-and-estop.md documents how to stop a fleet but not how to resume it"
         )
-        for knob in ("STRANDS_MESH_OVERRIDE_CODE", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):
+        for knob in ("STRANDS_MESH_RESUME_PUBLIC_KEY", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):
             assert knob in mesh_doc, f"safety-and-estop.md's recovery guidance omits {knob}"
 
 
@@ -417,8 +422,8 @@ class TestTheDocumentedDirectionIsGradedAgainstTheReceiver:
     """
 
     @pytest.fixture(autouse=True)
-    def _code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+    def _operator_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _KEY[:] = [trust_new_key(monkeypatch)]
 
     @pytest.mark.parametrize("knob", _BOUNDS)
     def test_each_row_names_the_direction_its_own_bound_governs(
