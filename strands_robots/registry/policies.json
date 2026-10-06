@@ -73,6 +73,7 @@
       "module": "strands_robots.policies.cosmos3",
       "class": "Cosmos3Policy",
       "description": "NVIDIA Cosmos 3 omnimodal VLA policy (DROID/UMI/AV/bridge/OpenArm) via Cosmos Framework",
+      "extra": "cosmos3-service",
       "requires": [],
       "config_keys": [
         "embodiment",
@@ -116,6 +117,7 @@
       "module": "strands_robots.policies.moveit2",
       "class": "MoveIt2Policy",
       "description": "MoveIt2 motion planning via ZMQ sidecar",
+      "extra": "moveit2",
       "requires": [
         "port"
       ],
@@ -168,6 +170,7 @@
       "module": "strands_robots.policies.wbc",
       "class": "WBCPolicy",
       "description": "NVIDIA GR00T Whole-Body-Control (SONIC) humanoid locomotion (in-process, ONNX)",
+      "extra": "wbc",
       "requires": [],
       "config_keys": [
         "checkpoint",
@@ -188,6 +191,7 @@
       "module": "strands_robots.policies.holosoma",
       "class": "HolosomaPolicy",
       "description": "Amazon FAR Holosoma whole-body locomotion for the Unitree G1 (in-process, ONNX, Apache-2.0 weights)",
+      "extra": "holosoma",
       "requires": [],
       "config_keys": [
         "checkpoint",
@@ -254,6 +258,7 @@
       "module": "strands_robots.policies.kimodo",
       "class": "KimodoPolicy",
       "description": "NVIDIA Kimodo text-to-motion diffusion for the Unitree G1 (prompt-driven kinematic motion, HuggingFace)",
+      "extra": "kimodo",
       "requires": [],
       "config_keys": [
         "config",
@@ -282,6 +287,7 @@
       "module": "strands_robots.policies.protomotions",
       "class": "ProtoMotionsPolicy",
       "description": "ProtoMotions Generalist Tracking Policy (ONNX, BeyondMimic-trained) for the Unitree G1 \u2014 consumes a MotionPlayer reference and emits PD joint targets",
+      "extra": "protomotions",
       "requires": [
         "onnx_path"
       ],
@@ -324,6 +330,7 @@
       "module": "strands_robots.policies.rl",
       "class": "RLCheckpointPolicy",
       "description": "Deterministic rollout of an RL training checkpoint's actor: policy.pt + policy_meta.json written by create_trainer('ppo'|'fast_sac'|'fast_td3'), or an rsl_rl run from Isaac Lab (a model_<n>.pt directory, one such file, or a HuggingFace repo id holding either)",
+      "extra": "rl",
       "requires": [],
       "config_keys": [
         "checkpoint_dir",
@@ -344,6 +351,7 @@
       "module": "strands_robots.policies.microduck",
       "class": "MicroduckPolicy",
       "description": "Pollen Microduck locomotion policy (ONNX, normaliser fused into the graph) for the 14-DOF open biped \u2014 self-configures from ONNX metadata, feeds obs raw, decodes DEFAULT_POSE + action*scale",
+      "extra": "microduck",
       "requires": [
         "onnx_path"
       ],
