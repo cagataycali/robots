@@ -67,9 +67,24 @@ def register_policy(
             wins over the built-in for the rest of the process.
 
     Raises:
+        TypeError: ``name`` or an alias is not a non-empty string, ``aliases``
+            is not a list of them, or ``loader`` is not callable. Nothing is
+            registered.
         ValueError: ``name`` or an alias is a built-in provider name or alias
             and ``overwrite`` is false. Nothing is registered.
     """
+    if not callable(loader):
+        raise TypeError(
+            f"register_policy({name!r}): loader must be a zero-argument callable returning a Policy "
+            f"subclass, got {type(loader).__name__}: {loader!r}."
+        )
+    if aliases is not None and (isinstance(aliases, str) or not isinstance(aliases, list | tuple)):
+        raise TypeError(f"register_policy({name!r}): aliases must be a list of str, got {type(aliases).__name__}.")
+    for param, spelling in [("name", name), *(("aliases", alias) for alias in aliases or [])]:
+        if not isinstance(spelling, str) or not spelling.strip():
+            raise TypeError(
+                f"register_policy(): {param} must be a non-empty str, got {type(spelling).__name__}: {spelling!r}."
+            )
     if not overwrite:
         builtin_aliases = list_policy_aliases()
         builtin_names = set(list_policy_providers())
@@ -507,7 +522,13 @@ def _resolve_policy_class(provider: str, /, **kwargs) -> tuple[str, type[Policy]
     # 1. Runtime registry (user-registered providers).
     resolved_name = _runtime_aliases.get(provider, provider)
     if resolved_name in _runtime_registry:
-        return resolved_name, _runtime_registry[resolved_name](), dict(kwargs)
+        loaded = _runtime_registry[resolved_name]()
+        if not (isinstance(loaded, type) and issubclass(loaded, Policy)):
+            raise ValueError(
+                f"register_policy({resolved_name!r}): the loader returned {loaded!r}, not a Policy subclass. "
+                "Return the class itself (lambda: MyPolicy), and declare it as class MyPolicy(Policy)."
+            )
+        return resolved_name, loaded, dict(kwargs)
     kwargs = _spell_model_path_as_the_provider_does(provider, kwargs)
 
     # 2. Smart string (HF ID, URL, etc.).

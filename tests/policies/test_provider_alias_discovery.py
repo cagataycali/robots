@@ -341,6 +341,45 @@ def test_a_built_in_spelling_is_refused_and_nothing_is_registered(name, aliases,
     assert (factory._runtime_registry, factory._runtime_aliases) == before
 
 
+@pytest.mark.parametrize(
+    ("name", "loader", "aliases", "named"),
+    [
+        (None, lambda: object, None, "name must be a non-empty str, got NoneType"),
+        (123, lambda: object, None, "name must be a non-empty str, got int"),
+        (b"probe", lambda: object, None, "name must be a non-empty str, got bytes"),
+        ("  ", lambda: object, None, "name must be a non-empty str"),
+        ("type_probe", None, None, "loader must be a zero-argument callable"),
+        ("type_probe", "MyPolicy", None, "loader must be a zero-argument callable"),
+        ("type_probe", lambda: object, [123, "ok"], "aliases must be a non-empty str, got int"),
+        ("type_probe", lambda: object, [None], "aliases must be a non-empty str, got NoneType"),
+        ("type_probe", lambda: object, "tp", "aliases must be a list of str, got str"),
+    ],
+)
+def test_a_malformed_registration_is_refused_and_nothing_is_registered(name, loader, aliases, named) -> None:
+    """``register_policy`` type-checks its inputs at the write seam, as ``register_robot`` does."""
+    from strands_robots.policies import factory
+
+    before = (dict(factory._runtime_registry), dict(factory._runtime_aliases))
+    with pytest.raises(TypeError, match=re.escape(named)):
+        register_policy(name, loader, aliases=aliases)
+    assert (factory._runtime_registry, factory._runtime_aliases) == before
+
+
+def test_a_loader_returning_a_non_policy_is_named_at_create_policy(monkeypatch) -> None:
+    """``create_policy`` never hands back an object that is not a ``Policy``."""
+    from strands_robots.policies import factory, policy_provider_error
+
+    monkeypatch.setattr(factory, "_runtime_registry", dict(factory._runtime_registry))
+
+    class NotAPolicy:
+        pass
+
+    register_policy("not_a_policy_probe", lambda: NotAPolicy)
+    with pytest.raises(ValueError, match=r"register_policy\('not_a_policy_probe'\).*not a Policy subclass"):
+        create_policy("not_a_policy_probe")
+    assert "not a Policy subclass" in (policy_provider_error("not_a_policy_probe") or "")
+
+
 def test_a_runtime_alias_shadows_a_json_alias_as_create_policy_does(monkeypatch) -> None:
     """With ``overwrite=True``, reported precedence matches resolution precedence.
 
