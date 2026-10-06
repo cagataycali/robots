@@ -5723,6 +5723,7 @@ class SimEngine(ABC):
         rtc_inference_timeout_s: float | None = None,
         wbc_install_torque_control: bool = True,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
+        max_onframe_failures: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -5805,7 +5806,10 @@ class SimEngine(ABC):
         daemon-thread recorder does not race ``mjData`` mutations. A hook
         exception other than ``CooperativeStop`` or
         :class:`~strands_robots.recording_errors.RecordingFrameError` is logged
-        at WARN and never aborts the eval; a ``RecordingFrameError`` is data loss
+        at WARN and tolerated up to ``max_onframe_failures`` consecutive
+        failures (default ``5``, the :meth:`run_policy` ceiling and domain),
+        after which the eval stops with ``status="error"`` and ``onframe_error``
+        naming the last failure; a ``RecordingFrameError`` is data loss
         rather than telemetry and propagates on the first occurrence, so the
         caller learns the episode is incomplete instead of reading a successful
         eval. Raising :class:`~strands_robots.simulation.policy_runner.CooperativeStop`
@@ -5935,7 +5939,8 @@ class SimEngine(ABC):
             physics diverged and the backend reset the world mid-episode. The
             evaluation stops there, the diverged episode is not counted and its
             unsaved recording frames are discarded, and ``status`` is
-            ``"error"``.
+            ``"error"``. ``onframe_error`` reports an ``on_frame`` hook that hit
+            ``max_onframe_failures`` the same way.
 
             Video: ``video_paths`` (one MP4 per episode, empty when no
             recording was requested).
@@ -6071,6 +6076,8 @@ class SimEngine(ABC):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "eval_policy"):
             return err
+        if err := self._validate_onframe_failure_limit(max_onframe_failures, "eval_policy"):
+            return err
         if err := self._validate_positive_int(max_steps, "max_steps", "eval_policy"):
             return err
         if err := self._validate_seed(seed, "eval_policy"):
@@ -6138,6 +6145,7 @@ class SimEngine(ABC):
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
                 on_frame=on_frame,
+                max_onframe_failures=max_onframe_failures,
                 policy_kwargs=policy_kwargs,
                 video=video,
             )
@@ -6200,6 +6208,7 @@ class SimEngine(ABC):
         seed: int | None = None,
         action_horizon: int = 8,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
+        max_onframe_failures: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         control_frequency: float | None = None,
         control_substeps: int | None = None,
@@ -6281,10 +6290,14 @@ class SimEngine(ABC):
                 in ``video_paths``. A hook exception other than
                 ``CooperativeStop`` or
                 :class:`~strands_robots.recording_errors.RecordingFrameError` is
-                logged at WARN and never aborts the eval; a
+                logged at WARN and tolerated up to ``max_onframe_failures``
+                consecutive failures, after which the benchmark stops with
+                ``status="error"`` and ``onframe_error`` set; a
                 ``RecordingFrameError`` is data loss rather than telemetry and
                 propagates on the first occurrence. A value that is not callable
                 at all is refused up front instead, as in :meth:`eval_policy`.
+            max_onframe_failures: The :meth:`run_policy` ``on_frame`` failure
+                ceiling: a positive integer, or ``None`` (default) for ``5``.
             policy_kwargs: Per-call goal payload forwarded verbatim to every
                 ``policy.get_actions(obs, instruction, **policy_kwargs)`` call
                 (same contract as :meth:`run_policy` / :meth:`eval_policy`).
@@ -6351,7 +6364,8 @@ class SimEngine(ABC):
 
             ``physics_error`` is ``None`` on every healthy run and carries the
             divergence report when the physics diverged mid-episode; the
-            benchmark stops the same way :meth:`eval_policy` does.
+            benchmark stops the same way :meth:`eval_policy` does, and on an
+            ``on_frame`` hook that hit ``max_onframe_failures`` (``onframe_error``).
 
             ``actions_applied`` (actions actually handed to ``send_action``),
             ``steps_advanced`` (control steps the benchmark advanced) and
@@ -6422,6 +6436,8 @@ class SimEngine(ABC):
         if err := self._validate_action_horizon(action_horizon, "evaluate_benchmark"):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "evaluate_benchmark"):
+            return err
+        if err := self._validate_onframe_failure_limit(max_onframe_failures, "evaluate_benchmark"):
             return err
         control_frequency = self._resolve_control_frequency(control_frequency)
         if err := self._validate_positive_frequency(control_frequency, "evaluate_benchmark"):
@@ -6580,6 +6596,7 @@ class SimEngine(ABC):
                 control_frequency=control_frequency,
                 control_substeps=control_substeps,
                 on_frame=on_frame,
+                max_onframe_failures=max_onframe_failures,
                 policy_kwargs=policy_kwargs,
                 video=video,
             )

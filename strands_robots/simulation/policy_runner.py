@@ -850,7 +850,8 @@ class _RolloutVideoWriter:
 # tolerating it writes a short, re-timestamped episode under a successful
 # rollout.
 #
-# Overridable via the ``max_onframe_failures`` kwarg on ``PolicyRunner.run``.
+# Overridable via the ``max_onframe_failures`` kwarg on ``PolicyRunner.run`` and
+# ``PolicyRunner.evaluate`` (both eval paths, through ``_watch_on_frame``).
 # See GH #117.
 _MAX_CONSECUTIVE_ONFRAME_FAILURES = 5
 
@@ -959,6 +960,60 @@ def _raise_if_diverged(result: object, episode: int, step: int) -> None:
     """
     if (diverged := _diverged_error(result)) is not None:
         raise _PhysicsDiverged(f"episode {episode}, step {step}: {diverged}")
+
+
+class _OnFrameFailing(RuntimeError):
+    """An evaluation's ``on_frame`` hook failed too many times in a row; it stops on it."""
+
+
+def _watch_on_frame(on_frame: OnFrame | None, limit: int | None) -> OnFrame | None:
+    """Wrap an evaluation's ``on_frame`` hook in the watchdog :meth:`PolicyRunner.run` applies.
+
+    A generic hook exception is logged at WARN and tolerated, and a success
+    resets the count, exactly as in :meth:`PolicyRunner.run`. ``CooperativeStop``
+    and :class:`~strands_robots.recording_errors.RecordingFrameError` are exempt
+    from the count and propagate on the first occurrence.
+
+    Args:
+        on_frame: The caller's hook, or ``None``.
+        limit: Consecutive failures tolerated; ``None`` uses
+            ``_MAX_CONSECUTIVE_ONFRAME_FAILURES``.
+
+    Returns:
+        The wrapped hook, or ``None`` when there is no hook.
+
+    Raises:
+        _OnFrameFailing: From the wrapped hook, once ``limit`` calls in a row
+            have raised, so an evaluation never reports success over a recorder
+            that wrote nothing.
+    """
+    if on_frame is None:
+        return None
+    ceiling = _MAX_CONSECUTIVE_ONFRAME_FAILURES if limit is None else limit
+    consecutive = 0
+
+    def watched(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+        nonlocal consecutive
+        try:
+            on_frame(step, observation, action)
+        except CooperativeStop:
+            raise
+        except RecordingFrameError:
+            raise
+        except Exception as e:  # noqa: BLE001 - hook is best-effort telemetry, bounded below
+            consecutive += 1
+            logger.warning(
+                "on_frame hook failed at global_step=%d (%d/%d consecutive): %s", step, consecutive, ceiling, e
+            )
+            if consecutive >= ceiling:
+                raise _OnFrameFailing(
+                    f"on_frame hook failed {ceiling} times in a row at global_step={step}; "
+                    f"aborting episode to avoid silent dataset corruption. Last error: {e!r}"
+                ) from e
+        else:
+            consecutive = 0
+
+    return watched
 
 
 def _recorded_action_names(ds: object) -> list[str] | None:
@@ -1891,7 +1946,7 @@ class PolicyRunner:
         episode is not a demonstration; the next one starts at frame 0.
         """
         world = getattr(self.sim, "_world", None)
-        recorder = world._backend_state.get("dataset_recorder") if world is not None else None
+        recorder = (getattr(world, "_backend_state", None) or {}).get("dataset_recorder")
         clear = getattr(recorder, "clear_episode_buffer", None)
         if callable(clear):
             clear()
@@ -3941,6 +3996,7 @@ class PolicyRunner:
         seed: int | None = None,
         action_horizon: int = 8,
         on_frame: OnFrame | None = None,
+        max_onframe_failures: int | None = None,
         control_frequency: float = 50.0,
         control_substeps: int | None = None,
         async_rtc: bool = False,
@@ -3998,7 +4054,9 @@ class PolicyRunner:
                 that continues across episode boundaries. A hook exception
                 other than ``CooperativeStop`` or
                 :class:`~strands_robots.recording_errors.RecordingFrameError` is
-                logged at WARN and never aborts the eval; a
+                logged at WARN and tolerated up to ``max_onframe_failures``
+                consecutive failures, after which the eval stops with
+                ``status="error"`` and ``onframe_error`` set; a
                 ``RecordingFrameError`` is data loss rather than telemetry and
                 propagates on the first occurrence. Raising
                 :class:`CooperativeStop` stops the
@@ -4009,6 +4067,12 @@ class PolicyRunner:
                 from the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
+            max_onframe_failures: The ``on_frame`` failure ceiling of
+                :meth:`run`, applied on both eval paths: that many failed calls
+                in a row stop the evaluation, the episode in progress is not
+                counted and its unsaved recording frames are discarded.
+                ``None`` uses the runner's own limit (``5``). Must be a positive
+                integer, refused as in :meth:`run`.
             control_frequency: Target Hz for ``policy.get_actions`` calls, as in
                 :meth:`run`. Also sets the wall-clock period each applied action
                 is integrated over, via the ``control_substeps`` derivation
@@ -4147,11 +4211,16 @@ class PolicyRunner:
             raise ValueError(horizon_error)
         # The caller's telemetry hook, on the same domain as run()'s and refused
         # for the reason the eval loop cannot: a hook exception there is
-        # best-effort telemetry, logged and never fatal, so a value that is not
+        # best-effort telemetry, logged and tolerated, so a value that is not
         # callable at all was reported once per frame and the evaluation still
         # returned a success rate the hook had watched none of.
         if hook_error := optional_callable_error(on_frame, "on_frame", "PolicyRunner.evaluate"):
             raise ValueError(hook_error)
+        # The ceiling run() refuses outside the same domain: nan/inf never trip it.
+        if max_onframe_failures is not None and (
+            limit_error := positive_count_error(max_onframe_failures, "max_onframe_failures", "PolicyRunner.evaluate")
+        ):
+            raise ValueError(limit_error)
         # The two bounds of this method's own episode loop, on the same shared
         # domain and raised for the same reason. A horizon outside the domain
         # degrades a rollout; a LOOP BOUND outside it removes the evaluation
@@ -4224,6 +4293,7 @@ class PolicyRunner:
                 seed=seed,
                 action_horizon=action_horizon,
                 on_frame=on_frame,
+                max_onframe_failures=max_onframe_failures,
                 control_frequency=control_frequency,
                 control_substeps=control_substeps,
                 policy_kwargs=_policy_kwargs,
@@ -4321,36 +4391,23 @@ class PolicyRunner:
         video_paths: list[str] = []
         current_vwriter: _RolloutVideoWriter | None = None
 
+        frame_hook = _watch_on_frame(on_frame, max_onframe_failures)
+
         def _fire_on_frame(obs: dict[str, Any], action: dict[str, Any], ep_step: int) -> None:
             # Fire AFTER ``send_action`` (post-action obs unavailable yet, so
             # pass the pre-action obs the chunk was queried with - matches
-            # ``_evaluate_with_spec``). The hook is best-effort telemetry: a
-            # GENERIC failure is logged at WARN and never aborts the eval. The
-            # two classes handled below are not telemetry and are exempt from
-            # that posture.
+            # ``_evaluate_with_spec``). ``_watch_on_frame`` owns the posture.
             nonlocal global_step
             if current_vwriter is not None:
                 current_vwriter.capture(ep_step)
-            if on_frame is not None:
-                try:
-                    on_frame(global_step, obs, action)
-                except CooperativeStop:
-                    # Documented graceful early-stop (the same signal run()
-                    # honors). Propagate to the episode loop; never swallow
-                    # it as a best-effort telemetry failure.
-                    raise
-                except RecordingFrameError:
-                    # Data loss, not telemetry - see the note on the tolerance
-                    # constant. Propagate so the caller learns the episode is
-                    # incomplete instead of reading a successful eval.
-                    raise
-                except Exception as e:  # noqa: BLE001 - hook is best-effort telemetry
-                    logger.warning("on_frame hook failed at global_step=%d: %s", global_step, e)
+            if frame_hook is not None:
+                frame_hook(global_step, obs, action)
             global_step += 1
 
         stopped_early = False
         recording_save_error: str | None = None
         physics_error: str | None = None
+        onframe_error: str | None = None
         try:
             for ep in range(n_episodes):
                 self.sim.reset()
@@ -4539,10 +4596,13 @@ class PolicyRunner:
                     recording_save_error = f"episode {ep}: {recording_save_error}"
                     break
 
-        except _PhysicsDiverged as e:
-            # The diverged episode is not averaged over: it is dropped, its
+        except (_PhysicsDiverged, _OnFrameFailing) as e:
+            # The interrupted episode is not averaged over: it is dropped, its
             # frames discarded, and the status says why the run is short.
-            physics_error = str(e)
+            if isinstance(e, _PhysicsDiverged):
+                physics_error = str(e)
+            else:
+                onframe_error = str(e)
             self._discard_recorder_episode()
             if current_vwriter is not None:
                 current_vwriter.close()
@@ -4595,7 +4655,7 @@ class PolicyRunner:
 
         return {
             "status": "error"
-            if recording_save_error is not None or uncommanded_error is not None or physics_error is not None
+            if any(err is not None for err in (recording_save_error, uncommanded_error, physics_error, onframe_error))
             else "success",
             "content": [
                 {
@@ -4607,6 +4667,7 @@ class PolicyRunner:
                             else ""
                         )
                         + (f"Stopped at {physics_error}\n" if physics_error is not None else "")
+                        + (f"Stopped because the {onframe_error}\n" if onframe_error is not None else "")
                         + f"Episodes: {n_completed}"
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
                         + (
@@ -4648,6 +4709,7 @@ class PolicyRunner:
                         "stopped_early": stopped_early,
                         "recording_save_error": recording_save_error,
                         "physics_error": physics_error,
+                        "onframe_error": onframe_error,
                         "n_success": n_success,
                         # Derived from ``n_success`` and ``episodes_completed``, both
                         # reported here, rather than from a reward - so the reliability
@@ -4690,6 +4752,7 @@ class PolicyRunner:
         seed: int | None,
         action_horizon: int = 8,
         on_frame: OnFrame | None = None,
+        max_onframe_failures: int | None = None,
         control_frequency: float = 50.0,
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
@@ -4834,6 +4897,8 @@ class PolicyRunner:
         stopped_early = False
         recording_save_error: str | None = None
         physics_error: str | None = None
+        onframe_error: str | None = None
+        frame_hook = _watch_on_frame(on_frame, max_onframe_failures)
         try:
             for ep in range(n_episodes):
                 self.sim.reset()
@@ -5041,25 +5106,8 @@ class PolicyRunner:
                             # one. ``steps`` is the pre-increment ep-local index.
                             if current_vwriter is not None:
                                 current_vwriter.capture(steps)
-                            if on_frame is not None:
-                                try:
-                                    on_frame(global_step, observation, action_applied)
-                                except CooperativeStop:
-                                    # Documented graceful early-stop; propagate
-                                    # to the episode loop instead of swallowing.
-                                    raise
-                                except RecordingFrameError:
-                                    # Data loss, not telemetry - see the note on
-                                    # the tolerance constant.
-                                    raise
-                                except Exception as e:  # noqa: BLE001 - hook is best-effort
-                                    logger.warning(
-                                        "on_frame hook failed at global_step=%d (ep=%d, ep_step=%d): %s",
-                                        global_step,
-                                        ep,
-                                        steps,
-                                        e,
-                                    )
+                            if frame_hook is not None:
+                                frame_hook(global_step, observation, action_applied)
                             steps += 1
                             global_step += 1
                             try:
@@ -5160,9 +5208,12 @@ class PolicyRunner:
                     recording_save_error = f"episode {ep}: {recording_save_error}"
                     break
 
-        except _PhysicsDiverged as e:
-            # The diverged episode is not averaged over: see ``evaluate``.
-            physics_error = str(e)
+        except (_PhysicsDiverged, _OnFrameFailing) as e:
+            # The interrupted episode is not averaged over: see ``evaluate``.
+            if isinstance(e, _PhysicsDiverged):
+                physics_error = str(e)
+            else:
+                onframe_error = str(e)
             self._discard_recorder_episode()
             if current_vwriter is not None:
                 current_vwriter.close()
@@ -5216,7 +5267,7 @@ class PolicyRunner:
 
         return {
             "status": "error"
-            if recording_save_error is not None or uncommanded_error is not None or physics_error is not None
+            if any(err is not None for err in (recording_save_error, uncommanded_error, physics_error, onframe_error))
             else "success",
             "content": [
                 {
@@ -5228,6 +5279,7 @@ class PolicyRunner:
                             else ""
                         )
                         + (f"Stopped at {physics_error}\n" if physics_error is not None else "")
+                        + (f"Stopped because the {onframe_error}\n" if onframe_error is not None else "")
                         + f"Episodes: {n_completed}"
                         + (f" of {n_episodes} (stopped early)" if stopped_early else "")
                         + f" | Success: {n_success} | Failure: {n_failure} ({success_rate:.1%} success)\n"
@@ -5265,6 +5317,7 @@ class PolicyRunner:
                         "stopped_early": stopped_early,
                         "recording_save_error": recording_save_error,
                         "physics_error": physics_error,
+                        "onframe_error": onframe_error,
                         "n_success": n_success,
                         "n_failure": n_failure,
                         "avg_steps": round(avg_steps, 1),

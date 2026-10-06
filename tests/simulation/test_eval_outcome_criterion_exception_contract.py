@@ -237,17 +237,49 @@ class TestTheWorkingCriterionPathsAreUnchanged:
         with pytest.raises(RecordingFrameError, match="add_frame failed"):
             _eval(sim, n_episodes=2, success_fn=lambda obs: False, on_frame=lose_a_frame)
 
-    def test_a_raising_on_frame_hook_stays_best_effort(self, sim):
-        """``on_frame`` is telemetry: a failure is logged and the eval still
-        completes. A terminal handler that made it fatal would break this."""
+    @pytest.mark.parametrize("surface", ["eval_policy", "evaluate_benchmark"])
+    @pytest.mark.parametrize(
+        ("fails", "limit", "status", "episodes"),
+        [
+            # Telemetry: an intermittent failure is logged and the eval completes.
+            (lambda n: n % 2 == 0, None, "success", 2),
+            # A hook failing on every step hits run_policy's ceiling instead of
+            # reporting success over frames it never wrote.
+            (lambda n: True, 3, "error", 0),
+        ],
+        ids=["intermittent", "every-step"],
+    )
+    def test_an_on_frame_failure_is_bounded_by_the_watchdog(self, sim, surface, fails, limit, status, episodes):
+        calls = {"n": 0}
 
-        def boom(step, obs, action):
-            raise RuntimeError("telemetry sink down")
+        def flaky(step, obs, action):
+            calls["n"] += 1
+            if fails(calls["n"]):
+                raise RuntimeError("telemetry sink down")
 
-        result = _eval(sim, n_episodes=2, success_fn=lambda obs: False, on_frame=boom)
-        assert result["status"] == "success", result
-        assert _json(result)["episodes_completed"] == 2, _json(result)
-        assert _json(result)["success_measured"] is True, _json(result)
+        if surface == "eval_policy":
+            result = _eval(sim, n_episodes=2, success_fn=lambda obs: False, on_frame=flaky, max_onframe_failures=limit)
+        else:
+            result = _bench(sim, _Spec(), n_episodes=2, on_frame=flaky, max_onframe_failures=limit)
+        payload = _json(result)
+        assert result["status"] == status, result
+        assert payload["episodes_completed"] == episodes, payload
+        if status == "error":
+            assert calls["n"] == limit
+            assert "3 times in a row" in payload["onframe_error"]
+            assert "silent dataset corruption" in _text(result)
+        else:
+            assert payload["onframe_error"] is None
+
+    @pytest.mark.parametrize("surface", ["eval_policy", "evaluate_benchmark"])
+    @pytest.mark.parametrize("limit", [0, float("nan")])
+    def test_a_failure_ceiling_the_watchdog_cannot_count_is_refused(self, sim, surface, limit):
+        if surface == "eval_policy":
+            result = _eval(sim, n_episodes=1, max_onframe_failures=limit)
+        else:
+            result = _bench(sim, _Spec(), n_episodes=1, max_onframe_failures=limit)
+        assert result["status"] == "error", result
+        assert f"{surface}: max_onframe_failures must be a positive integer" in _text(result), _text(result)
 
     def test_a_cooperative_stop_still_ends_the_eval_cleanly(self, sim):
         """``CooperativeStop`` is a BaseException and its handler precedes the

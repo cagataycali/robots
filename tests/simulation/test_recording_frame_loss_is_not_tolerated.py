@@ -340,7 +340,8 @@ def test_every_on_frame_call_site_excludes_a_lost_recording_frame() -> None:
     behaviourally - and requires each to handle ``RecordingFrameError``.
     """
     guarded = _on_frame_guards()
-    assert len(guarded) >= 3, f"expected every on_frame call site to be guarded, found {len(guarded)}"
+    # ``run`` guards its own call; both eval loops call through ``_watch_on_frame``.
+    assert len(guarded) >= 2, f"expected every on_frame call site to be guarded, found {len(guarded)}"
 
     for node in guarded:
         names = {h.type.id for h in node.handlers if isinstance(h.type, ast.Name)}

@@ -3,8 +3,8 @@
 ``on_frame`` is the caller's own per-step lane on the eval routes: it fires after
 every applied ``send_action`` and is where a caller attaches synchronous frame
 recording or telemetry. An exception from it is deliberately best-effort - logged
-at WARN, never fatal - because a hook that fails at frame 700 must not discard
-699 good episodes.
+at WARN and fatal only after ``max_onframe_failures`` in a row - because a hook
+that fails once at frame 700 must not discard 699 good episodes.
 
 That posture was applied to a value that was never callable at all, which is a
 caller error knowable before the first step. Measured on a 6-step evaluation
@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import logging
 import pathlib
 from typing import Any
 
@@ -110,21 +109,6 @@ class TestEverySurfaceRefusesAHookItCannotCall:
 
 class TestTheBestEffortPostureSurvives:
     """Over-reach control: a hook that FAILS is still telemetry, not a caller error."""
-
-    def test_a_raising_hook_is_still_absorbed_by_the_eval_loop(self, caplog: pytest.LogCaptureFixture) -> None:
-        sim, policy = _arm()
-        calls: list[int] = []
-
-        def hook(step: int, obs: dict[str, Any], action: dict[str, Any]) -> None:
-            calls.append(step)
-            raise RuntimeError("telemetry sink down")
-
-        with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
-            result = PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=6, on_frame=hook)
-
-        assert result["status"] == "success"
-        assert len(calls) == 6
-        assert sum("on_frame hook failed" in record.message for record in caplog.records) == 6
 
     def test_a_raising_hook_still_trips_the_rollout_watchdog(self) -> None:
         sim, policy = _arm()
