@@ -8,6 +8,9 @@ export interface Presence {
   connected?: boolean
   hw?: string
   cameras?: string[]
+  /** Configured cameras that did NOT open at connect, by name, with the driver's own reason
+   *  (a native driver's `camera_failures`). Absent when every camera opened. */
+  camera_failures?: Record<string, string>
   sim_robots?: string[]
   action_keys?: string[]
   topics?: string[]
