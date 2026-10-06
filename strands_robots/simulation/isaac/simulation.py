@@ -28,6 +28,7 @@ Environment variables:
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import math
 import os
@@ -4202,13 +4203,24 @@ class IsaacSimulation(
             # canonical name stored / reported is ``"box"``.
             shape = _SHAPE_ALIASES.get(shape, shape)
 
-            # Validate shape
+            # Validate shape. Mirrors the sibling ``add_object`` gate on the
+            # Newton (``simulation/newton/simulation.py``) and MuJoCo
+            # (``simulation/mujoco/spec_builder.py:_geom_type``, harness#726)
+            # backends: a close-match suggestion is offered for a spelling
+            # that is one typo off from a supported shape (``'spehre'`` ->
+            # ``'sphere'``). Isaac was the lone backend without this hint.
             valid_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
             if shape not in valid_shapes:
                 accepted = valid_shapes + tuple(_SHAPE_ALIASES)
+                close = difflib.get_close_matches(
+                    str(shape).lower(), valid_shapes, n=1, cutoff=0.6
+                )
+                hint = f" Did you mean {close[0]!r}?" if close else ""
                 return {
                     "status": "error",
-                    "content": [{"text": f"Unknown shape: {shape!r}. Valid: {accepted}"}],
+                    "content": [
+                        {"text": f"Unknown shape: {shape!r}.{hint} Valid: {accepted}"}
+                    ],
                 }
 
             if name in self._objects:
