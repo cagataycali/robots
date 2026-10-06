@@ -93,6 +93,7 @@ def test_inline_export_says_whether_it_is_the_whole_scene(sim: Simulation, bodie
     sim.create_world()
     geoms = "".join(f'<body name="b{i}"><geom type="sphere" size="0.01"/></body>' for i in range(bodies))
     sim.replace_scene_mjcf(f"<mujoco><worldbody>{geoms}</worldbody></mujoco>")
+    assert sim._world is not None
     full = sim._world._backend_state["spec"].to_xml()
     result = sim.export_xml()
     assert result["status"] == "success", result
