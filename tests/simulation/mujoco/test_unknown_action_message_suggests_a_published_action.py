@@ -123,6 +123,19 @@ def test_the_action_refusal_suggests_under_the_same_rule_as_the_entity_refusals(
     assert expected in _text(sim(action=typo))
 
 
+@pytest.mark.parametrize("guess", ["pick", "grab", "grasp", "help", "place", "spawn"])
+def test_a_word_that_resembles_no_action_gets_no_suggestion(sim, guess):
+    """A natural first guess is not answered with an unrelated action.
+
+    At a looser cutoff ``"pick"`` was offered ``stop_policy`` and ``"grab"``
+    ``set_gravity`` - shared letters, not shared meaning, and some of them
+    destructive. The discovery pointer is what recovers this caller.
+    """
+    text = _text(sim(action=guess))
+    assert _suggestions(text) == [], f"{guess!r} -> {text!r}"
+    assert "tool_spec" in text
+
+
 def test_the_stream_entry_point_gets_the_same_suggestion(sim):
     """Both agent-facing entry points share the refusal, so both recover.
 
