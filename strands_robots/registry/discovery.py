@@ -384,26 +384,33 @@ def urdf_registry_entry(name: str) -> dict[str, Any] | None:
     return _urdf_entry(norm)
 
 
-def list_urdf_only() -> list[str]:
+def list_urdf_only(*, include_refused: bool = False) -> list[str]:
     """Sorted URDF names the MuJoCo backend gains: no MJCF description, not curated.
 
     The complement of :func:`list_discoverable` inside :func:`list_urdf_discoverable`,
     minus every curated name and alias (curated always wins, and an alias must
-    stay unique). Cheap: static tables and the curated registry, no import.
+    stay unique), minus every description ``urdf_robots.json`` records as not
+    building (``has_sim`` false), so each name returned spawns with
+    ``Robot(name)``. Cheap: static tables and the curated registry, no import.
+
+    Args:
+        include_refused: Also return the descriptions that do not build. The
+            registry lists those with their refusal, and the sweep that writes
+            ``urdf_robots.json`` retries them.
     """
-    reg = _load("robots").get("robots", {})
-    taken = set(reg)
-    for info in reg.values():
-        taken.update(info.get("aliases", ()))
-    mjcf = _mjcf_modules()
-    return sorted(n for n in _urdf_modules() if n not in mjcf and n not in taken)
+    names = _urdf_only_set()
+    if not include_refused:
+        refused = {n for n, e in urdf_registry().items() if not e.get("has_sim", True)}
+        names = names - refused
+    return sorted(names)
 
 
 def is_urdf_only(name: str) -> bool:
     """Return ``True`` if *name* is a robot the MuJoCo backend serves from a URDF.
 
-    The membership test for :func:`list_urdf_only`: a URDF description, no MJCF
-    description, not a curated name or alias. Cheap: no import, no network.
+    A URDF description, no MJCF description, not a curated name or alias. True
+    for a description that does not build too, so ``Robot(name)`` reports its
+    refusal instead of an unknown name. Cheap: no import, no network.
     """
     norm = normalize_robot_name(name)
     return _NAME_RE.match(norm) is not None and norm in _urdf_only_set()
@@ -411,7 +418,12 @@ def is_urdf_only(name: str) -> bool:
 
 @lru_cache(maxsize=1)
 def _urdf_only_set() -> frozenset[str]:
-    return frozenset(list_urdf_only())
+    reg = _load("robots").get("robots", {})
+    taken = set(reg)
+    for info in reg.values():
+        taken.update(info.get("aliases", ()))
+    mjcf = _mjcf_modules()
+    return frozenset(n for n in _urdf_modules() if n not in mjcf and n not in taken)
 
 
 def invalidate_cache() -> None:
