@@ -60,7 +60,7 @@ class TestOneSetOnBothSides:
 
     @pytest.mark.parametrize("action", sorted(security.LOCKOUT_ADMITTED_ACTIONS - {"resume"}))
     def test_a_locked_peer_answers_every_admitted_action(self, action: str) -> None:
-        # ``resume`` needs an override code and is graded by its own module.
+        # ``resume`` needs a signed assertion and is graded by its own module.
         out = _locked_mesh()._dispatch({"action": action})
         assert "error" not in out or out.get("ok") is not False, out
 

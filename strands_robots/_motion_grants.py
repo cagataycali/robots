@@ -47,7 +47,7 @@ import re
 import threading
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +57,7 @@ __all__ = [
     "DETAIL_FIELDS",
     "DIRECT_SERIAL_TOOLS",
     "GRANT_TTL_ENV",
+    "UNKEYED_FIELDS",
     "calibration_identity",
     "consume_grant",
     "deposit_grant",
@@ -112,8 +113,20 @@ DIRECT_SERIAL_TOOLS: frozenset[str] = frozenset({"pose_tool", "serial_tool"})
 #: no file at all. :func:`grant_key` binds the CONTENT of the file too, through
 #: :func:`calibration_identity`, so an absent calibration is an explicit
 #: identity rather than a missing field.
+#:
+#: ``robot_id`` names the pose library ``load_pose`` reads its joint targets
+#: from, so a yes for ``rest`` in one library is not a yes for another's.
+#: ``steps``, ``step_delay`` and ``smooth`` are the speed profile: a yes for a
+#: one-second interpolated move must not be spendable as a single full-speed
+#: write. ``baudrate`` decides what the bytes on the bus mean to the servo.
+#: The ``policy_*`` fields, the checkpoint fields the mesh carries
+#: (``pretrained_name_or_path``, ``policy_type``, ``model_path``,
+#: ``embodiment``, ``walk``) and ``policy_config`` name WHICH policy an
+#: ``execute`` / ``start`` runs, and ``target_velocity`` is the speed a walking
+#: policy is told to hold; a yes for one policy is not a yes for another.
 DETAIL_FIELDS = (
     "calibration",
+    "robot_id",
     "pose_name",
     "motor_name",
     "motor_id",
@@ -122,12 +135,38 @@ DETAIL_FIELDS = (
     "velocity",
     "delta",
     "steps",
+    "step_delay",
+    "smooth",
     "data",
     "hex_data",
+    "baudrate",
     "duration",
     "source_peer_id",
     "device_name",
+    "policy_provider",
+    "policy_host",
+    "policy_port",
+    "policy_type",
+    "pretrained_name_or_path",
+    "model_path",
+    "embodiment",
+    "walk",
+    "target_velocity",
+    "policy_config",
 )
+
+#: The parameters a gated tool declares that are deliberately NOT part of a
+#: grant's identity, each with the reason it cannot change what the arm does.
+#: Every parameter of a gated tool is a fixed key part (``action``, the target,
+#: the instruction), on :data:`DETAIL_FIELDS`, or named here; a new parameter
+#: that is none of the three fails the structural test that reads this table.
+UNKEYED_FIELDS: Mapping[str, str] = {
+    "description": "pose_tool: the label store_pose writes; no gated action reads it",
+    "timeout": "serial_tool: how long a read waits for a reply; nothing it writes depends on it",
+    "read_bytes": "serial_tool: how many reply bytes are read back after the write",
+    "camera_name": "Robot: names the camera render reads; execute/start never read it",
+    "output_path": "Robot: where a capture is saved; execute/start never read it",
+}
 
 
 @dataclass(frozen=True)
@@ -207,8 +246,18 @@ def calibration_identity(value: Any) -> str:
     (the tool refuses it anyway; the grant must not be spendable by the file
     that appears there later). An inline record is hashed canonically.
 
+    A file and a record are hashed in ONE form, the canonical JSON of the
+    parsed object, so the identity of the file the operator was shown equals
+    the identity of the records a tool loaded from it. That is what lets a
+    tool spend a grant against the records that will actually drive the
+    servos (``consume_grant(..., calibration=records)``) instead of reading
+    the file a second time, after it was loaded, and hashing whatever is
+    there by then. A file that is not JSON is hashed as bytes, under a prefix
+    no record can produce.
+
     Args:
-        value: The ``calibration`` field as the gate saw it.
+        value: The ``calibration`` field as the gate saw it, or the records a
+            tool loaded from it (motor name -> a mapping or a dataclass).
 
     Returns:
         A short string that is equal exactly when the frame of reference is.
@@ -216,15 +265,30 @@ def calibration_identity(value: Any) -> str:
     if value is None or value == "":
         return "none"
     if isinstance(value, Mapping):
-        canonical = json.dumps(value, sort_keys=True, default=str).encode("utf-8")
-        return "sha256:" + hashlib.sha256(canonical).hexdigest()[:16]
+        return _canonical_identity(value)
     if isinstance(value, (str, Path)):
         try:
             data = Path(value).expanduser().read_bytes()
         except (OSError, ValueError):
             return f"unreadable:{refusal_str(str(value))}"
-        return "sha256:" + hashlib.sha256(data).hexdigest()[:16]
+        try:
+            parsed = json.loads(data)
+        except ValueError:
+            return "bytes-sha256:" + hashlib.sha256(data).hexdigest()[:16]
+        return _canonical_identity(parsed)
     return f"other:{refusal_repr(value)}"
+
+
+def _canonical_identity(value: Any) -> str:
+    """``sha256:<16 hex>`` of *value* as canonical JSON; a dataclass record reads as its fields."""
+
+    def fields(obj: Any) -> Any:
+        if is_dataclass(obj) and not isinstance(obj, type):
+            return asdict(obj)
+        return str(obj)
+
+    canonical = json.dumps(value, sort_keys=True, default=fields).encode("utf-8")
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()[:16]
 
 
 def resolve_target(
@@ -270,7 +334,11 @@ def resolve_target(
     return str(tool_input.get("target") or "").strip()
 
 
-def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
+#: ``calibration=`` left unset: the identity is read from ``tool_input["calibration"]``.
+_FROM_INPUT: Any = object()
+
+
+def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None, *, calibration: Any = _FROM_INPUT) -> str:
     """The identity a human yes is recorded against: what they were shown, verbatim.
 
     A grant is spendable by exactly one call, so the key has to name that call.
@@ -298,6 +366,8 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
     Args:
         tool_name: The gated tool's name.
         tool_input: The call as the gate saw it; ``None`` is an empty call.
+        calibration: The records the tool loaded, when it has them, to be
+            identified in place of ``tool_input["calibration"]``.
 
     Returns:
         ``repr`` of the parts tuple. A tuple rather than a ``"|"`` join because
@@ -305,6 +375,7 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
         otherwise shift a boundary and let two different calls agree.
     """
     tool_input = tool_input or {}
+    frame = tool_input.get("calibration") if calibration is _FROM_INPUT else calibration
     return repr(
         (
             tool_name,
@@ -315,7 +386,7 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None) -> str:
             # the model wrote; the key binds what the file says, so a symlink or
             # a relative spelling of the same file spends the same grant and a
             # different file, or none, does not.
-            f"calibration={calibration_identity(tool_input.get('calibration'))}",
+            f"calibration={calibration_identity(frame)}",
             *(field for field in motion_fields(tool_input) if not field.startswith("calibration=")),
         )
     )
@@ -340,7 +411,7 @@ def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
         _grants[grant_key(tool_name, tool_input)] = record
 
 
-def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> bool:
+def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None, *, calibration: Any = _FROM_INPUT) -> bool:
     """True exactly once per deposited grant for this call's shape.
 
     The gated surfaces call this before asking the operator themselves, so a
@@ -352,11 +423,13 @@ def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> bool:
         tool_name: The tool about to run.
         tool_input: The call as the tool received it - the same field names the
             operator was shown, with the unset ones omitted.
+        calibration: The calibration records the motion will be driven with,
+            when the tool has already loaded them; see :func:`grant_key`.
 
     Returns:
         True when a grant for this exact call existed and was spent.
     """
-    key = grant_key(tool_name, tool_input)
+    key = grant_key(tool_name, tool_input, calibration=calibration)
     now = time.monotonic()
     ttl = grant_ttl_s()
     with _grants_lock:

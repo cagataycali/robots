@@ -276,6 +276,10 @@ class _FakeMesh:
         self.commands.append("emergency_stop")
         return []
 
+    def resume(self, *args, **kwargs):
+        self.commands.append("resume")
+        return {}
+
     def publish_step(self, *args, **kwargs):
         self.commands.append("publish_step")
 

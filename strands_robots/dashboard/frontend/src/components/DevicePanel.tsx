@@ -98,6 +98,7 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
   const [robotName, setRobotName] = useState('')
   const [mode, setMode] = useState<'sim' | 'real'>('sim')
   const [port, setPort] = useState('')
+  const [nic, setNic] = useState('')
   const [camRows, setCamRows] = useState<CameraRow[]>([{ name: 'main', index: '' }])
   const [camFps, setCamFps] = useState('')
   const [camW, setCamW] = useState('')
@@ -281,16 +282,27 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
    * peer can announce itself before this promise resolves, and its card must not greet it with
    * the old reason.
    */
+  // A networked robot (G1, Go2, UR, Spot...) is reached at an address, not over a servo bus here:
+  // the form asks for that address, and offers no serial picker or lerobot calibration id.
+  const transport = robots.find(r => r.name === robotName)?.realTransport
+  const networked = transport?.portKind === 'address'
+  /** The one line that starts this robot as a mesh peer on the computer that can reach it. */
+  const peerCommand = 'Robot(' + JSON.stringify(robotName) + ', mode="real", port='
+    + JSON.stringify(port.trim() || '<robot ip>')
+    + (transport?.networkInterface ? ', network_interface=' + JSON.stringify(nic.trim() || 'eth0') : '')
+    + ', mesh=True)'
   const spawn = () => act(() => (forgetJointFailure(nameVerdict.value), post('/api/devices/spawn', {
     robot_name: robotName,
     peer_id: nameVerdict.value,
     mode,
-    port: mode === 'real' ? port || null : null,
+    port: mode === 'real' ? port.trim() || null : null,
+    ...(mode === 'real' && networked && transport?.networkInterface && nic.trim()
+      ? { network_interface: nic.trim() } : {}),
     // The camera config must be a MAPPING per entry ({index_or_path: N, ...}); a bare int here is
     // the exact ValueError an operator once hit live: "Camera 'main' config must be a mapping ...
     // got int: 3". camerasField owns that shape (and every name/index collision) in one place.
     cameras: camField.problem ? null : camField.value,
-    robot_id: robotId || null,
+    robot_id: networked ? null : robotId || null,
   })), 'spawned')
 
   const showLogs = async (peer: string) => {
@@ -512,7 +524,32 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
                 </select>
               </label>
             </div>
-            {mode === 'real' && (
+            {mode === 'real' && networked && (
+              <>
+                <div className="row">
+                  <label className="field">
+                    <span>Address</span>
+                    <input value={port} placeholder="robot IP or host (optional)"
+                           onChange={e => setPort(e.target.value)} />
+                  </label>
+                  {transport?.networkInterface && (
+                    <label className="field">
+                      <span>Network interface</span>
+                      <input value={nic} placeholder="eth0"
+                             onChange={e => setNic(e.target.value)} />
+                    </label>
+                  )}
+                </div>
+                <p className="hint">
+                  {robotName} is reached over the network, not a servo bus, so it needs no port
+                  scan and no calibration. Spawning here works only when this machine is on the
+                  robot's network{transport?.networkInterface ? ' (the interface above is the one wired to it)' : ''}.
+                  Otherwise run the peer on a computer that is, and pair it from Settings → mesh connect:
+                </p>
+                <pre className="logtail">{peerCommand}</pre>
+              </>
+            )}
+            {mode === 'real' && !networked && (
               <>
                 <div className="row">
                   <label className="field">
@@ -650,8 +687,8 @@ export default function DevicePanel({ open, onClose }: { open: boolean; onClose:
             )}
             <div className="sheet-actions">
               <button className="btn go"
-                      disabled={busy || !robotName || (mode === 'real' && !port) || !!camProblem || !!nameVerdict.problem
-                                || (mode === 'real' && blocksSpawn(portVerdict))}
+                      disabled={busy || !robotName || (mode === 'real' && !networked && !port) || !!camProblem || !!nameVerdict.problem
+                                || (mode === 'real' && !networked && blocksSpawn(portVerdict))}
                       onClick={spawn}>
                 spawn
               </button>
