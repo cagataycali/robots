@@ -132,7 +132,9 @@ PRESENTED = [
 
 
 def _client(owner: TestClient, cookie: str, bearer: str) -> TestClient:
-    values = {"valid": owner.cookies.get(access.COOKIE), "junk": "junk", "static": "the-static-token"}
+    valid = owner.cookies.get(access.COOKIE)
+    assert valid is not None, "the owner fixture signed in"
+    values = {"valid": valid, "junk": "junk", "static": "the-static-token"}
     client = TestClient(create_app(), base_url="http://localhost")
     if cookie:
         client.cookies.set(access.COOKIE, values[cookie])
@@ -154,4 +156,5 @@ def test_a_valid_cookie_wins_over_a_valid_bearer(owner) -> None:
     request = connection(
         path=GUARDED, cookie=f"{access.COOKIE}={owner.cookies.get(access.COOKIE)}", authorization=f"Bearer {other}"
     )
-    assert access.session_claims(request)["sub"] == OWNER
+    claims = access.session_claims(request)
+    assert claims is not None and claims["sub"] == OWNER
