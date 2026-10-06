@@ -3271,6 +3271,23 @@ class PolicyRunner:
         # the operational no-drive fail-fast without asserting that physical
         # state is known.
         if _total_failure_steps >= step_count and step_count > 0:
+            # The leading summary line was composed earlier with the
+            # ``prefix`` chosen on the no-error happy path -- "Policy
+            # complete" for a run_policy that exhausted its budget, "Policy
+            # stopped" for a cooperative stop, "Policy stopped early (…)"
+            # for a stop_when hit. We now know the rollout confirmed no
+            # applied actuator on EVERY step, so the result is ``status
+            # ="error"``; reading the text linearly, "Policy complete" is
+            # the first thing an agent or human sees and reads as the
+            # mirror of the "Policy failed:" header the early
+            # fail-fast raises above (line 2921) uses for the SAME
+            # outcome under ``n_steps >= _FAIL_FAST_PROBE_STEPS``. Rewrite
+            # the summary header to match the fail-fast's wording so the
+            # text and the status agree, and the two paths one defect
+            # reaches (``n_steps < 3`` here, ``n_steps >= 3`` there) lead
+            # with the same words.
+            if text.startswith(prefix):
+                text = "Policy failed" + text[len(prefix):]
             if _coarse_failure_steps:
                 text += (
                     f"\n\nALL {step_count} action steps failed to confirm an applied actuator; "
@@ -3307,6 +3324,15 @@ class PolicyRunner:
         # tolerance is unchanged.
         if step_count > 0 and _actions_commanding == 0:
             _n_keys = len(_robot_actuators)
+            # The leading summary line is the no-error "Policy complete" /
+            # "Policy stopped" header. This branch reports ``status
+            # ="error"`` for a rollout that commanded no actuator for a
+            # single step, so a reader scanning the text sees "Policy
+            # complete" first and reads it as success. Rewrite the header
+            # for the same reason the total-unresolved sibling above does,
+            # so the summary line and the result status agree.
+            if text.startswith(prefix):
+                text = "Policy failed" + text[len(prefix):]
             text += (
                 f"\n\nALL {step_count} action steps commanded no actuator "
                 f"-- the robot did not move. Every action the policy emitted named "
