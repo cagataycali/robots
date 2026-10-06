@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 pytest.importorskip("fastapi")
+from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from strands_robots.dashboard import env_install, log_redaction, settings  # noqa: E402
@@ -58,6 +59,13 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 @pytest.fixture()
 def client(isolated: Path) -> TestClient:
     return TestClient(create_app(), headers=bootstrap_headers())
+
+
+def _devices(client: TestClient) -> Any:
+    """The app's device manager; ``TestClient.app`` is typed as a bare ASGI callable."""
+    app = client.app
+    assert isinstance(app, FastAPI)
+    return app.state.devices
 
 
 def _script(tmp_path: Path, body: str) -> list[str]:
@@ -271,7 +279,12 @@ class TestTheRoutes:
         """The Twin button used to answer 200 + pid for a child that died on ``import mujoco``."""
         monkeypatch.setattr(env_install, "_importable", lambda module: module != "mujoco")
         started: list[Any] = []
-        monkeypatch.setattr(client.app.state.devices, "spawn", lambda *a, **k: started.append(a) or {})
+
+        def spawn(*args: Any, **_kwargs: Any) -> dict[str, Any]:
+            started.append(args)
+            return {}
+
+        monkeypatch.setattr(_devices(client), "spawn", spawn)
         resp = client.post("/api/robots/so101-real/twin", json={"robot_name": "so101"})
         assert resp.status_code == 412, resp.text
         detail = resp.json()["error"]
@@ -282,7 +295,7 @@ class TestTheRoutes:
     def test_a_twin_that_dies_while_settling_answers_failed_with_the_extra(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        dm = client.app.state.devices
+        dm = _devices(client)
         hint = "ImportError: 'mujoco' is required for MuJoCo simulation\n  pip install 'strands-robots[sim-mujoco]'"
         spawned: list[tuple[Any, ...]] = []
 
