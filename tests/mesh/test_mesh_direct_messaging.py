@@ -148,6 +148,9 @@ def _start(session: Any, peer_id: str = "operator-1") -> Mesh:
         patch.object(mesh_core, "get_session", return_value=session),
         patch.object(mesh_core, "current_session", return_value=session),
         patch.object(mesh_core, "release_session"),
+        # Direct messaging is the AWS IoT transport, whose broker binds the
+        # response topic to the replying identity (no wire zid on that path).
+        patch.object(mesh_core, "select_backend", return_value="iot"),
     )
     for p in patches:
         p.start()
@@ -573,7 +576,7 @@ class TestResponseTopicBindsTheResponder:
         finally:
             _stop(m)
 
-    def test_the_legacy_shape_without_a_responder_segment_is_judged_on_the_body(self, puts):
+    def test_the_legacy_shape_without_a_responder_segment_is_refused(self, puts):
         t = _DirectTransport()
         m = _start(t)
         turn = "c" * 32
@@ -584,7 +587,7 @@ class TestResponseTopicBindsTheResponder:
                     f"strands/operator-1/response/{turn}", {"responder_id": "so101", "turn_id": turn, "type": "result"}
                 )
             )
-            assert len(m._responses[turn]) == 1
+            assert m._responses[turn] == []
         finally:
             _stop(m)
 

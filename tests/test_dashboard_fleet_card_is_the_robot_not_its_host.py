@@ -23,6 +23,7 @@ import pytest
 from strands_robots.dashboard import safety_state
 from strands_robots.dashboard.mesh_bridge import MeshBridge
 from strands_robots.mesh import core as mesh_core
+from tests._mesh_reply import reply_sample
 
 HOST, ROBOT, LOCKED = "so101-sim-7487", "so101-sim-7487__so101", "arm-b"
 APP = pathlib.Path(__file__).parent.parent / "strands_robots" / "dashboard" / "frontend" / "src" / "App.tsx"
@@ -49,7 +50,7 @@ def fleet(tmp_path, monkeypatch):
         if parts[-1] == "cmd" and parts[1] in hosts:
             hosts[parts[1]]._on_cmd(_sample(msg))
         elif "response" in parts:
-            dash._on_response(_sample(msg))
+            dash._on_response(reply_sample(dash, msg))
 
     monkeypatch.setattr(mesh_core, "put", loopback)
     bridge = MeshBridge(peer_id="dash")

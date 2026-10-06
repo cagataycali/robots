@@ -389,6 +389,7 @@ class TestEveryPostureFlagRoutesThroughTheDomain:
         }
         assert found == {
             "bootstrap.py::bootstrap_account": ["confirm", "dry_run", "force_update"],
+            "provision.py::clear_retained_safety_messages": ["apply"],
             "provision.py::provision_robot": ["allow_estop_publish"],
             "provision.py::withdraw_fleet_stop_grant": ["apply"],
         }

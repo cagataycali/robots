@@ -44,6 +44,8 @@ from strands_robots.mesh.iot.camera_offload import enable_for_mesh as enable_cam
 from strands_robots.mesh.iot.provision import (
     FleetStopGrantReport,
     ProvisionedThing,
+    RetainedSafetyReport,
+    clear_retained_safety_messages,
     provision_operator,
     provision_robot,
     reprovision_thing,
@@ -66,6 +68,8 @@ __all__ = [
     "teardown_thing",
     "withdraw_fleet_stop_grant",
     "FleetStopGrantReport",
+    "clear_retained_safety_messages",
+    "RetainedSafetyReport",
     # Bootstrap
     "BootstrappedAccount",
     "bootstrap_account",
