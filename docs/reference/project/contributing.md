@@ -11,11 +11,11 @@ The short version of `AGENTS.md`, the file that governs this repository: a devel
 ```bash
 git clone https://github.com/<you>/robots && cd robots
 uv venv --python 3.12 && source .venv/bin/activate
-uv pip install -e ".[all,dev]"
+uv pip install -e ".[all,dev]" hatch
 strands-robots doctor
 ```
 
-Python 3.12 or newer. `hatch` drives the scripts below with `uv` as its installer.
+Python 3.12 or newer. `hatch`, in no extra, drives the scripts below with `uv` as its installer.
 
 ## Check before you push
 
