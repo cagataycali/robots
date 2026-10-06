@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 from strands_robots.drivers import list_driver_coverage, list_native_drivers, resolve_driver
+from strands_robots.policies.factory import _REMOVED_IN_0_7
 from tests._docs_hooks import docs_hook
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -157,6 +158,18 @@ def test_every_body_bound_policy_is_a_registered_provider_with_a_live_witness() 
         assert set(named) <= providers, f"{robot} row names providers the registry lacks: {set(named) - providers}"
     bound = {robot for robot, cells in _published().items() if _CODE.findall(cells["policies"] or "")}
     assert bound == {robot for _p, robots, _m, _l in hook.EMBODIMENT_WITNESSES for robot in robots}
+
+
+def test_a_provider_announced_for_removal_is_marked_wherever_a_body_is_said_to_use_it() -> None:
+    """The matrix row and the robot page say "removed in 0.7" exactly for the providers ``create_policy`` warns on."""
+    marked = re.compile(r"`([a-z0-9_]+)` \(removed in 0\.7\)")
+    for _provider, robots, _module, _literal in _hook().EMBODIMENT_WITNESSES:
+        for robot in robots:
+            page = (_REPO / "docs" / "robots" / f"{robot}.md").read_text(encoding="utf-8")
+            sentence = next(line for line in page.splitlines() if line.startswith("Providers written for this body"))
+            for where, text in (("matrix row", _published()[robot]["policies"] or ""), ("robot page", sentence)):
+                bound = set(_CODE.findall(text))
+                assert set(marked.findall(text)) == bound & set(_REMOVED_IN_0_7), f"{robot} {where}: {text}"
 
 
 def test_the_catalog_page_carries_the_token_and_names_the_generator() -> None:
