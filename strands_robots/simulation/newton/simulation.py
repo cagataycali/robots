@@ -46,6 +46,7 @@ from strands_robots.simulation.base import (
     own_keyword_names,
     reject_misspelled_kwargs,
     reject_setup_kwargs,
+    send_action_summary,
 )
 from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
@@ -1384,7 +1385,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             self._advance(n_substeps)
         return {
             "status": "success",
-            "content": [{"text": f"Action applied to '{robot_name}' ({len(action_map)} keys)."}],
+            "content": [{"text": send_action_summary(robot_name, len(action_map), n_substeps)}],
         }
 
     def set_joint_positions(
