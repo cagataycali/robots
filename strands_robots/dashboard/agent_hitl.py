@@ -180,10 +180,16 @@ class MotionInterruptHook(HookProvider):
         peers_snapshot: Callable[[], Mapping[str, Any]],
         proxy_motion: Mapping[str, frozenset[str]] | None = None,
         proxy_targets: Mapping[str, str] | None = None,
+        actor: str | None = None,
     ) -> None:
         self._peers_snapshot = peers_snapshot
         self._proxy_motion = dict(proxy_motion or {})
         self._proxy_targets = dict(proxy_targets or {})
+        # The mesh peer id this dashboard sends wire commands as. A yes for a
+        # proxy tool is deposited for that actor, so the robot spends it only on
+        # a command it attributed to this dashboard; an in-process tool's yes
+        # carries no actor and is spent in this process.
+        self._actor = actor
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         """Subscribe the motion gate to every tool call the agent is about to make."""
@@ -228,7 +234,7 @@ class MotionInterruptHook(HookProvider):
             response=response,
         )
         if approved:
-            deposit_grant(name, tool_input)
+            deposit_grant(name, tool_input, actor=self._actor if name in self._proxy_targets else None)
             return
         event.cancel_tool = cancel_sentence(reason)
 

@@ -31,6 +31,7 @@ from strands_robots.bus_access import joint_read_source, read_joints, read_obser
 from strands_robots.drivers.cameras import camera_names, camera_read_source, device_camera_names
 from strands_robots.mesh import resume_authority as _resume_authority
 from strands_robots.mesh import security as _security
+from strands_robots.mesh import wire_identity as _wire_identity
 from strands_robots.mesh._backend_select import select_backend
 from strands_robots.mesh._kill_switch import mesh_disabled_by_env
 from strands_robots.mesh.sensors import SensorLoopsMixin
@@ -132,44 +133,99 @@ class WireSource:
     """Where a wire command came from, as the transport saw it.
 
     ``sender_id`` is the envelope's own claim (validated as an identifier,
-    nothing more); ``wire_zid`` is the publishing session's TLS-bound id the
-    Zenoh sample carried (:func:`_extract_sample_source_zid`), ``None`` when
-    the sample carried none; ``leg`` is which transport delivered it
-    (:func:`~strands_robots.mesh.transport.base.sample_leg`). The motion gate
-    attributes a command to its sender only when the claim and the wire agree.
+    nothing more); ``wire_zid`` is the publisher's session id the Zenoh sample
+    carried (:func:`_extract_sample_source_zid`), ``None`` when the sample
+    carried none; ``leg`` is which transport delivered it
+    (:func:`~strands_robots.mesh.transport.base.sample_leg`). ``signer`` is the
+    common name of the certificate whose signature over the envelope verified
+    against this peer's trust roots (:mod:`~strands_robots.mesh.wire_identity`),
+    ``None`` when the envelope was unsigned or did not verify, and
+    ``cert_sha256`` pins that certificate. The motion gate attributes a command
+    to the signer when signatures are required, and to the session id only on
+    a mesh that has not turned them on; the session id is a hint the publisher
+    chose, never proof.
     """
 
     sender_id: str
     wire_zid: str | None
     leg: str
+    signer: str | None = None
+    cert_sha256: str | None = None
 
 
 #: The allowlist variable the receiving robot host reads: the same
 #: ``STRANDS_ROBOT_COMMAND_ALLOW`` the hardware ``Robot`` agent tool reads
 #: (``hardware_robot.COMMAND_ALLOW_ENV``; spelled here because that module
 #: imports this one), so one operator setting on the robot machine
-#: pre-approves a verb whichever path it arrives by. Comma-separated verbs
-#: from :data:`WIRE_MOTION_ACTIONS`, or ``*``.
+#: pre-approves a verb whichever path it arrives by. Comma-separated entries:
+#: ``<verb>@<peer>`` or ``*@<peer>`` pre-approve the verb (or every verb) for
+#: ONE verified sender; a bare ``<verb>`` or ``*`` pre-approves it for every
+#: verified sender and is warned about once, because an approval that names
+#: no actor is spendable by any peer the mesh admits.
 WIRE_MOTION_ALLOW_ENV = "STRANDS_ROBOT_COMMAND_ALLOW"
 
+_bare_allow_warned: set[str] = set()
+_bare_allow_warned_lock = threading.Lock()
 
-def remote_motion_refusal(action: str, tool_name: str, cmd: Mapping[str, Any]) -> tuple[str, str] | None:
+
+def allow_match(allowed: frozenset[str], action: str, actor: str | None) -> bool:
+    """Whether the allowlist *allowed* pre-approves *action* for *actor*.
+
+    ``<action>@<actor>`` and ``*@<actor>`` match exactly one verified actor. A
+    bare ``<action>`` or ``*`` matches every actor and is logged once per
+    spelling, naming the scoped form, so an operator who typed the fleet-wide
+    spelling learns the narrower one exists. An entry scoped to another actor
+    matches nothing. With no actor (``None``) only the bare spellings match:
+    an unattributed command cannot claim an entry that names someone.
+    """
+    scoped = set()
+    if actor is not None:
+        scoped = {f"{action}@{actor}", f"*@{actor}"}
+    if scoped & allowed:
+        return True
+    bare = {"*", action} & allowed
+    if not bare:
+        return False
+    with _bare_allow_warned_lock:
+        first = {entry for entry in bare if entry not in _bare_allow_warned}
+        _bare_allow_warned.update(first)
+    if first:
+        logger.warning(
+            "[safety] %s names %s, which pre-approves %r for EVERY peer the mesh admits; scope it to one sender "
+            "with %s@<peer> (the sender's certificate CN).",
+            WIRE_MOTION_ALLOW_ENV,
+            ", ".join(sorted(first)),
+            action,
+            action,
+        )
+    return True
+
+
+def remote_motion_refusal(
+    action: str, tool_name: str, cmd: Mapping[str, Any], *, actor: str | None = None
+) -> tuple[str, str] | None:
     """The operator-approval decision for a remote command that moves a REAL robot.
 
     One copy of the approval path every remote entry point runs once it knows
     who asked: the mesh receiving side (:meth:`Mesh._wire_motion_refusal`,
-    after it has attributed the command to its sender) and the Device Connect
-    ``execute`` RPC (after the caller passed its authorization check). In
-    order: a dashboard grant for this exact call is spent,
-    ``STRANDS_ROBOT_COMMAND_ALLOW`` on the robot host pre-approves the verb,
+    after it has attributed the command to its sender), the Device Connect
+    ``execute`` RPC and the Reachy Mini Device Connect motion RPCs (after the
+    caller passed its authorization check). In order: a dashboard grant for
+    this exact call AND this actor is spent, ``STRANDS_ROBOT_COMMAND_ALLOW`` on
+    the robot host pre-approves the verb for this actor (:func:`allow_match`),
     ``BYPASS_TOOL_CONSENT=true`` lifts the gate with a WARNING, and otherwise
     the command is refused with the remedy, because a remote handler has no
     operator to interrupt.
 
     Args:
-        action: One of :data:`WIRE_MOTION_ACTIONS`.
+        action: One of :data:`WIRE_MOTION_ACTIONS`, or any other verb a
+            remote surface moves the robot with (a Device Connect RPC name).
         tool_name: The robot's tool name; keys the grant and the allowlist.
         cmd: The command as the operator would be shown it.
+        actor: The verified sender asking: the certificate CN the mesh
+            attributed the command to, or the Device Connect caller id.
+            ``None`` means nobody verifiable asked, so only a bare allowlist
+            entry or the bypass flag can admit it.
 
     Returns:
         ``None`` when the command may proceed, else ``(refusal, what)``: the
@@ -177,7 +233,7 @@ def remote_motion_refusal(action: str, tool_name: str, cmd: Mapping[str, Any]) -
         caller's log line and audit row.
     """
     tool_input = {k: v for k, v in cmd.items() if v is not None}
-    if consume_grant(tool_name, tool_input):
+    if consume_grant(tool_name, tool_input, actor=actor):
         return None
     if action == "teleop_receive":
         what = (
@@ -188,19 +244,25 @@ def remote_motion_refusal(action: str, tool_name: str, cmd: Mapping[str, Any]) -
         what = f"'reset' drives every joint of the real robot {tool_name!r} to its home pose at once"
     elif action == "step":
         what = f"'step' advances the real robot {tool_name!r} by {cmd.get('steps', 1)!r} step(s)"
-    else:
+    elif action in ("execute", "start"):
         what = (
             f"{action!r} drives the real robot {tool_name!r} with {str(cmd.get('instruction', ''))!r} "
             f"(policy_provider={cmd.get('policy_provider', 'mock')!r})"
         )
+    else:
+        what = f"{action!r} moves the real robot {tool_name!r}"
+    scoped = (
+        f"{WIRE_MOTION_ALLOW_ENV}={action}@{actor}" if actor is not None else f"{WIRE_MOTION_ALLOW_ENV}={action}@<peer>"
+    )
     refusal = gate_motion(
         "robot",
         action,
         tool_name,
-        f"{what}; a command arriving from another machine needs operator approval on this robot host.",
+        f"{what}; a command arriving from another machine needs operator approval on this robot host "
+        f"(scope a pre-approval to this sender with {scoped}).",
         None,
         allow_env=WIRE_MOTION_ALLOW_ENV,
-        allow_match=lambda allowed: "*" in allowed or action in allowed,
+        allow_match=lambda allowed: allow_match(allowed, action, actor),
     )
     return None if refusal is None else (refusal, what)
 
@@ -924,6 +986,17 @@ class Mesh(SensorLoopsMixin):
         # answered so a broadcast accepts one reply per peer id per session.
         self._peer_wire_zids: dict[str, tuple[str, float]] = {}
         self._turn_sources: dict[str, set[str]] = {}
+        # Signed wire identity (:mod:`~strands_robots.mesh.wire_identity`).
+        # ``_wire_identity`` signs what this peer publishes; ``_trust_roots``
+        # verifies what it receives; ``_peer_certs`` maps peer_id -> (leaf
+        # fingerprint, certificate CN, monotonic time of the last signed
+        # presence) and is the identity table when signatures are required,
+        # the way ``_peer_wire_zids`` is when they are not. ``_replay_guard``
+        # makes each signed reply single use. Loaded in ``start()``.
+        self._wire_identity: _wire_identity.WireIdentity | None = None
+        self._trust_roots: _wire_identity.TrustRoots | None = None
+        self._peer_certs: dict[str, tuple[str, str, float]] = {}
+        self._replay_guard = _wire_identity.ReplayGuard()
         # The transport, when it can address ONE peer without a subscription
         # on its side (AWS IoT Core Direct Messaging). Decided once in
         # ``start()``: ``isinstance(session, DirectSender)`` and the
@@ -1236,6 +1309,7 @@ class Mesh(SensorLoopsMixin):
 
             self._has_session_ref = True
             self._direct = self._select_direct_sender(session)
+            self._load_wire_identity()
 
             declared: list[Any] = []
             try:
@@ -1654,7 +1728,9 @@ class Mesh(SensorLoopsMixin):
         with Ticker(1.0 / HEARTBEAT_HZ, self._stop_event) as ticker:
             while self._running:
                 try:
-                    self._publish_with_wire_source(f"strands/{self.peer_id}/presence", self._build_presence())
+                    self._publish_with_wire_source(
+                        f"strands/{self.peer_id}/presence", self._sign(self._build_presence())
+                    )
                     prune_peers()
                 except Exception as exc:
                     logger.debug("[mesh] %s: heartbeat tick error: %s", self.peer_id, exc)
@@ -1664,12 +1740,15 @@ class Mesh(SensorLoopsMixin):
     def _on_presence(self, sample: Any) -> None:
         """Handle a peer's presence broadcast.
 
-        Identity, fleet membership, and replay protection are enforced
-        at the Zenoh transport: a sample reaching this callback has
-        already cleared mTLS handshake + ACL, so its peer-id is
-        cryptographically bound to the cert CN. We only parse the
-        payload, update our peer registry, and log a debug line for
-        first-sighting.
+        Fleet membership is enforced at the transport (mTLS handshake and
+        ACL), but a sample reaching this callback carries a body the
+        publisher wrote: ``robot_id`` is a claim. When signatures are
+        required (:meth:`_signing_required`) the claim is admitted only when
+        the presence is signed by a certificate chained to this peer's trust
+        roots whose common name speaks for ``robot_id``
+        (:meth:`_bind_peer_cert`). Otherwise the legacy session-id table is
+        kept (:meth:`_bind_peer_wire_zid`), which defends against a second
+        session taking a live name but not against a copied label.
         """
         try:
             raw = sample.payload.to_bytes().decode()
@@ -1721,7 +1800,10 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        if not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
+        if self._signing_required():
+            if not self._bind_peer_cert(peer_id, data):
+                return
+        elif not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
             return
 
         is_new = update_peer(
@@ -1732,6 +1814,151 @@ class Mesh(SensorLoopsMixin):
         )
         if is_new:
             logger.info("[mesh] new peer: %s (%s)", peer_id, data.get("robot_type", "?"))
+
+    # Signed wire identity --------------------------------------------------
+
+    def _load_wire_identity(self) -> None:
+        """Load this peer's signing identity and trust roots once, at start.
+
+        Says at INFO which certificate signs; WARNs once when the mesh runs
+        mTLS and no identity could be loaded, because every presence, reply and
+        command this peer then publishes is unsigned and a receiver that
+        requires signatures refuses them all.
+        """
+        self._trust_roots = _wire_identity.TrustRoots.load()
+        loaded = _wire_identity.WireIdentity.load_or_problem()
+        if isinstance(loaded, _wire_identity.WireIdentity):
+            self._wire_identity = loaded
+            logger.info(
+                "[mesh] %s: signing wire identity as CN %s (%s, %s, fingerprint %s)",
+                self.peer_id,
+                loaded.cn,
+                loaded.alg,
+                loaded.source,
+                loaded.cert_sha256[:16],
+            )
+            if not _wire_identity.cn_speaks_for(loaded.cn, self.peer_id):
+                logger.warning(
+                    "[safety:%s] the signing certificate's CN %s does not speak for this peer id; peers that "
+                    "require signed identity will refuse this peer's presence and replies. Issue the certificate "
+                    "with CN equal to the peer id (or to its parent for a <parent>__<robot> child).",
+                    self.peer_id,
+                    loaded.cn,
+                )
+            return
+        self._wire_identity = None
+        required = self._signing_required()
+        if loaded is None and not required:
+            return
+        _warn_posture_once(
+            "wire_identity",
+            "[safety:%s] No signing wire identity: %s. Every presence, reply and command this peer publishes "
+            "is unsigned, and a peer that requires signed identity (%s=1, or auto under mTLS with a trust "
+            "root) refuses them. Point STRANDS_MESH_TLS_CERT/STRANDS_MESH_TLS_KEY at this peer's certificate "
+            "and key (CN = peer id).",
+            self.peer_id,
+            loaded if isinstance(loaded, str) else "no certificate pair configured",
+            _wire_identity.REQUIRE_ENV,
+        )
+
+    def _signing_required(self) -> bool:
+        """Whether this peer refuses unsigned identities (:func:`~strands_robots.mesh.wire_identity.signing_required`)."""
+        return _wire_identity.signing_required(self._trust_roots)
+
+    def _sign(self, body: dict[str, Any]) -> dict[str, Any]:
+        """*body* signed by this peer's wire identity, or unchanged when it has none."""
+        identity = self._wire_identity
+        if identity is None:
+            return body
+        try:
+            return _wire_identity.sign(identity, body)
+        except (ValueError, TypeError) as exc:
+            logger.warning("[mesh] %s: could not sign outgoing message: %s", self.peer_id, exc)
+            return body
+
+    def _verify_wire(self, data: dict[str, Any]) -> _wire_identity.Verified | str:
+        """Who signed *data*, or why it is not trusted, under the mesh's freshness knobs."""
+        return _wire_identity.verify(
+            self._trust_roots,
+            data,
+            freshness_s=_resume_freshness_window_s(),
+            forward_skew_s=_resume_forward_skew_s(),
+        )
+
+    def _bind_peer_cert(self, peer_id: str, data: dict[str, Any]) -> bool:
+        """Admit a signed presence for *peer_id* and record which certificate speaks for it.
+
+        Returns ``False`` when the presence must be dropped: it is unsigned or
+        does not verify, its certificate's CN does not speak for *peer_id*
+        (:func:`~strands_robots.mesh.wire_identity.cn_speaks_for`), or a
+        different certificate claims the id of a peer still alive on its first
+        one. The last case is the takeover the session-id table also refuses,
+        and is audited the same way (``presence_identity_conflict``); the first
+        two are audited as ``presence_identity_rejected``. Unlike the session
+        table, silence does not open the name to another certificate: a peer
+        that comes back after ``PEER_TIMEOUT`` must present a certificate
+        whose CN speaks for its id, so a name can only ever move between
+        certificates the trust root issued for it.
+        """
+        verified = self._verify_wire(data)
+        if isinstance(verified, str):
+            self._refuse_presence_identity(peer_id, verified, None, None)
+            return False
+        cn, fingerprint = verified.cn, verified.cert_sha256
+        if not _wire_identity.cn_speaks_for(cn, peer_id):
+            why = "the signing certificate's common name does not speak for this peer id"
+            self._refuse_presence_identity(peer_id, why, cn, fingerprint)
+            return False
+        now = time.monotonic()
+        with self._rpc_lock:
+            bound = self._peer_certs.get(peer_id)
+            if bound is not None and bound[0] != fingerprint and now - bound[2] <= PEER_TIMEOUT:
+                conflict = True
+            else:
+                conflict = False
+                self._peer_certs[peer_id] = (fingerprint, cn, now)
+        if conflict:
+            logger.warning(
+                "[mesh] %s: dropped presence for %s -- a second certificate (CN %s, %s) claims the id of a peer "
+                "still alive on certificate %s (possible identity takeover)",
+                self.peer_id,
+                peer_id,
+                cn,
+                fingerprint[:16],
+                bound[0][:16] if bound else "?",
+            )
+            self._audit_local(
+                "presence_identity_conflict",
+                {
+                    "peer_id": peer_id,
+                    "bound_cert_sha256": bound[0] if bound else None,
+                    "claimed_cert_sha256": fingerprint,
+                    "claimed_cn": cn,
+                },
+            )
+            return False
+        return True
+
+    def _refuse_presence_identity(self, peer_id: str, why: str, cn: str | None, fingerprint: str | None) -> None:
+        """WARN and audit (``presence_identity_rejected``) a presence whose identity did not verify."""
+        logger.warning(
+            "[mesh] %s: dropped presence for %s -- %s (signer CN %s)", self.peer_id, peer_id, why, cn or "none"
+        )
+        self._audit_local(
+            "presence_identity_rejected",
+            {
+                "peer_id": peer_id,
+                "reason": why,
+                "cn": cn,
+                "cert_sha256_prefix": fingerprint[:16] if fingerprint else None,
+            },
+        )
+
+    def peer_cert(self, peer_id: str) -> tuple[str, str] | None:
+        """``(cert_sha256, cn)`` of the certificate *peer_id* last announced itself with, or ``None``."""
+        with self._rpc_lock:
+            bound = self._peer_certs.get(peer_id)
+        return None if bound is None else (bound[0], bound[1])
 
     def _bind_peer_wire_zid(self, peer_id: str, wire_zid: str | None) -> bool:
         """Record which Zenoh session *peer_id* announces itself from.
@@ -1779,7 +2006,11 @@ class Mesh(SensorLoopsMixin):
         return True
 
     def peer_wire_zid(self, peer_id: str) -> str | None:
-        """The TLS-bound session id *peer_id* last announced itself from, or ``None``."""
+        """The session id *peer_id* last announced itself from, or ``None``.
+
+        A publisher-chosen hint (``SourceInfo``), not a verified identity: see
+        :mod:`~strands_robots.mesh.wire_identity` for the signed one.
+        """
         with self._rpc_lock:
             bound = self._peer_wire_zids.get(peer_id)
         return None if bound is None else bound[0]
@@ -2399,6 +2630,22 @@ class Mesh(SensorLoopsMixin):
         # command: the motion gate binds its approval to them, never to a field
         # the publisher wrote into the body.
         exec_kwargs: dict[str, Any] = {"wire_zid": _extract_sample_source_zid(sample), "leg": sample_leg(sample)}
+        # The signature is verified ONCE, here, and its verdict travels with
+        # the command as ``signer`` / ``cert_sha256``: an envelope that is
+        # unsigned or does not verify carries ``signer=None``, which the motion
+        # gate refuses when signatures are required and the audit row records.
+        if _wire_identity.SIG_FIELD in data and self._trust_roots is not None:
+            verified = self._verify_wire(data)
+            if isinstance(verified, str):
+                logger.warning(
+                    "[mesh] %s: command from %s carries an unverifiable signature: %s",
+                    self.peer_id,
+                    sender_id,
+                    verified,
+                )
+            else:
+                exec_kwargs["signer"] = verified.cn
+                exec_kwargs["cert_sha256"] = verified.cert_sha256
         if isinstance(reply_to, str):
             exec_kwargs["reply_to"] = reply_to
         threading.Thread(
@@ -2500,6 +2747,7 @@ class Mesh(SensorLoopsMixin):
         that is not delivered falls back to ``publish`` on ``rkey`` in the same
         call, which the sender still subscribes to.
         """
+        payload = self._sign(payload)
         if direct_key is not None and self._direct is not None:
             result = self._direct.send_direct(
                 sender, direct_key, payload, confirm=True, timeout=self.REPLY_DIRECT_BUDGET_S, correlation=turn
@@ -2556,7 +2804,14 @@ class Mesh(SensorLoopsMixin):
         )
 
     def _exec_cmd(
-        self, data: dict[str, Any], reply_to: str | None = None, *, wire_zid: str | None = None, leg: str = "lan"
+        self,
+        data: dict[str, Any],
+        reply_to: str | None = None,
+        *,
+        wire_zid: str | None = None,
+        leg: str = "lan",
+        signer: str | None = None,
+        cert_sha256: str | None = None,
     ) -> None:
         sender = data.get("sender_id", "")
         # full 128-bit fallback. Pre-fix, an inbound command without
@@ -2756,7 +3011,12 @@ class Mesh(SensorLoopsMixin):
                 return
 
         try:
-            result = self._dispatch(cmd, source=WireSource(sender_id=str(sender), wire_zid=wire_zid, leg=leg))
+            result = self._dispatch(
+                cmd,
+                source=WireSource(
+                    sender_id=str(sender), wire_zid=wire_zid, leg=leg, signer=signer, cert_sha256=cert_sha256
+                ),
+            )
             if rkey is not None:
                 reply(
                     rkey,
@@ -3279,20 +3539,31 @@ class Mesh(SensorLoopsMixin):
         """Why a wire command cannot be attributed to its sender, or ``None`` when it can.
 
         An approval is spent on behalf of SOMEONE, so a hardware peer first
-        establishes who asked, from what the transport itself vouches for:
-        the envelope must name a sender, the Zenoh sample must carry the
-        publisher's TLS-bound session id, and that id must be the one the
-        sender announced its presence from (:meth:`peer_wire_zid`, bound on
-        the presence topic and defended against takeover there). A body
-        ``sender_id`` on its own is whatever the publisher typed, and a
-        transport that attaches no publisher identity to a command (the AWS
-        IoT leg) cannot be attributed at all; both are refused, because a
-        yes nobody can be held to is not a yes.
+        establishes who asked. When signatures are required
+        (:meth:`_signing_required`) that is the certificate that signed the
+        envelope: ``source.signer`` must be set and its common name must speak
+        for the claimed ``sender_id``
+        (:func:`~strands_robots.mesh.wire_identity.cn_speaks_for`); a body
+        ``sender_id`` on its own is whatever the publisher typed. On a mesh that
+        has not turned signatures on, the legacy rule applies: the Zenoh sample
+        must carry a publisher session id and that id must be the one the
+        sender announced its presence from (:meth:`peer_wire_zid`). That
+        session id is a label the publisher attaches and can copy from another
+        peer's heartbeat, which is why it is not the identity once a trust root
+        exists. A transport that attaches neither (the AWS IoT leg without a
+        signature) cannot be attributed at all. Every gap is a refusal, because
+        a yes nobody can be held to is not a yes.
         """
         if source is None:
             return "the command arrived with no wire source"
         if not source.sender_id:
             return "the command names no sender"
+        if self._signing_required():
+            if source.signer is None:
+                return "the command carries no verifiable signature"
+            if not _wire_identity.cn_speaks_for(source.signer, source.sender_id):
+                return "the signing certificate's common name does not speak for the claimed sender"
+            return None
         if source.leg != "lan":
             return f"the {source.leg} transport attaches no verified publisher identity to a command"
         if source.wire_zid is None:
@@ -3361,6 +3632,7 @@ class Mesh(SensorLoopsMixin):
                     "robot": tool_name,
                     "reason": gap,
                     "sender": source.sender_id if source is not None else None,
+                    "signer": source.signer if source is not None else None,
                     "wire_zid": source.wire_zid if source is not None else None,
                     "leg": source.leg if source is not None else None,
                     "source_peer_id": cmd.get("source_peer_id"),
@@ -3369,7 +3641,12 @@ class Mesh(SensorLoopsMixin):
                 },
             )
             return refusal
-        if (refused := remote_motion_refusal(action, tool_name, cmd)) is None:
+        # The actor an approval is spent for: the verified signer when
+        # signatures are required, else the attributed sender id.
+        actor = None
+        if source is not None:
+            actor = source.signer if self._signing_required() else source.sender_id
+        if (refused := remote_motion_refusal(action, tool_name, cmd, actor=actor)) is None:
             return None
         refusal, what = refused
         logger.warning("[safety] %s: refused wire %s: %s", self.peer_id, action, what)
@@ -3380,6 +3657,7 @@ class Mesh(SensorLoopsMixin):
                 "robot": tool_name,
                 "reason": "no operator approval",
                 "sender": source.sender_id if source is not None else None,
+                "signer": source.signer if source is not None else None,
                 "wire_zid": source.wire_zid if source is not None else None,
                 "leg": source.leg if source is not None else None,
                 "source_peer_id": cmd.get("source_peer_id"),
@@ -3650,12 +3928,16 @@ class Mesh(SensorLoopsMixin):
     def _on_response(self, sample: Any) -> None:
         """Inbound response handler.
 
-        Identity, fleet membership, and topic ACL have already been
-        enforced at the Zenoh transport. We additionally bind the reply to
-        its wire source: the sample's TLS-bound zid must be the session the
-        claimed ``responder_id`` announced itself from on the presence topic
-        (or both absent, only on a backend whose broker binds the topic to the
-        sender). Then a point-to-point scope check: a response is accepted
+        Fleet membership and topic ACL have already been enforced at the
+        transport. The reply is then attributed: when signatures are required
+        it must be signed by a certificate chained to this peer's trust roots
+        whose CN speaks for the claimed ``responder_id``, single use per nonce
+        (:mod:`~strands_robots.mesh.wire_identity`); otherwise the legacy rule
+        compares the sample's publisher session id with the one the responder
+        announced itself from (both absent only on a broker-bound IoT leg). The
+        session id is a label the publisher chose, so the legacy rule holds
+        against a second session, not against a copied label; that is what the
+        signature is for. Then a point-to-point scope check: a response is accepted
         only if its ``responder_id`` matches the expected target recorded in
         :attr:`_expected_responders` by :meth:`send`. Broadcast turns
         use the ``BROADCAST_RESPONDER`` sentinel and accept any verified
@@ -3719,58 +4001,70 @@ class Mesh(SensorLoopsMixin):
                 {"turn_prefix": turn[:12], "responder_id": responder, "topic_responder": topic_responder},
             )
             return
-        # The wire source is the identity; ``responder_id`` is the claim. The
-        # same three-state rule ``_decode_bound_safety_envelope`` applies to
-        # the safety envelopes: the sample's TLS-bound zid and the session
-        # this responder announced itself from (``_on_presence``) must both be
-        # present and equal, or both absent -- and both-absent only on a
-        # backend in ``_TOPIC_BOUND_REPLY_BACKENDS``, whose broker policy binds
-        # the topic segment to the sender. On Zenoh both-absent is a reply
-        # nobody can attribute: every honest peer attaches its wire source
-        # (``_publish_with_wire_source``), so it is refused. A reply carrying a
-        # wire zid in the name of a peer we never saw announce itself, a
-        # reply from a different session than the one bound to that name,
-        # and a reply with its SourceInfo stripped for a peer we know by
-        # session are all refused, on broadcast turns too: a broadcast
-        # accepts answers from MANY peers, not from an unidentified one.
-        wire_zid = _extract_sample_source_zid(sample)
-        bound_zid = self.peer_wire_zid(responder) if isinstance(responder, str) else None
-        if wire_zid != bound_zid or (wire_zid is None and select_backend() not in _TOPIC_BOUND_REPLY_BACKENDS):
-            if wire_zid is None and bound_zid is None:
-                why = "wire source absent on a transport whose topic does not bind the sender"
-            elif bound_zid is None:
-                why = "wire source is a session that never announced this peer id"
-            elif wire_zid is None:
-                why = "wire source absent for a peer known by session (SourceInfo stripped)"
-            else:
-                why = "wire source is not the session bound to this peer id"
-            logger.warning(
-                "[mesh] %s: dropped response on turn %s -- responder_id=%r refused: %s (possible response forgery)",
-                self.peer_id,
-                turn[:12],
-                responder,
-                why,
-            )
-            self._audit_local(
-                "response_hijack_rejected",
-                {
-                    "turn_prefix": turn[:12],
-                    "responder_id": responder,
-                    "wire_zid": wire_zid,
-                    "bound_zid": bound_zid,
-                    "reason": why,
-                },
-            )
-            return
-        # One answer per verified identity per turn. The identity is the peer
-        # id bound to the wire zid above, so it is keyed by both: one session
-        # may carry several peer ids (a ``Robot`` with ``mesh=True`` announces
-        # itself and its ``<peer>__<robot>`` child from one Zenoh session), and
-        # keying by the zid alone kept the first of them and dropped the
-        # other's e-stop acknowledgement as a duplicate. The responder id alone
-        # is the key only on a backend whose broker binds it to the topic --
-        # never a body claim on its own.
-        source_key = f"zid:{wire_zid}/{responder}" if wire_zid is not None else f"id:{responder}"
+        # Who answered. With signatures required the identity is the certificate
+        # that signed the reply: it must chain to this peer's trust roots, its
+        # CN must speak for ``responder_id``, and its nonce must be unseen
+        # (a captured genuine reply replayed on a later turn is refused). On a
+        # mesh without signatures the legacy rule holds: the sample's publisher
+        # session id must be the one ``responder_id`` announced itself from
+        # (``_on_presence``), both present and equal; both absent is accepted
+        # only on a leg whose broker binds the topic segment to the sender
+        # (the IoT leg of ``iot`` / ``bridge``), never on a Zenoh leg, where
+        # every honest peer attaches its session id and a bare reply is one
+        # nobody can attribute. Whichever path, ``source_key`` names the
+        # verified identity for the one-answer-per-turn rule below.
+        source_key: str
+        if self._signing_required():
+            verified = self._verify_wire(data)
+            if isinstance(verified, str):
+                self._refuse_response_identity(turn, responder, None, verified)
+                return
+            if not isinstance(responder, str) or not _wire_identity.cn_speaks_for(verified.cn, responder):
+                why = "the signing certificate's common name does not speak for responder_id"
+                self._refuse_response_identity(turn, responder, verified.cn, why)
+                return
+            if self._replay_guard.seen_before(verified.cert_sha256, verified.nonce):
+                why = "signed reply replayed (nonce already seen for this certificate)"
+                self._refuse_response_identity(turn, responder, verified.cn, why)
+                return
+            source_key = f"cert:{verified.cert_sha256}/{responder}"
+        else:
+            wire_zid = _extract_sample_source_zid(sample)
+            bound_zid = self.peer_wire_zid(responder) if isinstance(responder, str) else None
+            topic_bound = select_backend() in _TOPIC_BOUND_REPLY_BACKENDS and sample_leg(sample) != "lan"
+            if wire_zid != bound_zid or (wire_zid is None and not topic_bound):
+                if wire_zid is None and bound_zid is None:
+                    why = "wire source absent on a leg whose topic does not bind the sender"
+                elif bound_zid is None:
+                    why = "wire source is a session that never announced this peer id"
+                elif wire_zid is None:
+                    why = "wire source absent for a peer known by session (SourceInfo stripped)"
+                else:
+                    why = "wire source is not the session bound to this peer id"
+                logger.warning(
+                    "[mesh] %s: dropped response on turn %s -- responder_id=%r refused: %s (possible response forgery)",
+                    self.peer_id,
+                    turn[:12],
+                    responder,
+                    why,
+                )
+                self._audit_local(
+                    "response_hijack_rejected",
+                    {
+                        "turn_prefix": turn[:12],
+                        "responder_id": responder,
+                        "wire_zid": wire_zid,
+                        "bound_zid": bound_zid,
+                        "reason": why,
+                    },
+                )
+                return
+            # One answer per identity per turn, keyed by session AND peer id:
+            # one session may carry several peer ids (a ``Robot`` with
+            # ``mesh=True`` announces itself and its ``<peer>__<robot>`` child
+            # from one Zenoh session). The responder id alone is the key only on
+            # a leg whose broker binds it to the topic, never a body claim alone.
+            source_key = f"zid:{wire_zid}/{responder}" if wire_zid is not None else f"id:{responder}"
         with self._rpc_lock:
             event = self._pending.get(turn)
             if event is None:
@@ -3823,6 +4117,20 @@ class Mesh(SensorLoopsMixin):
             )
             return
         event.set()
+
+    def _refuse_response_identity(self, turn: str, responder: Any, signer: str | None, why: str) -> None:
+        """WARN and audit (``response_hijack_rejected``) a reply whose signed identity did not hold."""
+        logger.warning(
+            "[mesh] %s: dropped response on turn %s -- responder_id=%r refused: %s (possible response forgery)",
+            self.peer_id,
+            turn[:12],
+            responder,
+            why,
+        )
+        self._audit_local(
+            "response_hijack_rejected",
+            {"turn_prefix": turn[:12], "responder_id": responder, "signer": signer, "reason": why},
+        )
 
     # Safety -- inbound estop / resume
     _AUDIT_FAILURES = (TypeError, ValueError, OSError)
@@ -4355,7 +4663,7 @@ class Mesh(SensorLoopsMixin):
                 self._responses.pop(turn, None)
                 raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
-        msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        msg = self._sign({"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()})
         # An over-cap command is dropped by the transport with no diagnostics,
         # so report it here instead of publishing into the filter.
         size_problem = self._cmd_topic_size_problem(msg)
@@ -4569,7 +4877,7 @@ class Mesh(SensorLoopsMixin):
             self._responses[turn] = []
             # Sentinel -- broadcast accepts responses from any peer.
             self._expected_responders[turn] = BROADCAST_RESPONDER
-        msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        msg = self._sign({"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()})
         # ``strands/broadcast`` shares the cmd-topic byte cap with ``**/cmd``
         # (one ``strands_cmd_size_cap`` rule), so an over-cap broadcast is
         # dropped by the filter and returns the same empty list a broadcast

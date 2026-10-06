@@ -267,7 +267,7 @@ class TestApprovalIsBoundToTheAuthenticatedSender:
 
     def test_a_dashboard_grant_is_only_spent_by_an_attributed_command(self, mesh: Mesh, arm: _HardwareArm) -> None:
         call = {"action": "teleop_receive", "source_peer_id": "leader-1", "device_name": "leader"}
-        _motion_grants.deposit_grant("so101", call)
+        _motion_grants.deposit_grant("so101", call, actor="leader-1")
 
         assert "error" in mesh._dispatch(dict(call), source=_bound(zid=OTHER_ZID))
         assert arm.following == []

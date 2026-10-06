@@ -397,6 +397,7 @@ class Console:
                 peers_snapshot=lambda: bridge.peers,
                 proxy_motion=motion_actions_for(proxies, peers),
                 proxy_targets={t.tool_name: t.peer_id for t in proxies},
+                actor=str(getattr(bridge, "peer_id", "") or "") or None,
             )
             hooks.append(self._hook)
         return Agent(

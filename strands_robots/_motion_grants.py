@@ -171,12 +171,21 @@ UNKEYED_FIELDS: Mapping[str, str] = {
 
 @dataclass(frozen=True)
 class _Grant:
-    """One deposited yes: who it is about and when it was given (monotonic seconds)."""
+    """One deposited yes: who it is about, who may spend it, and when it was given (monotonic seconds).
+
+    ``actor`` is the verified sender the yes was given FOR: the dashboard's own
+    mesh peer id when the approved call goes out as a wire command (the robot
+    spends it only for a command it attributed to that sender), ``None`` for a
+    call spent in this process (``pose_tool``, ``serial_tool``, the hardware
+    ``Robot`` tool). A yes for one actor is not spendable by another whose
+    command happens to have the same shape.
+    """
 
     tool: str
     action: str
     target: str
     deposited_at: float
+    actor: str | None = None
 
 
 _grants_lock = threading.Lock()
@@ -392,12 +401,14 @@ def grant_key(tool_name: str, tool_input: Mapping[str, Any] | None, *, calibrati
     )
 
 
-def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
-    """Grant one pass through the gate to the next call with this exact shape.
+def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None, *, actor: str | None = None) -> None:
+    """Grant one pass through the gate to the next call with this exact shape, by *actor*.
 
     Args:
         tool_name: The tool the operator answered for.
         tool_input: The call they were shown.
+        actor: The verified sender the yes is for (see :class:`_Grant`);
+            ``None`` for a call spent in this process.
     """
     tool_input = tool_input or {}
     record = _Grant(
@@ -405,19 +416,28 @@ def deposit_grant(tool_name: str, tool_input: Mapping[str, Any] | None) -> None:
         action=str(tool_input.get("action") or "").strip(),
         target=resolve_target(tool_name, tool_input, None),
         deposited_at=time.monotonic(),
+        actor=actor,
     )
     with _grants_lock:
         _sweep_expired_locked(record.deposited_at, grant_ttl_s())
         _grants[grant_key(tool_name, tool_input)] = record
 
 
-def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None, *, calibration: Any = _FROM_INPUT) -> bool:
-    """True exactly once per deposited grant for this call's shape.
+def consume_grant(
+    tool_name: str,
+    tool_input: Mapping[str, Any] | None,
+    *,
+    calibration: Any = _FROM_INPUT,
+    actor: str | None = None,
+) -> bool:
+    """True exactly once per deposited grant for this call's shape and *actor*.
 
     The gated surfaces call this before asking the operator themselves, so a
     human who has already said yes to this exact motion is not asked twice. No
     grant deposited means no answer given, which is what the caller's own gate
-    then goes and gets.
+    then goes and gets. A grant deposited for another actor is left in place,
+    unspent: a sender that is not the one the yes was given for neither moves
+    the robot nor burns the grant the right sender is about to spend.
 
     Args:
         tool_name: The tool about to run.
@@ -425,17 +445,30 @@ def consume_grant(tool_name: str, tool_input: Mapping[str, Any] | None, *, calib
             operator was shown, with the unset ones omitted.
         calibration: The calibration records the motion will be driven with,
             when the tool has already loaded them; see :func:`grant_key`.
+        actor: The verified sender spending the grant, ``None`` for a call in
+            this process; must equal the actor the grant was deposited for.
 
     Returns:
-        True when a grant for this exact call existed and was spent.
+        True when a grant for this exact call and actor existed and was spent.
     """
     key = grant_key(tool_name, tool_input, calibration=calibration)
     now = time.monotonic()
     ttl = grant_ttl_s()
     with _grants_lock:
-        record = _grants.pop(key, None)
+        record = _grants.get(key)
         if record is None:
             return False
+        if record.actor != actor:
+            logger.info(
+                "motion grant for %s %s on %s was given for actor %s, not %s; left unspent",
+                record.tool,
+                record.action,
+                record.target or "(no target)",
+                refusal_str(record.actor) if record.actor is not None else "this process",
+                refusal_str(actor) if actor is not None else "this process",
+            )
+            return False
+        _grants.pop(key, None)
         if now - record.deposited_at > ttl:
             logger.info(
                 "motion grant for %s %s on %s expired unspent after %.0f s (window %.0f s)",
@@ -487,6 +520,7 @@ def pending_grants() -> list[dict[str, Any]]:
             "tool": g.tool,
             "action": g.action,
             "target": g.target,
+            "actor": g.actor,
             "age_s": round(now - g.deposited_at, 3),
             "expires_in_s": round(ttl - (now - g.deposited_at), 3),
         }
