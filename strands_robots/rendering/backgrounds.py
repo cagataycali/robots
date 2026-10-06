@@ -30,6 +30,7 @@ full view-dependent color (the SH coefficients are evaluated per-view by
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
 from pathlib import Path
@@ -926,7 +927,29 @@ def download_gsplat_scene(
             than the peer's declared ``Content-Length``).
     """
     if name not in GSPLAT_SCENES:
-        raise KeyError(f"Unknown scene {name!r}. Known: {list(GSPLAT_SCENES)}")
+        # Build a short "Did you mean X?" hint. Match against both the full
+        # preset keys ("tabletop (indoor room)") and their first-token slugs
+        # ("tabletop") -- the slug form is the one the module itself uses
+        # elsewhere to key per-scene state (see ``GSPLAT_SKYBOX_ALIGN`` keyed
+        # by ``n.split(" ")[0]`` and the ``slug = name.split(" ")[0]`` used
+        # below to name the cache file), so a user typing the slug alone is
+        # typing a form the code already understands and should at least be
+        # pointed back to the canonical key.
+        keys = list(GSPLAT_SCENES)
+        slug_to_key = {k.split(" ")[0]: k for k in keys}
+        pool = keys + list(slug_to_key)
+        close = difflib.get_close_matches(str(name).lower(), [p.lower() for p in pool], n=1, cutoff=0.6)
+        hint = ""
+        if close:
+            # Map the lowercased match back to its canonical key.
+            match_lower = close[0]
+            canonical = next(
+                (k for k in keys if k.lower() == match_lower),
+                slug_to_key.get(match_lower.split(" ")[0]),
+            )
+            if canonical:
+                hint = f" Did you mean {canonical!r}?"
+        raise KeyError(f"Unknown scene {name!r}.{hint} Known: {keys}")
     if error := positive_finite_number_error(timeout, "timeout", "download_gsplat_scene"):
         raise ValueError(error)
     url = GSPLAT_SCENES[name]
