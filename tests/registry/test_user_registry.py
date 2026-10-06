@@ -155,7 +155,7 @@ class TestRegisterRobotDuplicates:
                 ["built-in robot"],
             ),
             (
-                lambda: next(n for n in list_urdf_only() if (get_robot(n) or {}).get("refusal")),
+                lambda: next(n for n in list_urdf_only(include_refused=True) if (get_robot(n) or {}).get("refusal")),
                 ["is an auto-discovered robot_descriptions URDF", "does not build: ", "to supply a working model"],
                 ["built-in robot", "0 joints", "aliases []", "shadow"],
             ),

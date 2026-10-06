@@ -9,10 +9,12 @@ import { twinButtonCopy } from '../lib/twinButton'
 import { deadCameraNote, stoppedCameras } from '../lib/cameraFreshness'
 import CameraTile from './CameraTile'
 import CameraConfigSheet from './CameraConfigSheet'
+import CameraFailures from './CameraFailures'
 import JointStrip from './JointStrip'
 import TelemetryStrip from './TelemetryStrip'
 import RunForm from './RunForm'
 import ConsentSheet from './ConsentSheet'
+import InstallExtra from './InstallExtra'
 import { useJointFailure } from '../lib/useJointFailure'
 
 export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange }: {
@@ -22,7 +24,10 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
   onOpen?: (peerId: string) => void
   onBusyChange?: (peerId: string, running: boolean) => void
 }) {
-  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin, consent, clearConsent, retryLast } = useTask(peer)
+  const {
+    phase, outcome, running, busy, twinBusy, twinGap, clearTwinGap, run, stop, reset, toggleTwin, setOutcome,
+    consent, clearConsent, retryLast,
+  } = useTask(peer)
 
   // The sheet opens on request: a refusal must not steal focus from an
   // operator who is watching an arm move.
@@ -151,6 +156,8 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
                 ))}
               </div>
             )}
+            <CameraFailures failures={p?.camera_failures} arrived={cams}
+                            onReconfigure={canConfig ? c => setCamSheet({ cam: c, add: false }) : undefined} />
             {canConfig && (
               <button className="chip addcam" onClick={() => setCamSheet({ cam: null, add: true })}
                       title="attach another camera to this robot (applying restarts it)">
@@ -196,6 +203,14 @@ export default function RobotCard({ peer, twinLive = false, onOpen, onBusyChange
             <button className="btn small" onClick={() => setSheet(true)}>review permission…</button>
           )}
         </div>
+      )}
+      {/* The twin needs an extra this environment lacks: install it here, then click twin again. */}
+      {twinGap && (
+        <InstallExtra
+          extra={twinGap.extra}
+          reason={twinGap.remedy ? `the sim twin cannot start here: ${twinGap.remedy}` : null}
+          onDone={() => { clearTwinGap(); setOutcome({ ok: true, text: `installed [${twinGap.extra}] — click twin again` }) }}
+        />
       )}
 
       {consent && sheet && (

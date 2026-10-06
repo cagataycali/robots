@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cameraEvidence, cameraPlaceholder } from '../lib/cameraEvidence'
+import CameraFailures from './CameraFailures'
 import { useDialogFocus } from '../lib/useDialogFocus'
 import type { Peer, StreamStep } from '../types'
 import { useTask } from '../lib/useTask'
 import { twinButtonCopy } from '../lib/twinButton'
+import InstallExtra from './InstallExtra'
 import { statusSentence, peerStatusFields } from '../lib/statusSentence'
 import { teleopView, stopVerdict, startVerdict, type TeleopView } from '../lib/teleopView'
 import { leaderOptions, pairPlan, teleopSubject, type PairInput } from '../lib/teleopPair'
@@ -38,7 +40,9 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
   onOpen?: (peerId: string) => void
   onClose: () => void
 }) {
-  const { phase, outcome, running, busy, twinBusy, run, stop, reset, toggleTwin } = useTask(peer)
+  const {
+    phase, outcome, running, busy, twinBusy, twinGap, clearTwinGap, run, stop, reset, toggleTwin, setOutcome,
+  } = useTask(peer)
   const cams = Object.keys(peer.cameras ?? {})
   // R2: same words as the card, from the same pure module.
   const twin = twinButtonCopy({ peerId: peer.peer_id, twinLive, busy: twinBusy })
@@ -443,7 +447,7 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                   // "this peer publishes none" was a denial of the presence THIS SAME peer announces
                   // (lib/cameraEvidence): on a machine where macOS blocks capture, both arms announce top+wrist
                   // and deliver nothing, and the detail screen is where the operator comes to find out why.
-                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested))
+                  const ph = cameraPlaceholder(cameraEvidence(peer.peer_id, peer.presence?.cameras, cams, peer.cameras_requested, p?.camera_failures))
                   return (
                     <div className="camtile big">
                       <div className="camstate" title={ph?.title}>
@@ -471,6 +475,8 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                 )}
               </div>
             )}
+            <CameraFailures failures={p?.camera_failures} arrived={cams}
+                            onReconfigure={canConfig ? c => setCamConfig({ cam: c, add: false }) : undefined} />
             <TelemetryStrip peer={peer} />
             <RunForm
               peerId={peer.peer_id}
@@ -488,6 +494,14 @@ export default function RobotDetail({ peer, twinLive = false, hostsChildren, fle
                 <span>{outcome.ok ? '✓' : outcome.ambiguous ? '⚠ unknown —' : '✗'} {outcome.text}</span>
                 {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
               </div>
+            )}
+            {/* The twin needs an extra this environment lacks: install it here, then click twin again. */}
+            {twinGap && (
+              <InstallExtra
+                extra={twinGap.extra}
+                reason={twinGap.remedy ? `the sim twin cannot start here: ${twinGap.remedy}` : null}
+                onDone={() => { clearTwinGap(); setOutcome({ ok: true, text: `installed [${twinGap.extra}] — click twin again` }) }}
+              />
             )}
             {phase === 'stopping' && <div className="hint">stop sent, waiting for the peer to confirm…</div>}
           </div>

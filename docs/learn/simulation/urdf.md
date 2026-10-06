@@ -12,14 +12,14 @@ pip install 'strands-robots[sim-urdf]'   # trimesh, pycollada, xacrodoc, plus [s
 
 ## Which robots
 
-`robot_descriptions` ships {{n:urdf_robots}} descriptions with a URDF, no MJCF sibling and no curated entry in `robots.json`. They are the `source: "urdf"` rows of `list_robots()`, listed by `strands_robots.list_urdf_only()`, and appear in the [catalog](../../robots/index.md) with a thumbnail and the upstream commit. {{n:urdf_robots_sim}} of them build; a description that does not is listed with `has_sim` false and the refusal on its page.
+`robot_descriptions` ships {{n:urdf_robots}} descriptions with a URDF, no MJCF sibling and no curated entry in `robots.json`. They are the `source: "urdf"` rows of `list_robots()` and appear in the [catalog](../../robots/index.md) with a thumbnail and the upstream commit. {{n:urdf_robots_sim}} of them build, listed by `strands_robots.list_urdf_only()`; one that does not has `has_sim` false and the refusal on its page.
 
 A curated name always wins. `panda` has both a `panda_description` URDF and a `panda_mj_description` MJCF, and the registry serves the curated entry; the URDF path never shadows a name you already know.
 
 ```python
 from strands_robots import Robot, list_urdf_only
 
-print(len(list_urdf_only()))          # the URDF long tail
+print(len(list_urdf_only()))          # the URDF robots that build
 robot = Robot("atlas_v4", mode="sim")  # first call compiles the asset
 ```
 

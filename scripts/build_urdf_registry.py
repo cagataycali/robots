@@ -112,13 +112,13 @@ def main(argv: list[str] | None = None) -> int:
     existing: dict[str, dict[str, object]] = {}
     if OUT.exists():
         existing = json.loads(OUT.read_text(encoding="utf-8")).get("robots", {})
-    names = args.names or list_urdf_only()
+    names = args.names or list_urdf_only(include_refused=True)
     robots = dict(existing)
     for name in names:
         robots[name] = entry_for(name, build=not args.no_build)
         print(f"{name:22s} {'sim' if robots[name]['has_sim'] else 'refused: ' + str(robots[name].get('refusal'))}")
     # A name that left the URDF-only set (a new MJCF sibling, a curated entry) leaves the file.
-    keep = set(list_urdf_only())
+    keep = set(list_urdf_only(include_refused=True))
     robots = {n: robots[n] for n in sorted(robots) if n in keep}
     doc = {"_comment": COMMENT, "robot_descriptions_version": _version(), "robots": robots}
     OUT.write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
