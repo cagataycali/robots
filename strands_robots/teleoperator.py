@@ -30,6 +30,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
+from strands_robots._serial_discovery import describe_missing_port
 from strands_robots.utils import did_you_mean, ensure_lerobot_family_registered, refuse_dropped_connection_kwargs
 
 if TYPE_CHECKING:
@@ -214,8 +215,13 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
     try:
         return ConfigClass(**config_data)
     except (TypeError, ValueError) as e:
+        # A serial leader with no port: name this host's candidates, as Robot(..., mode="real") does.
+        hint = ""
+        if "port" in valid_fields and "port" not in config_data:
+            hint = f" Pass Teleoperator({teleop_type!r}, port=...). {describe_missing_port()}"
         raise ValueError(
-            f"Failed to construct {ConfigClass.__name__} for teleop_type {teleop_type!r}: {e}. Config: {config_data}"
+            f"Failed to construct {ConfigClass.__name__} for teleop_type {teleop_type!r}: {e}. "
+            f"Config: {config_data}{hint}"
         ) from e
 
 

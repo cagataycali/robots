@@ -198,3 +198,16 @@ def describe_serial_candidates(devices: list[SerialCandidate]) -> str:
             f"{', '.join(device.port for device in devices)}."
         )
     return "No serial devices are present on this host."
+
+
+def describe_missing_port() -> str:
+    """Scan this host and describe it for a refusal whose caller supplied no ``port``.
+
+    Returns:
+        :func:`describe_serial_candidates` of a fresh :func:`scan_serial_devices`,
+        followed by why the usb id is worth noting beside the path.
+    """
+    return (
+        f"{describe_serial_candidates(scan_serial_devices())} A port path is a position on the bus, "
+        "not an identity: it can change when the device is replugged, while the usb id does not."
+    )

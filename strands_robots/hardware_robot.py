@@ -57,7 +57,7 @@ from strands.types.tools import ToolContext, ToolResult, ToolSpec, ToolUse
 from strands_robots import hardware_observe
 from strands_robots._command_gate import gate_motion
 from strands_robots._motion_grants import consume_grant
-from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
+from strands_robots._serial_discovery import describe_missing_port
 from strands_robots.bus_access import bus_lock, read_observation, write_action
 from strands_robots.policies.base import instruction_not_read_notice, provider_policy_class
 from strands_robots.registry.policies import policy_requires_error
@@ -1556,11 +1556,7 @@ class Robot(TeleopMixin, AgentTool):
             # this host's serial devices for a missing ``remote_ip`` would point
             # a network robot's caller at the wrong bus entirely.
             if any(name == "port" or name.endswith("_port") for name in missing_required):
-                hint += (
-                    f" {describe_serial_candidates(scan_serial_devices())}"
-                    " A port path is a position on the bus, not an identity: it can change when the device is"
-                    " replugged, while the usb id does not."
-                )
+                hint += f" {describe_missing_port()}"
             raise ValueError(
                 f"Failed to construct {ConfigClass.__name__} for robot type {robot_type!r}: "
                 f"{hint} Config: {config_data}"

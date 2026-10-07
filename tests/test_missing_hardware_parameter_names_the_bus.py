@@ -310,8 +310,7 @@ class TestTheRuleHasOneOwner:
     def test_the_hardware_refusal_consults_the_owner(self) -> None:
         source = (_PACKAGE_DIR / "hardware_robot.py").read_text(encoding="utf-8")
 
-        assert "scan_serial_devices" in source
-        assert "describe_serial_candidates" in source
+        assert "describe_missing_port" in source
 
     def test_the_owner_is_reachable_without_pyserial(self, monkeypatch) -> None:
         """pyserial is not a declared dependency, so its absence reports no devices."""

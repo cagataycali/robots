@@ -50,7 +50,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from strands_robots._mesh_switch import mesh_env_request
-from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
+from strands_robots._serial_discovery import describe_missing_port, scan_serial_devices
 from strands_robots.drivers import (
     constructor_keywords,
     driver_choice_error,
@@ -534,8 +534,7 @@ def _build_native_driver(
                 f"Failed to construct {driver_cls.__name__} for {canonical!r}: missing required "
                 f"parameter(s) ['port'], which the caller supplies -- e.g. "
                 f"Robot({tool_name or canonical!r}, mode='real', driver='strands', port=...). "
-                f"{describe_serial_candidates(scan_serial_devices())} A port path is a position on the "
-                "bus, not an identity: it can change when the device is replugged, while the usb id does not."
+                f"{describe_missing_port()}"
             )
 
     # The twin transport steps an engine that is built here, one layer above the
