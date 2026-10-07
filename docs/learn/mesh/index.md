@@ -6,7 +6,16 @@ description: Two robots see each other on the mesh; three switches decide whethe
 
 At the end of this page two robots in one process see each other on the mesh, one asks the other for status and hands it a task, and you know the three switches: mesh on or off, how it is secured, which wire it rides.
 
-No hardware needed. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
+No hardware needed. The mesh ships in the `[mesh]` extra; the bare
+`pip install strands-robots` from [Install](../../start/install.md) does
+not carry `eclipse-zenoh`, so `Robot(mesh=True)` would log a warning and
+leave `mesh.alive` False.
+
+```bash
+pip install 'strands-robots[mesh]'              # eclipse-zenoh, json5, cryptography
+```
+
+`STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
 
 ```python
 import os, time
