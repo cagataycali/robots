@@ -185,12 +185,21 @@ def test_destroy_resets_recording_state() -> None:
     assert engine._is_recording() is False
 
 
-def test_get_observation_forces_images_while_recording() -> None:
-    """skip_images=True still yields camera frames during a recording session.
+@pytest.mark.parametrize(
+    ("scope", "forced"),
+    [
+        pytest.param({}, True, id="every-camera"),
+        pytest.param({"recording_cameras": [("front", "front", 64, 48)]}, True, id="scoped-to-front"),
+        pytest.param({"recording_cameras": []}, False, id="no-cameras"),
+    ],
+)
+def test_get_observation_forces_images_while_recording(scope: dict, forced: bool) -> None:
+    """skip_images=True still yields camera frames while a recording keeps cameras.
 
-    Parity with MuJoCo/Newton: a non-image policy (requires_images=False, e.g.
-    MockPolicy) makes PolicyRunner pass skip_images=True, but the recorded
-    frames must carry the camera images the schema declared.
+    A non-image policy (requires_images=False, e.g. MockPolicy) makes
+    PolicyRunner pass skip_images=True, but the recorded frames must carry the
+    camera images the schema declared. A recording scoped to no cameras
+    declares none, so the skip hint stands and no frame is rendered for it.
     """
     engine = _make_engine(
         robots={"so100": _robot()},
@@ -199,10 +208,11 @@ def test_get_observation_forces_images_while_recording() -> None:
     obs = engine.get_observation("so100", skip_images=True)
     assert "front" not in obs  # not recording: skip honoured
 
-    engine._recording_state_dict["recording"] = True
+    engine._recording_state_dict.update(recording=True, **scope)
     obs = engine.get_observation("so100", skip_images=True)
-    assert "front" in obs, "recording must force camera frames into the observation"
-    assert obs["front"].shape == (48, 64, 3)
+    assert ("front" in obs) is forced
+    if forced:
+        assert obs["front"].shape == (48, 64, 3)
 
 
 def test_get_observation_refreshes_render_products_once_per_physics_step() -> None:

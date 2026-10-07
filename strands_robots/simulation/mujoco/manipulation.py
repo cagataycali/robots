@@ -34,8 +34,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registry_entry
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
+from strands_robots.simulation.mujoco.backend import _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
     actuator_driven_joint_ids,

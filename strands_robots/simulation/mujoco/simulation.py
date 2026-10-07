@@ -85,6 +85,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     SimEngine,
     close_match_hint,
     own_keyword_names,
@@ -124,7 +125,6 @@ from strands_robots.simulation.models import (
     registry_entry,
 )
 from strands_robots.simulation.mujoco.backend import (
-    _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,
@@ -1258,21 +1258,8 @@ class MuJoCoSimEngine(
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._world is not None and self._world._backend_state.get("recording"):
-            # T26: dataset recording needs every frame's image obs. Override
-            # the policy's skip hint when an active recorder is attached -- but
-            # only when the recorder actually keeps images. A recording scoped
-            # to no cameras (``start_recording(cameras=[])``) writes a dataset
-            # with no image features at all, and the frame hook drops every
-            # image array through ``_drop_unrecorded_cameras`` before add_frame.
-            # Overriding the hint there renders every scene camera once per
-            # control step only to discard the pixels, which on a robot like
-            # ``aloha`` (7 scene cameras) is the dominant cost of an
-            # action-only rollout. ``None`` means "record every camera" (the
-            # legacy default), so it still forces the render.
-            rec_cams = self._world._backend_state.get("recording_cameras")
-            if rec_cams is None or len(rec_cams) > 0:
-                skip_images = False
+        if skip_images and self._recording_keeps_images():
+            skip_images = False
         with self._lock:
             obs = self._get_sim_observation(robot_name, skip_images=skip_images)
         # Additive sensor noise (set_obs_noise). Exact no-op / same dict when

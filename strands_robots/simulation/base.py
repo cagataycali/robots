@@ -86,6 +86,15 @@ logger = logging.getLogger(__name__)
 # "No world" error.
 _SETUP_KWARGS: tuple[str, ...] = ("robot_name", "robot")
 
+# The one "no live world" error every backend returns, so an agent that learns
+# it from one action or engine recognises it from all of them. It names the
+# documented entry point first: a user who called ``cleanup()`` and re-ran a
+# cell has never seen ``create_world``.
+_NO_WORLD_MSG = (
+    "No world: none was built yet, or cleanup() tore it down. "
+    'Construct a fresh Robot(name, mode="sim"), or call create_world / load_scene.'
+)
+
 
 def scene_contents_sentence(objects: Iterable[str], cameras: Iterable[str]) -> str:
     """The tool-description sentence naming the objects and cameras a session holds.

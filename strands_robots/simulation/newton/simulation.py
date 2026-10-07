@@ -40,6 +40,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
     outside_joint_range,
@@ -471,7 +472,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             recorder whose buffer is in an undefined state.
         """
         if self._world is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         flush_note = ""
         if (flush := self._flush_open_episode_before_reset()) is not None:
             if flush.get("status") != "success":
@@ -501,7 +502,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             the steps completed, since some were.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if error := non_negative_whole_number_error(n_steps, "n_steps", "step"):
             return {"status": "error", "content": [{"text": error}]}
         n_steps = int(n_steps)
@@ -543,7 +544,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
     def get_state(self) -> dict[str, Any]:
         """Return a human-readable world-state summary."""
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         w = self._world
         lines = [
             "Newton Simulation State",
@@ -651,7 +652,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             Status dict including the resolved joint names.
         """
         if self._world is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Refuse a name that cannot address the robot this call creates, on the
         # shared ``entity_name_error`` domain. Unlike the MuJoCo backend this
         # method documents no "derive a label" short form - ``name`` is required
@@ -888,7 +889,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             Status dict.
         """
         if self._world is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         # Refuse a name that cannot address the object this call creates, on the
         # same shared domain the MuJoCo backend's ``add_object`` uses, so a name
@@ -1088,7 +1089,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             world exists or the object is unknown.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
@@ -1143,7 +1144,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             scene record has no body in the finalized model.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._world.objects:
             return {"status": "success", "content": [{"text": "No objects."}, {"json": {"objects": {}}}]}
         lines = ["Objects:\n"]
@@ -1212,8 +1213,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             logger.warning(
-                "get_observation(robot_name=%r): returning no observation. No world. Call create_world first.",
+                "get_observation(robot_name=%r): returning no observation. %s",
                 robot_name,
+                _NO_WORLD_MSG,
             )
             return {}
         try:
@@ -1228,12 +1230,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._world._backend_state.get("recording"):
-            # T26: dataset recording needs every frame's image obs. Override
-            # the policy's skip hint when an active recorder is attached so a
-            # non-image policy (e.g. the default mock, requires_images=False)
-            # does not silently record pixel-less frames for declared camera
-            # features. Mirrors the MuJoCo backend's get_observation guard.
+        if skip_images and self._recording_keeps_images():
             skip_images = False
         with self._lock:
             joint_q = self._state_0.joint_q.numpy()
@@ -1344,7 +1341,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             written when it is.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Refused before ``_write_targets``, because a refusal after the write
         # would leave the robot commanded and the world un-advanced. Pre-fix
         # this count reached ``_advance``'s ``max(1, n_steps)`` floor, so a
@@ -1435,7 +1432,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             writes nothing and names the problem.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if text := boolean_flag_error(hold, "hold", "set_joint_positions"):
             return {"status": "error", "content": [{"text": text}]}
         if positions is None:
@@ -1546,7 +1543,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             world exists or the argument is not a finite 3-vector / scalar.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Normalize through the shared domain rather than a local copy of it,
         # so what this backend refuses and accepts cannot drift from
         # ``create_world`` above or from the other backends. The local copy
@@ -1584,7 +1581,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             domain.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Shared with create_world, and with the MuJoCo setter this method
         # mirrors, so no surface can install a dt another one refuses. The
         # hand-rolled float()/isfinite() pair this replaces had no bool arm, so
@@ -1676,7 +1673,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             name is taken, or the mount body is unknown. Never raises.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         # The whole name rule, in the one order ``camera_name_error`` owns and
         # the MuJoCo backend's ``add_camera`` reads too: a value that cannot be
@@ -1804,7 +1801,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             unknown.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Same rule as ``add_camera``, at the other end of the name's life: a
         # routing token cannot be un-addressed, and ``list_cameras`` names it
         # unconditionally. It precedes the existence test because that test
@@ -1854,7 +1851,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             the shared ``PolicyRunner`` video pipeline consumes it unchanged.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         is_default = camera_name in FREE_CAMERA_TOKENS
         label = "default" if is_default else camera_name
@@ -2096,7 +2093,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             ValueError: the camera's mount body is no longer in the model.
         """
         if self._world is None or self._model is None:
-            raise RuntimeError("No world. Call create_world first.")
+            raise RuntimeError(_NO_WORLD_MSG)
         eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height, "get_frame")
         rgb = self._render_rgb(w, h, eye=eye, target=target, fov_deg=fov_deg)
         return np.asarray(rgb, dtype=np.uint8), None
@@ -2131,7 +2128,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         from strands_robots.rendering import CameraParams as _CameraParams
 
         if self._world is None or self._model is None:
-            raise RuntimeError("No world. Call create_world first.")
+            raise RuntimeError(_NO_WORLD_MSG)
         eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height, "get_camera_params")
 
         fy = 0.5 * h / math.tan(math.radians(fov_deg) / 2.0)
@@ -2275,7 +2272,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             URL.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         kind = viewer.lower().strip()
         if kind not in self._VIEWER_KINDS:
             return {
@@ -2472,7 +2469,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             ``json`` block ``{"state": {joint: {"position", "velocity"}}}``.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         try:
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as exc:
@@ -2552,7 +2549,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             world position, joint count, and config.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._world.robots:
             return {"status": "success", "content": [{"text": "No robots. Use add_robot."}]}
         lines = ["Robots in simulation:\n"]
@@ -2596,7 +2593,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             ``{"bodies": [...]}`` (plus ``"gripper_body"`` when scoped).
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         if robot_name is not None:
             if not registered(self._world.robots, robot_name):
@@ -2645,7 +2642,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             ``{"features": {...}}``.
         """
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         m = self._model
         if robot_name is not None:
