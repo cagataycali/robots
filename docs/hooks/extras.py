@@ -38,6 +38,7 @@ _PURPOSE: dict[str, str] = {
     "smolvla": "SmolVLA policies through lerobot",
     "molmoact2": "MolmoAct 2 policies through lerobot",
     "flux3": "FLUX 3 Action policies (no pins, install flux-action yourself)",
+    "plastic-wam": "plastic-wam self-learning policy (no pins, install plastic-wam yourself)",
     "holosoma": "Holosoma G1 locomotion (ONNX checkpoints from the Hub)",
     "rl": "reinforcement learning on the MuJoCo backend",
     "mesh": "Zenoh fleet mesh",
