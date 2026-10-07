@@ -1013,6 +1013,13 @@ constraint-dependencies = [
     # chunk-size line; GHSA-gh4c-6fx4-qh6g (MEDIUM): chunked Deflate streaming
     # infinite loop. All < 2.8.0 (under botocore / requests).
     "urllib3>=2.8.0",
+    # GHSA-27vj-qcqg-25rc (HIGH): server-side template injection in
+    # ReferenceFileSystem lets a crafted reference spec run code, < 2026.6.0
+    # (under datasets / huggingface-hub / torch).
+    "fsspec>=2026.6.0",
+    # GHSA-54p9-h82j-f925 (MEDIUM): reference leak in the C extension on
+    # update paths, < 6.9.1 (under aiohttp / yarl).
+    "multidict>=6.9.1",
 ]
 override-dependencies = [
         # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA
