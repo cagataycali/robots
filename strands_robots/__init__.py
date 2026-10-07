@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         is_discoverable,
         list_discoverable,
         list_robots,
+        list_robots_by_category,
         list_urdf_only,
     )
     from strands_robots.robot import Robot
@@ -112,6 +113,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "HardwareRtpsBridge": ("strands_robots.hardware_rtps_bridge", "HardwareRtpsBridge"),
     "Teleoperator": ("strands_robots.teleoperator", "Teleoperator"),
     "list_robots": ("strands_robots.registry", "list_robots"),
+    "list_robots_by_category": ("strands_robots.registry", "list_robots_by_category"),
     "get_robot": ("strands_robots.registry", "get_robot"),
     "list_discoverable": ("strands_robots.registry", "list_discoverable"),
     "is_discoverable": ("strands_robots.registry", "is_discoverable"),
@@ -187,6 +189,7 @@ __all__ = [
     "SimObject",
     "SimCamera",
     "list_robots",
+    "list_robots_by_category",
     "get_robot",
     "list_discoverable",
     "is_discoverable",
