@@ -92,6 +92,7 @@ from strands_robots.simulation.base import (
     reject_setup_kwargs,
     scene_contents_sentence,
     send_action_summary,
+    twist_keys_hint,
     unknown_model_msg,
     unknown_parameter_error,
 )
@@ -1403,7 +1404,7 @@ class MuJoCoSimEngine(
         )
         text = (
             f"Keys {unresolved} could not be resolved to actuators or joints on '{robot_name}'. {outcome} "
-            f"Use individual joint/actuator names as dict keys.{hint}"
+            f"Use individual joint/actuator names as dict keys.{hint}{twist_keys_hint(robot_name, unresolved)}"
         )
         return {
             "status": "error",

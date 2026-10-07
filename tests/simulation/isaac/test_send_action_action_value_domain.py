@@ -245,6 +245,14 @@ class TestUsableValuesStayUsable:
         assert _call(sim, {"gripper": 0.04})["status"] == "success"
         assert list(np.asarray(art.last_action.joint_indices)) == [JOINTS.index("gripper")]
 
+    def test_a_twist_refusal_names_the_locomotion_path(self, fake_isaacsim_types) -> None:  # noqa: F811
+        """A twist is not a joint; the refusal says where a twist goes."""
+        sim = _running_sim(_FakeArticulation())
+
+        result = _call(sim, {"vx": 0.1, "vyaw": 0.0})
+        assert result["status"] == "error"
+        assert "'target_velocity'" in result["content"][0]["text"]
+
     def test_an_unresolved_key_refuses_the_batch_whole(self, fake_isaacsim_types) -> None:  # noqa: F811
         """Name resolution is a separate question from the value domain; a miss applies nothing."""
         art = _FakeArticulation()

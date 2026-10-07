@@ -941,6 +941,31 @@ def send_action_summary(robot_name: str, commanded: int, n_substeps: int) -> str
     return text
 
 
+#: The keys of a base velocity twist, as the intent-level drivers spell them
+#: (:mod:`strands_robots.drivers.microduck`, :mod:`strands_robots.drivers.booster`).
+TWIST_ACTION_KEYS: tuple[str, ...] = ("vx", "vy", "vyaw")
+
+
+def twist_keys_hint(robot_name: str, unresolved: Sequence[str]) -> str:
+    """The sentence a ``send_action`` refusal adds when every refused key is a twist.
+
+    A simulated robot is commanded by joint, so ``{"vx": 0.1}`` names nothing a
+    world can write. It is still the documented ``send_action`` of a real
+    intent-level driver, so the bare joint list read as "this robot cannot be
+    told to walk". Name where the twist does go: a real driver, or a locomotion
+    policy's ``target_velocity`` in sim. Returns ``""`` when any refused key is
+    not a twist key (a joint typo gets no walking advice).
+    """
+    if not unresolved or not set(unresolved) <= set(TWIST_ACTION_KEYS):
+        return ""
+    return (
+        f" {sorted(unresolved)} are a base velocity twist, which an intent-level driver takes on real hardware "
+        "(mode='real'), not joints this world can write. In sim a locomotion policy turns the twist into joint targets: "
+        f"run_policy(robot_name='{robot_name}', policy_provider=..., "
+        "policy_kwargs={'target_velocity': [vx, vy, vyaw]}) (see docs/learn/policies/)."
+    )
+
+
 def _rollout_error_report(failed: Mapping[str, str], exclude: Sequence[str] = ()) -> str:
     """The asynchronous rollouts that died, as a block, for a reader of the population.
 

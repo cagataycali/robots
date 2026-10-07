@@ -45,6 +45,7 @@ from strands_robots.simulation.base import (
     SimEngine,
     outside_joint_range,
     send_action_summary,
+    twist_keys_hint,
     unknown_kwargs_error,
     unknown_model_msg,
 )
@@ -6597,6 +6598,7 @@ class IsaacSimulation(
                             "text": (
                                 f"Keys {unresolved} could not be resolved to joints on '{robot_name}'. Nothing "
                                 f"was applied and the world did not advance. Valid keys: {robot.joint_names}"
+                                f"{twist_keys_hint(robot_name, unresolved)}"
                             )
                         },
                         {"json": {"unresolved_keys": unresolved, "applied": []}},
