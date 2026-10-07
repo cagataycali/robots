@@ -28,14 +28,6 @@ from strands_robots._mujoco_gl import (
 
 logger = logging.getLogger(__name__)
 
-# Canonical "no live world" error message shared by every world-touching
-# MuJoCo facade/mixin method. Defined in this low-level module so the
-# Simulation facade and its mixins (physics, randomization, rendering,
-# recording) can all source the single string without a circular import -
-# an agent that learns the error from one action recognises it identically
-# from every other.
-_NO_WORLD_MSG = "No world. Call create_world (or load_scene) first."
-
 _mujoco = None
 _mujoco_viewer = None
 
@@ -232,9 +224,8 @@ def qpos_ceiling_error(method: str, values: "Iterable[tuple[str, float]]") -> st
     free joint's quaternion components are not renormalized on write either.
 
     Shared by every MuJoCo surface that writes a caller-supplied value into
-    ``qpos``, defined in this low-level module for the reason
-    :data:`_NO_WORLD_MSG` is (the facade and its mixins can both source it
-    without a circular import), so their accepted domains cannot diverge.
+    ``qpos``, defined in this low-level module so the facade and its mixins can
+    both source it without a circular import, and so their accepted domains cannot diverge.
 
     Only a value that really reaches ``qpos`` is held to the ceiling. A static
     object is welded to the worldbody with no free joint, so it owns no ``qpos``

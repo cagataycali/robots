@@ -42,6 +42,7 @@ import numpy as np
 from strands.tools.tools import AgentTool
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     SimEngine,
     outside_joint_range,
     send_action_summary,
@@ -3534,7 +3535,7 @@ class IsaacSimulation(
             if not self._world_created:
                 return {
                     "status": "error",
-                    "content": [{"text": "No world created. Call create_world() first."}],
+                    "content": [{"text": _NO_WORLD_MSG}],
                 }
 
             # Refuse a name that cannot address the robot this call creates, on the
@@ -5857,7 +5858,7 @@ class IsaacSimulation(
         """
         with self._lock:
             if not self._world_created or self._world is None:
-                return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+                return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
             # Keyed on (epoch, step) rather than step alone. _step_count is NOT
             # monotonic - create_world, reset and destroy all rewind it to 0 - so a
             # cache written at step N before a rewind is indistinguishable from one
@@ -5947,7 +5948,7 @@ class IsaacSimulation(
         """
         with self._lock:
             if not self._world_created or self._world is None:
-                return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+                return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
             if force is None and torque is None:
                 return {
                     "status": "error",
@@ -6098,7 +6099,7 @@ class IsaacSimulation(
         """
         with self._lock:
             if not self._world_created or self._world is None:
-                return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+                return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
             origin_v, o_err = coerce_pose_vector("raycast", "origin", origin, 3)
             if o_err is not None or origin_v is None:
                 return {"status": "error", "content": [{"text": o_err or "raycast: 'origin' is required."}]}
@@ -6921,7 +6922,7 @@ class IsaacSimulation(
         from strands_robots.simulation.policy_runner import CooperativeStop, policy_reads_images
 
         if not getattr(self, "_world_created", False) or self._world is None:
-            return {"status": "error", "content": [{"text": "No world created. Use action='create_world' first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Refused in the preflight, where an envelope is still returnable: the
         # loop's own tick (``_apply_all_and_step``) returns None, so a stale view
         # discovered there can only raise. This is the reachable order -
@@ -7687,7 +7688,7 @@ class IsaacSimulation(
         """
         with self._lock:
             if not self._world_created:
-                raise RuntimeError("No world created. Call create_world first.")
+                raise RuntimeError(_NO_WORLD_MSG)
             if self._config.render_mode == "headless":
                 raise RuntimeError(
                     "get_frame is unavailable in headless render mode (no RTX frames are produced); "
@@ -7773,7 +7774,7 @@ class IsaacSimulation(
 
         with self._lock:
             if not self._world_created:
-                raise RuntimeError("No world created. Call create_world first.")
+                raise RuntimeError(_NO_WORLD_MSG)
             if not registered(self._cameras, camera_name):
                 raise KeyError(f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}")
             cam = self._cameras[camera_name]
@@ -8537,7 +8538,7 @@ class IsaacSimulation(
 
         with self._lock:
             if not self._world_created:
-                return {"status": "error", "content": [{"text": "No world created. Call create_world() first."}]}
+                return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
             rec_state = self._cams_rec_state
             if rec_state:
@@ -10649,7 +10650,7 @@ class IsaacSimulation(
                 "content": [{"text": "get_body_state: body_name must be a non-empty string."}],
             }
         if not self._world_created:
-            return {"status": "error", "content": [{"text": "No world created. Call create_world() first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         if self._on_main_thread() or not self._pump_running:
             return self._get_body_state_impl(body_name)

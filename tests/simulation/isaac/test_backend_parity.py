@@ -25,6 +25,7 @@ import types
 import numpy as np
 import pytest
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
 
 
@@ -217,4 +218,4 @@ class TestAddRobotUnsupportedParams:
         result = sim.add_robot(name="so100", orientation=[1.0, 0.0, 0.0, 0.0])
         assert result["status"] == "error"
         assert "orientation" not in result["content"][0]["text"]
-        assert "No world created" in result["content"][0]["text"]
+        assert result["content"][0]["text"] == _NO_WORLD_MSG
