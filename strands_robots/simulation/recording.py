@@ -44,6 +44,7 @@ from strands_robots.utils import (
     is_boolean,
     name_list_error,
     positive_whole_number_error,
+    published_string_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -1827,6 +1828,19 @@ class DatasetRecordingMixin:
         for flag, value in (("push_to_hub", push_to_hub), ("private", private)):
             if error := dataset_recording_posture_error("stop_recording", flag, value):
                 return error
+        # ``bucket`` and ``run_id`` are threaded unchecked into
+        # :func:`~strands_robots.dataset_transfer.sync_dataset_to_bucket`, which
+        # applies them to ``re.match`` against an allowlist pattern - a non-str
+        # value raised ``TypeError`` out of the agent-tool envelope, breaking
+        # the sibling ``push_to_hub`` guard's promise above and the one every
+        # other validator in this method keeps. Refused here, so the same
+        # caller mistake reports the same shape as the posture flags beside
+        # them.
+        for param, value in (("bucket", bucket), ("run_id", run_id)):
+            if value is None:
+                continue
+            if text := published_string_error(value, param, "stop_recording"):
+                return {"status": "error", "content": [{"text": text}]}
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
