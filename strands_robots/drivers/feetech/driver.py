@@ -98,11 +98,12 @@ logger = logging.getLogger(__name__)
 # driver built for one of them gets :data:`SO_ARM_MOTORS` by default, which
 # names joints it does not have; pass ``motor_ids=`` (or a ``motors=`` map on
 # the bus) until a verified map for those two lands. Said here rather than
-# discovered on the wire.
+# discovered on the wire. ``lekiwi`` is not listed: its three-omniwheel base is
+# not on this six-motor map, so it resolves to lerobot's ``lekiwi``, which
+# drives the arm and the base; its arm alone is ``so100`` here.
 SUPPORTED_ROBOTS: tuple[str, ...] = (
     "so100",
     "so101",
-    "lekiwi",
     "hope_jr",
     "open_duck_mini",
 )
