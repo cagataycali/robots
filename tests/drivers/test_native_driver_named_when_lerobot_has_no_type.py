@@ -7,17 +7,13 @@ second and not the first - that gap is what a native driver exists to close, and
 Mini has no lerobot robot type, so before this driver ``mode="real"`` raised
 ``ValueError: Unsupported robot type: 'reachy_mini'``".
 
-The Reachy Mini also declares ``hardware.driver="strands"`` on its registry
-entry, so :func:`~strands_robots.drivers.resolve_driver` sends it to its driver
-and it never meets that refusal. The Franka and UR arms declare nothing; when
-an undeclared robot still fell back to lerobot they reached the generic listing
-of lerobot's sixteen robot types, and that listing never mentioned that this
-package ships the driver that builds them: an answer to the wrong question, and
-a dead end for a caller who had no reason to guess at ``driver="strands"``.
-
-Since 2026-10-01 an undeclared robot with a native driver resolves to that
-driver, so the bare call builds these arms and the refusal is met only by a
-caller who asks for lerobot by name (``driver="lerobot"``). The refusal still
+Every such robot declares ``hardware.driver="strands"`` on its registry entry,
+so :func:`~strands_robots.drivers.resolve_driver` sends the bare call to its
+driver. A caller who asks for lerobot by name (``driver="lerobot"``) still
+reaches lerobot, and the generic listing of lerobot's robot types never
+mentioned that this package ships the driver that builds them: an answer to the
+wrong question, and a dead end for a caller who had no reason to guess at
+``driver="strands"``. The refusal still
 has to name the native driver for that caller, so every cell below pins the
 explicit spelling and :class:`TestThePremise` records the new default.
 
@@ -52,7 +48,7 @@ import strands_robots.drivers.registry as drivers_registry_mod
 from strands_robots import Robot
 from strands_robots.drivers import get_native_driver_class, resolve_driver
 from strands_robots.drivers.registry import _native_driver_refusal
-from strands_robots.registry import get_driver, get_robot, list_robots
+from strands_robots.registry import get_robot, list_robots
 
 #: The robots that reach lerobot (when asked for it by name) with a native driver
 #: already registered for them. Literal rather than derived: a rule narrowed by mistake would
@@ -62,6 +58,14 @@ from strands_robots.registry import get_driver, get_robot, list_robots
 #: which is how the Franka arms, the UR arms, the xArm 7, the Gen3, the iiwa, the H1, the H1-2 and the B2 arrived here, each having moved
 #: out of :data:`NO_DRIVER_OF_EITHER_KIND` when its own driver landed.
 NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE = (
+    "booster_t1",
+    "crazyflie",
+    "microduck",
+    "reachy_mini",
+    "robotiq_2f85",
+    "robotiq_2f85_v4",
+    "unitree_go2",
+    "yahboom_m3pro",
     "open_duck_mini",
     "panda",
     "rby1",
@@ -214,19 +218,12 @@ class TestTheDerivedPopulationIsExactlyThese:
 
     @staticmethod
     def _routed_to_lerobot_with_a_native_driver() -> set[str]:
-        """Undeclared robots lerobot cannot build that have a native driver.
-
-        Before the native default these were exactly the robots whose bare call
-        resolved to lerobot; the declaration read keeps the population the same
-        now that an undeclared robot resolves to its driver (a robot that
-        declares ``"strands"``, the Reachy Mini, never belonged here).
-        """
+        """Robots lerobot cannot build whose bare call resolves to a native driver."""
         known = _lerobot_robot_types()
         return {
             entry["name"]
             for entry in list_robots("all")
-            if get_driver(entry["name"]) is None
-            and resolve_driver(entry["name"], None) == "strands"
+            if resolve_driver(entry["name"], None) == "strands"
             and _type_handed_to_lerobot(entry["name"]) not in known
             and get_native_driver_class(entry["name"]) is not None
         }
@@ -389,7 +386,9 @@ class TestNothingElseChanged:
 
     @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
     def test_an_explicit_strands_choice_still_builds_the_driver(self, name: str) -> None:
-        robot: Any = Robot(name, mode="real", driver="strands", port="/dev/ttyUSB0")
+        # The Yahboom speaks rosbridge and refuses a device path; the rest accept one.
+        port = "localhost:9090" if name == "yahboom_m3pro" else "/dev/ttyUSB0"
+        robot: Any = Robot(name, mode="real", driver="strands", port=port)
         assert type(robot) is get_native_driver_class(name)
 
     @pytest.mark.parametrize("name", ["koch"])

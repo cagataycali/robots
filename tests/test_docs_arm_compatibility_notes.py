@@ -147,16 +147,18 @@ class TestTheTableIsShapedTheWayTheRulesAssume:
         The LeRobot claim is derived from ``hardware.lerobot_type`` rather than
         from the presence of a ``hardware`` block, and today every arm that has
         the block names a type, so the two readings pick the same set and the
-        distinction is invisible. It is not invisible in general:
-        ``reachy_mini`` declares ``{"driver": "strands"}`` with no type at all.
-        When the first arm does that, this fails and says the two derivations
-        have come apart, rather than the LeRobot column quietly gaining a robot
-        LeRobot cannot build.
+        distinction is invisible. An arm a native driver builds declares
+        ``{"driver": "strands"}`` with no type at all (``panda``, ``ur5e``), and
+        that is the native route. Any other typeless block fails here and says
+        the two derivations have come apart, rather than the LeRobot column
+        quietly gaining a robot LeRobot cannot build.
         """
         typeless = {
             name
             for name in _arm_names()
-            if (_registry()[name].get("hardware") or {}) and not _arms_with_a_lerobot_type() & {name}
+            if (hardware := _registry()[name].get("hardware") or {})
+            and hardware.get("driver") != "strands"
+            and not _arms_with_a_lerobot_type() & {name}
         }
         assert not typeless, (
             f"these arms declare a hardware block with no lerobot_type: {sorted(typeless)}. "

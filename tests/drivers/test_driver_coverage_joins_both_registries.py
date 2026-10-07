@@ -71,6 +71,21 @@ def test_the_lerobot_entry_agrees_with_the_declared_robot_type() -> None:
         assert (DEFAULT_DRIVER in drivers) is (get_hardware_type(name) is not None), name
 
 
+def test_list_robots_real_names_every_robot_a_driver_can_build() -> None:
+    """``list_robots(mode="real")`` and the join name the same robots.
+
+    The registry cannot import a driver, so a robot a shipped native driver builds
+    declares ``hardware.driver`` (curated in ``robots.json``, stamped into
+    ``urdf_robots.json`` by ``scripts/build_urdf_registry.py``). A driver that
+    adds a robot to its ``SUPPORTED_ROBOTS`` without the declaration fails here
+    by name instead of vanishing from the listing.
+    """
+    drivable = {name for name, drivers in list_driver_coverage().items() if drivers}
+    real = {entry["name"] for entry in list_robots("real")}
+    assert drivable - real == set()
+    assert real - drivable == set()
+
+
 def test_a_driver_registered_later_leaves_the_gap_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
     """Derived, not a snapshot: this is what a hand-written list cannot do.
 

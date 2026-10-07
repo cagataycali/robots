@@ -347,13 +347,10 @@ class TestThePolymorphismThisGrades:
     def test_an_explicit_driver_keyword_moves_the_surface(self) -> None:
         """The same robot and mode, graded differently because of ``driver=``.
 
-        ``ur5e`` declares no ``hardware.driver``; since the native default
-        (2026-10-01) the bare call and ``driver="strands"`` both build its
-        native driver, and ``driver="lerobot"`` is the keyword that moves the
-        surface to the lerobot wrapper. Before the flip the bare call was the
-        wrapper and ``"strands"`` the keyword that moved it.
+        ``ur5e`` declares its native driver, so the bare call and
+        ``driver="strands"`` both build it, and ``driver="lerobot"`` is the
+        keyword that moves the surface to the lerobot wrapper.
         """
-        assert not _declares_a_native_driver("ur5e"), "premise: ur5e declares no driver in the registry"
         assert "HardwareRobot" not in _hardware_surfaces("ur5e", "real")
         assert "HardwareRobot" not in _hardware_surfaces("ur5e", "real", "strands")
         assert "HardwareRobot" in _hardware_surfaces("ur5e", "real", "lerobot")

@@ -92,14 +92,15 @@ def test_list_robots_reports_urdf_robots_with_their_source_and_sim_flag() -> Non
         assert name in listed, name
         assert listed[name]["source"] == "urdf"
         assert listed[name]["has_sim"] is entry["has_sim"]
-        assert listed[name]["has_real"] is False
+        assert listed[name]["has_real"] is ("driver" in entry), name
         assert listed[name]["category"] == entry["category"]
         if entry["has_sim"]:
             assert listed[name]["joints"] == entry["joints"]
     curated = [r for r in listed.values() if r["source"] == "curated"]
     assert curated, "the curated registry still lists"
     assert all(r["source"] == "urdf" for r in list_robots(mode="sim") if r["name"] in table)
-    assert not [r for r in list_robots(mode="real") if r["name"] in table]
+    real = {r["name"] for r in list_robots(mode="real") if r["name"] in table}
+    assert real == {name for name, entry in table.items() if "driver" in entry}
 
 
 def test_get_robot_synthesizes_an_asset_block_the_downloader_recognizes() -> None:
