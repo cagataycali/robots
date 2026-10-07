@@ -69,7 +69,8 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
 
 #: Spellings that are not providers, each with the one sentence that refuses
 #: it and names where it runs: ``groot``, removed in 1.0, and the LeRobot policy
-#: types the README lists by name. Such a name is refused, never rerouted:
+#: types the README lists by name, and the Microduck skill shorthands, whose
+#: name never chose the weight. Such a name is refused, never rerouted:
 #: without this table ``create_policy("act")`` would fall through
 #: :func:`resolve_policy`'s last stage and reach ``lerobot_local`` as a
 #: checkpoint id, and the caller's next report would name a HuggingFace repo it
@@ -87,6 +88,13 @@ REMOVED_PROVIDERS: dict[str, str] = {
             "and pretrained_name_or_path='<checkpoint>'."
         )
         for policy_type in ("act", "diffusion", "molmoact2", "pi0", "pi05", "pi0_fast", "smolvla", "tdmpc", "vqbet")
+    },
+    **{
+        shorthand: (
+            f"policy_provider {shorthand!r} was removed: the weight file picks the Microduck skill, "
+            f"not the provider name; use policy_provider='microduck' with onnx_path={weight!r}."
+        )
+        for shorthand, weight in (("microduck_walk", "alpha_walking.onnx"), ("microduck_stand", "alpha_stand.onnx"))
     },
 }
 

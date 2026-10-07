@@ -444,8 +444,6 @@ _REGISTRY_POLICY_PROVIDERS: frozenset[str] = frozenset(
         "protomotions_g1",
         # MicroduckPolicy / MicroduckPolicyBundle
         "microduck",
-        "microduck_walk",
-        "microduck_stand",
         # RemotePolicy
         "remote",
         # RLCheckpointPolicy
