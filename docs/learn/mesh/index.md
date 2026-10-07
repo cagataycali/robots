@@ -4,9 +4,15 @@ description: Two robots see each other on the mesh; three switches decide whethe
 
 # Mesh
 
-At the end of this page two robots in one process see each other on the mesh, one asks the other for status and hands it a task, and you know the three switches: mesh on or off, how it is secured, which wire it rides.
+At the end of this page two robots in one process see each other on the mesh, one asks the other for status and hands it a task, and you know its three switches.
 
-No hardware needed. `STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
+No hardware needed; without the `[mesh]` extra `mesh.alive` stays `False`.
+
+```bash
+pip install 'strands-robots[sim-mujoco,mesh]'
+```
+
+`STRANDS_MESH_LOCAL_DEV=true` is the single-machine preset (no TLS, no ACL, loud warnings); set it before the first `Robot(mesh=True)`.
 
 ```python
 import os, time
@@ -32,7 +38,7 @@ A simulation appears twice: the session peer (`arm-b`) and one child peer per ro
 
 {{drawing:d06_mesh_topology}}
 
-Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers RPC commands, and relays teleoperation frames. The wire is Zenoh on the LAN (`[mesh]` extra, `eclipse-zenoh`), optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
+Every `Robot` and every simulation can own a `Mesh`: a peer that broadcasts presence, publishes state and sensors, answers RPC commands, and relays teleoperation frames. The wire is Zenoh on the LAN, optionally bridged to AWS IoT Core for the cloud ([bridges](bridges.md)). Every message is JSON on a key like `strands/<peer>/state` ([topics](topics.md)).
 
 The mesh is enrichment. A Zenoh session that fails to open leaves the robot working without it; the mesh never crashes the host.
 
