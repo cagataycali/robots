@@ -79,6 +79,7 @@ extra:
 
 hooks:
   - docs/hooks/facts.py
+  - docs/hooks/meta_escape.py
   - docs/hooks/visuals.py
   - docs/hooks/extras.py
   - docs/hooks/manifest.py

@@ -1,4 +1,4 @@
-/* strands-robots docs, in the strandsagents.com design: black or white surfaces, the Strands green, the pixel STRANDS wordmark, JetBrains Mono headings over Space Grotesk text, GitHub code colours. */
+/* strands-robots docs, in the strandsagents.com design: black or white surfaces, the Strands green, the pixel STRANDS wordmark, JetBrains Mono headings over Space Grotesk text, highlighted code (hero terminal + GitHub token colours). */
 
 :root {
   --sr-radius: 8px;
@@ -30,10 +30,11 @@
   --md-code-bg-color: var(--sr-chip-bg);
   --md-code-fg-color: var(--md-default-fg-color--light);
   --md-code-hl-color: var(--sr-accent-soft);
-  --md-code-hl-keyword-color: var(--md-default-fg-color); --md-code-hl-operator-color: var(--md-default-fg-color--light); --md-code-hl-string-color: var(--sr-accent);
-  --md-code-hl-function-color: var(--md-default-fg-color); --md-code-hl-number-color: var(--md-default-fg-color--light); --md-code-hl-constant-color: var(--md-default-fg-color--light);
-  --md-code-hl-special-color: var(--md-default-fg-color); --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
-  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: var(--md-default-fg-color); --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
+  /* Token colours (the README hero's terminal: keywords magenta, strings the green, comments muted; the rest GitHub Light). */
+  --md-code-hl-keyword-color: #b3009e; --md-code-hl-operator-color: #cf222e; --md-code-hl-string-color: var(--sr-accent);
+  --md-code-hl-function-color: #8250df; --md-code-hl-number-color: #0550ae; --md-code-hl-constant-color: #0550ae;
+  --md-code-hl-special-color: #0550ae; --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
+  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: #953800; --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
   --md-typeset-color: var(--sr-charcoal-2);
   --md-typeset-kbd-color: #f4f4f4;
   --md-admonition-bg-color: #ffffff;
@@ -75,10 +76,11 @@
   --md-code-bg-color: var(--sr-chip-bg);
   --md-code-fg-color: var(--md-default-fg-color--light);
   --md-code-hl-color: var(--sr-accent-soft);
-  --md-code-hl-keyword-color: var(--md-default-fg-color); --md-code-hl-operator-color: var(--md-default-fg-color--light); --md-code-hl-string-color: var(--sr-accent);
-  --md-code-hl-function-color: var(--md-default-fg-color); --md-code-hl-number-color: var(--md-default-fg-color--light); --md-code-hl-constant-color: var(--md-default-fg-color--light);
-  --md-code-hl-special-color: var(--md-default-fg-color); --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
-  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: var(--md-default-fg-color); --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
+  /* Token colours (the README hero's terminal: keywords magenta, strings the green, comments muted; the rest GitHub Dark). */
+  --md-code-hl-keyword-color: #ff70eb; --md-code-hl-operator-color: #ff7b72; --md-code-hl-string-color: var(--sr-accent);
+  --md-code-hl-function-color: #d2a8ff; --md-code-hl-number-color: #79c0ff; --md-code-hl-constant-color: #79c0ff;
+  --md-code-hl-special-color: #79c0ff; --md-code-hl-generic-color: var(--md-default-fg-color--light); --md-code-hl-comment-color: var(--sr-muted);
+  --md-code-hl-name-color: var(--md-default-fg-color); --md-code-hl-variable-color: #ffa657; --md-code-hl-punctuation-color: var(--md-default-fg-color--light);
   --md-typeset-color: #b6b6b6;
   --md-typeset-kbd-color: var(--sr-charcoal-1);
   --md-admonition-bg-color: var(--sr-black);
@@ -262,6 +264,7 @@
 .sr-filter { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 1rem; }
 .sr-filter button, .sr-filter-btn { font: inherit; font-family: var(--sr-mono); font-size: 0.68rem; padding: 0.35rem 0.75rem; border-radius: 999px; border: 1px solid var(--sr-pill-border); background: var(--sr-pill-bg); color: var(--sr-fg); cursor: pointer; }
 .sr-filter button[aria-pressed="true"], .sr-filter-btn[aria-pressed="true"] { border-color: var(--sr-accent); background: var(--sr-accent); color: var(--sr-on-accent); }
+.sr-filter--lane { margin-top: -0.4rem; } .sr-filter-count { align-self: center; margin-left: auto; font-family: var(--sr-mono); font-size: 0.62rem; color: var(--sr-muted); }
 
 /* Landing: a halftone banner behind the mono headline (green on black, ink on white), equal pill buttons, a copyable install pill. */
 .sr-home > h1:first-of-type { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
