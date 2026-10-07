@@ -8,8 +8,8 @@ top-level ``Robot()`` factory give - not a dead-end "Either urdf_path or
 data_config is required" that never names the robot nor points at discovery.
 
 The bare "supply a model source" message is preserved for the genuine no-name
-case (``add_robot()`` with nothing to resolve), and the deprecated positional
-name-as-registry-key short form still resolves a VALID name.
+case (``add_robot()`` with nothing to resolve), and the positional
+``add_robot("so100")`` short form still resolves a VALID name.
 
 A model source that is SUPPLIED but empty is a fourth condition, and it is not
 the "given without a model source" one above: read by truthiness the two were
@@ -67,9 +67,9 @@ class TestUnknownModelMessage:
         msg = _msg(world.add_robot())
         assert msg == "Either urdf_path or data_config is required.", msg
 
-    def test_deprecated_positional_valid_name_still_resolves(self, world):
-        """The deprecated name-as-registry-key short form still resolves a VALID
-        name past the unknown-model gate (regression guard on the fallback)."""
+    def test_positional_valid_name_still_resolves(self, world):
+        """The ``add_robot("so100")`` short form still resolves a VALID name
+        past the unknown-model gate."""
         result = world.add_robot("so100")
         txt = result["content"][0]["text"] if result.get("content") else ""
         assert "No model found" not in txt, txt

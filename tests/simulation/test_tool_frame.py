@@ -205,9 +205,8 @@ class TestOnTheMuJoCoBackend:
         finally:
             sim.cleanup()
 
-    def test_the_deprecated_name_as_registry_key_add_gets_the_site_too(self) -> None:
-        # add_robot("so100") resolves the model through the deprecated
-        # name-as-registry-key fallback; the tool point describes that model, so
+    def test_the_name_as_registry_key_add_gets_the_site_too(self) -> None:
+        # add_robot("so100") resolves the model from the name itself; the tool point describes that model, so
         # it applies whichever argument named the entry.
         from strands_robots.simulation.ik import discover_ee_frame
 
