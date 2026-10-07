@@ -107,6 +107,13 @@ class TestSendActionRefusesAScalarTargetOnTheFreeBase:
         # "success" and wrote _targets[("g1", "floating_base_joint")] = 0.5.
         assert engine._targets == {}
 
+    def test_a_twist_refusal_names_the_locomotion_path(self):
+        engine = _engine(free_base=True)
+        result = engine.send_action({"vx": 0.1, "vyaw": 0.0}, robot_name="g1", n_substeps=1)
+
+        assert result["status"] == "error" and engine._targets == {}
+        assert "'target_velocity'" in result["content"][0]["text"]
+
     def test_the_refusal_names_the_key_and_the_commandable_set(self):
         engine = _engine(free_base=True)
         result = engine.send_action({_BASE_JOINT: 0.5}, robot_name="g1", n_substeps=1)
