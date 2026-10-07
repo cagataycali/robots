@@ -17,6 +17,8 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 ## Two driver families
 
+{{drawing:d05_driver_stack}}
+
 | `driver=` | builds | for |
 |---|---|---|
 | `"strands"` (`NATIVE_DRIVER`, what `auto` picks when one is registered) | the native driver class registered for the robot | the robots in the table below |
@@ -25,7 +27,7 @@ print(list_driver_coverage()["ability_hand"])    # ()
 
 Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; other robots in the table below need none: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver` with no lerobot extra, with the arm's lerobot calibration. `omx`, `openarm` and `reachy2` have no native driver and fall back to lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for teleop reads. `driver="strands"` on a robot with no native driver is refused by name.
 
-`port=` is a Feetech serial path, a controller IP, a `radio://` URI for a Crazyflie, `host:port` for a daemon. A keyword the driver does not declare is refused.
+`port=` is a Feetech serial path, a controller IP, a `radio://` URI for a Crazyflie, `host:port` for a daemon. An undeclared keyword is refused.
 
 ## Shipped native drivers
 
