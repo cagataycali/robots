@@ -87,9 +87,12 @@ UNUSABLE_FLAGS = [
     float("nan"),
 ]
 
-#: The truthy non-booleans: each one selected the branch that deletes a dataset
-#: (``overwrite``) or publishes it (``push_to_hub``).
-TRUTHY_NON_BOOLEANS = ["false", "no", "off", "0", "true", 1, float("nan")]
+#: The value the end-to-end cells drive. Which values are refused is the shared
+#: guard's table (:class:`TestThePostureDomain`, no world needed); a surface only
+#: has to *return* that refusal before it acts, which one value proves. It is the
+#: opt-out spelling, and truthy - the branch that deleted or published - so a
+#: surface that dropped the guard would act on it rather than pass by luck.
+OPT_OUT = "false"
 
 
 @pytest.fixture
@@ -158,14 +161,15 @@ class TestThePostureDomain:
 class TestOverwriteNoLongerDeletesTheDatasetItWasOptingOutOf:
     """The measured defect: a truthy non-boolean wiped recorded episodes."""
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_the_recorded_episode_survives_a_refused_overwrite(self, sim, tmp_path, value):
+    def test_the_recorded_episode_survives_a_refused_overwrite(self, sim, tmp_path):
         pytest.importorskip("lerobot")
         root = tmp_path / "dataset"
         assert _record_one_episode(sim, root)["status"] == "success"
         assert _episode_count(root) == 1
 
-        refused = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), overwrite=value, cameras=[])
+        refused = sim.start_recording(
+            repo_id="local/posture_flag", fps=30, root=str(root), overwrite=OPT_OUT, cameras=[]
+        )
 
         assert refused["status"] == "error", refused
         assert "overwrite" in _text(refused)
@@ -188,11 +192,10 @@ class TestOverwriteNoLongerDeletesTheDatasetItWasOptingOutOf:
 class TestPushToHubNoLongerPublishesWhenOptedOut:
     """A publication posture is not read by truthiness."""
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_start_recording_refuses_before_the_session_opens(self, sim, tmp_path, value):
+    def test_start_recording_refuses_before_the_session_opens(self, sim, tmp_path):
         root = tmp_path / "dataset"
         refused = sim.start_recording(
-            repo_id="local/posture_flag", fps=30, root=str(root), push_to_hub=value, cameras=[]
+            repo_id="local/posture_flag", fps=30, root=str(root), push_to_hub=OPT_OUT, cameras=[]
         )
 
         assert refused["status"] == "error", refused
@@ -201,8 +204,7 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
         assert "idle" in _text(sim.get_recording_status()).lower()
         assert not root.exists() or not any(root.iterdir())
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_stop_recording_refuses_without_uploading(self, sim, tmp_path, monkeypatch, value):
+    def test_stop_recording_refuses_without_uploading(self, sim, tmp_path, monkeypatch):
         pytest.importorskip("lerobot")
         import strands_robots.dataset_recorder as dataset_recorder
 
@@ -222,7 +224,7 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
             == "success"
         )
 
-        refused = sim.stop_recording(push_to_hub=value)
+        refused = sim.stop_recording(push_to_hub=OPT_OUT)
 
         assert refused["status"] == "error", refused
         assert "push_to_hub" in _text(refused)
@@ -255,10 +257,9 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
         assert stopped["status"] == "success", stopped
         assert len(uploads) == 1
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_the_idle_path_reports_the_flag_too(self, sim, value):
+    def test_the_idle_path_reports_the_flag_too(self, sim):
         """No session open: the flag is judged before the idle branch reads it."""
-        refused = sim.stop_recording(push_to_hub=value)
+        refused = sim.stop_recording(push_to_hub=OPT_OUT)
 
         assert refused["status"] == "error", refused
         assert "push_to_hub" in _text(refused)

@@ -431,154 +431,146 @@ class TestTheSeedIsAppliedOnTheEvalPath:
         assert singles[0], "the policy must have been queried"
 
 
+#: The one rule, as each rollout surface answers it. Which values a seed can
+#: take is a property of the shared rule, so the whole table is pinned on the
+#: rule itself (no world needed); a surface only has to *reach* it, which one
+#: value per way a seed fails proves: a type no RNG takes, and an integer past
+#: the legacy global RNG's bound - the bound is passed per caller
+#: (``max_seed=``), so a surface could keep the type check and drop the bound.
+SEED_FAILURES = {
+    "type": (2.7, "seed must be a non-negative integer or None"),
+    "bound": (MAX_EVAL_SEED + 1, f"seed must be an integer in [0, {MAX_EVAL_SEED}]"),
+}
+
+
+def _run_policy(sim: Any, policy: _Jitter, seed: Any) -> dict[str, Any]:
+    return sim.run_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
+
+
+def _eval_policy(sim: Any, policy: _Jitter, seed: Any) -> dict[str, Any]:
+    return sim.eval_policy(
+        robot_name="arm", policy_object=policy, n_episodes=1, max_steps=3, control_frequency=30.0, seed=seed
+    )
+
+
+def _start_policy(sim: Any, policy: _Jitter, seed: Any) -> dict[str, Any]:
+    # The false "started" is why this check is synchronous, before ``executor.submit``.
+    return sim.start_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
+
+
+def _evaluate_benchmark(sim: Any, policy: _Jitter, seed: Any) -> dict[str, Any]:
+    return sim.evaluate_benchmark(benchmark_name="whatever", robot_name="arm", policy_object=policy, seed=seed)
+
+
+def _runner_run(sim: Any, policy: _Jitter, seed: Any) -> None:
+    PolicyRunner(sim).run("arm", policy, n_steps=3, control_frequency=30.0, seed=seed)
+
+
+def _runner_evaluate(sim: Any, policy: _Jitter, seed: Any) -> None:
+    PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=3, control_frequency=30.0, seed=seed)
+
+
+#: ``(method named in the refusal, how to drive it)``. The facades answer with an
+#: envelope; ``PolicyRunner`` is drivable directly and raises, since a direct
+#: caller has no envelope.
+ENVELOPE_SURFACES = {
+    "run_policy": _run_policy,
+    "eval_policy": _eval_policy,
+    "start_policy": _start_policy,
+    "evaluate_benchmark": _evaluate_benchmark,
+}
+RAISING_SURFACES = {"PolicyRunner.run": _runner_run, "PolicyRunner.evaluate": _runner_evaluate}
+
+
 class TestEverySurfaceRefusesAnUnusableSeed:
-    """The domain half, on each facade, through the structured envelope."""
+    """The domain half, on each surface: refused, named, and nothing run."""
 
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_run_policy_refuses(self, arm_xml: Path, seed: Any) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.run_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert "seed must be a non-negative integer or None" in _text(result)
-        assert "run_policy" in _text(result)
-        assert policy.drawn == [], "a refused seed must not run the rollout"
-
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_eval_policy_refuses(self, arm_xml: Path, seed: Any) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.eval_policy(
-            robot_name="arm",
-            policy_object=policy,
-            n_episodes=2,
-            max_steps=3,
-            control_frequency=30.0,
-            seed=seed,
-        )
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert "seed must be a non-negative integer or None" in _text(result)
-        assert "eval_policy" in _text(result)
-        assert policy.drawn == []
-
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_start_policy_refuses_before_submitting_to_the_executor(self, arm_xml: Path, seed: Any) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.start_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert "seed must be a non-negative integer or None" in _text(result)
-        # The false "started" is the whole point of a synchronous check.
-        assert "started" not in _text(result).lower()
-
-    @pytest.mark.parametrize("seed", USABLE_SEEDS, ids=repr)
-    def test_a_usable_seed_is_accepted_everywhere(self, arm_xml: Path, seed: Any) -> None:
-        """Over-reach control: the guard must not refuse a seed that works."""
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.run_policy(robot_name="arm", policy_object=policy, n_steps=3, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "success", _text(result)
-
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.eval_policy(
-            robot_name="arm",
-            policy_object=policy,
-            n_episodes=1,
-            max_steps=3,
-            control_frequency=30.0,
-            seed=seed,
-        )
-        sim.cleanup()
-        assert result["status"] == "success", _text(result)
-
-
-class TestNothingRaisesPastTheEnvelope:
-    """The refusal replaces NumPy's own message, which named neither the
-    parameter nor the method."""
-
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_no_bare_numpy_error_escapes(self, arm_xml: Path, seed: Any) -> None:
+    @pytest.mark.parametrize("failure", SEED_FAILURES)
+    @pytest.mark.parametrize("method", ENVELOPE_SURFACES)
+    def test_the_facade_answers_with_the_shared_refusal(self, arm_xml: Path, method: str, failure: str) -> None:
+        seed, reason = SEED_FAILURES[failure]
         sim, policy = _sim_and_policy(arm_xml)
         try:
-            result = sim.run_policy(
-                robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed
-            )
+            result = ENVELOPE_SURFACES[method](sim, policy, seed)
         finally:
             sim.cleanup()
         text = _text(result)
-        assert "Cannot cast scalar" not in text
-        assert "2**32" not in text
-        assert "supported seed types" not in text
+        assert result["status"] == "error", text
+        assert reason in text
+        assert method in text
+        assert "started" not in text.lower()
+        # NumPy's own wording named neither the parameter nor the method.
+        for numpy_wording in ("Cannot cast scalar", "Seed must be between", "2**32", "supported seed types"):
+            assert numpy_wording not in text
+        assert policy.drawn == [], "a refused seed must not run the rollout"
 
-
-class TestThePolicyRunnerLayerEnforcesItToo:
-    """``PolicyRunner`` is drivable directly; a direct caller has no envelope."""
-
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_run_raises_a_named_value_error(self, arm_xml: Path, seed: Any) -> None:
+    @pytest.mark.parametrize("failure", SEED_FAILURES)
+    @pytest.mark.parametrize("method", RAISING_SURFACES)
+    def test_the_runner_layer_raises_a_named_value_error(self, arm_xml: Path, method: str, failure: str) -> None:
+        seed, reason = SEED_FAILURES[failure]
         sim, policy = _sim_and_policy(arm_xml)
         try:
-            with pytest.raises(ValueError, match="seed must be a non-negative integer or None"):
-                PolicyRunner(sim).run("arm", policy, n_steps=3, control_frequency=30.0, seed=seed)
+            with pytest.raises(ValueError) as raised:
+                RAISING_SURFACES[method](sim, policy, seed)
         finally:
             sim.cleanup()
+        assert reason in str(raised.value)
+        assert method in str(raised.value)
+        assert policy.drawn == []
 
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS, ids=repr)
-    def test_evaluate_raises_a_named_value_error(self, arm_xml: Path, seed: Any) -> None:
+    @pytest.mark.parametrize("method", ["run_policy", "eval_policy"])
+    def test_the_accepted_side_of_the_boundary_still_runs(self, arm_xml: Path, method: str) -> None:
+        """Over-reach control: the largest seed the applier honors is usable."""
         sim, policy = _sim_and_policy(arm_xml)
         try:
-            with pytest.raises(ValueError, match="seed must be a non-negative integer or None"):
-                PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=3, control_frequency=30.0, seed=seed)
+            result = ENVELOPE_SURFACES[method](sim, policy, MAX_EVAL_SEED)
         finally:
             sim.cleanup()
+        assert result["status"] == "success", _text(result)
+        assert policy.drawn, "the policy must have been queried"
+
+
+#: ``(seed, verdict of the rollout rule)``: ``"usable"``, ``"unusable"`` (refused by
+#: ``randomize`` too), or ``"above"`` (only the rollout's narrower bound refuses it).
+ROLLOUT_SEED_TABLE: list[tuple[Any, str]] = [
+    *((seed, "unusable") for seed in UNUSABLE_SEEDS),
+    *((seed, "above") for seed in SEEDS_ABOVE_THE_APPLIERS_BOUND),
+    *((seed, "usable") for seed in USABLE_SEEDS),
+]
 
 
 class TestTheDomainIsShared:
     """One rule, so a seed refused for ``randomize`` cannot be accepted for the
     rollout whose reproducibility it is supposed to pin."""
 
-    @pytest.mark.parametrize("seed", UNUSABLE_SEEDS + USABLE_SEEDS + SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_every_seed_randomize_refuses_is_refused_by_a_rollout_too(self, arm_xml: Path, seed: Any) -> None:
+    @pytest.mark.parametrize(("seed", "verdict"), ROLLOUT_SEED_TABLE, ids=repr)
+    def test_the_rollout_rule_is_the_randomize_rule_plus_the_appliers_bound(self, seed: Any, verdict: str) -> None:
         """An implication, not an equivalence - the rollout domain is narrower.
 
-        The two families share the non-negative-integer rule, so nothing
-        ``randomize`` refuses may be accepted for the rollout whose
-        reproducibility it pins. The converse does not hold: the rollout applier
-        adds the legacy NumPy global RNG, so it refuses a high integer
-        ``randomize`` can honor. That direction is pinned below, with its reason,
-        rather than smoothed away.
+        Nothing ``randomize`` refuses may be accepted for a rollout, and the
+        envelope carries the shared reason verbatim. The converse does not
+        hold: the rollout applier adds the legacy NumPy global RNG, so it
+        refuses a high integer ``randomize`` can honor - a width
+        ``default_rng`` honors and the legacy global RNG does not. Refusing
+        those for ``randomize`` too would remove a capability that works, so
+        the bound is carried per destination instead of narrowing the shared
+        rule.
         """
-        randomize_refuses = randomization_seed_error(seed, "randomize") is not None
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.run_policy(robot_name="arm", policy_object=policy, n_steps=3, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        rollout_refuses = result["status"] == "error"
-        if randomize_refuses:
-            assert rollout_refuses, (
-                f"randomize refuses seed={seed!r} but the rollout accepted it - the shared rule is not shared"
-            )
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_the_narrower_rollout_domain_is_the_appliers_and_is_documented(self, seed: int) -> None:
-        """The one divergence: a width ``default_rng`` honors and the legacy
-        global RNG does not.
-
-        Refusing these for ``randomize`` too would remove a capability that
-        works, so the bound is carried per destination instead of narrowing the
-        shared rule.
-        """
-        assert randomization_seed_error(seed, "randomize") is None
-        assert randomization_seed_error(seed, "run_policy", max_seed=MAX_EVAL_SEED) is not None
         envelope = SimEngine._validate_seed(seed, "run_policy")
-        assert envelope is not None
-        assert f"[0, {MAX_EVAL_SEED}]" in _text(envelope)
-
-    def test_the_envelope_binding_carries_the_shared_reason_verbatim(self) -> None:
-        for seed in UNUSABLE_SEEDS:
-            reason = randomization_seed_error(seed, "run_policy")
-            envelope = SimEngine._validate_seed(seed, "run_policy")
+        randomize_reason = randomization_seed_error(seed, "randomize")
+        if verdict == "usable":
+            assert envelope is None
+            assert randomize_reason is None
+        elif verdict == "above":
+            assert randomize_reason is None
             assert envelope is not None
-            assert _text(envelope) == reason
+            assert f"[0, {MAX_EVAL_SEED}]" in _text(envelope)
+            assert randomization_seed_error(seed, "run_policy", max_seed=MAX_EVAL_SEED) == _text(envelope)
+        else:
+            assert randomize_reason is not None
+            assert envelope is not None
+            assert _text(envelope) == randomization_seed_error(seed, "run_policy")
+            assert "seed must be a non-negative integer or None" in _text(envelope)
 
 
 class TestTheCeilingIsTheOneItsApplierCanHonor:
@@ -595,82 +587,11 @@ class TestTheCeilingIsTheOneItsApplierCanHonor:
     """
 
     @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_run_policy_refuses(self, arm_xml: Path, seed: int) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.run_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert f"seed must be an integer in [0, {MAX_EVAL_SEED}]" in _text(result)
-        assert policy.drawn == [], "a refused seed must not run the rollout"
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_eval_policy_refuses_instead_of_raising_numpys_message(self, arm_xml: Path, seed: int) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        try:
-            result = sim.eval_policy(
-                robot_name="arm",
-                policy_object=policy,
-                n_episodes=1,
-                max_steps=3,
-                control_frequency=30.0,
-                seed=seed,
-            )
-        finally:
-            sim.cleanup()
-        assert result["status"] == "error"
-        text = _text(result)
-        assert f"seed must be an integer in [0, {MAX_EVAL_SEED}]" in text
-        assert "eval_policy" in text
-        # NumPy's own wording named neither the parameter nor the method.
-        assert "Seed must be between" not in text
-        assert policy.drawn == []
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_start_policy_refuses_without_reporting_started(self, arm_xml: Path, seed: int) -> None:
-        """The false "started" is why this check is synchronous."""
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.start_policy(robot_name="arm", policy_object=policy, n_steps=4, control_frequency=30.0, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert f"seed must be an integer in [0, {MAX_EVAL_SEED}]" in _text(result)
-        assert "started" not in _text(result).lower()
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_evaluate_benchmark_refuses(self, arm_xml: Path, seed: int) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.evaluate_benchmark(benchmark_name="whatever", robot_name="arm", policy_object=policy, seed=seed)
-        sim.cleanup()
-        assert result["status"] == "error"
-        assert f"seed must be an integer in [0, {MAX_EVAL_SEED}]" in _text(result)
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
-    def test_the_runner_layer_raises_a_named_error(self, arm_xml: Path, seed: int) -> None:
-        sim, policy = _sim_and_policy(arm_xml)
-        try:
-            with pytest.raises(ValueError, match=r"seed must be an integer in \[0, 4294967295\]"):
-                PolicyRunner(sim).run("arm", policy, n_steps=3, control_frequency=30.0, seed=seed)
-            with pytest.raises(ValueError, match=r"seed must be an integer in \[0, 4294967295\]"):
-                PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=3, control_frequency=30.0, seed=seed)
-        finally:
-            sim.cleanup()
-
-    @pytest.mark.parametrize("seed", SEEDS_ABOVE_THE_APPLIERS_BOUND, ids=repr)
     def test_the_applier_itself_names_the_bound(self, seed: int) -> None:
         """``set_eval_seed`` is public API and documented for direct callers, so
         the rule is enforced where it is owned - not only at the facades."""
         with pytest.raises(ValueError, match=r"set_eval_seed: seed must be an integer in \[0, 4294967295\]"):
             set_eval_seed(seed)
-
-    def test_the_accepted_side_of_the_boundary_still_runs(self, arm_xml: Path) -> None:
-        """Over-reach control: the largest seed the applier honors is usable."""
-        set_eval_seed(MAX_EVAL_SEED)
-        sim, policy = _sim_and_policy(arm_xml)
-        result = sim.run_policy(
-            robot_name="arm", policy_object=policy, n_steps=3, control_frequency=30.0, seed=MAX_EVAL_SEED
-        )
-        sim.cleanup()
-        assert result["status"] == "success", _text(result)
-        assert policy.drawn, "the policy must have been queried"
 
     def test_the_bound_is_the_appliers_own_and_not_a_chosen_number(self) -> None:
         """Premise: ``MAX_EVAL_SEED`` is exactly where NumPy's legacy global RNG
