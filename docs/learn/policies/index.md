@@ -75,7 +75,7 @@ actions = policy.get_actions_sync({"shoulder_pan": 0.0, "elbow_flex": 0.0}, "wav
 print(len(actions), actions[0])
 ```
 
-Smart strings: a Hub id resolves to `lerobot_local`, `ws://` to [`remote`](remote.md). A misspelled keyword is a `TypeError` before any download; `lerobot_local` needs `STRANDS_TRUST_REMOTE_CODE=1`.
+Smart strings: a Hub id resolves to `lerobot_local`, `ws://` to [`remote`](remote.md). A misspelled keyword raises `TypeError` before download; `lerobot_local` and `kimodo` need `STRANDS_TRUST_REMOTE_CODE=1`.
 
 ## Run one, then swap it
 

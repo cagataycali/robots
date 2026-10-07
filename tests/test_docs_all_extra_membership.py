@@ -170,6 +170,15 @@ class TestThePagesAgreeWithPyproject:
             f"A reader would believe they have an extra they still need to add."
         )
 
+    def test_every_extra_has_a_purpose_and_every_purpose_an_extra(self) -> None:
+        """The hook's hand-written purpose column covers pyproject exactly; a gap renders blank."""
+        purpose = docs_hook("extras")._PURPOSE
+        extras = _extras()
+        assert {"missing": sorted(set(extras) - set(purpose)), "stale": sorted(set(purpose) - set(extras))} == {
+            "missing": [],
+            "stale": [],
+        }
+
     def test_no_page_calls_the_bundle_a_union_or_everything(self) -> None:
         _, left_out, _ = _membership()
         assert left_out, "nothing is left opt-in, so 'union' would be accurate and this rule is vacuous"

@@ -94,7 +94,7 @@ in sim runs on the metal by changing `mode`.
 |---|---|
 | **150+ robots across 8 categories** - arms, bimanual, hands and grippers, humanoids, mobile bases, mobile manipulators, aerial, expressive - from one registry with asset auto-download | [Robots](https://strands-labs.github.io/robots/robots/) |
 | **Any policy** behind one ABC: LeRobot (ACT / Pi0 / SmolVLA / Diffusion / GR00T N1.7), Cosmos 3, MolmoAct2, whole-body control, cuRobo, MoveIt2, scripted | [Policies](https://strands-labs.github.io/robots/learn/policies/) |
-| **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; stream to HF datasets or Storage Buckets | [Teleoperation](https://strands-labs.github.io/robots/learn/hardware/teleoperation/), [Recording](https://strands-labs.github.io/robots/learn/data/record/) |
+| **Teleoperate and record** LeRobotDataset episodes from leader arms, gamepads or WASD; push to a Hub dataset repo or sync to an HF Storage Bucket | [Teleoperation](https://strands-labs.github.io/robots/learn/hardware/teleoperation/), [Recording](https://strands-labs.github.io/robots/learn/data/record/) |
 | **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](https://strands-labs.github.io/robots/learn/training/lerobot/) |
 | **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](https://strands-labs.github.io/robots/learn/simulation/) |
 | **Mesh** every `Robot(mesh=True)` as a Zenoh peer (on one machine set `STRANDS_MESH_LOCAL_DEV=true`; across hosts, mTLS and an ACL): `robot.mesh.tell(peer, instruction, policy_provider=...)` asks another robot to run a policy; broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](https://strands-labs.github.io/robots/learn/mesh/fleet/) |
@@ -128,7 +128,7 @@ Conventions and review learnings are in [AGENTS.md](AGENTS.md);
 ## Security
 
 Found a vulnerability? **Do not** open a public issue - follow
-[SECURITY.md](SECURITY.md). The `trust_remote_code` gate on `lerobot_local`, the
+[SECURITY.md](SECURITY.md). The `trust_remote_code` gate on `lerobot_local` and `kimodo`, the
 mesh CA-pinning controls and the ordered
 [CA Pin Rotation Runbook](https://strands-labs.github.io/robots/reference/configuration/#ca-pin-rotation-runbook)
 are documented in the [Configuration](https://strands-labs.github.io/robots/reference/configuration/) matrix.
