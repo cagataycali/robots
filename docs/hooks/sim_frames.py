@@ -15,11 +15,18 @@ Which fences produce a frame is declared in ``docs/hooks/data/sim_frames.json``:
                     "frames": ["talk-to-it-1", "talk-to-it-2"]}}
 
 ``fence`` is the 1-based index among the page's runnable fences, as
-``check_fences.py`` numbers them. A ``script`` entry runs a capture script (an agent
-transcript, say) that writes the listed frames itself. Frames are committed: the build needs no GPU,
-no display and no MuJoCo; ``--check`` reports a manifest entry with no frame or
-a frame with no entry, which is what ``tests/test_docs_visual_tokens_resolve.py``
-grades against the pages.
+``check_fences.py`` numbers them; ``"sketches": true`` counts the page's ``sketch``
+fences too (a GPU backend's fence, rendered on a box that has the backend). A
+``script`` entry runs a capture script (an agent transcript, say) that writes the
+listed frames itself. An entry with ``"video": {"fps": 30, "every": 1}`` also records
+a clip: every ``every``-th physics step of the fence (``mj_step`` is wrapped) is
+rendered from one fixed camera and encoded to ``<id>.webm`` (VP9, no audio); the
+default ``every`` is one frame per ``1 / fps`` seconds of simulated time, so the clip
+plays in real time, and a smaller value is slow motion. The ``.png`` is then the
+clip's last frame, so the poster and the clip share a camera. Frames are committed:
+the build needs no GPU, no display and no MuJoCo; ``--check`` reports a manifest entry
+with no frame (or a video entry with no clip) and a file with no entry, which is what
+``tests/test_docs_visual_tokens_resolve.py`` grades against the pages.
 
     python3 docs/hooks/sim_frames.py                # every entry
     python3 docs/hooks/sim_frames.py first-robot-1  # one
@@ -47,6 +54,7 @@ DOCS = REPO / "docs"
 MANIFEST = DOCS / "hooks" / "data" / "sim_frames.json"
 OUT = DOCS / "assets" / "sim"
 FENCE = re.compile(r"^```python[ \t]*\n(.*?)^```[ \t]*$", re.M | re.S)
+ANY_FENCE = re.compile(r'^```python(?:[ \t]+title="sketch(?::[^"]*)?")?[ \t]*\n(.*?)^```[ \t]*$', re.M | re.S)
 TIMEOUT_S = 180
 WIDTH, HEIGHT = 960, 540
 
@@ -74,8 +82,86 @@ def _frame_camera(engine):
     target = centre + np.array([0.0, 0.0, radius * 0.15])
     return [float(x) for x in position], [float(x) for x in target]
 
+_VIDEO = os.environ.get("STRANDS_DOCS_VIDEO")
+_rec = {"steps": 0, "every": 0, "cam": None, "renderer": None, "model": None, "writer": None, "last": None, "frames": 0}
+
+def _free_camera(mujoco, model, data):
+    """The fixed camera of the clip: the same framing as the still, as an MjvCamera."""
+    import math
+    import numpy as np
+    pts = np.asarray(data.xpos[1:]) if model.nbody > 1 else np.zeros((1, 3))
+    lo, hi = pts.min(axis=0), pts.max(axis=0)
+    centre = (lo + hi) / 2
+    radius = max(float(np.linalg.norm(hi - lo)) / 2, 0.15)
+    direction = np.array([1.7, -1.4, 0.95])
+    position = centre + direction / np.linalg.norm(direction) * radius * 3.2
+    target = centre + np.array([0.0, 0.0, radius * 0.15])
+    forward = target - position
+    distance = float(np.linalg.norm(forward))
+    forward /= distance
+    cam = mujoco.MjvCamera()
+    cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    cam.lookat[:] = target
+    cam.distance = distance
+    cam.azimuth = math.degrees(math.atan2(forward[1], forward[0]))
+    cam.elevation = math.degrees(math.asin(forward[2]))
+    return cam
+
+def _capture(mujoco, model, data):
+    """Render one clip frame of ``data`` and stream it to the encoder."""
+    import imageio.v2 as imageio
+    if _rec["model"] is not model:
+        if _rec["renderer"] is not None:
+            _rec["renderer"].close()
+        _rec["renderer"] = mujoco.Renderer(model, height=_H, width=_W)
+        _rec["model"] = model
+    if _rec["cam"] is None:
+        _rec["cam"] = _free_camera(mujoco, model, data)
+    if _rec["writer"] is None:
+        fps = int(os.environ["STRANDS_DOCS_VIDEO_FPS"])
+        _rec["writer"] = imageio.get_writer(
+            _VIDEO, format="FFMPEG", mode="I", fps=fps, codec="libvpx-vp9", pixelformat="yuv420p",
+            output_params=["-b:v", "0", "-crf", "34", "-row-mt", "1", "-an"], macro_block_size=1,
+        )
+    _rec["renderer"].update_scene(data, camera=_rec["cam"])
+    frame = _rec["renderer"].render()
+    _rec["writer"].append_data(frame)
+    _rec["last"] = frame
+    _rec["frames"] += 1
+
+def _record():
+    """Wrap ``mujoco.mj_step`` so every ``every``-th physics step becomes a clip frame."""
+    import mujoco
+    orig = mujoco.mj_step
+    def mj_step(model, data, nstep=1):
+        orig(model, data, nstep)
+        if not _rec["every"]:
+            configured = int(os.environ.get("STRANDS_DOCS_VIDEO_EVERY", "0"))
+            fps = int(os.environ["STRANDS_DOCS_VIDEO_FPS"])
+            _rec["every"] = configured or max(1, round(1.0 / (fps * float(model.opt.timestep))))
+        _rec["steps"] += nstep
+        if _rec["steps"] % _rec["every"] < nstep:
+            try:
+                _capture(mujoco, model, data)
+            except Exception as exc:  # the fence's own output matters more than the clip
+                print(f"[sim_frames] clip frame dropped: {exc!r}", file=sys.stderr)
+    mujoco.mj_step = mj_step
+
+def _finish_clip():
+    """Close the encoder; the poster is the clip's last frame. False when nothing was recorded."""
+    if _rec["writer"] is None:
+        return False
+    import imageio.v2 as imageio
+    _rec["writer"].close()
+    imageio.imwrite(_OUT, _rec["last"])
+    print(f"[sim_frames] clip: {_rec['frames']} frames, one per {_rec['every']} physics steps", file=sys.stderr)
+    return True
+
 def _shoot(engine):
     if _done["shot"]:
+        return
+    if _VIDEO and _finish_clip():
+        _done["shot"] = True
         return
     try:
         position, target = _frame_camera(engine)
@@ -100,14 +186,20 @@ def _install():
         return orig_cleanup(self, *a, **k)
     Engine.__init__, Engine.cleanup = __init__, cleanup
     atexit.register(lambda: [_shoot(e) for e in _live])
+    if _VIDEO:
+        _record()
 
 _install()
 '''
 
 
-def runnable_fences(page: Path) -> list[str]:
-    """The bare ``python`` fences of a page, in order, as check_fences.py numbers them."""
-    return [m.group(1) for m in FENCE.finditer(page.read_text(encoding="utf-8"))]
+def runnable_fences(page: Path, sketches: bool = False) -> list[str]:
+    """The bare ``python`` fences of a page, in order, as check_fences.py numbers them.
+
+    With ``sketches`` the ``title="sketch"`` fences count too, in page order.
+    """
+    pattern = ANY_FENCE if sketches else FENCE
+    return [m.group(1) for m in pattern.finditer(page.read_text(encoding="utf-8"))]
 
 
 def render_script(ident: str, entry: dict, python: str) -> bool:
@@ -153,7 +245,7 @@ def render_one(ident: str, entry: dict, python: str) -> bool:
     if "script" in entry:
         return render_script(ident, entry, python)
     page = DOCS / entry["page"]
-    fences = runnable_fences(page)
+    fences = runnable_fences(page, sketches=bool(entry.get("sketches")))
     index = int(entry["fence"])
     if not 1 <= index <= len(fences):
         print(f"{ident}: {entry['page']} has {len(fences)} runnable fences, no #{index}")
@@ -168,29 +260,51 @@ def render_one(ident: str, entry: dict, python: str) -> bool:
         STRANDS_DOCS_FRAME_W=str(entry.get("width", WIDTH)),
         STRANDS_DOCS_FRAME_H=str(entry.get("height", HEIGHT)),
     )
+    video = entry.get("video")
+    clip = OUT / f"{ident}.webm"
+    if video:
+        clip.unlink(missing_ok=True)
+        env.update(
+            STRANDS_DOCS_VIDEO=str(clip),
+            STRANDS_DOCS_VIDEO_FPS=str(video.get("fps", 30)),
+            STRANDS_DOCS_VIDEO_EVERY=str(video.get("every", 0)),
+        )
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / f"{ident}.py"
         script.write_text(_PRELUDE + "\n" + fences[index - 1], encoding="utf-8")
         proc = subprocess.run(
             [python, str(script)], cwd=tmp, env=env, capture_output=True, text=True, timeout=TIMEOUT_S, check=False
         )
-    if proc.returncode != 0 or not target.is_file():
+    if proc.returncode != 0 or not target.is_file() or (video and not clip.is_file()):
         print(f"{ident}: FAIL (exit {proc.returncode})\n{proc.stderr[-1500:]}")
         return False
     print(f"{ident}: {target.relative_to(REPO)} ({target.stat().st_size // 1024} KB) from {entry['page']} #{index}")
+    if video:
+        print(f"{ident}: {clip.relative_to(REPO)} ({clip.stat().st_size // 1024} KB)")
     return True
 
 
+def expected_clips(manifest: dict) -> set[str]:
+    """Every clip id the manifest promises: the fence entries that carry ``video``."""
+    return {ident for ident, entry in manifest.items() if "video" in entry and "script" not in entry}
+
+
 def check(manifest: dict) -> int:
-    """Exit 1 when a manifest entry has no frame or a frame has no entry."""
+    """Exit 1 when a manifest entry has no frame (or clip) or a file has no entry."""
     frames = {p.stem for p in OUT.glob("*.png")} if OUT.is_dir() else set()
+    clips = {p.stem for p in OUT.glob("*.webm")} if OUT.is_dir() else set()
     promised = expected_frames(manifest)
-    missing = sorted(promised - frames)
-    extra = sorted(frames - promised)
-    for ident in missing:
+    promised_clips = expected_clips(manifest)
+    missing = sorted(promised - frames) + sorted(promised_clips - clips)
+    extra = sorted(frames - promised) + sorted(clips - promised_clips)
+    for ident in sorted(promised - frames):
         print(f"no frame for manifest entry {ident}: run docs/hooks/sim_frames.py {ident}")
-    for ident in extra:
+    for ident in sorted(promised_clips - clips):
+        print(f"no clip for video entry {ident}: run docs/hooks/sim_frames.py {ident}")
+    for ident in sorted(frames - promised):
         print(f"frame with no manifest entry: docs/assets/sim/{ident}.png")
+    for ident in sorted(clips - promised_clips):
+        print(f"clip with no video entry: docs/assets/sim/{ident}.webm")
     return 1 if missing or extra else 0
 
 

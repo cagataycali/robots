@@ -20,5 +20,13 @@
   "same-checkpoint-1": {
     "page": "start/first-policy.md",
     "fence": 1
+  },
+  "mujoco-1": {
+    "page": "learn/simulation/mujoco.md",
+    "fence": 1,
+    "video": {
+      "fps": 30,
+      "every": 1
+    }
   }
 }

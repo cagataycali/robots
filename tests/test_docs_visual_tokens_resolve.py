@@ -148,6 +148,15 @@ def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
     assert sorted(frames - set(promised)) == [], (
         "frames with no manifest entry; add them to docs/hooks/data/sim_frames.json"
     )
+    clips = {p.stem for p in (_DOCS / "assets" / "sim").glob("*.webm")}
+    video_entries = {ident for ident, entry in manifest.items() if "video" in entry and "script" not in entry}
+    assert sorted(video_entries - clips) == [], "video entries with no clip; run docs/hooks/sim_frames.py <id>"
+    assert sorted(clips - video_entries) == [], (
+        "clips with no video entry; a clip is recorded from a fence the manifest names, nothing else"
+    )
+    for ident in sorted(video_entries):
+        size = (_DOCS / "assets" / "sim" / f"{ident}.webm").stat().st_size
+        assert size <= 2_500_000, f"{ident}.webm is {size} bytes; clips stay under 2.5 MB (raise crf or shorten)"
     placed = {ident for kind, ident in _references() if kind == "sim"}
     for frame, page_path in promised.items():
         page = _DOCS / page_path
