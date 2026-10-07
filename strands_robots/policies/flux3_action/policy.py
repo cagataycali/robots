@@ -45,10 +45,12 @@ logger = logging.getLogger(__name__)
 
 #: ``[flux3]`` is an empty extra on purpose: the inference library is git-only
 #: and NATTEN's wheel depends on the torch/CUDA build, so no pip line the
-#: package could declare supplies them; the refusal names the real install.
+#: package could declare supplies them. Both preflights (torch and flux_action)
+#: refuse with this one remedy, so the first refusal names the whole install.
 FLUX3_SYSTEM_INSTALL_HINT = (
-    "flux-action is not published on PyPI and the [flux3] extra is empty, so no pip line supplies it.\n"
-    "Install the inference library and the NATTEN wheel matching your torch/CUDA build, then retry:\n"
+    "flux-action is not published on PyPI and the [flux3] extra is empty, so no single pip line supplies it.\n"
+    "Install torch through [lerobot], then the inference library and the NATTEN wheel matching that torch/CUDA build:\n"
+    "  pip install 'strands-robots[lerobot]'\n"
     "  pip install 'flux-action[encoders] @ git+https://github.com/black-forest-labs/flux-action'\n"
     "  pip install natten==0.21.6 -f https://whl.natten.org\n"
     "docs/learn/policies/flux3-action.md has the prerequisites (a CUDA GPU with ~22 GB free)."
@@ -194,7 +196,11 @@ class Flux3ActionPolicy(Policy):
         self.tick_ms: list[float] = []
         self.inference_ms: list[float] = []
 
-        self._torch: Any = require_optional("torch", extra="lerobot", purpose="FLUX 3 Action inference (CUDA)")
+        self._torch: Any = require_optional(
+            "torch",
+            system_install=FLUX3_SYSTEM_INSTALL_HINT,
+            purpose="FLUX 3 Action inference (CUDA)",
+        )
         require_optional(
             "flux_action",
             system_install=FLUX3_SYSTEM_INSTALL_HINT,
