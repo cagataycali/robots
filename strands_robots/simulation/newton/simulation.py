@@ -65,6 +65,7 @@ from strands_robots.simulation.models import (
     SimRobot,
     SimWorld,
     canonical_shape,
+    color_name,
     registered,
     registry_entry,
 )
@@ -1172,12 +1173,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 else:
                     position = self._live_body_position(body_index)
-                lines.append(f"  - {name}: {obj.shape} at {position}, {mass}{suffix}")
+                lines.append(f"  - {name}: {obj.shape} at {position}, {mass}, {color_name(obj.color)}{suffix}")
                 listing[name] = {
                     "shape": obj.shape,
                     "is_static": is_static,
                     "mass": None if is_static else float(obj.mass),
                     "position": [float(v) for v in position],
+                    "color": color_name(obj.color),
                 }
         return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"objects": listing}}]}
 

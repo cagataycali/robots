@@ -103,10 +103,10 @@ robot.cleanup()
 You should see:
 
 ```text
-'cube' added: box at [0.3, 0.0, 0.025], size=[0.025, 0.025, 0.025], 0.1kg
+'cube' added: box at [0.3, 0.0, 0.025], size=[0.025, 0.025, 0.025], 0.1kg, red
 Objects:
 
-  - cube: box at [0.3, 0.0, 0.025], 0.1kg
+  - cube: box at [0.3, 0.0, 0.025], 0.1kg, red
 Reset to initial state.
 ```
 

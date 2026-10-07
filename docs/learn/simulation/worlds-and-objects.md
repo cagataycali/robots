@@ -4,7 +4,7 @@ description: "Build a scene on any backend: objects and their size conventions, 
 
 # Worlds and objects
 
-By the end of this page you can build a scene from primitives, an articulated carton the predicates read, a wrist camera riding the arm, an MJCF patch and stairs under it all, with the same calls on every backend.
+By the end of this page you can build a scene from primitives, an articulated carton the predicates read, a wrist camera riding the arm, an MJCF patch and stairs, with the same calls on every backend.
 
 ```python
 from strands_robots.simulation import create_simulation
@@ -40,9 +40,9 @@ You should see:
 ['cap_hinge']
 Objects:
 
-  - cube: box at [0.3, 0.0, 0.2], 0.1kg
-  - ball: sphere at [0.25, 0.1, 0.0396], 0.05kg
-  - shelf: box at [0.4, 0.0, 0.3], static
+  - cube: box at [0.3, 0.0, 0.2], 0.1kg, red
+  - ball: sphere at [0.25, 0.1, 0.0396], 0.05kg, grey
+  - shelf: box at [0.4, 0.0, 0.3], static, white
 Ground height at (1.0000, 0.0000) = 0.0240m
 ```
 
@@ -63,7 +63,7 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 | `plane` | visual half-widths; infinite for collision, forced static |
 | `mesh` | ignored; the file's units define the extent, `mesh_path` required |
 
-A short vector is refused, not padded; an unused slot must be 0 or repeat its mirror. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
+A short vector is refused, not padded; an unused slot must be 0 or repeat its mirror. `color` is RGB(A); listings name the nearest colour. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
 
 `move_object(name, position, orientation)` places a dynamic object at rest or rebuilds a static one. `remove_object`, `list_objects` (text, then `json` per object) and `get_body_state` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current pose.
 
