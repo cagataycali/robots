@@ -5439,18 +5439,22 @@ class MuJoCoSimEngine(
         concurrent ``mj_step`` mutates the position arrays.
 
         Returns:
-            A ``{status, content}`` tool result whose text enumerates the
-            objects (or reports that there are none). ``status`` is
-            ``"error"`` when no world exists, or when an object in the scene
-            record has no body in the compiled model.
+            A ``{status, content}`` tool result: a text block enumerating the
+            objects (or reporting that there are none) for the agent, then a
+            ``{"json": {"objects": {name: {shape, is_static, mass, position}}}}``
+            block for programmatic callers, the shape ``list_bodies`` and the
+            other backends use. ``status`` is ``"error"`` when no world exists,
+            or when an object in the scene record has no body in the compiled
+            model.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._world.objects:
-            return {"status": "success", "content": [{"text": "No objects."}]}
+            return {"status": "success", "content": [{"text": "No objects."}, {"json": {"objects": {}}}]}
 
         model, data = self._world._model, self._world._data
         lines = ["Objects:\n"]
+        listing: dict[str, dict[str, Any]] = {}
         with self._lock:
             for name, obj in self._world.objects.items():
                 body_id = mj_name_to_id(model, self._mj.mjtObj.mjOBJ_BODY, name)
@@ -5469,7 +5473,13 @@ class MuJoCoSimEngine(
                     }
                 position = [round(float(v), 4) for v in data.xpos[body_id]]
                 lines.append(f"  - {name}: {obj.shape} at {position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
-        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
+                listing[name] = {
+                    "shape": obj.shape,
+                    "is_static": bool(obj.is_static),
+                    "mass": None if obj.is_static else float(obj.mass),
+                    "position": position,
+                }
+        return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"objects": listing}}]}
 
     def list_cameras_info(self) -> dict[str, Any]:
         """Agent-facing camera listing (tool-result form of :meth:`list_cameras`).
