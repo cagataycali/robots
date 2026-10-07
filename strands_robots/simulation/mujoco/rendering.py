@@ -15,10 +15,9 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
-from strands_robots.simulation.base import close_match_hint
+from strands_robots.simulation.base import _NO_WORLD_MSG, close_match_hint
 from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
-    _NO_WORLD_MSG,
     _can_render,
     _ensure_mujoco,
     capture_stderr_fd,

@@ -37,6 +37,7 @@ import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     SimEngine,
     own_keyword_names,
     reject_misspelled_kwargs,
@@ -1037,7 +1038,7 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
             unchanged. Pixel arrays for recorders come from :meth:`_render_rgb`.
         """
         if self._sim is None and not self._robots and not self._objects:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         is_default = camera_name in FREE_CAMERA_TOKENS
         label = "default" if is_default else camera_name
         if not is_default and registry_entry(self._cameras, camera_name) is None:

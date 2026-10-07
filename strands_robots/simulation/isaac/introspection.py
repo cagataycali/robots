@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered
 
-_NO_WORLD = "No world. Call create_world first."
+_NO_WORLD_MSG = _NO_WORLD_MSG
 
 
 class IsaacIntrospectionMixin:
@@ -37,7 +38,7 @@ class IsaacIntrospectionMixin:
 
     def _single_robot(self, robot_name: str | None) -> tuple[str | None, dict[str, Any] | None]:
         if not self._world_created:
-            return None, {"status": "error", "content": [{"text": _NO_WORLD}]}
+            return None, {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if robot_name is None:
             if len(self._robots) != 1:
                 return None, {
@@ -108,7 +109,7 @@ class IsaacIntrospectionMixin:
         convention).
         """
         if not self._world_created:
-            return {"status": "error", "content": [{"text": _NO_WORLD}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         with self._lock:
             if robot_name is not None:
                 if not registered(self._robots, robot_name):
@@ -159,7 +160,7 @@ class IsaacIntrospectionMixin:
     def list_objects(self) -> dict[str, Any]:
         """Objects with their shape and LIVE pose (read back, not the spawn request)."""
         if not self._world_created:
-            return {"status": "error", "content": [{"text": _NO_WORLD}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         with self._lock:
             objects = dict(self._objects)
         if not objects:

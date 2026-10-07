@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from strands_robots.dataset_transfer import sync_dataset_to_bucket
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.utils import (
     boolean_flag_error,
     camera_schema_key,
@@ -1154,7 +1155,7 @@ class DatasetRecordingMixin:
         overrides this.
         """
         if state is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         return None
 
     def _recording_scene_cameras(self) -> list[str]:
@@ -2530,7 +2531,7 @@ class DatasetRecordingMixin:
             return {
                 "status": "success",
                 "content": [
-                    {"text": "No world. Call create_world to start recording."},
+                    {"text": _NO_WORLD_MSG},
                     {"json": {"world": False, "recording": False, "steps": 0, "last_save": None}},
                 ],
             }

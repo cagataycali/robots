@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered, registry_entry
 
 # The backend-agnostic half (parameter domains, registry gripper metadata,
@@ -78,7 +79,7 @@ from strands_robots.simulation.motion_primitives_base import (
     _err,
     _quat_angle_error,
 )
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
+from strands_robots.simulation.mujoco.backend import mj_name_to_id
 from strands_robots.simulation.mujoco.divergence import divergence_error, instability_counts
 from strands_robots.simulation.mujoco.scene_ops import (
     actuator_target_body_ids,

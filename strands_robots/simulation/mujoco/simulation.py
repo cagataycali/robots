@@ -85,6 +85,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     SimEngine,
     close_match_hint,
     own_keyword_names,
@@ -124,7 +125,6 @@ from strands_robots.simulation.models import (
     registry_entry,
 )
 from strands_robots.simulation.mujoco.backend import (
-    _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,

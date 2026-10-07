@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     randomization_range_error,
     randomization_seed_error,
     unknown_kwargs_error,
@@ -151,7 +152,7 @@ class DomainRandomizationMixin(ObservationNoiseMixin):
         if kwargs_error := unknown_kwargs_error("randomize", kwargs, _RANDOMIZE_PARAMS):
             return kwargs_error
         if self._world is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # Each flag selects a posture, so each is checked on the shared domain
         # rather than read by truthiness - the same rule the MuJoCo backend's
         # keyword parity promises. ``randomize_positions`` is declared only
