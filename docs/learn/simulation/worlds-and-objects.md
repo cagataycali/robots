@@ -52,7 +52,7 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 
 ## Objects
 
-`add_object(name, shape="box", position, orientation, size, color, mass=0.1, is_static=None, mesh_path=None, material=None)`. Shapes: `box`, `sphere`, `cylinder`, `capsule`, `ellipsoid`, `plane`, `mesh`. On MuJoCo `size` is the full extent in metres, halved internally:
+`add_object(name, shape="box", position, orientation, size, color, mass=0.1, is_static=None, mesh_path=None, material=None)`. Shapes: `box`, `sphere`, `cylinder`, `capsule`, `ellipsoid`, `plane`, `mesh`. On every backend `size` is the full extent in metres, halved internally:
 
 | shape | `size` |
 |---|---|
@@ -63,7 +63,7 @@ Ground height at (1.0000, 0.0000) = 0.0240m
 | `plane` | visual half-widths; infinite for collision, forced static |
 | `mesh` | ignored; the file's units define the extent, `mesh_path` required |
 
-A short vector is refused, not padded; an unused slot must be 0 or repeat its mirror. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Newton consumes half-extents and radii directly; Isaac pads trailing components from a documented default.
+A short vector is refused, not padded; an unused slot must be 0 or repeat its mirror. `color` is RGB or RGBA; an RGB triple gets an opaque alpha. `is_static` is tri-state: `None` lets the backend decide (a plane is always static), `True` welds, `False` is a free body; a non-boolean is refused. `material` accepts `builtin` (`checker`, `gradient`, `flat`), `rgb1`, `rgb2`, `texrepeat`, `texdim`, `texture`, `reflectance`, `shininess`, `specular`; anything else is refused with the accepted list. Isaac instead pads trailing components from a documented default.
 
 `move_object(name, position, orientation)` places a dynamic object at rest or rebuilds a static one. `remove_object`, `list_objects` (text, then `json` per object) and `get_body_state` complete the set. `attach_bodies(parent, child, mode="weld")` and `detach_bodies(parent, child)` glue two bodies at their current pose.
 

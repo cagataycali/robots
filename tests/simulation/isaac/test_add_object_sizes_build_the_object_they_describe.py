@@ -60,7 +60,7 @@ class TestAZeroConsumedExtentIsRefused:
             ("capsule", [0.04, 0.5, 0.0], "height=0"),
             ("box", [0.1, 0.0, 0.1], "y=0"),
             ("box", [0.1, 0.1, -0.2], "z=-0.2"),
-            ("sphere", [0.0], "radius=0"),
+            ("sphere", [0.0], "diameter=0"),
         ],
     )
     def test_it_names_the_component_and_builds_nothing(self, shape: str, size: list[float], named: str) -> None:

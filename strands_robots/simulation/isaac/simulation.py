@@ -638,8 +638,8 @@ def _primitive_size_error(shape: str, size: list[float] | None) -> str | None:
         dims = [(axis, float(values[i]) if len(values) > i else 0.05) for i, axis in enumerate("xyz")]
         layout = "[x, y, z] full edge lengths"
     elif shape == "sphere":
-        dims = [("radius", float(values[0]) if values else 0.05)]
-        layout = "[radius]"
+        dims = [("diameter", float(values[0]) if values else 0.05)]
+        layout = "[diameter]"
     elif shape in ("cylinder", "capsule"):
         radius, height = _round_shape_dims(values)
         dims = [("radius", radius), ("height", height)]
@@ -3999,7 +3999,8 @@ class IsaacSimulation(
             ``size`` wins if both are passed. Conventions per shape:
 
             * ``box``:      ``[width, height, depth]`` (default ``[0.05, 0.05, 0.05]``).
-            * ``sphere``:   ``[radius]`` (default ``[0.05]``).
+            * ``sphere``:   ``[diameter]`` (default ``[0.05]``, a 5 cm ball, as
+              on the MuJoCo and Newton backends).
             * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``), or
               three components ``[diameter, unused, height]`` - the MuJoCo
               backend's layout, which the published tool schema documents - so
@@ -4717,8 +4718,9 @@ class IsaacSimulation(
             return cls(**common), scale
         if shape == "sphere":
             cls = FixedSphere if is_static else DynamicSphere
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            return cls(radius=radius, **common), [radius]
+            # ``size[0]`` is the diameter, as on the MuJoCo and Newton backends.
+            diameter = float(size[0]) if size and len(size) >= 1 else 0.05
+            return cls(radius=diameter / 2.0, **common), [diameter]
         if shape in ("cylinder", "capsule"):
             if shape == "cylinder":
                 cls = FixedCylinder if is_static else DynamicCylinder
