@@ -296,6 +296,27 @@ def test_the_sdk_missing_is_a_reason_naming_the_extra(monkeypatch: pytest.Monkey
     assert reason is not None and "strands-robots[spot]" in reason
 
 
+def test_sdk_missing_is_reported_even_when_credentials_are_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Guard order: with no [spot] extra installed, the SDK-missing message is the
+    root cause and must win over the BOSDYN_CLIENT_* credentials check. Sibling
+    drivers (xarm/crazyflie/rby1/ur) all check the SDK first; this pins the
+    same order on SpotDriver so a user with no extras doesn't get nudged to set
+    env vars that cannot fix the real problem. See cagataycali/robots-harness#TBD.
+    """
+    def missing(name: str) -> Any:
+        raise ImportError(f"No module named {name!r}")
+
+    monkeypatch.setattr(spot.importlib, "import_module", missing)
+    monkeypatch.delenv("BOSDYN_CLIENT_USERNAME", raising=False)
+    monkeypatch.delenv("BOSDYN_CLIENT_PASSWORD", raising=False)
+    reason = SpotDriver("spot", port="192.168.80.3").connect_eagerly()
+    assert reason is not None
+    assert "strands-robots[spot]" in reason, reason
+    assert "BOSDYN_CLIENT_USERNAME" not in reason, (
+        "credentials red-herring surfaced before SDK-missing cause: " + reason
+    )
+
+
 def test_send_action_moves_the_arm_and_claw_in_one_command(robot: FakeRobot) -> None:
     driver = _connected(robot)
     envelope = driver.send_action({"arm_el1": 0.4, "arm_f1x": -1.2})
