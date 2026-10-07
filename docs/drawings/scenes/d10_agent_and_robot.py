@@ -46,10 +46,11 @@ def scene() -> Scene:
     s.down(800, 410, 436)
     s.box(700, 436, 420, 76, "operator gate",
           "an interrupt on the real arm: n declined, y dispatched; the reply is audited, not shown to the model",
-          accent=True, size=14, subsize=12)
-    s.arrow([(560, 190), (700, 190)])
+          accent=True, size=14, subsize=12, id="gate")
+    s.arrow([(560, 190), (700, 190)], id="use_add")
     s.text(630, 182, "tool_use: add_object", cls="mono muted", size=10, anchor="middle")
-    s.arrow([(560, 240), (620, 240), (620, 350), (700, 350)])
+    s.arrow([(560, 240), (620, 240), (620, 350), (700, 350)], id="use_execute")
+    s.motion = [("gate", "pulse"), ("use_add", "flow"), ("use_execute", "flow")]
     s.text(612, 300, "tool_use: execute", cls="mono muted", size=10.5, anchor="end")
 
     # ---------------------------------------------------------------- the envelope

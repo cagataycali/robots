@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -198,3 +199,30 @@ def test_a_sketch_fence_renders_untitled_and_other_titles_survive() -> None:
         '```python title="strands_robots/policies/base.py"\nx\n```': '```python title="strands_robots/policies/base.py"\nx\n```',
     }
     assert {src: hook.unmark_sketches(src) for src in cases} == cases
+
+
+def test_every_drawing_carries_the_mark_and_its_motion_honours_reduced_motion() -> None:
+    """Motion in a drawing lives in its own <style>: one keyframes block, a reduced-motion reset.
+
+    Every committed scene SVG shows the STRANDS wordmark in accent; a drawing that animates names
+    the preference that stops it, and every animated id is an element in that SVG.
+    """
+    drawings = _DOCS / "assets" / "drawings"
+    svgs = sorted(drawings.glob("*.svg"))
+    assert len(svgs) >= 20
+    animated = 0
+    for svg in svgs:
+        text = svg.read_text(encoding="utf-8")
+        assert 'class="mark" aria-label="STRANDS"' in text, f"{svg.name}: no STRANDS mark"
+        ids = set(re.findall(r'<(?:rect|path)\s+id="([^"]+)"', text))
+        moving = set(re.findall(r"#([A-Za-z0-9_-]+)\{(?:[^}]*;)?animation:", text))
+        if not moving:
+            continue
+        animated += 1
+        assert moving <= ids, f"{svg.name}: animated ids with no element: {sorted(moving - ids)}"
+        assert "@media (prefers-reduced-motion: reduce)" in text, f"{svg.name}: animates, no reduced-motion reset"
+        reset = re.search(r"@media \(prefers-reduced-motion: reduce\)\{([^{]*)\{animation:none", text)
+        assert reset and moving <= set(re.findall(r"#([A-Za-z0-9_-]+)", reset.group(1))), (
+            f"{svg.name}: the reduced-motion reset does not name every animated id"
+        )
+    assert animated >= 10, f"only {animated} animated drawings; every scene was given motion"

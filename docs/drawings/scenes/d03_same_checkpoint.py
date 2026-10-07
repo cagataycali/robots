@@ -34,15 +34,16 @@ def scene() -> Scene:
           "a vision-language-action model from the Hub: the instruction, observation.state and three camera "
           "images go in, a chunk of actions in the same units comes out", size=14, subsize=12)
     s.chips(C + 14, 206, ["observation.state", "observation.images.camera1..3", "action"])
-    s.down(600, 242, 276, label="loaded once", label_dx=10, label_dy=4)
+    s.down(600, 242, 276, label="loaded once", label_dx=10, label_dy=4, id="obs")
 
     # ---------------------------------------------------------------- the policy (the one green element)
     s.box(C, 276, CW, 104, "one Policy object",
           'create_policy("lerobot_local", pretrained_name_or_path="lerobot/smolvla_base", embodiment=...)',
-          accent=True, size=14, subsize=12)
+          accent=True, size=14, subsize=12, id="policy")
     s.chips(C + 14, 346, ["get_actions(observation, instruction)"])
     s.down(600, 380, 404, label="observation in, action chunk out: the same tensors either way",
-           label_dx=10, label_dy=4)
+           label_dx=10, label_dy=4, id="act")
+    s.motion = [("policy", "pulse"), ("obs", "flow"), ("act", "flow")]
 
     # ---------------------------------------------------------------- embodiment map (dashed layer)
     s.box(80, 404, 1040, 206, None, None, dashed=True)
