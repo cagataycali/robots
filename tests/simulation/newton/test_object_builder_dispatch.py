@@ -197,7 +197,7 @@ def test_each_primitive_routes_to_its_builder_method(shape, expected):
 
 @pytest.mark.parametrize(
     ("shape", "hint"),
-    [("sfere", " Did you mean 'sphere'?"), ("cilinder", " Did you mean 'cylinder'?"), ("cuboid", "")],
+    [("sfere", " Did you mean 'sphere'?"), ("cilinder", " Did you mean 'cylinder'?"), ("torus", "")],
 )
 def test_add_object_names_the_closest_newton_shape(shape, hint):
     engine = NewtonSimEngine.__new__(NewtonSimEngine)

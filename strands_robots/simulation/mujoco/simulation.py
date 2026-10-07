@@ -119,6 +119,7 @@ from strands_robots.simulation.models import (
     SimRobot,
     SimStatus,
     SimWorld,
+    canonical_shape,
     registered,
     registry_entry,
 )
@@ -2409,12 +2410,9 @@ class MuJoCoSimEngine(
         model source". The bare model-source message is kept only when no
         ``name`` was supplied at all.
 
-        Resolving the model from ``name`` is a DEPRECATED fallback, and the
-        success message carries a ``Warning:`` line naming the ``data_config=``
-        form to use instead. That notice belongs to the call that used the
-        fallback and to no other: it is not reported on a later call that
-        resolved its model correctly, including when the deprecated call it
-        came from failed.
+        ``add_robot("so101")`` with no model source resolves ``name`` itself
+        in the model registry, the form the docs teach and every backend
+        accepts; ``data_config=`` gives the instance its own label.
 
         A model source that is SUPPLIED but empty (``urdf_path=""`` /
         ``data_config=""``) is refused naming THAT parameter, rather than read
@@ -2561,7 +2559,7 @@ class MuJoCoSimEngine(
 
         # A model source the caller SUPPLIED but left empty is not one they
         # omitted. The resolution below reads both by truthiness, so `""` was
-        # indistinguishable from `None`: the deprecated name-as-registry-key
+        # indistinguishable from `None`: the name-as-registry-key
         # fallback ran for a call that had asked for a file, and the refusal
         # then diagnosed the NAME - offering close-match suggestions for a
         # name the caller never asked to resolve, and advising them to "pass
@@ -2592,22 +2590,10 @@ class MuJoCoSimEngine(
         # Resolution precedence:
         #   1. explicit `urdf_path` (anything on disk).
         #   2. `data_config` looked up in the model registry.
-        #   3. DEPRECATED: `name` looked up in the registry (undocumented
-        #      fallback kept for one release with a DeprecationWarning).
-        # Pass `data_config` for new code; the `name`-as-registry-key path
-        # will be removed.
-        #
-        # The deprecation notice is per-call state, so it is carried in a local
-        # and not on the engine: an attribute armed here is only disarmed by the
-        # success return below, so any error exit between the two (a mesh the
-        # downloader cannot resolve, an injection the recompiler refuses, an
-        # unexpected compile crash) left it armed for the NEXT add_robot to
-        # report - accusing a caller that passed data_config= correctly, and
-        # naming the earlier robot.
-        deprecation_hint: str | None = None
+        #   3. `name` looked up in the registry (`add_robot("so101")`).
         # The registry entry the robot was built from, when it was built from
-        # one - ``data_config`` as passed, or the instance name when the
-        # deprecated fallback below resolved it. This is what the robot's
+        # one - ``data_config`` as passed, or the instance name when step 3
+        # resolved it. This is what the robot's
         # ``data_config`` records: the registry metadata keyed on it (the
         # ``gripper`` block ``set_gripper`` resolves actuators from, the
         # ``robot_type`` a recording declares, the ``Config:`` line of
@@ -2627,26 +2613,14 @@ class MuJoCoSimEngine(
                     "content": [{"text": self._unknown_model_msg(data_config)}],
                 }
         elif not resolved_path and name:
-            # deprecated fallback - try registry by instance name.
             resolved_path = resolve_model(name)
             if resolved_path:
                 registry_key = name
-                logger.info(
-                    "add_robot: resolved model via instance name '%s'. "
-                    "Prefer: add_robot(name='<instance_label>', data_config='%s')",
-                    name,
-                    name,
-                )
-                deprecation_hint = (
-                    f"Hint: add_robot(name='{name}') resolved via deprecated "
-                    f"name-as-registry-key fallback. Prefer: "
-                    f"add_robot(name='<instance_label>', data_config='{name}')."
-                )
 
         if not resolved_path:
             # A caller-provided `name` that resolves to no model is almost
-            # always a mistyped/unknown robot (the deprecated
-            # name-as-registry-key short form). Surface the same actionable
+            # always a mistyped/unknown robot (the `add_robot("so101")`
+            # short form). Surface the same actionable
             # "no model found (did you mean ...?) / list_urdfs" error the
             # data_config path and the Robot() factory give, instead of a
             # dead-end "supply urdf_path or data_config". The bare
@@ -2718,8 +2692,7 @@ class MuJoCoSimEngine(
             # ``data_config or name`` is the registry key the model was
             # resolved from on this path (the same key the mesh resolution
             # above uses): ``data_config`` when it was passed, else the
-            # instance name that the deprecated name-as-registry-key fallback
-            # looked up.
+            # instance name step 3 looked up.
             tool_frame = None
             if not urdf_path:
                 tool_frame, tool_frame_err = registry_tool_frame(data_config or name)
@@ -2845,7 +2818,6 @@ class MuJoCoSimEngine(
 
             source = f"data_config='{data_config}'" if data_config else os.path.basename(resolved_path)
             mesh_line = f"\nMesh peer: {robot.peer_id}" if robot.peer_id else ""
-            hint_line = f"\nWarning: {deprecation_hint}" if deprecation_hint else ""
             return {
                 "status": "success",
                 "content": [
@@ -2859,7 +2831,6 @@ class MuJoCoSimEngine(
                             f"Cameras: {list(self._world.cameras.keys())}"
                             f"{mesh_line}\n"
                             f"{self._next_step_after_add(name, robot)}"
-                            f"{hint_line}"
                             f"{burial_line}"
                         )
                     }
@@ -4906,7 +4877,8 @@ class MuJoCoSimEngine(
                 keeps the full string, and a non-string name is not addressable
                 through the agent-tool surface, where a name arrives as JSON.
             shape: ``"box"``, ``"sphere"``, ``"cylinder"``, ``"capsule"``,
-                ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
+                ``"ellipsoid"``, ``"plane"``, or ``"mesh"``. ``"cube"`` and
+                ``"cuboid"`` build a ``"box"``.
             position: World position ``[x, y, z]`` of the body origin (default
                 origin).
             orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
@@ -5014,6 +4986,8 @@ class MuJoCoSimEngine(
         # name, so this has to come first.
         if (name_err := entity_name_error("add_object", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
+
+        shape = canonical_shape(shape)
 
         if name in self._world.objects:
             return {

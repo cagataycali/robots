@@ -1,6 +1,6 @@
 """``add_robot("so101")`` keeps the registry metadata of the model it loaded.
 
-The deprecated name-as-registry-key fallback resolved the model from the
+The name-as-registry-key short form resolved the model from the
 instance name but left the robot's ``data_config`` ``None``, so everything
 keyed on it forgot which registry entry the model came from: ``set_gripper``
 reported "the registry carries no gripper metadata for this robot" for an
@@ -11,8 +11,8 @@ reaches for first (``Simulation().add_robot("so101")``) was the one that
 failed.
 
 The robot's ``data_config`` now records the registry entry the model was
-built from whichever argument named it; the deprecation hint on the reply is
-unchanged.
+built from whichever argument named it. The short form is the one the docs
+teach, so its reply carries no deprecation warning either.
 
 ``resolve_model`` resolves a decorated variant of a registry key to its model
 as a documented friction fix (``"so101_arm"`` loads so101's model), so the
@@ -52,7 +52,7 @@ class TestTheFallbackRecordsTheRegistryEntry:
     def test_data_config_is_the_registry_key_the_model_came_from(self, sim) -> None:
         result = sim.add_robot("so101")
         assert result["status"] == "success", _text(result)
-        assert "deprecated name-as-registry-key fallback" in _text(result)
+        assert "Warning" not in _text(result) and "deprecated" not in _text(result)
         assert sim._world.robots["so101"].data_config == "so101"
 
     def test_it_matches_what_the_documented_form_records(self, sim) -> None:

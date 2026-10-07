@@ -723,6 +723,11 @@ def robot_page(name: str) -> str:
         lines += ["| Observation key | also accepted by `send_action` |", "|---|---|"]
         lines += [f"| `{k}` | `{v}` |" for k, v in labels.items()]
         lines.append("")
+        if cov.real:
+            lines += [
+                'These are `mode="sim"` keys; on hardware `get_observation()` returns lerobot\'s `<motor>.pos`.',
+                "",
+            ]
     gripper = spec.get("gripper")
     if gripper:
         acts = ", ".join(f"`{a}`" for a in gripper.get("actuators", ()))

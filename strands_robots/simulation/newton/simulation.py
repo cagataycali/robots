@@ -58,10 +58,12 @@ from strands_robots.simulation.model_registry import (
     register_urdf as _register_urdf,
 )
 from strands_robots.simulation.models import (
+    SHAPE_ALIASES,
     SimCamera,
     SimObject,
     SimRobot,
     SimWorld,
+    canonical_shape,
     registered,
     registry_entry,
 )
@@ -1004,8 +1006,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "content": [{"text": f"add_object: object '{name}' already exists. Remove it first (remove_object)."}],
             }
         newton_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
+        shape = canonical_shape(shape)
         if shape not in newton_shapes:
-            close = difflib.get_close_matches(str(shape).lower(), newton_shapes, n=1, cutoff=0.6)
+            close = difflib.get_close_matches(str(shape).lower(), newton_shapes + tuple(SHAPE_ALIASES), n=1, cutoff=0.6)
             hint = f" Did you mean {close[0]!r}?" if close else ""
             return {
                 "status": "error",

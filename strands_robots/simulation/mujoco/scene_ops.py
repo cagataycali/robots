@@ -43,7 +43,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
+from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld, canonical_shape
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
 from strands_robots.simulation.mujoco.spec_builder import _SIZE_LAYOUT, SpecBuilder
 from strands_robots.simulation.tool_frame import ToolFrame, ToolFrameRefused
@@ -3205,7 +3205,7 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
         if body is None:
             raise ValueError(f"add_geom: body '{body_name}' not found")
 
-        shape = op.get("type", "box")
+        shape = canonical_shape(op.get("type", "box"))
         if (shape_err := _geom_shape_error(shape)) is not None:
             raise ValueError(shape_err)
         from strands_robots.simulation.mujoco.spec_builder import (

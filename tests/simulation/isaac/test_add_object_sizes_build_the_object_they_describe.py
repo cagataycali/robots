@@ -135,6 +135,6 @@ def test_an_unknown_shape_names_the_closest_one(shape: str, hint: str) -> None:
     result = IsaacSimulation.add_object(stub, "thing", shape=shape)
     assert result["status"] == "error"
     assert _text(result) == (
-        f"Unknown shape: {shape!r}.{hint} Valid: ('box', 'sphere', 'capsule', 'cylinder', 'mesh', 'cuboid')"
+        f"Unknown shape: {shape!r}.{hint} Valid: ('box', 'sphere', 'capsule', 'cylinder', 'mesh', 'cube', 'cuboid')"
     )
     assert seen["construct"] == 0
