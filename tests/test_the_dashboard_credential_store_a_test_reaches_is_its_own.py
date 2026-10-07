@@ -54,6 +54,21 @@ def test_the_store_is_inside_this_tests_own_directory(tmp_path: Path) -> None:
     assert auth._store_path() == (tmp_path / "auth.json").resolve()
 
 
+def test_a_cell_that_asks_for_no_directory_is_built_none(request: pytest.FixtureRequest) -> None:
+    """The redirect names a directory of this test's own without building one.
+
+    A ``tmp_path`` is a directory, a symlink and a removal per test; a cell that
+    never asked for one is handed a name instead, shared by the session-store
+    redirect, which the store's own writer creates on first use.
+    """
+    from strands_robots.tools import _process_stop
+
+    assert "tmp_path" not in request.node.funcargs
+    home = auth._store_path().parent
+    assert _process_stop.SESSION_DIR.parent.resolve() == home
+    assert not home.exists()
+
+
 def test_a_read_writes_the_store_it_was_pointed_at(tmp_path: Path) -> None:
     """``_load`` creates what it could not find - here, and nowhere else.
 

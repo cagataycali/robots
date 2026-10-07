@@ -19,11 +19,13 @@ Blocks ``import isaacsim`` for every test (:func:`_no_real_isaac_sim`), so a hos
 with the Isaac Sim wheel installed never boots Kit inside the unit run.
 
 Finally, removes a passed test's ``<name>current`` symlink in the same teardown
-that removes its ``tmp_path`` (:func:`pytest_runtest_teardown` below): every
-test here creates a ``tmp_path``, and the base temp is listed in full to name
-each one, so an entry left behind is paid for by every test after it.
+that removes its ``tmp_path`` (:func:`pytest_runtest_teardown` below): the
+base temp is listed in full to name each ``tmp_path``, so an entry left behind
+is paid for by every test after it. The session-wide redirects build no
+``tmp_path`` for a test that did not ask for one (:func:`a_directory_of_its_own`).
 """
 
+import itertools
 import os
 import re
 import sys
@@ -226,13 +228,23 @@ def _strands_environment_is_left_as_found() -> Iterator[None]:
     (which grades the always-on loops) failed with ``mesh-camera-peer-a`` as an
     extra thread, once per few thousand runs and never in the file's own run.
 
-    Snapshotting only the ``STRANDS_`` prefix keeps the fixture cheap on a
-    55,000-test session and leaves the interpreter's own variables alone.
-    Writes a test makes on purpose *inside* itself are the test's subject and
-    still land; they are undone once it returns, which is the property.
+    Only the ``STRANDS_`` prefix is restored, which leaves the interpreter's
+    own variables alone. Writes a test makes on purpose *inside* itself are the
+    test's subject and still land; they are undone once it returns, which is
+    the property.
+
+    The fixture runs around every test, so the common case - nothing changed -
+    is one C-level copy and compare of ``os.environ``'s encoded mapping (about
+    5 us), not a decode of every variable twice (about 250 us). Only a test that
+    changed the environment pays for the decode.
     """
-    before = {k: v for k, v in os.environ.items() if k.startswith("STRANDS_")}
+    encoded = os.environ._data  # type: ignore[attr-defined]  # the encoded mapping os.environ wraps
+    snapshot = encoded.copy()
     yield
+    if encoded == snapshot:
+        return
+    decode = os.environ.decodekey
+    before = {decode(k): os.environ.decodevalue(v) for k, v in snapshot.items() if decode(k).startswith("STRANDS_")}
     for key in [k for k in os.environ if k.startswith("STRANDS_") and k not in before]:
         del os.environ[key]
     for key, value in before.items():
@@ -322,9 +334,47 @@ def _predicate_registry_is_left_as_found() -> Iterator[None]:
 #: record. Read by :func:`_dashboard_auth_store_is_a_per_test_file` below.
 DASHBOARD_AUTH_ENV = "STRANDS_DASH_AUTH_"
 
+#: Numbers the directory :func:`a_directory_of_its_own` names for a test that
+#: asked for no ``tmp_path``; the name is kept on the test so both redirects agree.
+_UNREQUESTED_DIR_NUMBERS = itertools.count()
+_UNREQUESTED_DIR = pytest.StashKey[Path]()
+
+
+def a_directory_of_its_own(request: pytest.FixtureRequest) -> Path:
+    """Name a directory only this test reaches, building one only if the test asked.
+
+    A test that requests ``tmp_path`` (directly or through a fixture) gets it, so
+    a module that seeds a file under ``tmp_path`` and lets an autouse redirect
+    find it there needs no change. Any other test gets a numbered path under the
+    session's base temp that nothing creates: building a ``tmp_path`` is a
+    directory, a ``current`` symlink and a removal per test (about 0.3 ms), and
+    the session-wide redirects below only ever need a *name* - the code they
+    point makes the directory when it actually writes.
+    """
+    if "tmp_path" in request.fixturenames:
+        path: Path = request.getfixturevalue("tmp_path")
+        return path
+    stash = request.node.stash
+    if _UNREQUESTED_DIR not in stash:
+        base = request.getfixturevalue("tmp_path_factory").getbasetemp()
+        stash[_UNREQUESTED_DIR] = base / "unrequested" / str(next(_UNREQUESTED_DIR_NUMBERS))
+    return stash[_UNREQUESTED_DIR]
+
+
+def a_monkeypatch_after_it(request: pytest.FixtureRequest) -> pytest.MonkeyPatch:
+    """The test's ``monkeypatch``, resolved after :func:`a_directory_of_its_own`.
+
+    Fixtures are torn down in the reverse of the order they were set up, so a
+    ``tmp_path`` built before ``monkeypatch`` is removed after every patch is
+    undone. A test that patches ``os.open`` or ``os.close`` (the audit-lock
+    cells) otherwise has its directory removed through its own fakes.
+    """
+    monkeypatch: pytest.MonkeyPatch = request.getfixturevalue("monkeypatch")
+    return monkeypatch
+
 
 @pytest.fixture(autouse=True)
-def _dashboard_auth_store_is_a_per_test_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _dashboard_auth_store_is_a_per_test_file(request: pytest.FixtureRequest) -> None:
     """Let no test read or write the credential store this machine is sealed with.
 
     :func:`strands_robots.dashboard.auth._store_path` resolves an unset
@@ -353,9 +403,12 @@ def _dashboard_auth_store_is_a_per_test_file(tmp_path: Path, monkeypatch: pytest
 
     The file is not created, only named: ``_save_locked`` makes the parent when
     something actually writes, so a session that never touches the dashboard
-    pays a name and no I/O.
+    pays a name and no I/O - and a test that asked for no ``tmp_path`` is not
+    built one (:func:`a_directory_of_its_own`).
     """
-    monkeypatch.setenv(DASHBOARD_AUTH_ENV + "STORE", str(tmp_path / "auth.json"))
+    home = a_directory_of_its_own(request)
+    monkeypatch = a_monkeypatch_after_it(request)
+    monkeypatch.setenv(DASHBOARD_AUTH_ENV + "STORE", str(home / "auth.json"))
     for name in [key for key in os.environ if key.startswith(DASHBOARD_AUTH_ENV)]:
         if name != DASHBOARD_AUTH_ENV + "STORE":
             monkeypatch.delenv(name)
@@ -551,7 +604,7 @@ def _warn_once_memos_are_left_empty() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _the_session_store_a_test_reaches_is_its_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _the_session_store_a_test_reaches_is_its_own(request: pytest.FixtureRequest) -> None:
     """Let no test read, rewrite or delete the session records of a live run.
 
     :data:`strands_robots.tools._process_stop.SESSION_DIR` is
@@ -578,7 +631,8 @@ def _the_session_store_a_test_reaches_is_its_own(tmp_path: Path, monkeypatch: py
     ``store_sessions`` make it when something actually writes, and the readers
     report an absent one as *no sessions* - which is the state a test wants. So a
     session a test never starts costs a name and no I/O, and a cell that lists
-    its own ``tmp_path`` still finds it empty.
+    its own ``tmp_path`` still finds it empty. A test that asked for no
+    ``tmp_path`` is not built one (:func:`a_directory_of_its_own`).
     """
     # Imported rather than looked up in sys.modules: the redirect has to be in
     # place before the module under test imports it, which is what happens
@@ -590,7 +644,8 @@ def _the_session_store_a_test_reaches_is_its_own(tmp_path: Path, monkeypatch: py
     except ImportError:
         return
 
-    monkeypatch.setattr(_process_stop, "SESSION_DIR", tmp_path / ".sessions")
+    home = a_directory_of_its_own(request)
+    a_monkeypatch_after_it(request).setattr(_process_stop, "SESSION_DIR", home / ".sessions")
 
 
 def remove_dead_current_symlink(tmp_path: Path, test_name: str) -> None:
