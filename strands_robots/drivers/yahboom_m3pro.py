@@ -87,7 +87,7 @@ from typing import TYPE_CHECKING, Any, cast
 from strands.types.tools import ToolContext
 
 from strands_robots._command_gate import gate_command
-from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.drivers.yahboom_m3pro_wire import (
     ARM_CENTER_DEG,
     ARM_CHANNELS,
@@ -997,7 +997,9 @@ class YahboomM3ProDriver:
             that question). The twin's graph carries the topic, so there this
             is the model's state.
         """
-        if not self._connected or JOINT_STATES_TOPIC not in self._topics:
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
+        if JOINT_STATES_TOPIC not in self._topics:
             return {}
         samples = parse_echo(
             self._call("echo", topic=JOINT_STATES_TOPIC, type=JOINT_STATES_TYPE, count=1, gate=self._never)

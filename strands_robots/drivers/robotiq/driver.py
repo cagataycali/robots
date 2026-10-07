@@ -42,7 +42,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import halt_failure_detail, refuse, undeclared_verb_error
+from strands_robots.drivers.base import halt_failure_detail, refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.drivers.robotiq.protocol import (
     DEFAULT_TCP_PORT,
     DEFAULT_UNIT_ID,
@@ -606,7 +606,7 @@ class RobotiqDriver:
             the gripper cannot be read - "no joints" is not a failure.
         """
         if not self.is_connected:
-            return {}
+            return unconnected_observation(type(self).__name__, self._connect_error)
         try:
             status = self._read_status_raw()
         except (OSError, ProtocolError) as exc:

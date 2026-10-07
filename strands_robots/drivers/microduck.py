@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots._path_validation import resolve_output_path, validate_save_path
-from strands_robots.drivers.base import refuse, undeclared_verb_error
+from strands_robots.drivers.base import refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.utils import (
     boolean_flag_error,
     did_you_mean,
@@ -1628,6 +1628,8 @@ class MicroduckDriver:
 
     def get_observation(self) -> dict[str, float]:
         """The 14 locomotion joints (name -> radians) for the mesh joint read."""
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         with self._cache_lock:
             return dict(self._joints)
 

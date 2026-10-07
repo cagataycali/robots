@@ -54,7 +54,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from strands_robots._pacing import Ticker
-from strands_robots.drivers.base import policy_step, refuse, undeclared_verb_error
+from strands_robots.drivers.base import policy_step, refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
@@ -518,6 +518,8 @@ class KinovaDriver:
 
     def get_observation(self) -> dict[str, float]:
         """The seven joint positions (name -> radians), for the mesh and the rollout."""
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         self._feedback()
         with self._lock:
             return dict(self._joints)
