@@ -2380,25 +2380,17 @@ class SimEngine(ABC):
                 ],
             }
 
-        try:
-            # Keep the raw entries: ``float`` erases a boolean into 1.0/0.0, so
-            # the bool gate below has to see the value the caller passed.
-            raw_entries = list(action)
-            values = [float(v) for v in raw_entries]
-        except (TypeError, ValueError) as exc:
-            return None, {
-                "status": "error",
-                "content": [{"text": f"send_action: action vector has a non-numeric entry: {exc}."}],
-            }
-
+        # Keep the raw entries: ``float`` erases a boolean into 1.0/0.0, so
+        # the bool gate below has to see the value the caller passed.
+        raw_entries = list(action)
         action_keys = self.robot_action_keys(robot_name)
-        if len(values) != len(action_keys):
+        if len(raw_entries) != len(action_keys):
             return None, {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            f"send_action: action vector length {len(values)} does not "
+                            f"send_action: action vector length {len(raw_entries)} does not "
                             f"match robot '{robot_name}' action-key count {len(action_keys)}. "
                             f"Action keys (in order): {action_keys}. Pass a {{name: value}} "
                             "mapping to target a subset of actuators."
@@ -2407,10 +2399,26 @@ class SimEngine(ABC):
                 ],
             }
         bound: dict[str, Any] = {}
-        for idx, (name, raw, value) in enumerate(zip(action_keys, raw_entries, values, strict=True)):
+        for idx, (name, raw) in enumerate(zip(action_keys, raw_entries, strict=True)):
             label = f"action vector entry {idx} ('{name}')"
             if error := _boolean_action_error(label, raw):
                 return None, error
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                # Same voice as the mapping branch: name the entry, its key and
+                # its type, never the raw ``float()`` exception text.
+                return None, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"send_action: {label} must be a scalar number "
+                                f"(one value per actuator/joint), got {type(raw).__name__}."
+                            )
+                        }
+                    ],
+                }
             if error := _non_finite_action_error(label, value):
                 return None, error
             bound[name] = value
