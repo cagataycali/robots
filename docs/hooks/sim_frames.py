@@ -23,7 +23,8 @@ records a clip: the fence's physics loop is wrapped (``mujoco.mj_step``, Newton'
 ``_advance``, mjlab's ``Simulation.step``) and a frame is rendered each time the
 simulated clock passes ``1 / (fps * slowdown)`` seconds, so ``slowdown`` 1 plays in real
 time and 16 is slow motion; MuJoCo frames come from one fixed camera framed like the
-still, GPU backends render their own default view. Frames are encoded to ``<id>.webm``
+still, GPU backends render their own default view or the entry's ``"camera":
+{"position": [...], "target": [...]}`` look-at camera. Frames are encoded to ``<id>.webm``
 (VP9, no audio) and the ``.png`` is the clip's last frame, so poster and clip share a
 camera. Frames are committed:
 the build needs no GPU, no display and no MuJoCo; ``--check`` reports a manifest entry
@@ -122,10 +123,21 @@ def _mujoco_frame(mujoco, model, data):
     return _rec["renderer"].render()
 
 def _engine_frame(engine):
-    """One clip frame from the engine's own default camera (GPU backends render for us)."""
+    """One clip frame through the engine's own renderer (GPU backends render for us).
+
+    With ``STRANDS_DOCS_VIDEO_CAMERA`` (``x,y,z;x,y,z`` = position; target) the entry's
+    look-at camera is registered once as ``docs_frame``; otherwise the backend's default view.
+    """
     import io
     import imageio.v2 as imageio
-    out = engine.render(camera_name="default", width=_W, height=_H)
+    name = "default"
+    spec = os.environ.get("STRANDS_DOCS_VIDEO_CAMERA")
+    if spec:
+        if _rec["cam"] is None:
+            position, target = ([float(v) for v in part.split(",")] for part in spec.split(";"))
+            _rec["cam"] = engine.add_camera(name="docs_frame", position=position, target=target, fov=45.0, width=_W, height=_H)
+        name = "docs_frame"
+    out = engine.render(camera_name=name, width=_W, height=_H)
     png = next(b["image"]["source"]["bytes"] for b in out["content"] if "image" in b)
     return imageio.imread(io.BytesIO(png))[:, :, :3]
 
@@ -321,11 +333,22 @@ def render_one(ident: str, entry: dict, python: str) -> bool:
             STRANDS_DOCS_VIDEO_FPS=str(video.get("fps", 30)),
             STRANDS_DOCS_VIDEO_SLOWDOWN=str(video.get("slowdown", 1)),
         )
+        if "camera" in video:
+            cam = video["camera"]
+            env["STRANDS_DOCS_VIDEO_CAMERA"] = ";".join(
+                ",".join(str(v) for v in cam[k]) for k in ("position", "target")
+            )
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / f"{ident}.py"
         script.write_text(_PRELUDE + "\n" + fences[index - 1], encoding="utf-8")
         proc = subprocess.run(
-            [python, str(script)], cwd=tmp, env=env, capture_output=True, text=True, timeout=TIMEOUT_S, check=False
+            [python, str(script)],
+            cwd=tmp,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=entry.get("timeout_s", TIMEOUT_S),
+            check=False,
         )
     if proc.returncode != 0 or not target.is_file() or (video and not clip.is_file()):
         print(f"{ident}: FAIL (exit {proc.returncode})\n{proc.stderr[-1500:]}")
