@@ -170,7 +170,7 @@ def _run(**kwargs: Any) -> tuple[dict[str, Any], _CountingSim, _Counting]:
     that intention is stated once instead of suppressed per call.
     """
     sim, policy = _arm()
-    result = PolicyRunner(sim).run("arm", policy, control_frequency=50.0, action_horizon=1, **kwargs)
+    result = PolicyRunner(sim).run("arm", policy, control_frequency=50.0, action_horizon=1, fast_mode=True, **kwargs)
     return result, sim, policy
 
 
