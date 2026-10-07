@@ -79,7 +79,7 @@ Smart strings: a Hub id resolves to `lerobot_local`, `ws://` to [`remote`](remot
 
 ## Run one, then swap it
 
-`run_policy` builds the policy from the provider name, runs `preflight` before any download, then drives the loop; a registered class is one more string:
+`run_policy` builds the policy, runs `preflight` on `set(sim.get_observation(robot))` before any download, then drives the loop; a registered class is one more string:
 
 ```python
 from typing import Any
