@@ -386,7 +386,7 @@
     },
     "tol": {
       "type": "number",
-      "description": "move_to / rotate_wrist convergence tolerance: meters for move_to (EE POSITION only - use orientation_tol for the rotation, default 0.01), radians for rotate_wrist (joint angle, default 0.02)"
+      "description": "move_to / rotate_wrist convergence tolerance: meters for move_to (EE POSITION only - use orientation_tol for the rotation, default 0.015), radians for rotate_wrist (joint angle, default 0.02)"
     },
     "orientation_tol": {
       "type": "number",
