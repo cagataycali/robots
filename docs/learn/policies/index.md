@@ -22,6 +22,8 @@ One gap is open: over the mesh `policy_config` travels but `embodiment` does not
 
 ## The contract
 
+{{drawing:d12_policy_contract}}
+
 ```python title="strands_robots/policies/base.py (abridged)"
 class Policy(ABC):
     control_frequency: float | None = None          # set by the runtime
@@ -53,7 +55,7 @@ class Policy(ABC):
     def provider_name(self) -> str: ...
 ```
 
-[API reference](../../reference/api/policies.md). `get_actions` returns the chunk: one dict per control tick, joint name to a `float`. Planners read `target_pose` or `target_joints`, not the instruction.
+[API reference](../../reference/api/policies.md). `get_actions` returns the chunk: one dict per control tick, joint name to a `float`. Planners read `target_pose` or `target_joints`, not words.
 
 ## Providers
 
