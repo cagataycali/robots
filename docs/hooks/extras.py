@@ -24,8 +24,8 @@ _TOKEN = re.compile(r"\{\{\s*extras:([a-z_]+)\s*\}\}")
 _SELF = "strands-robots["
 _PIN = re.compile(r"^([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?)")
 
-# What each extra is for, in one clause. Keys not in pyproject are ignored;
-# an extra without a row here gets an empty purpose column.
+# What each extra is for, in one clause. Every pyproject extra needs a row:
+# tests/test_docs_all_extra_membership.py fails on a missing or stale key.
 _PURPOSE: dict[str, str] = {
     "sim": "asset download through robot_descriptions",
     "sim-mujoco": "MuJoCo simulation, offscreen rendering, IK (the default sim)",
@@ -37,10 +37,13 @@ _PURPOSE: dict[str, str] = {
     "lerobot": "lerobot drivers, teleoperation, recording, Feetech buses",
     "smolvla": "SmolVLA policies through lerobot",
     "molmoact2": "MolmoAct 2 policies through lerobot",
+    "flux3": "FLUX 3 Action policies (no pins, install flux-action yourself)",
+    "holosoma": "Holosoma G1 locomotion (ONNX checkpoints from the Hub)",
     "rl": "reinforcement learning on the MuJoCo backend",
     "mesh": "Zenoh fleet mesh",
     "mesh-iot": "AWS IoT Core bridge for the mesh",
     "dashboard": "the web dashboard",
+    "voice": "the dashboard's speech-to-speech voice operator",
     "device-connect": "device-connect edge agent",
     "ros2": "pure DDS (cyclonedds) ROS 2 bridge",
     "rosbridge": "rosbridge WebSocket client",
@@ -57,6 +60,9 @@ _PURPOSE: dict[str, str] = {
     "microduck": "Microduck walking policy",
     "crazyflie": "Crazyflie radio driver",
     "ur": "Universal Robots RTDE driver",
+    "xarm": "UFactory xArm driver",
+    "rby1": "Rainbow Robotics RB-Y1 driver",
+    "spot": "Boston Dynamics Spot driver",
     "earthrover": "Earth Rover HTTP driver",
     "ollama": "Ollama model provider for the agent",
     "inference": "WebSocket inference server",
