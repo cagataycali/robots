@@ -23,10 +23,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint, outside_joint_range
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, _NO_WORLD_MSG, close_match_hint, outside_joint_range
 from strands_robots.simulation.models import color_name, registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
-    _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,

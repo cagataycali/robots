@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
@@ -74,7 +75,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
     def _recording_start_error(self, state: dict[str, Any] | None) -> dict[str, Any] | None:
         """Refuse without a finalized Newton model."""
         if self._world is None or self._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         return None
 
     def _recording_scene_cameras(self) -> list[str]:

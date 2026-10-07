@@ -11,8 +11,9 @@ render refusal.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registry_entry
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _can_render, _ensure_mujoco, mj_name_to_id
+from strands_robots.simulation.mujoco.backend import _can_render, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.recording import DatasetRecordingMixin, RecordingSchema, floating_base_state_specs
 from strands_robots.utils import camera_schema_key
 

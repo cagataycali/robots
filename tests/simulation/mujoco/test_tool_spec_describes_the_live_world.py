@@ -95,6 +95,13 @@ def test_every_discovery_surface_names_the_colour_an_object_renders_with(ready_a
     assert "  - cube_a: box at [0.0, -0.2, 0.025], 0.1kg, red\n" in listing
     assert "  - cube_c: box at [0.2, -0.2, 0.025], 0.1kg, red\n" in listing
     assert listing.endswith(", 0.1kg, green")
+    rows = ready_arm.list_objects()["content"][1]["json"]["objects"]
+    assert {name: row["color"] for name, row in rows.items()} == {
+        "cube_a": "red",
+        "cube_b": "green",
+        "cube_c": "red",
+        "cube_d": "green",
+    }
     state = ready_arm.get_body_state("cube_b")["content"]
     assert state[1]["json"]["color"] == [0.0, 0.8, 0.0, 1.0]
     assert "color: green" in state[0]["text"]

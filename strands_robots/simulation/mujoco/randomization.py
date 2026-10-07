@@ -6,12 +6,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     finite_non_negative_error,
     randomization_range_error,
     randomization_seed_error,
     unknown_kwargs_error,
 )
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
+from strands_robots.simulation.mujoco.backend import _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import _get_spec
 from strands_robots.simulation.obs_noise import ObservationNoiseMixin
 from strands_robots.utils import boolean_flag_error

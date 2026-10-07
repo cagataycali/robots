@@ -4,8 +4,8 @@ Every world-touching facade/mixin method must, when called before
 ``create_world`` (or after a failed ``load_scene`` that leaves a partial
 world), return the same structured error - never raise and never drift the
 wording. The canonical text lives in a single shared constant,
-``strands_robots.simulation.mujoco.backend._NO_WORLD_MSG`` (re-exported from
-``...mujoco.simulation`` for the facade); this module pins that single string
+``strands_robots.simulation.base._NO_WORLD_MSG`` (shared by every backend and
+re-exported from ``...mujoco.simulation`` for the facade); this module pins that single string
 across every guarded method - the high-level facade methods AND the dynamics,
 randomization, rendering, and recording mixin methods - so an agent that learns
 the error from one action recognises it from all of them. Because every method
@@ -24,6 +24,7 @@ Two states are exercised:
 
 import pytest
 
+from strands_robots import Robot
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import _NO_WORLD_MSG, Simulation
 
@@ -152,3 +153,17 @@ def test_require_world_passes_when_world_live():
         assert s._require_world() is None
     finally:
         s.cleanup()
+
+
+def test_a_cleaned_up_quickstart_robot_names_the_documented_way_back():
+    """After the quickstart's ``cleanup()``, the error names ``Robot(...)``.
+
+    A user who re-runs a cell after ``robot.cleanup()`` has only ever been shown
+    ``Robot(name, mode="sim")``; the error must point there, not only at the
+    engine-level ``create_world`` / ``load_scene`` they never met.
+    """
+    robot = Robot("so101", mode="sim")
+    robot.cleanup()
+    result = robot.send_action({"1": 0.5}, n_substeps=10)
+    _assert_no_world_error(result, "send_action after cleanup")
+    assert 'Robot(name, mode="sim")' in _NO_WORLD_MSG
