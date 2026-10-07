@@ -352,6 +352,15 @@ rby1 = [
 spot = [
     "bosdyn-client>=5.0.0,<6.0.0",
 ]
+# Hello Robot Stretch client for the native driver (strands_robots/drivers/stretch.py).
+# `hello-robot-stretch-body` ships on PyPI, so an extra is the right shape for
+# the refusal in :func:`_resolve_sdk` to cite -- matches the sibling family
+# (crazyflie/earthrover/rby1/spot/ur/xarm). Not folded into [all]: the vendor
+# wheel pulls in udev and robot-side device bindings that only make sense on
+# the robot's own computer, so the install line is deliberately opt-in.
+stretch = [
+    "hello-robot-stretch-body>=0.7.0",
+]
 # pyserial for the native Feetech and Dynamixel bus drivers
 # (strands_robots/drivers/feetech/bus.py, drivers/dynamixel/bus.py) and the
 # serial_tool and pose_tool agent tools. Pure Python, so a member of [all]; the
