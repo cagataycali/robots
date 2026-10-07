@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_file
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Areas that must be swept however the tree grows. A directory added later that
@@ -366,7 +368,7 @@ class TestEveryAreaThatShipsPythonIsSwept:
         :func:`_is_repo_owned_python_area` rather than spelling the rule out
         again and drifting from the sweep.
         """
-        module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        module = parse_file(Path(__file__))
         derivations = []
         for node in ast.walk(module):
             if not isinstance(node, ast.SetComp | ast.ListComp | ast.GeneratorExp):

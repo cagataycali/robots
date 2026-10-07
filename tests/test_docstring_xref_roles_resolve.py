@@ -649,7 +649,7 @@ def _graded_short_form_roles() -> tuple[dict[str, list[str]], int]:
         source_file = getattr(module, "__file__", None)
         if source_file is None:
             continue
-        tree = ast.parse(Path(source_file).read_text(encoding="utf-8"), filename=source_file)
+        tree = parse_file(Path(source_file))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue

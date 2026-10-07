@@ -82,7 +82,7 @@ def _iter_files(suffixes: frozenset[str]) -> list[Path]:
 @functools.cache
 def _public_utils_guards() -> tuple[str, ...]:
     """Every public callable ``utils.py`` defines, derived from its AST."""
-    tree = ast.parse((REPO_ROOT / "strands_robots" / "utils.py").read_text(encoding="utf-8"))
+    tree = parse_file(REPO_ROOT / "strands_robots" / "utils.py")
     return tuple(
         sorted(
             node.name

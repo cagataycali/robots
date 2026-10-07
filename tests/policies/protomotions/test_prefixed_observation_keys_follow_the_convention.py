@@ -60,6 +60,7 @@ import pytest
 import strands_robots.policies.protomotions.policy as policy_mod
 from strands_robots.policies.protomotions import ProtoMotionsPolicy
 from strands_robots.policies.protomotions.state_utils import mujoco_wxyz_to_xyzw
+from tests._package_ast import parse_source
 from tests.policies.protomotions.test_observation_state_reads_the_same_through_every_convention import (
     _policy,
 )
@@ -116,7 +117,7 @@ def _ladders_in_source(source: str) -> list[tuple[int, list[str], str]]:
         One ``(line, keys, bare_key)`` per ladder, where ``bare_key`` is the
         first key carrying no ``observation.`` prefix.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     sites: list[ast.expr] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.For):

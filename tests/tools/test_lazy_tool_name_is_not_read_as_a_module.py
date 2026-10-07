@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools as tools_package
+from tests._package_ast import parse_source
 
 _TOOLS_ROOT = Path(tools_package.__file__).resolve().parent
 _REPO_ROOT = _TOOLS_ROOT.parent.parent
@@ -108,7 +109,7 @@ def _module_reads(source: str) -> list[tuple[int, str]]:
         way, and refusing them would refuse working code.
     """
     shadowable = _shadowable_names()
-    tree = ast.parse(source)
+    tree = parse_source(source)
 
     bound: dict[str, str] = {}
     for node in ast.walk(tree):

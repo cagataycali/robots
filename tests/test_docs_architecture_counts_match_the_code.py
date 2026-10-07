@@ -104,7 +104,7 @@ def _shipped_providers() -> list[str]:
 
 def _shipped_drivers() -> int:
     """Entries of ``_SHIPPED_DRIVERS``, read with ``ast`` like the hooks do."""
-    tree = ast.parse((PACKAGE / "drivers" / "__init__.py").read_text(encoding="utf-8"))
+    tree = parse_file(PACKAGE / "drivers" / "__init__.py")
     for node in tree.body:
         target: ast.expr | None = None
         if isinstance(node, ast.AnnAssign):

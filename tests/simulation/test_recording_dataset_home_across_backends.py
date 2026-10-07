@@ -65,6 +65,7 @@ import strands_robots.dataset_source as dataset_source
 from strands_robots.dataset_source import resolve_dataset_dir
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_file
 
 _JOINTS = ["Rotation", "Pitch", "Elbow"]
 
@@ -297,7 +298,7 @@ def _method_node(module: str, method: str) -> ast.FunctionDef:
     no method would assert nothing at all - so a missing name fails the test
     rather than yielding an empty set.
     """
-    tree = ast.parse((_REPO_ROOT / module).read_text())
+    tree = parse_file(_REPO_ROOT / module)
     found = next(
         (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == method),
         None,

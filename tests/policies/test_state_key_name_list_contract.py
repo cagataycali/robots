@@ -123,6 +123,7 @@ from strands_robots.policies.composite import CompositePolicy
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.policies.wbc.policy import WBCConfig, WBCPolicy
 from strands_robots.utils import name_list_error
+from tests._package_ast import parse_source
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent
 
@@ -180,7 +181,7 @@ def _classify(source: str) -> dict[str, dict[str, bool]]:
     it is the abstract declaration.
     """
     out: dict[str, dict[str, bool]] = {}
-    tree = ast.parse(source)
+    tree = parse_source(source)
     for cls in ast.walk(tree):
         if not isinstance(cls, ast.ClassDef):
             continue
@@ -291,7 +292,7 @@ def test_the_state_keys_handler_forwards_the_wire_value_verbatim() -> None:
     guard. The policy owns the domain, exactly as the ``hz`` handler documents.
     """
     source = (_PACKAGE / "inference" / "server.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = parse_source(source)
     calls = [
         node
         for node in ast.walk(tree)

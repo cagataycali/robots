@@ -65,6 +65,7 @@ import strands_robots.hardware_robot as hardware_robot
 import strands_robots.robot as robot_factory
 from strands_robots.drivers import get_native_driver_class, resolve_driver
 from strands_robots.registry import get_robot, resolve_name
+from tests._package_ast import parse_source
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 #: A python fence, with or without a title (``python title="sketch"`` marks
@@ -109,7 +110,7 @@ def _instance_surface(cls: type) -> frozenset[str]:
         except (OSError, TypeError):
             continue
         try:
-            tree = ast.parse(source)
+            tree = parse_source(source)
         except SyntaxError:
             continue
         for node in ast.walk(tree):
@@ -219,7 +220,7 @@ _Read = tuple[str, str, str | None, str | None, str]
 def _documented_reads(source: str, origin: str) -> list[_Read]:
     """Return a :data:`_Read` for each attribute read on a ``Robot()`` in ``source``."""
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []
 

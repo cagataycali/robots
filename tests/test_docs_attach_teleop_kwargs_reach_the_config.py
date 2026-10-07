@@ -36,6 +36,7 @@ import strands_robots  # noqa: E402
 from strands_robots.teleop_mixin import TeleopMixin  # noqa: E402
 from strands_robots.teleoperator import _FORWARDABLE_TELEOP_KWARGS  # noqa: E402
 from strands_robots.utils import ensure_lerobot_family_registered  # noqa: E402
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)  # fences may carry title="..."
@@ -49,7 +50,7 @@ def _documentation_files() -> list[Path]:
 
 def _mixin_keywords() -> set[str]:
     """The keywords ``attach_teleop`` consumes itself (everything else is forwarded)."""
-    signature = ast.parse(Path(TeleopMixin.attach_teleop.__code__.co_filename).read_text(encoding="utf-8"))
+    signature = parse_file(Path(TeleopMixin.attach_teleop.__code__.co_filename))
     for node in ast.walk(signature):
         if isinstance(node, ast.FunctionDef) and node.name == "attach_teleop":
             return {arg.arg for arg in node.args.kwonlyargs}

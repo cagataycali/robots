@@ -55,6 +55,7 @@ from strands_robots.tools.pose_tool import (
     _stored_pose_target_error,
     pose_tool,
 )
+from tests._package_ast import parse_file
 
 pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
 
@@ -338,7 +339,7 @@ class TestReachingHomeStaysOutOfScope:
 
     def test_every_home_literal_is_inside_its_configured_travel(self) -> None:
         """Read off the literals themselves, so retuning one out of range fires."""
-        module = ast.parse(Path(str(pose_tool_module.__file__)).read_text())
+        module = parse_file(Path(str(pose_tool_module.__file__)))
         assignments = [
             node
             for node in ast.walk(module)

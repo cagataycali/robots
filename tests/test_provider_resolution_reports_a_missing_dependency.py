@@ -45,6 +45,7 @@ from typing import Any
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_source
 
 #: A distribution nothing installs, so importing it always fails.
 _ABSENT_DEP = "a_backend_sdk_that_is_not_installed_xyz"
@@ -93,7 +94,7 @@ def resolvers_in_source(source: str, module: str) -> list[_Resolver]:
         One :class:`_Resolver` per discovered function, ordered by appearance.
     """
     found: list[_Resolver] = []
-    for function in ast.walk(ast.parse(source)):
+    for function in ast.walk(parse_source(source)):
         if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         parameters = {a.arg for a in function.args.args} | {a.arg for a in function.args.kwonlyargs}

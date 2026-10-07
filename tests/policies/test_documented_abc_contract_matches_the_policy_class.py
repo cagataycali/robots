@@ -27,6 +27,7 @@ import pathlib
 import re
 
 from strands_robots.policies.base import Policy
+from tests._package_ast import parse_file
 
 _REPO = pathlib.Path(inspect.getfile(Policy)).parents[2]
 _DOC = _REPO / "docs" / "learn" / "policies" / "index.md"
@@ -92,7 +93,7 @@ def _members_with_docstrings() -> set[str]:
     A def's docstring is its first statement; a class-level attribute's is the
     string literal on the line after it. ``#:`` comments are not docstrings.
     """
-    tree = ast.parse(pathlib.Path(inspect.getfile(Policy)).read_text(encoding="utf-8"))
+    tree = parse_file(pathlib.Path(inspect.getfile(Policy)))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Policy")
     out: set[str] = set()
     body = cls.body

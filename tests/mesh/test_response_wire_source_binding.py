@@ -72,6 +72,16 @@ def _response(turn: str, responder: str, *, zid: str | None, me: str = "op") -> 
     )
 
 
+class _MqttShaped(SimpleNamespace):
+    """A sample as the IoT leg delivers it: the class, not the instance, says which leg."""
+
+    leg = "iot"
+
+
+def _iot_leg(sample: Any) -> Any:
+    return _MqttShaped(**vars(sample))
+
+
 def _register(m: Mesh, turn: str, expected: str) -> threading.Event:
     event = threading.Event()
     with m._rpc_lock:
@@ -216,17 +226,23 @@ class TestBroadcastTurn:
     def test_a_broker_that_binds_the_topic_still_accepts_zid_less_replies(
         self, mesh: Mesh, audits: list, monkeypatch: pytest.MonkeyPatch, backend: str
     ) -> None:
-        """The IoT policy pins ``response/${ThingName}``, so the topic segment names the sender there."""
+        """The IoT policy pins ``response/${ThingName}``, so the topic segment names the sender there.
+
+        Only a sample the IoT leg delivered is judged that way: the leg is read
+        off the sample's class (``sample_leg``), so a zid-less reply arriving on
+        the bridge's Zenoh leg is refused like any other unattributed Zenoh reply.
+        """
         monkeypatch.setattr(mesh_core, "select_backend", lambda: backend)
         mesh._on_presence(_presence("robot-b", zid=None))
         event = _register(mesh, "t6", BROADCAST_RESPONDER)
 
-        mesh._on_response(_response("t6", "robot-b", zid=None))
-        mesh._on_response(_response("t6", "robot-c", zid=None))
+        mesh._on_response(_iot_leg(_response("t6", "robot-b", zid=None)))
+        mesh._on_response(_iot_leg(_response("t6", "robot-c", zid=None)))
+        mesh._on_response(_response("t6", "robot-d", zid=None))
 
         assert [r["responder_id"] for r in mesh._responses["t6"]] == ["robot-b", "robot-c"]
         assert event.is_set()
-        assert audits == []
+        assert [(e, p["responder_id"]) for e, p in audits] == [("response_hijack_rejected", "robot-d")]
 
     def test_a_reply_on_the_legacy_key_shape_is_refused(self, mesh: Mesh, audits: list) -> None:
         """``strands/<me>/response/<turn>`` names no responder, so the topic cannot vouch for the body."""

@@ -48,6 +48,7 @@ from strands_robots.mesh.iot.bootstrap import (
     SAFETY_TABLE_NAME,
     BootstrappedAccount,
 )
+from tests._package_ast import parse_file
 
 ACCOUNT = "111122223333"
 REGION = "us-west-2"
@@ -426,7 +427,7 @@ class TestTheLedgerContractHoldsForEveryHelper:
 
     def _mutating_helpers(self) -> dict[str, str]:
         """``{function name: unparsed body}`` for every helper that mutates AWS."""
-        tree = ast.parse(Path(inspect.getfile(boot_mod)).read_text(encoding="utf-8"))
+        tree = parse_file(Path(inspect.getfile(boot_mod)))
         out = {}
         for node in tree.body:
             if not isinstance(node, ast.FunctionDef):

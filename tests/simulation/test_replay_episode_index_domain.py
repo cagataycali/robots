@@ -81,6 +81,7 @@ import pytest
 
 from strands_robots import episode_labels
 from strands_robots.utils import non_negative_whole_number_error
+from tests._package_ast import parse_source
 
 # ── the fake dataset ────────────────────────────────────────────────
 #
@@ -576,7 +577,7 @@ def _drift_message(discovered: set[tuple[str, str]]) -> str:
 
 def _public_episode_surfaces(source: str) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     """Every public function that resolves an episode index, in either spelling."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

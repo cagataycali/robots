@@ -189,8 +189,19 @@ def _answer_later(m: Mesh, turn_holder: dict[str, str], transport: _DirectTransp
     return t
 
 
+class _IotSample(MagicMock):
+    """A sample the IoT leg delivered: the CLASS says so, the way ``_MqttSample`` does.
+
+    ``_on_response`` judges a reply with no publisher session id on the topic
+    binding only when the sample arrived on a broker-bound leg; a bare mock
+    reads as a Zenoh (``lan``) sample and is refused.
+    """
+
+    leg = "iot"
+
+
 def _sample(key: str, payload: dict[str, Any], response_topic: str | None = None) -> Any:
-    s = MagicMock(spec=["key_expr", "payload"])
+    s = _IotSample(spec=["key_expr", "payload"])
     s.key_expr = key
     s.payload.to_bytes.return_value = json.dumps(payload).encode()
     if response_topic is not None:

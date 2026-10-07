@@ -57,6 +57,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.mesh as mesh_pkg
+from tests._package_ast import parse_source
 
 _MESH_PKG = Path(inspect.getfile(mesh_pkg)).parent
 _REPO_ROOT = _MESH_PKG.parents[1]
@@ -83,7 +84,7 @@ def states_the_posture(text: str) -> bool:
 def _python_blocks(source: str) -> list[tuple[str, str]]:
     """Docstrings and contiguous ``#`` comment runs, each as one block."""
     blocks: list[tuple[str, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(parse_source(source)):
         if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             doc = ast.get_docstring(node, clean=False)
             if doc:

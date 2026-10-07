@@ -218,7 +218,7 @@ def tool_docstring(module: str, function: str) -> str:
         The function's docstring, dedented as :func:`ast.get_docstring` returns
         it, or ``""`` when it has none.
     """
-    tree = ast.parse((_TOOLS_ROOT / module).read_text(encoding="utf-8"))
+    tree = parse_file(_TOOLS_ROOT / module)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function:
             return ast.get_docstring(node) or ""
@@ -405,7 +405,7 @@ class TestTheGuardReadsDocstringsFromSource:
         That is the form ``tests/tools/test_tools_lazy_import.py`` uses, and the
         reason it has to.
         """
-        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        tree = parse_file(Path(__file__))
         aliases = {
             alias.asname or "strands_robots"
             for node in ast.walk(tree)

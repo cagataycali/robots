@@ -158,7 +158,7 @@ def test_the_guard_refuses_a_session_it_does_not_disable_the_rail(value, recorde
     m = bridge._safety_mesh()
 
     assert m is not None
-    assert recorder.events == [("constructed", "dash-safety"), ("started", "dash-safety")]
+    assert recorder.events == [("constructed", "dash"), ("started", "dash")]
 
 
 @pytest.mark.parametrize("value", KILLED)
@@ -211,7 +211,7 @@ def test_with_the_switch_clear_a_resume_reaches_the_rail(value, recorder, monkey
     out = bridge.signed_resume("Correct-Horse-Battery-9")
 
     assert out["signed"] is True
-    assert ("resume", "dash-safety") in recorder.events, recorder.events
+    assert ("resume", "dash") in recorder.events, recorder.events
 
 
 def test_every_rail_unavailable_answer_asks_the_kill_switch():

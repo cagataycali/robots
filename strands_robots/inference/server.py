@@ -33,6 +33,7 @@ import traceback
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
+from strands_robots.policies._ws_wire import require_held_connect
 from strands_robots.policies.base import Policy, collect_required_bodies
 from strands_robots.utils import tcp_port_error
 
@@ -93,6 +94,8 @@ class PolicyServer:
     Raises:
         ValueError: If neither or both of ``policy`` / ``policy_provider`` are
             given, or if ``port`` cannot be bound.
+        ImportError: If ``websockets`` is absent or older than 17.1; the
+            message names ``strands-robots[inference]``.
         TypeError: If the served policy tree declares
             :attr:`~strands_robots.policies.base.Policy.required_bodies` that is
             not a sequence of non-empty body names. Refused here rather than per
@@ -118,6 +121,9 @@ class PolicyServer:
         # ephemeral port, which ``start()``/``serve()`` read back onto ``port``.
         if (port_error := _bind_port_error(port, "port", type(self).__name__)) is not None:
             raise ValueError(port_error)
+        # Same reason, same report as RemotePolicy: a base install has no
+        # websockets, and start()/serve() would otherwise fail on a bare import.
+        require_held_connect(type(self).__name__, "inference")
 
         if policy is None:
             from strands_robots.policies import create_policy

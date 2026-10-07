@@ -53,6 +53,7 @@ pytest.importorskip("psutil")
 import importlib
 
 import strands_robots  # noqa: E402
+from tests._package_ast import parse_source
 from tests.tools.test_lerobot_train import _write_dataset  # noqa: E402
 
 train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
@@ -295,7 +296,7 @@ def _local_domain_comparisons(source: str) -> list[str]:
     topology I must launch differently") and is deliberately not matched.
     """
     offenders: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(parse_source(source)):
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
             continue
         if _compared_field(node.left) not in TOPOLOGY_FIELDS:

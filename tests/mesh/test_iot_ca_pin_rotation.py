@@ -21,6 +21,7 @@ import re
 import pytest
 
 from strands_robots.mesh.iot import provision
+from tests._package_ast import parse_file
 
 
 def test_resolve_ca_pins_accepts_both_builtin_and_staged_pin_for_grace_period(
@@ -103,7 +104,7 @@ def _ca_pin_env_vars() -> set[str]:
     Derived from ``provision.py``'s own ``os.getenv`` calls, so a third knob
     added to the pin path is graded against the runbook without editing a list.
     """
-    tree = ast.parse(pathlib.Path(provision.__file__).read_text(encoding="utf-8"))
+    tree = parse_file(pathlib.Path(provision.__file__))
     names = {
         node.args[0].value
         for node in ast.walk(tree)

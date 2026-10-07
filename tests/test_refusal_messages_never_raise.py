@@ -117,6 +117,7 @@ from strands_robots.utils import (
     tcp_port_error,
     validation_split_error,
 )
+from tests._package_ast import parse_source
 
 NAN = float("nan")
 INF = float("inf")
@@ -705,7 +706,7 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
         on the shared renderers contributes nothing, because
         ``refusal_repr(value)`` is a call rather than a bare name.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
         args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
@@ -867,7 +868,7 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
         ``(name, kind)`` pairs, where kind names the read form - a builtin, an
         attribute call, a comprehension or a subscript.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
     for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
         if fn.name.startswith("_") or fn.name in GUARDED_READERS:
@@ -1024,7 +1025,7 @@ class TestNoGuardRendersACallerValueDirectly:
 
     def test_the_scan_actually_reaches_the_guards_this_change_owns(self) -> None:
         """An empty scan would satisfy the assertion above just as well."""
-        tree = ast.parse(self._source())
+        tree = parse_source(self._source())
         scanned = set()
         for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
             args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
@@ -1050,7 +1051,7 @@ class TestNoGuardRendersACallerValueDirectly:
         weaker statement of the two, so the reachable set is what the assertion is
         over - a guard whose whole call graph renders nothing still fails.
         """
-        tree = ast.parse(self._source())
+        tree = parse_source(self._source())
         defined = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
         owned = set(GUARD_IDS) | CONTAINER_GUARDS | {"validation_split_error"}
         renderers = {"refusal_repr", "refusal_str", "refusal_container_repr"}

@@ -69,6 +69,7 @@ from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after i
     _ObjectState,
     _RobotState,
 )
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 #: The remedy every refusal has to name. An agent reads the text and nothing
@@ -471,7 +472,7 @@ class TestOnlyABodyMutationMarksTheScene:
 
         from strands_robots.simulation.isaac import simulation as module
 
-        tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+        tree = parse_file(pathlib.Path(module.__file__))
         found: dict[str, list[bool]] = {}
 
         def visit(node: ast.AST, enclosing: str | None) -> None:

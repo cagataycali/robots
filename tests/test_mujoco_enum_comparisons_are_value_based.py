@@ -43,6 +43,8 @@ import re
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TREES = ("strands_robots", "tests", "tests_integ", "examples")
 
@@ -72,7 +74,7 @@ def _enum_collection_names(tree: ast.Module) -> set[str]:
 
 def _order_dependent_comparisons(source: str) -> list[tuple[int, str, str]]:
     """Return ``[(lineno, kind, snippet)]`` for every enum-on-the-left comparison."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     collections = _enum_collection_names(tree)
     found: list[tuple[int, str, str]] = []
     for node in ast.walk(tree):

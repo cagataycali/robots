@@ -16,6 +16,7 @@ import pytest
 
 from strands_robots.simulation import capabilities as caps
 from strands_robots.simulation.base import SimEngine
+from tests._package_ast import parse_file
 from tests.tool_result_contract import assert_strands_tool_result, tool_json
 
 _CORE = caps.CORE_CAPABILITIES
@@ -94,7 +95,7 @@ def test_any_engine_like_object_is_checked_and_a_clashing_name_does_not_break_de
 
     assert tool_json(caps.check_capabilities(Reporter(), [caps.JOINTS], caller="x"))["missing"] == [caps.JOINTS]
     assert _engine(capabilities=["legacy"])().describe()["capabilities"] is None
-    tree = ast.parse(Path(caps.__file__).read_text(encoding="utf-8"))
+    tree = parse_file(Path(caps.__file__))
     assert not any(
         isinstance(n, ast.ImportFrom) and (n.module or "").startswith("strands_robots") for n in ast.walk(tree)
     )

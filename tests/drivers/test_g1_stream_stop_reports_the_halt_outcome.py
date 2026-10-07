@@ -15,9 +15,9 @@ budget - a remote inference call is the ordinary case - therefore left the loop
 publishing frames on ``rt/lowcmd`` while the agent read ``status="success"``.
 
 One driver, two stop surfaces, two contracts, and the agent got the one that
-cannot say it failed.  The cells that grade the fix park a policy past the join
-budget, which is why they cost about two seconds each; the fast path cannot
-distinguish a reported outcome from an asserted one.
+cannot say it failed.  The cells that grade the fix park a policy past a
+shortened join budget; the fast path cannot distinguish a reported outcome from
+an asserted one.
 """
 
 from __future__ import annotations
@@ -40,17 +40,19 @@ import strands_robots.drivers.g1 as g1_mod
 from tests.drivers.test_g1_cleanup_reads_the_loop_halt_outcome import (  # noqa: F401
     _Rollout,
     _stub_unitree_sdk,
+    shorten_the_join_budget,
 )
 
 
 @pytest.fixture
-def unjoined() -> Any:
-    """A rollout whose policy outlasts the join budget.  Always released.
+def unjoined(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A rollout whose policy outlasts a shortened join budget.  Always released.
 
     Wraps the sibling's ``_Rollout`` rather than importing its fixture:
     importing a fixture re-binds the name in this module, so every cell that
     takes it as a parameter reads as a redefinition (ruff ``F811``).
     """
+    shorten_the_join_budget(monkeypatch, g1_mod._ControlLoop)
     rollout = _Rollout(blocking=True)
     try:
         yield rollout

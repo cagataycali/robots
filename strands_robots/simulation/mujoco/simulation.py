@@ -121,6 +121,7 @@ from strands_robots.simulation.models import (
     SimStatus,
     SimWorld,
     canonical_shape,
+    color_name,
     registered,
     registry_entry,
 )
@@ -139,6 +140,7 @@ from strands_robots.simulation.mujoco.physics import (
     PhysicsMixin,
     _coerce_rgba,
     anchor_relative_scene_path,
+    object_rgba,
     scene_not_found_error,
 )
 from strands_robots.simulation.mujoco.randomization import RandomizationMixin
@@ -5207,12 +5209,16 @@ class MuJoCoSimEngine(
         # (:func:`_compiled_geometry_detail`), which is also where the mesh's
         # convex-hull collision geometry and the plane's infinite one are named.
         detail = _compiled_geometry_detail(self._mj, self._world._model, shape, f"{name}_geom")
+        rgba = object_rgba(self._mj, self._world._model, name, obj.color)
 
         return {
             "status": "success",
             "content": [
                 {
-                    "text": f"'{name}' added: {shape} at {obj.position}, {detail}, {'static' if is_static else f'{mass}kg'}"
+                    "text": (
+                        f"'{name}' added: {shape} at {obj.position}, {detail}, "
+                        f"{'static' if is_static else f'{mass}kg'}, {color_name(rgba)}"
+                    )
                 }
             ],
         }
@@ -5459,12 +5465,17 @@ class MuJoCoSimEngine(
                         ],
                     }
                 position = [round(float(v), 4) for v in data.xpos[body_id]]
-                lines.append(f"  - {name}: {obj.shape} at {position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
+                rgba = object_rgba(self._mj, model, name, obj.color)
+                lines.append(
+                    f"  - {name}: {obj.shape} at {position}, "
+                    f"{'static' if obj.is_static else f'{obj.mass}kg'}, {color_name(rgba)}"
+                )
                 listing[name] = {
                     "shape": obj.shape,
                     "is_static": bool(obj.is_static),
                     "mass": None if obj.is_static else float(obj.mass),
                     "position": position,
+                    "color": color_name(rgba),
                 }
         return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"objects": listing}}]}
 
@@ -6987,10 +6998,15 @@ class MuJoCoSimEngine(
                 "the robot(s) yet, so add a position servo per joint with actuate_robot before "
                 "move_to (which refuses a robot with no actuator) or run_policy. "
             )
+        colors = (
+            {n: object_rgba(self._mj, world._model, n, o.color) for n, o in world.objects.items()}
+            if world._model is not None
+            else {n: o.color for n, o in world.objects.items()}
+        )
         return (
             "One world per instance. The world is ALREADY CREATED and holds robot(s) "
             f"{'; '.join(robots)} - do not call create_world (it is refused while a world exists); "
-            f"{next_steps}{scene_contents_sentence(world.objects, world.cameras)}"
+            f"{next_steps}{scene_contents_sentence(world.objects, world.cameras, colors)}"
         )
 
     def wire_tool_spec(self) -> dict[str, Any]:

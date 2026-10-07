@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 if TYPE_CHECKING:
     import networkx as nx  # type: ignore[import-untyped]
@@ -145,7 +145,7 @@ def test_the_single_pass_scan_defers_exactly_what_the_per_node_predicates_do():
         "teleoperator.py",
         "robot.py",
     ):
-        tree = ast.parse((PKG / rel).read_text())
+        tree = parse_file(PKG / rel)
         imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
         assert imports, f"{rel} has no imports - it cannot exercise the comparison"
 
@@ -223,7 +223,7 @@ def _module_level_policy_runner_imports(src: str) -> list[list[str]]:
     """
     return [
         [alias.name for alias in node.names]
-        for node in ast.parse(src).body
+        for node in parse_source(src).body
         if isinstance(node, ast.ImportFrom) and node.module == _POLICY_RUNNER
     ]
 
@@ -240,7 +240,7 @@ def _type_checking_policy_runner_imports(src: str) -> list[list[str]]:
     # once per node - quadratic over base.py's 6.8k lines, 66 s on a laptop and
     # past the 120 s test timeout on a loaded runner.
     found: list[list[str]] = []
-    for block in ast.walk(ast.parse(src)):
+    for block in ast.walk(parse_source(src)):
         if not isinstance(block, ast.If):
             continue
         test = block.test
@@ -328,7 +328,7 @@ def test_a_deferred_import_is_not_part_of_the_module_level_surface():
         + _POLICY_RUNNER
         + " import PolicyRunner\n\n    del PolicyRunner\n"
     )
-    ast.parse(planted)  # the planted source must still be valid Python
+    parse_source(planted)  # the planted source must still be valid Python
 
     # The superseded proxy counted this as a violation; the surface check does not.
     assert planted.count(_SUPERSEDED_PROXY) == base_src.count(_SUPERSEDED_PROXY) + 1

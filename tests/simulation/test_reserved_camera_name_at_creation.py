@@ -69,7 +69,7 @@ import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import FREE_CAMERA_TOKENS, camera_name_error, reserved_camera_name_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 from tests.simulation._isaac_engine import isaac_engine
 
 #: The tokens that are also *addressable* strings, so only the reserved-name rule
@@ -335,7 +335,7 @@ class TestIsaacDoesNotRouteAndSoDoesNotRefuse:
         from strands_robots.simulation.isaac.simulation import IsaacSimulation
 
         source = pathlib.Path(inspect_file(IsaacSimulation)).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = parse_source(source)
         get_frame = _find_method(tree, "IsaacSimulation", "get_frame")
         assert get_frame is not None, "IsaacSimulation.get_frame not found"
         body = ast.get_source_segment(source, get_frame) or ""
@@ -408,7 +408,7 @@ class TestTheTokenSetHasOneDefinition:
             if path.name == "utils.py" and path.parent == _package_root():
                 continue  # the one definition
             text = path.read_text(encoding="utf-8")
-            tree = ast.parse(text)
+            tree = parse_source(text)
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Tuple) or len(node.elts) != 4:
                     continue

@@ -95,12 +95,12 @@
         "source": "examples/microduck/microduck_walk_sim.py --vx 0.15 --duration 5, 2026-10-07"
       },
       {
-        "checkpoint": "alpha_stand.onnx",
-        "kind": "Pollen's RL stand",
+        "checkpoint": "velstand.onnx",
+        "kind": "Pollen's default walk",
         "provider": "microduck",
         "where": "sim",
-        "result": "250 of 250 actions, 0 errors; upright for 5 s, drifting 0.12 m, or 3 mm from the STAND keyframe",
-        "source": "examples/microduck/microduck_walk_sim.py --onnx alpha_stand.onnx --vx 0, 2026-10-07"
+        "result": "250 of 250 actions, 0 errors; 0.15 m/s: 0.30 m forward, 0.15 m left in 5 s, upright; zero command: 9 mm drift",
+        "source": "examples/microduck/microduck_walk_sim.py --onnx velstand.onnx --vx 0.15 or 0 --duration 5, 2026-10-07"
       }
     ]
   }

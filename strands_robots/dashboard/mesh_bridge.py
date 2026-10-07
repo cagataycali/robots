@@ -140,6 +140,16 @@ def _resolve_mesh_camera_hz() -> float:
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
+#: The dashboard's own mesh peer id. Unset, it is ``dashboard-<host>-<4 hex>``,
+#: different at every start. Its commands and approvals go out under the rail
+#: id (:func:`safety_rail_peer_id`): this peer id on Zenoh, the IoT Thing on a
+#: backend with an IoT leg. On a mesh that requires signed identity a peer is
+#: heard only under a name its certificate's common name speaks for, so set
+#: this to the CN of the dashboard's ``STRANDS_MESH_TLS_CERT`` (or a
+#: ``<cn>__<suffix>`` child of it); robots then attribute its commands to it
+#: and spend the approvals it deposits.
+PEER_ID_ENV = "STRANDS_DASHBOARD_PEER_ID"
+
 # : How long a peer may stay quiet before it is dropped from the fleet snapshot : entirely.
 PEER_TTL_S = _env_float("STRANDS_DASHBOARD_PEER_TTL_S", "300")
 
@@ -287,9 +297,14 @@ _IOT_BEARING_BACKENDS = frozenset({"iot", "bridge"})
 
 
 def safety_rail_peer_id(dashboard_peer_id: str) -> str:
-    """The peer id of the dashboard's robot-less safety Mesh.
+    """The peer id of the dashboard's robot-less safety Mesh, the id every command it sends carries.
 
-    On plain Zenoh it is ``<dashboard>-safety``. On a backend with an IoT leg it
+    On plain Zenoh it is the dashboard's own peer id: the name its certificate
+    speaks for and the actor its approvals are deposited for. The bridge itself
+    publishes no presence, so the rail is the dashboard on the wire. (It used
+    to be ``<dashboard>-safety``, which no certificate CN speaks for, so a
+    signed mesh dropped the rail and every approval was deposited for an id no
+    command carried.) On a backend with an IoT leg it
     is the Thing the dashboard connects as (``STRANDS_IOT_THING_NAME``): the
     operator policy lets that Thing publish presence only under its own name and
     subscribe to replies only under ``strands/<thing>/response/#``, so a rail
@@ -300,7 +315,7 @@ def safety_rail_peer_id(dashboard_peer_id: str) -> str:
     thing = os.getenv("STRANDS_IOT_THING_NAME", "").strip()
     if backend in _IOT_BEARING_BACKENDS and thing:
         return thing
-    return f"{dashboard_peer_id}-safety"
+    return dashboard_peer_id
 
 
 #: Budget for resolving one camera S3 reference: the presigned GET must answer
@@ -757,7 +772,8 @@ class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
 
     def __init__(self, peer_id: str | None = None) -> None:
-        self.peer_id = peer_id or f"dashboard-{socket.gethostname().split('.')[0]}-{uuid.uuid4().hex[:4]}"
+        configured = os.getenv(PEER_ID_ENV, "").strip()
+        self.peer_id = peer_id or configured or f"dashboard-{socket.gethostname().split('.')[0]}-{uuid.uuid4().hex[:4]}"
         self._session: Any | None = None
         self._subs: list[Any] = []
         self._running = False
@@ -1469,8 +1485,8 @@ class MeshBridge:
         return safety_rail_peer_id(self.peer_id)
 
     def is_own_rail(self, peer_id: str) -> bool:
-        """True for the dashboard's own safety rail under either of its names: never a host to stop."""
-        return peer_id == self.rail_peer_id or peer_id == f"{self.peer_id}-safety"
+        """True for the dashboard's own rail, or the ``<dashboard>-safety`` an older one used: never a host to stop."""
+        return peer_id in (self.peer_id, self.rail_peer_id, f"{self.peer_id}-safety")
 
     def _safety_mesh(self) -> Any | None:
         """Lazily start the bridge's robot-less Mesh: signed safety envelopes and every command."""

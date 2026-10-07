@@ -16,6 +16,7 @@ from typing import Any
 from device_connect_edge.drivers import DeviceDriver, emit, get_rpc_source_device, on, rpc
 from device_connect_edge.types import DeviceIdentity, DeviceStatus
 
+from strands_robots.audit import log_safety_event
 from strands_robots.device_connect._authz import attached_runtime, authz_error, is_authorized_caller
 from strands_robots.drivers.reachy_envelope import envelope_error
 from strands_robots.drivers.reachy_transport import (
@@ -25,6 +26,7 @@ from strands_robots.drivers.reachy_transport import (
     identity_pose,
     rpy_to_pose,
 )
+from strands_robots.mesh.core import remote_motion_refusal
 from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 from strands_robots.utils import dial_host_error, finite_number_error, tcp_port_error
 
@@ -245,6 +247,25 @@ def _motor_selection(motor_ids: str) -> list[str] | None:
     return ids
 
 
+#: The Device Connect RPCs that MOVE the real robot: each one runs, after the
+#: caller's authorization check, the same operator-approval gate the mesh
+#: ``execute`` and the ``RobotDriver.execute`` RPC run
+#: (:func:`~strands_robots.mesh.core.remote_motion_refusal`): a dashboard grant
+#: for this exact call and caller, ``STRANDS_ROBOT_COMMAND_ALLOW=<rpc>@<caller>``
+#: on this host, or the bypass flag; otherwise the head does not move. An
+#: authorized caller is who asked, not a yes.
+DEVICE_CONNECT_MOTION_RPCS: frozenset[str] = frozenset(
+    {"look", "antennas", "body", "enableMotors", "playMove", "nod", "shake", "happy", "wakeUp", "sleep"}
+)
+
+#: The RPCs that read state or STOP the robot. Stopping must never get harder
+#: than moving, so these pass only the caller check. Every ``@rpc`` on the
+#: driver is in exactly one of the two sets; a new RPC must be classified.
+DEVICE_CONNECT_UNGATED_RPCS: frozenset[str] = frozenset(
+    {"stopMotion", "disableMotors", "getJoints", "getImu", "getDaemonStatus", "listMoves"}
+)
+
+
 class ReachyMiniDriver(DeviceDriver):
     """Device Connect driver for Pollen Reachy Mini.
 
@@ -353,6 +374,30 @@ class ReachyMiniDriver(DeviceDriver):
         """
         return DeviceStatus(availability="idle")
 
+    def _motion_refusal(self, rpc_name: str, caller: Any, args: dict[str, Any]) -> dict[str, Any] | None:
+        """The operator-approval verdict for a motion RPC, as an error envelope, or ``None`` to proceed.
+
+        Runs :func:`~strands_robots.mesh.core.remote_motion_refusal` with the
+        caller as the actor, so a grant or ``STRANDS_ROBOT_COMMAND_ALLOW``
+        entry scoped to another caller admits nothing. A refusal is logged and
+        written to the safety audit as ``device_connect_motion_refused``, the
+        way :class:`~strands_robots.device_connect.robot_driver.RobotDeviceDriver`
+        records its ``execute`` refusals.
+        """
+        tool_name = f"reachy_mini@{self._host}"
+        cmd: dict[str, Any] = {"action": rpc_name, **args}
+        refused = remote_motion_refusal(rpc_name, tool_name, cmd, actor=caller if isinstance(caller, str) else None)
+        if refused is None:
+            return None
+        refusal, what = refused
+        logger.warning("[safety] refused Device Connect %s from %r: %s", rpc_name, caller, what)
+        log_safety_event(
+            "device_connect_motion_refused",
+            str(caller),
+            {"action": rpc_name, "robot": tool_name, "caller": caller, **{k: str(v)[:128] for k, v in args.items()}},
+        )
+        return {"status": "error", "reason": refusal}
+
     async def connect(self) -> None:
         """Connect to the Reachy Mini, auto-detecting Wireless vs Lite."""
         try:
@@ -434,6 +479,12 @@ class ReachyMiniDriver(DeviceDriver):
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "look")
         if (
+            unapproved := self._motion_refusal(
+                "look", caller, {"pitch": pitch, "roll": roll, "yaw": yaw, "x": x, "y": y, "z": z}
+            )
+        ) is not None:
+            return unapproved
+        if (
             rejection := _motion_domain_error(
                 "look", {"pitch": pitch, "roll": roll, "yaw": yaw, "x": x, "y": y, "z": z}
             )
@@ -458,6 +509,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "antennas")
+        if (unapproved := self._motion_refusal("antennas", caller, {"left": left, "right": right})) is not None:
+            return unapproved
         if (rejection := _motion_domain_error("antennas", {"left": left, "right": right})) is not None:
             return rejection
         await self._send_cmd({"antennas_joint_positions": [math.radians(left), math.radians(right)]})
@@ -478,6 +531,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "body")
+        if (unapproved := self._motion_refusal("body", caller, {"yaw": yaw})) is not None:
+            return unapproved
         if (rejection := _motion_domain_error("body", {"yaw": yaw})) is not None:
             return rejection
         await self._send_cmd({"body_yaw": math.radians(yaw)})
@@ -526,6 +581,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "enableMotors")
+        if (unapproved := self._motion_refusal("enableMotors", caller, {"motor_ids": motor_ids})) is not None:
+            return unapproved
         try:
             ids = _motor_selection(motor_ids)
         except ValueError as exc:
@@ -626,6 +683,10 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "playMove")
+        if (
+            unapproved := self._motion_refusal("playMove", caller, {"move_name": move_name, "library": library})
+        ) is not None:
+            return unapproved
         if (refusal := _library_error(library, "playMove")) is not None:
             return refusal
         if not _MOVE_NAME_RE.fullmatch(move_name or ""):
@@ -676,6 +737,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "nod")
+        if (unapproved := self._motion_refusal("nod", caller, {})) is not None:
+            return unapproved
         for _ in range(3):
             await self._send_cmd({"head_pose": rpy_to_pose(15, 0, 0)})
             await asyncio.sleep(0.25)
@@ -690,6 +753,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "shake")
+        if (unapproved := self._motion_refusal("shake", caller, {})) is not None:
+            return unapproved
         for _ in range(3):
             await self._send_cmd({"head_pose": rpy_to_pose(0, 0, 25)})
             await asyncio.sleep(0.2)
@@ -704,6 +769,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "happy")
+        if (unapproved := self._motion_refusal("happy", caller, {})) is not None:
+            return unapproved
         for _ in range(4):
             await self._send_cmd({"antennas_joint_positions": [math.radians(60), math.radians(-60)]})
             await asyncio.sleep(0.2)
@@ -726,6 +793,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "wakeUp")
+        if (unapproved := self._motion_refusal("wakeUp", caller, {})) is not None:
+            return unapproved
         result = await asyncio.to_thread(
             api,
             self._host,
@@ -749,6 +818,8 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc", device=attached_runtime(self)):
             return authz_error(caller, "sleep")
+        if (unapproved := self._motion_refusal("sleep", caller, {})) is not None:
+            return unapproved
         result = await asyncio.to_thread(
             api,
             self._host,

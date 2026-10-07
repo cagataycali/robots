@@ -397,6 +397,8 @@ class Console:
                 peers_snapshot=lambda: bridge.peers,
                 proxy_motion=motion_actions_for(proxies, peers),
                 proxy_targets={t.tool_name: t.peer_id for t in proxies},
+                # The id the rail sends this dashboard's commands as, so the robot spends the yes it carries.
+                actor=str(getattr(bridge, "rail_peer_id", "") or "") or None,
             )
             hooks.append(self._hook)
         return Agent(

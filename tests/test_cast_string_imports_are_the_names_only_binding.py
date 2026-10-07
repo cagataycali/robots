@@ -51,6 +51,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
+from tests._package_ast import parse_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Every top-level directory that ships Python. The idiom this grades is not
@@ -181,7 +183,7 @@ def _cast_string_names() -> tuple[_CastStringName, ...]:
             if "cast(" not in source:
                 continue
             try:
-                tree = ast.parse(source)
+                tree = parse_source(source)
             except SyntaxError:
                 continue
             import_lines = _type_checking_import_lines(tree)
@@ -217,7 +219,7 @@ class TestACastStringImportIsTheNamesOnlyBinding:
         redundant = []
         for reference in _cast_string_names():
             source = (REPO_ROOT / reference.path).read_text(encoding="utf-8")
-            bindings = _module_level_bindings(ast.parse(source))
+            bindings = _module_level_bindings(parse_source(source))
             if "runtime" in bindings.get(reference.name, set()):
                 redundant.append(
                     f"{reference.path}:{reference.import_line} imports {reference.name!r} under "
