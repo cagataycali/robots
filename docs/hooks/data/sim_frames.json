@@ -71,5 +71,27 @@
         ]
       }
     }
+  },
+  "isaac-1": {
+    "page": "learn/simulation/isaac.md",
+    "fence": 1,
+    "sketches": true,
+    "timeout_s": 1100,
+    "video": {
+      "fps": 30,
+      "slowdown": 4,
+      "camera": {
+        "position": [
+          0.65,
+          -0.65,
+          0.45
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.2
+        ]
+      }
+    }
   }
 }

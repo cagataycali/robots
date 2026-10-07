@@ -20,7 +20,7 @@ fences too (a GPU backend's fence, rendered on a box that has the backend). A
 ``script`` entry runs a capture script (an agent transcript, say) that writes the
 listed frames itself. An entry with ``"video": {"fps": 30, "slowdown": 1}`` also
 records a clip: the fence's physics loop is wrapped (``mujoco.mj_step``, Newton's
-``_advance``, mjlab's ``Simulation.step``) and a frame is rendered each time the
+``_advance``, Isaac's ``World.step``, mjlab's ``Simulation.step``) and a frame is rendered each time the
 simulated clock passes ``1 / (fps * slowdown)`` seconds, so ``slowdown`` 1 plays in real
 time and 16 is slow motion; MuJoCo frames come from one fixed camera framed like the
 still, GPU backends render their own default view or the entry's ``"camera":
@@ -185,6 +185,25 @@ def _record():
     except ImportError:
         pass
     try:
+        from strands_robots.simulation.isaac import simulation as _isaac
+        orig_create_world = _isaac.IsaacSimulation.create_world
+        def create_world(self, *a, **k):
+            out = orig_create_world(self, *a, **k)
+            world = getattr(self, "_world", None)
+            if world is not None and not getattr(world, "_docs_clip", False):
+                orig_world_step = world.step
+                dt = float(_isaac._resolved_physics_dt(world) or self._config.physics_dt)
+                def world_step(*sa, **sk):
+                    res = orig_world_step(*sa, **sk)
+                    _tick(dt, lambda: _engine_frame(self))
+                    return res
+                world.step = world_step
+                world._docs_clip = True
+            return out
+        _isaac.IsaacSimulation.create_world = create_world
+    except ImportError:
+        pass
+    try:
         from mjlab.sim import Simulation as _MjlabSim
         orig_sim_step = _MjlabSim.step
         def step(self, *a, **k):
@@ -232,6 +251,7 @@ def _engines():
         ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine"),
         ("strands_robots.simulation.newton.simulation", "NewtonSimEngine"),
         ("strands_robots.simulation.mjlab.simulation", "MjlabEngine"),
+        ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),
     ):
         try:
             found.append(getattr(__import__(module, fromlist=[name]), name))
@@ -241,14 +261,17 @@ def _engines():
 
 def _install():
     for Engine in _engines():
-        orig_init, orig_cleanup = Engine.__init__, Engine.cleanup
+        orig_init, orig_cleanup, orig_destroy = Engine.__init__, Engine.cleanup, Engine.destroy
         def __init__(self, *a, _orig=orig_init, **k):
             _orig(self, *a, **k)
             _live.append(self)
         def cleanup(self, *a, _orig=orig_cleanup, **k):
             _shoot(self)
             return _orig(self, *a, **k)
-        Engine.__init__, Engine.cleanup = __init__, cleanup
+        def destroy(self, *a, _orig=orig_destroy, **k):  # Isaac's destroy closes Kit and the process: shoot first
+            _shoot(self)
+            return _orig(self, *a, **k)
+        Engine.__init__, Engine.cleanup, Engine.destroy = __init__, cleanup, destroy
     atexit.register(lambda: [_shoot(e) for e in _live])
     if _VIDEO:
         _record()
