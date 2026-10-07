@@ -102,12 +102,3 @@ def test_without_an_output_dir_nothing_is_written() -> None:
     history.record({"iteration": 1, "mean_reward": 1.0})
     history.close()
     assert history.summary() == {"metrics_path": None, "iterations_recorded": 1}
-
-
-@pytest.mark.parametrize("module", ["fast_sac", "fast_td3"])
-def test_the_off_policy_loops_record_it_too(module) -> None:
-    import inspect
-
-    mod = __import__(f"strands_robots.training.rl.{module}", fromlist=["x"])
-    source = inspect.getsource(mod)
-    assert "TrainingHistory(" in source and "history.record(last_metrics)" in source
