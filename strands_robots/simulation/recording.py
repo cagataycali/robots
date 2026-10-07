@@ -1250,7 +1250,8 @@ class DatasetRecordingMixin:
                 :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`:
                 the task passed with a frame wins, then this value, then the
                 literal ``"untitled"``. Every rollout hook passes
-                ``run_policy(instruction=...)`` as the frame task.
+                ``run_policy(instruction=...)`` as the frame task. A value
+                that is not a string is refused.
             fps: Dataset frame rate recorded in the LeRobot metadata. Must be a
                 positive whole number, refused up front
                 (:func:`dataset_recording_option_error`). It must EQUAL the
@@ -1303,6 +1304,12 @@ class DatasetRecordingMixin:
         # capturing at.
         if error := dataset_recording_option_error("start_recording", fps):
             return error
+        # The same rule run_policy applies to ``instruction``: both label the
+        # recorded ``task`` column, and a falsy non-string fell through to
+        # "untitled" while a truthy one was written as its repr.
+        if not isinstance(task, str):
+            text = f"start_recording: 'task' must be a string, got {type(task).__name__}."
+            return {"status": "error", "content": [{"text": text}]}
         for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
             if error := dataset_recording_posture_error("start_recording", _flag, _value):
                 return error
