@@ -4379,7 +4379,7 @@ class MuJoCoSimEngine(
         base["methods"]["run_multi_policy"] = (
             "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
             "control_frequency=None (the open recording's fps, else 50.0), action_horizon=8 | dict, n_steps=None, "
-            "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
+            "max_steps=None, fast_mode=False) -> dict  # drive MULTIPLE robots, each with its own "
             "Policy, in one synchronized loop that records ALL robots into ONE "
             "merged frame per timestep (prefixed state/action, e.g. "
             "'alice__shoulder_pan'); the concurrent multi-robot sibling of "
