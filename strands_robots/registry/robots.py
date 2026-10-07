@@ -168,7 +168,8 @@ def has_hardware(name: str) -> bool:
     A robot may be drivable without declaring anything: a native driver
     registered through
     :func:`~strands_robots.drivers.register_native_driver` needs no registry
-    declaration, and several servo-bus arms are in exactly that position.
+    declaration (every driver shipped here declares one; a driver package
+    outside this one may not).
     Declaration and registration are two different facts and this predicate
     reports only the first, because it is the one a caller can read without
     importing a driver package.
@@ -257,10 +258,10 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
             - ``"sim"``: robots ``Robot(name)`` can simulate (``has_sim``); an
               ``auto_download: false`` entry is listed once its asset is on disk.
             - ``"real"``: robots *declaring* a hardware backend
-              (``has_hardware``). A robot a native driver can build without a
-              declaration is not in this list;
-              :func:`~strands_robots.drivers.list_driver_coverage` is the
-              complete answer.
+              (``has_hardware``). Every robot a shipped driver builds declares
+              one, so this matches
+              :func:`~strands_robots.drivers.list_driver_coverage`; a driver
+              registered at runtime without a declaration shows only there.
             - ``"both"``: robots that have BOTH sim and real.
 
     Returns:

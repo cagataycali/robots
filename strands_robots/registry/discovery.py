@@ -373,6 +373,8 @@ def _urdf_entry(norm: str) -> dict[str, Any] | None:
         }
     else:
         entry["refusal"] = str(recorded.get("refusal", "the description does not build"))
+    if recorded.get("driver"):
+        entry["hardware"] = {"driver": str(recorded["driver"])}
     return entry
 
 

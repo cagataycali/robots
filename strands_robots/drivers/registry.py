@@ -299,5 +299,5 @@ def _native_driver_refusal(robot_type: str) -> str | None:
         f"Unsupported robot type: {robot_type!r}. lerobot has no robot type for it, but this "
         f"package ships a native driver for it ({driver_cls.__name__}): build it with "
         f"Robot({robot_type!r}, mode='real', driver='strands', ...), or leave driver= unset: "
-        f"the native driver is the default for a robot that declares no hardware.driver."
+        f"the native driver is the default."
     )

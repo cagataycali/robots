@@ -63,7 +63,10 @@
       },
       "aliases": [
         "franka_fr3"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "fr3_v2": {
       "description": "Franka Research 3 v2 (7-DOF + gripper, updated)",
@@ -77,7 +80,10 @@
       },
       "aliases": [
         "franka_fr3_v2"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "hope_jr": {
       "description": "HopeJR Arm (high-DOF anthropomorphic arm, Feetech)",
@@ -98,7 +104,10 @@
       },
       "aliases": [
         "gen3"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "koch": {
       "description": "Koch v1.1 Low Cost Robot Arm (6-DOF, Dynamixel)",
@@ -133,7 +142,10 @@
         "iiwa",
         "iiwa14",
         "kuka_iiwa_14"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "omx": {
       "description": "OMX Robot Arm (ROBOTIS, CAN bus motors)",
@@ -210,7 +222,10 @@
         "oxe_droid_rel",
         "oxe_droid_relative_eef_relative_joint",
         "single_panda_gripper"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "piper": {
       "description": "AgileX Piper (6-DOF + gripper)",
@@ -332,6 +347,9 @@
         "model_xml": "ur10e.xml",
         "scene_xml": "scene.xml",
         "robot_descriptions_module": "ur10e_mj_description"
+      },
+      "hardware": {
+        "driver": "strands"
       }
     },
     "ur5e": {
@@ -343,6 +361,9 @@
         "model_xml": "ur5e.xml",
         "scene_xml": "scene.xml",
         "robot_descriptions_module": "ur5e_mj_description"
+      },
+      "hardware": {
+        "driver": "strands"
       }
     },
     "vx300s": {
@@ -390,7 +411,10 @@
       },
       "aliases": [
         "ufactory_xarm7"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "yam": {
       "description": "i2rt YAM Arm (8-DOF)",
@@ -836,7 +860,10 @@
         "open_duck",
         "open_duck_mini_v2",
         "open_duck_v2"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "rby1": {
       "description": "Rainbow Robotics RB-Y1A Mobile Manipulator (31-DOF)",
@@ -856,7 +883,10 @@
       "aliases": [
         "rby1a",
         "rainbow_rby1"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "reachy2": {
       "description": "Pollen Reachy 2",
@@ -939,7 +969,10 @@
       },
       "aliases": [
         "h1"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "unitree_h1_2": {
       "description": "Unitree H1-2 Humanoid (52-DOF, with hands)",
@@ -953,7 +986,10 @@
       },
       "aliases": [
         "h1_2"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "aliengo": {
       "description": "Unitree Aliengo Quadruped (12-DOF)",
@@ -1139,7 +1175,10 @@
       },
       "aliases": [
         "boston_dynamics_spot"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "stretch": {
       "description": "Hello Robot Stretch (original, mobile manipulator)",
@@ -1153,7 +1192,10 @@
       },
       "aliases": [
         "hello_robot_stretch_original"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "stretch3": {
       "description": "Hello Robot Stretch 3 (mobile manipulator)",
@@ -1168,7 +1210,10 @@
       "aliases": [
         "hello_robot_stretch",
         "hello_robot_stretch_3"
-      ]
+      ],
+      "hardware": {
+        "driver": "strands"
+      }
     },
     "tiago_dual": {
       "description": "PAL Robotics TIAGo++ Dual-Arm Mobile (26-DOF)",

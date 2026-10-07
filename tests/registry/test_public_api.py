@@ -370,14 +370,14 @@ class TestRobotRegistry:
         assert has_hardware("lekiwi") is True
 
     def test_has_hardware_false_for_sim_only(self):
-        assert has_hardware("ur5e") is False
+        assert has_hardware("shadow_hand") is False
 
     def test_get_hardware_type(self):
         assert get_hardware_type("so100") == "so100_follower"
         assert get_hardware_type("lekiwi") == "lekiwi"
 
     def test_get_hardware_type_none_for_sim_only(self):
-        assert get_hardware_type("ur5e") is None
+        assert get_hardware_type("shadow_hand") is None
 
     def test_get_hardware_type_none_for_unknown(self):
         assert get_hardware_type("nonexistent_xyz") is None
@@ -400,7 +400,7 @@ class TestRobotRegistry:
         robots = list_robots("real")
         for r in robots:
             assert r["has_real"] is True
-        assert "ur5e" not in [r["name"] for r in robots]
+        assert "shadow_hand" not in [r["name"] for r in robots]
 
     def test_list_robots_both(self):
         robots = list_robots("both")
@@ -411,7 +411,7 @@ class TestRobotRegistry:
         assert "so100" in names
         assert "lekiwi" in names  # sim + real
         assert "reachy2" not in names
-        assert "ur5e" not in names
+        assert "shadow_hand" not in names
 
     def test_list_robots_unknown_mode_raises(self):
         # A plausible-but-unsupported filter (hardware-capable robots) must not
