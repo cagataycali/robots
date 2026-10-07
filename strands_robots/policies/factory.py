@@ -933,9 +933,15 @@ def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> Non
         **kwargs: Provider-specific parameters (the policy_config).
 
     Raises:
+        TypeError: If ``provider`` is not a string. A non-string is a caller
+            bug (not a resolution failure), reported here with the same message
+            :func:`policy_provider_error` returns for the agent-tool surface
+            instead of being silently masked as "no preflight hook".
         ValueError: When the resolved provider's ``preflight`` rejects the
             configuration.
     """
+    if (type_error := _provider_type_error(provider, "provider")) is not None:
+        raise TypeError(type_error)
     try:
         _canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     except Exception as e:
@@ -1044,8 +1050,14 @@ def policy_overrides_preflight(provider: str, **kwargs) -> bool:
         it leaves the default no-op in place, and ``False`` when ``provider``
         cannot be resolved at all - :func:`preflight_policy` swallows resolution
         failures and degrades to a no-op for such a name, so there is likewise
-        no hook to feed here.
+        no hook to feed here. A non-string ``provider`` is NOT a resolution
+        failure though; it is a caller bug (``_resolve_policy_class`` would
+        raise ``TypeError`` from the shared ``_provider_type_error`` check).
+        That TypeError is re-raised here so the caller sees "you handed me a
+        non-string" instead of a silent "no preflight hook" verdict.
     """
+    if (type_error := _provider_type_error(provider, "provider")) is not None:
+        raise TypeError(type_error)
     try:
         _canonical, PolicyClass, _resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     except Exception as e:
