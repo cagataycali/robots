@@ -35,7 +35,7 @@ import pytest
 
 # Neither import below touches strands_robots, so both are safe above the
 # environment defaults that the strands_robots imports further down depend on.
-from tests._device_connect_real import EDGE_REBINDERS, held_modules, restore
+from tests._device_connect_real import EDGE_REBINDERS, integration_put_back
 from tests.description_clone_lock import serialize_description_clones
 from tests.session_truncation import register_truncation_reporter
 
@@ -172,12 +172,8 @@ def _device_connect_modules_are_put_back() -> Iterator[None]:
     caller keeps the pair together - the swap is undone by the session, not by
     thirteen callers remembering to.
     """
-    held = held_modules()
-    try:
+    with integration_put_back():
         yield
-    finally:
-        if held_modules() != held:
-            restore(held)
 
 
 @pytest.fixture(autouse=True)
