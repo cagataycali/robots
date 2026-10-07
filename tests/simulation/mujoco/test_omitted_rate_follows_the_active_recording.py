@@ -118,7 +118,7 @@ class TestARolloutAfterARecording:
         would have to type a number the engine already knew. Naming the adopted
         rate back to the caller is the routed surface's line, pinned above.
         """
-        sim.start_recording(repo_id="local/e", task="hold", root=str(tmp_path / "e"))
+        sim.start_recording(repo_id="local/e", task="hold", root=str(tmp_path / "e"), cameras=[])
         result = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=3)
         assert result["status"] == "success", result
         assert "3 steps" in _text(sim.get_recording_status())

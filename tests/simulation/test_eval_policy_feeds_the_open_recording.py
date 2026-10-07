@@ -44,7 +44,7 @@ def sim():
 
 
 def test_eval_policy_under_an_open_recording_writes_one_dataset_episode_per_episode(sim, tmp_path):
-    assert sim.start_recording(repo_id="lab/eval", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/eval", root=str(tmp_path / "ds"), fps=30, cameras=[])["status"] == "success"
     r = sim.eval_policy("so101", policy_provider="mock", n_episodes=2, max_steps=15, control_frequency=30.0)
     assert r["status"] == "success", _text(r)
     assert "Recorded 2 episode(s), 30 frames to lab/eval" in _text(r)
@@ -83,7 +83,10 @@ class _TenStepBenchmark(BenchmarkProtocol):
 def test_evaluate_benchmark_under_an_open_recording_writes_frames_too(sim, tmp_path):
     register_benchmark("eval_records_probe", _TenStepBenchmark())
     try:
-        assert sim.start_recording(repo_id="lab/bench", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
+        assert (
+            sim.start_recording(repo_id="lab/bench", root=str(tmp_path / "ds"), fps=30, cameras=[])["status"]
+            == "success"
+        )
         r = sim.evaluate_benchmark(
             "eval_records_probe", robot_name="so101", policy_provider="mock", n_episodes=1, control_frequency=30.0
         )
@@ -114,7 +117,7 @@ def test_a_caller_supplied_on_frame_is_kept_and_an_unfed_recorder_is_named(sim, 
     them, instead of leaving it to ``stop_recording`` to refuse.
     """
     seen: list[int] = []
-    assert sim.start_recording(repo_id="lab/own", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/own", root=str(tmp_path / "ds"), fps=30, cameras=[])["status"] == "success"
     r = sim.eval_policy(
         "so101",
         policy_provider="mock",
@@ -136,7 +139,7 @@ def test_a_caller_supplied_on_frame_is_kept_and_an_unfed_recorder_is_named(sim, 
 
 def test_a_caller_on_frame_that_does_feed_is_reported_as_recorded(sim, tmp_path):
     """The other branch: frames landed, so the answer credits them, not a diagnosis."""
-    assert sim.start_recording(repo_id="lab/both", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/both", root=str(tmp_path / "ds"), fps=30, cameras=[])["status"] == "success"
     hook = sim._make_recording_on_frame("so101", "")
     r = sim.eval_policy(
         "so101",
@@ -152,7 +155,7 @@ def test_a_caller_on_frame_that_does_feed_is_reported_as_recorded(sim, tmp_path)
 
 
 def test_run_policy_still_records_on_its_own(sim, tmp_path):
-    assert sim.start_recording(repo_id="lab/rp", root=str(tmp_path / "ds"), fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/rp", root=str(tmp_path / "ds"), fps=30, cameras=[])["status"] == "success"
     r = sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert r["status"] == "success", _text(r)
     assert "[recording] 15 steps buffered in the open episode" in _text(sim.get_recording_status())
@@ -206,7 +209,10 @@ def test_a_recorded_benchmark_evaluation_labels_its_frames_with_the_task_the_pol
     root = tmp_path / "ds"
     try:
         kwargs = {"task": session_task} if session_task is not None else {}
-        assert sim.start_recording(repo_id="lab/label", root=str(root), fps=30, **kwargs)["status"] == "success"
+        assert (
+            sim.start_recording(repo_id="lab/label", root=str(root), fps=30, **kwargs, cameras=[])["status"]
+            == "success"
+        )
         r = sim.evaluate_benchmark(
             "eval_records_label",
             robot_name="so101",

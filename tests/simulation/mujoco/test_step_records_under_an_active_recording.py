@@ -165,6 +165,29 @@ class TestTheFrameIsTheSceneAsCommanded:
         obs = recorder.add_frame.call_args.kwargs["observation"]
         assert not any(isinstance(v, np.ndarray) and v.ndim >= 2 for v in obs.values())
 
+    @pytest.mark.parametrize(
+        ("robots", "scope"), [(1, set()), (2, set()), (2, None)], ids=["one-no-camera", "two-no-camera", "two-all"]
+    )
+    def test_a_frame_renders_each_kept_camera_once(self, sim, monkeypatch, robots: int, scope: set[str] | None) -> None:
+        if robots == 2:
+            assert sim.add_robot(name="bob", data_config="so101", position=[0.6, 0.0, 0.0])["status"] == "success"
+        calls: list[tuple[int, int]] = []
+        lookup = sim._get_renderer
+
+        def counted(width: int, height: int):
+            calls.append((width, height))
+            return lookup(width, height)
+
+        monkeypatch.setattr(sim, "_get_renderer", counted)
+        sim.get_observation("so101")
+        one_observation = len(calls)
+        assert one_observation > 0, "the scene has no camera to render"
+        calls.clear()
+        _open_fake_recording(sim, fps=10)
+        sim._world._backend_state["recording_cameras"] = scope
+        sim.step(n_steps=1)
+        assert len(calls) == (0 if scope == set() else one_observation)
+
     def test_the_in_memory_trajectory_gets_one_step_per_robot_per_frame(self, sim) -> None:
         _open_fake_recording(sim, fps=10, task="three poses")
         sim.step(n_steps=round(0.3 / _dt(sim)))
@@ -302,7 +325,9 @@ class TestAFailedFrameIsReportedNotCounted:
 class TestTheRealRecorderEndToEnd:
     def test_a_scripted_three_pose_demonstration_is_a_saved_episode(self, sim, tmp_path) -> None:
         pytest.importorskip("lerobot")
-        opened = sim.start_recording(repo_id="local/step_records_e2e", fps=10, root=str(tmp_path), task="three poses")
+        opened = sim.start_recording(
+            repo_id="local/step_records_e2e", fps=10, root=str(tmp_path), task="three poses", cameras=[]
+        )
         assert opened["status"] == "success", _text(opened)
         assert "step records one frame per 1/10s of sim time" in _text(opened)
         keys = sim.robot_action_keys("so101")
