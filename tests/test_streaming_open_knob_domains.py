@@ -118,13 +118,16 @@ def _open_node() -> Any:
     parameter is.
     """
     import ast
+    import copy
     import inspect
     import pathlib
 
+    # The parse is shared across the process; the planted negatives below append
+    # to this node, so each caller gets its own copy.
     tree = parse_file(pathlib.Path(inspect.getfile(sd)))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "open":
-            return node
+            return copy.deepcopy(node)
     raise AssertionError("StreamingDatasetReader.open not found")
 
 
