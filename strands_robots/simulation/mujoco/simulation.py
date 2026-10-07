@@ -118,6 +118,7 @@ from strands_robots.simulation.models import (
     SimRobot,
     SimStatus,
     SimWorld,
+    canonical_shape,
     registered,
     registry_entry,
 )
@@ -4905,7 +4906,8 @@ class MuJoCoSimEngine(
                 keeps the full string, and a non-string name is not addressable
                 through the agent-tool surface, where a name arrives as JSON.
             shape: ``"box"``, ``"sphere"``, ``"cylinder"``, ``"capsule"``,
-                ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
+                ``"ellipsoid"``, ``"plane"``, or ``"mesh"``. ``"cube"`` and
+                ``"cuboid"`` build a ``"box"``.
             position: World position ``[x, y, z]`` of the body origin (default
                 origin).
             orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
@@ -5013,6 +5015,8 @@ class MuJoCoSimEngine(
         # name, so this has to come first.
         if (name_err := entity_name_error("add_object", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
+
+        shape = canonical_shape(shape)
 
         if name in self._world.objects:
             return {

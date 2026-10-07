@@ -23,6 +23,7 @@ Design (see ``docs/reference/backends/mjlab.md`` and the lane STUDY):
 
 from __future__ import annotations
 
+import difflib
 import logging
 import re
 import threading
@@ -43,7 +44,7 @@ from strands_robots.simulation.base import (
 )
 from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
-from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.models import SHAPE_ALIASES, canonical_shape, registered, registry_entry
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -775,10 +776,14 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         msg = entity_name_error("add_object", "name", name)
         if msg:
             return {"status": "error", "content": [{"text": msg}]}
-        if shape not in _SHAPE_GEOM:
+        shape = canonical_shape(shape)
+        if not isinstance(shape, str) or shape not in _SHAPE_GEOM:
+            accepted = sorted(_SHAPE_GEOM)
+            close = difflib.get_close_matches(str(shape).lower(), accepted + sorted(SHAPE_ALIASES), n=1, cutoff=0.6)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
             return {
                 "status": "error",
-                "content": [{"text": f"shape must be one of {sorted(_SHAPE_GEOM)}, got {shape!r}"}],
+                "content": [{"text": f"shape must be one of {accepted}, got {shape!r}.{hint}"}],
             }
         pos, msg = coerce_pose_vector("add_object", "position", position, 3)
         if msg:

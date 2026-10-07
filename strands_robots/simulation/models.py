@@ -123,6 +123,21 @@ class SimRobot:
         return was_running
 
 
+#: Everyday names for a primitive, mapped to the shape every backend builds.
+#: The docs and examples call a ``shape="box"`` object a cube, and Isaac's own
+#: classes are ``DynamicCuboid`` / ``FixedCuboid``, so both words are taken.
+SHAPE_ALIASES: dict[str, str] = {"cube": "box", "cuboid": "box"}
+
+
+def canonical_shape(shape: Any) -> Any:
+    """Return the shape name a backend builds for ``shape``.
+
+    An alias in :data:`SHAPE_ALIASES` becomes its canonical name; anything else,
+    including a non-string, is returned unchanged for the caller to validate.
+    """
+    return SHAPE_ALIASES.get(shape, shape) if isinstance(shape, str) else shape
+
+
 @dataclass
 class SimObject:
     """An object in the simulation scene."""

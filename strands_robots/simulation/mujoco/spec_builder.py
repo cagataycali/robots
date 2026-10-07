@@ -28,7 +28,7 @@ from typing import Any, Final
 
 import numpy as np
 
-from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
+from strands_robots.simulation.models import SHAPE_ALIASES, SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 from strands_robots.simulation.terrain import (
     TERRAIN_BASE,
@@ -192,7 +192,7 @@ def _geom_type(shape: str) -> int:
         return _GEOM_TYPE_CACHE[shape]
     except KeyError as e:
         known = sorted(_GEOM_TYPE_CACHE)
-        close = difflib.get_close_matches(str(shape).lower(), known, n=1, cutoff=0.6)
+        close = difflib.get_close_matches(str(shape).lower(), known + sorted(SHAPE_ALIASES), n=1, cutoff=0.6)
         hint = f" Did you mean {close[0]!r}?" if close else ""
         raise ValueError(f"Unsupported shape {shape!r}.{hint} Supported: {', '.join(known)}.") from e
 
