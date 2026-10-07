@@ -55,9 +55,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import tests._device_connect_real as dc_real
 from tests._device_connect_real import (
     bound_to_a_fake,
     held_modules,
+    integration_put_back,
     restore,
     restore_the_edge,
     use_a_mock_edge,
@@ -235,6 +237,38 @@ class TestRestoreReadsTheSnapshot:
 
         assert sys.modules[f"{_PREFIX}.blocked"] is None, "the block is left for the importer to raise on"
         assert sys.modules[_PREFIX] is package
+
+
+class TestThePutBackScansOnlyAChangedRegistry:
+    """The autouse put-back pays the prefix scan only when ``sys.modules`` moved."""
+
+    def test_an_untouched_registry_is_settled_without_a_scan(
+        self, probe_package: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        importlib.import_module(f"{_PREFIX}.leaf")
+        scans: list[str] = []
+
+        def counting_scan(*args: object, **kwargs: object) -> dict[str, ModuleType]:
+            scans.append("scan")
+            return {}
+
+        monkeypatch.setattr(dc_real, "held_modules", counting_scan)
+
+        with integration_put_back(_PREFIX):
+            pass
+
+        assert scans == []
+
+    def test_a_swap_inside_the_body_is_still_put_back(self, probe_package: Path) -> None:
+        first = importlib.import_module(f"{_PREFIX}.leaf")
+
+        with integration_put_back(_PREFIX):
+            for name in _PACKAGE_MODULES:
+                sys.modules.pop(name, None)
+            assert importlib.import_module(f"{_PREFIX}.leaf") is not first
+
+        assert sys.modules[f"{_PREFIX}.leaf"] is first
+        assert sys.modules[_PREFIX].leaf is first  # type: ignore[attr-defined]
 
 
 _EDGE_NAMES = (
