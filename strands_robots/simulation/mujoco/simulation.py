@@ -84,6 +84,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
+from strands_robots.registry.robots import get_robot
 from strands_robots.simulation.base import (
     SimEngine,
     close_match_hint,
@@ -526,6 +527,11 @@ def _resolve_policy_stop_timeout(policy_stop_timeout: float | None, default: flo
 # when the caller gives no per-robot override. Single-sourced so the signature
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
+
+# Base-twist components (m/s, m/s, rad/s). A legged robot's onboard controller
+# takes them on hardware; in simulation its locomotion policy does, as
+# ``target_velocity``, so a ``send_action`` naming only these gets that route.
+_TWIST_KEYS = frozenset({"vx", "vy", "vyaw"})
 
 # Vertical seating of a floating base on terrain
 # (:meth:`MuJoCoSimEngine._seat_floating_bases_on_terrain`). A long geom can be
@@ -1396,6 +1402,8 @@ class MuJoCoSimEngine(
         hint = f" Valid keys: {valid_keys}" if valid_keys else ""
         if labels_hint := self._joint_labels_hint(robot_name):
             hint += f" {labels_hint}"
+        if twist_hint := self._twist_keys_hint(robot_name, unresolved):
+            hint += f" {twist_hint}"
         outcome = (
             f"Action partially applied. Applied: {applied}."
             if applied
@@ -1409,6 +1417,29 @@ class MuJoCoSimEngine(
             "status": "error",
             "content": [{"text": text}, {"json": {"unresolved_keys": unresolved, "applied": applied}}],
         }
+
+    def _twist_keys_hint(self, robot_name: str, unresolved: list[str]) -> str:
+        """The ``run_policy`` call for a base twist, or ``""`` when the keys are not one.
+
+        ``vx`` / ``vy`` / ``vyaw`` are what a legged robot's onboard controller
+        takes on hardware; in simulation no actuator carries them, the robot's
+        locomotion policy does, as ``target_velocity``. The hint fires only
+        when every unresolved key is a twist component and the registry names
+        that policy (``locomotion_policy``), so a joint typo keeps the plain
+        refusal.
+        """
+        if not set(unresolved) <= _TWIST_KEYS:
+            return ""
+        entry = registry_entry(self._world.robots, robot_name) if self._world is not None else None
+        info = get_robot((entry.data_config if entry else None) or robot_name) or {}
+        provider = info.get("locomotion_policy")
+        if not provider:
+            return ""
+        return (
+            f"{unresolved} are base-twist components, which no actuator takes in simulation; "
+            f"the robot's locomotion policy walks them: run_policy(robot_name='{robot_name}', "
+            f"policy_provider='{provider}', policy_kwargs={{'target_velocity': [vx, vy, vyaw]}})."
+        )
 
     def physics_timestep(self) -> float | None:
         """Physics integration timestep (seconds) of the active world.

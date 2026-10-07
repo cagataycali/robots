@@ -804,7 +804,8 @@
       ],
       "hardware": {
         "driver": "strands"
-      }
+      },
+      "locomotion_policy": "microduck"
     },
     "mujoco_humanoid": {
       "description": "MuJoCo Humanoid (21-DOF reference model)",
@@ -946,6 +947,7 @@
         "driver": "strands"
       },
       "legacy_urdf": "unitree_g1/g1.urdf",
+      "locomotion_policy": "wbc",
       "aliases": [
         "g1",
         "g1_wbc",
