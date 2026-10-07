@@ -29,10 +29,10 @@ _TOKEN = re.compile(r"\{\{\s*drivers_table\s*\}\}")
 #: module path -> (transport, install line, page). The page is relative to
 #: ``docs/learn/hardware/``.
 _FAMILY: dict[str, tuple[str, str, str]] = {
-    "strands_robots.drivers.feetech.driver": ("serial (Feetech SCS bus)", "`pip install pyserial`", "feetech-arms.md"),
+    "strands_robots.drivers.feetech.driver": ("serial (Feetech SCS bus)", "`[serial]`", "feetech-arms.md"),
     "strands_robots.drivers.dynamixel.driver": (
         "serial (Dynamixel Protocol 2.0)",
-        "`pip install pyserial`",
+        "`[serial]`",
         "feetech-arms.md",
     ),
     "strands_robots.drivers.franka.driver": ("ethernet (FCI, libfranka)", "`panda-py`, vendor wheel", "franka.md"),

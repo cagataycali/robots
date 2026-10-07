@@ -25,12 +25,10 @@ MuJoCo backend.
 
 from __future__ import annotations
 
-import json
-import os
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.training.base import TrainResult, TrainSpec
-from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec, TrainingHistory
+from strands_robots.training.base import TrainSpec
+from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -142,6 +140,8 @@ def build_actor_critic(
 
 class FastSacTrainer(BaseRLAlgo):
     """Soft Actor-Critic trainer (``provider_name == "fast_sac"``)."""
+
+    _collected_steps: int  # counted by collect_rollout, reported as latest_step
 
     @property
     def provider_name(self) -> str:
@@ -338,12 +338,6 @@ class FastSacTrainer(BaseRLAlgo):
         """Current entropy temperature (``exp(log_alpha)``)."""
         return self.log_alpha.exp()
 
-    def _norm_actor(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
-        return self.actor_norm(x, update=update) if self.actor_norm is not None else x
-
-    def _norm_critic(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
-        return self.critic_norm(x, update=update) if self.critic_norm is not None else x
-
     def collect_rollout(self) -> dict[str, float]:
         """Step the env ``rollout_steps`` times, pushing transitions to the buffer.
 
@@ -396,6 +390,14 @@ class FastSacTrainer(BaseRLAlgo):
             "mean_episode_return": mean_return,
             "buffer_size": float(self.buffer.size),
         }
+
+    def _ready_to_update(self, spec: RLTrainSpec) -> bool:
+        """Learn only once the replay buffer holds ``learning_starts`` transitions."""
+        return self.buffer.size >= spec.learning_starts
+
+    def _extra_checkpoint_state(self) -> dict[str, Any]:
+        """The entropy temperature, which the actor-critic state dict does not hold."""
+        return {"log_alpha": self.log_alpha.detach()}
 
     def update(self) -> dict[str, float]:
         """Run ``gradient_steps`` SAC updates from the replay buffer.
@@ -470,113 +472,3 @@ class FastSacTrainer(BaseRLAlgo):
             "entropy": tot_entropy / g,
             "latest_loss": tot_critic / g,
         }
-
-    def train(self, spec: TrainSpec) -> TrainResult:
-        """Off-policy SAC loop: setup -> [collect_rollout -> update]* -> save.
-
-        Overrides the on-policy ``BaseRLAlgo.train``. ``spec`` MUST be an
-        :class:`RLTrainSpec`; :meth:`validate` is called first and fails closed.
-        Updates run only after the buffer passes ``learning_starts``. The env
-        built by :meth:`setup` is closed in ``finally`` when the run leaves
-        this method - see :meth:`BaseRLAlgo._close_env` for the ownership rule
-        and why a later ``evaluate`` on the same instance still works.
-        """
-        if not isinstance(spec, RLTrainSpec):
-            return TrainResult(
-                status="error",
-                job_id="",
-                message=f"{self.provider_name} requires an RLTrainSpec, got {type(spec).__name__}",
-            )
-        problems = self.validate(spec)
-        if problems:
-            return TrainResult(status="error", job_id="", message="validation failed: " + "; ".join(problems))
-
-        try:
-            self.setup(spec)
-            steps_per_iter = max(1, self.steps_per_iter)
-            num_iters = max(1, spec.total_timesteps // steps_per_iter)
-
-            job_id = f"{self.provider_name}-{id(self):x}"
-            last_metrics: dict[str, Any] = {}
-            history = self._history = TrainingHistory(self.provider_name, spec.output_dir, num_iters, spec.log_interval)
-            ckpt_dir: str | None = None
-            for it in range(num_iters):
-                rollout_metrics = self.collect_rollout()
-                loss_metrics = self.update() if self.buffer.size >= spec.learning_starts else {}
-                last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
-                history.record(last_metrics)
-                if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
-                    ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=it + 1)
-            if ckpt_dir is None:
-                ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
-
-            last_metrics.setdefault("latest_step", self._collected_steps)
-            last_metrics.update(history.summary())
-            return TrainResult(
-                status="success",
-                job_id=job_id,
-                checkpoint_dir=ckpt_dir,
-                exported_model=self.export(spec, ckpt_dir),
-                metrics=last_metrics,
-                message=f"{self.provider_name}: {num_iters} iterations x {steps_per_iter} steps complete",
-            )
-        finally:
-            self._close_env()
-
-    def _checkpoint_dir(self, output_dir: str) -> str:
-        return os.path.join(output_dir, "checkpoints", "last")
-
-    def save_checkpoint(self, output_dir: str, iteration: int | None = None) -> str:
-        """Save the actor-critic, normalizers, temperature, and policy metadata.
-
-        Writes the same ``policy.pt`` + ``policy_meta.json`` contract as
-        ``PpoTrainer`` so a single checkpoint loader serves both RL backends.
-        """
-        import torch
-
-        ckpt_dir = self._checkpoint_dir(output_dir)
-        os.makedirs(ckpt_dir, exist_ok=True)
-        state: dict[str, Any] = {
-            "actor_critic": self.actor_critic.state_dict(),
-            "log_alpha": self.log_alpha.detach(),
-            "iteration": iteration,
-            "provider": self.provider_name,
-        }
-        if self.actor_norm is not None:
-            state["actor_norm"] = self.actor_norm.state_dict()
-        if self.critic_norm is not None:
-            state["critic_norm"] = self.critic_norm.state_dict()
-        torch.save(state, os.path.join(ckpt_dir, "policy.pt"))
-
-        meta = {
-            "provider": self.provider_name,
-            "num_actor_obs": self.env.num_actor_obs,
-            "num_critic_obs": self.env.num_critic_obs,
-            "num_actions": self.env.num_actions,
-            "actor_obs_keys": self.env.actor_obs_keys,
-            # ``action_keys``, not a joint list: the field names what the
-            # ``num_actions`` outputs above it drive, so it must be the same
-            # vocabulary ``send_action`` binds a vector against. A tendon
-            # gripper's actuator has no matching joint name at all, and a
-            # Newton floating base is a joint with no commandable scalar.
-            "action_keys": (self.env.engine.robot_action_keys(self.env.robot_name) if self.env.robot_name else []),
-            "hidden_dims": list(self.spec.hidden_dims),
-            "iteration": iteration,
-        }
-        with open(os.path.join(ckpt_dir, "policy_meta.json"), "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
-        return ckpt_dir
-
-    def latest_checkpoint(self, output_dir: str) -> str | None:
-        """Return the checkpoint dir holding ``policy.pt`` under ``output_dir``."""
-        ckpt = self._checkpoint_dir(output_dir)
-        return ckpt if os.path.isfile(os.path.join(ckpt, "policy.pt")) else None
-
-    def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
-        """Return the loadable policy artifact (``policy.pt``) for inference."""
-        return os.path.join(checkpoint_dir, "policy.pt")
-
-    @property
-    def hardware_floor(self) -> dict[str, Any]:
-        """FastSAC on MuJoCo trains fine on CPU; no GPU floor."""
-        return {"min_gpus": 0, "min_vram_gb": 0, "multinode": False}

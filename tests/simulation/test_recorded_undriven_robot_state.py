@@ -103,7 +103,7 @@ def _open_recording(sim: Any, root: pathlib.Path) -> None:
             task="probe",
             fps=10,
             root=str(root),
-            cameras=["default"],
+            cameras=[],
             overwrite=True,
         )["status"]
         == "success"

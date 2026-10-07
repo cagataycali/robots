@@ -318,14 +318,14 @@ class TestOneOwnerForTheRLCheckpointInterval:
         assert adrift == [], f"RL backends whose validate skips the shared gate: {adrift}"
 
     def test_the_loop_that_consumes_the_interval_is_the_inherited_one(self) -> None:
-        """Why the hierarchy is the right scope: PPO reads the field by inheriting.
+        """Why the hierarchy is the right scope: every backend reads the field by inheriting.
 
-        Pins the asymmetry the derivation is built on, so a refactor that moves
+        Pins the shape the derivation is built on, so a refactor that moves
         the loop cannot quietly invalidate it.
         """
         readers = {p.name for p in _training_modules() if _reads_the_interval(p.read_text())}
-        assert readers == {"base_algo.py", "fast_sac.py", "fast_td3.py"}
-        assert PpoTrainer.train is BaseRLAlgo.train
+        assert readers == {"base_algo.py"}
+        assert all(cls.train is BaseRLAlgo.train for cls in _concrete_rl_backends())
 
     def test_no_backend_re_implements_the_domain(self) -> None:
         offenders: list[str] = []

@@ -110,7 +110,7 @@ class TestOnTheRealRecorder:
 
         def start() -> dict:
             """One recording target, opened three times: fresh, resumed, resumed."""
-            return sim.start_recording(root=str(tmp_path), task="t", fps=30, repo_id="lab/resumed")
+            return sim.start_recording(root=str(tmp_path), task="t", fps=30, repo_id="lab/resumed", cameras=[])
 
         try:
             assert start()["status"] == "success"

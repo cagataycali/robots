@@ -567,7 +567,7 @@ class FeetechBus:
             return
         if not self.port:
             raise ValueError(f"{self.NAME}: no port configured; pass port= to open {self.WIRE}")
-        serial = require_optional("serial", pip_install="pyserial", purpose=self.PURPOSE)
+        serial = require_optional("serial", pip_install="pyserial", extra="serial", purpose=self.PURPOSE)
         self._conn = serial.Serial(self.port, self.baud_rate, timeout=self.timeout)  # type: ignore[attr-defined]
 
     def disconnect(self) -> None:

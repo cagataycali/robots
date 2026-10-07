@@ -313,11 +313,10 @@ def _metadata_action_key_reads(source: str) -> set[str]:
 
 
 class TestTheCheckpointNamesWhatTheHeadDrives:
-    """Both trainers write the action vocabulary beside ``num_actions``."""
+    """The one checkpoint writer puts the action vocabulary beside ``num_actions``."""
 
-    @pytest.mark.parametrize("module", ["ppo.py", "fast_sac.py"])
-    def test_the_metadata_carries_action_keys(self, module: str) -> None:
-        path = next(p for p in _training_modules() if p.name == module)
+    def test_the_metadata_carries_action_keys(self) -> None:
+        path = next(p for p in _training_modules() if p.name == "base_algo.py")
         assert _metadata_action_key_reads(path.read_text(encoding="utf-8"))
 
     def test_the_metadata_scanner_detects_a_missing_entry(self) -> None:

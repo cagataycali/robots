@@ -1,11 +1,13 @@
-"""A serial arm with no usable ``port=`` is refused when ``Robot()`` is called, on both paths.
+"""A serial arm with no usable ``port=`` is refused at construction, naming this host's serial devices.
 
 Before: the lerobot path refused an omitted ``port`` at construction (naming this
 host's serial devices) but accepted ``port=""`` and called the empty string a
 network port at the first bus action (#4168); the native path returned a
 ``FeetechDriver(port=None)`` that refused only at the first bus action, in other
 words (#4152). Now both paths refuse ``None``, a blank string and a non-string
-port with the same sentence, at the same moment.
+port with the same sentence, at the same moment. A serial leader built with
+``Teleoperator()`` and no port gets the same scan (#4152's sentence, not just
+lerobot's bare ``missing 1 required positional argument: 'port'``).
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from strands_robots import Robot
+from strands_robots import Robot, Teleoperator
 from strands_robots.drivers.feetech import FeetechDriver
 from strands_robots.hardware_robot import _is_blank_port
 
@@ -37,7 +39,7 @@ class TestTheBlankPortRule:
 
 @pytest.mark.parametrize("kwargs", [{}, {"port": ""}, {"port": "  "}])
 def test_the_native_driver_refuses_at_construction(kwargs: dict, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("strands_robots.robot.scan_serial_devices", lambda: [])
+    monkeypatch.setattr("strands_robots._serial_discovery.scan_serial_devices", lambda: [])
     with pytest.raises(ValueError, match=_MISSING) as info:
         Robot("so101", mode="real", driver="strands", mesh=False, **kwargs)
     assert "driver='strands', port=..." in str(info.value)
@@ -56,7 +58,7 @@ def test_the_twin_transport_needs_no_port() -> None:
 
 def test_the_lerobot_path_refuses_a_blank_port_like_an_omitted_one(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("lerobot")
-    monkeypatch.setattr("strands_robots.hardware_robot.scan_serial_devices", lambda: [])
+    monkeypatch.setattr("strands_robots._serial_discovery.scan_serial_devices", lambda: [])
     messages = []
     cases: tuple[dict[str, Any], ...] = ({}, {"port": ""})
     for kwargs in cases:
@@ -64,3 +66,20 @@ def test_the_lerobot_path_refuses_a_blank_port_like_an_omitted_one(monkeypatch: 
             Robot("so101", mode="real", driver="lerobot", mesh=False, **kwargs)
         messages.append(str(info.value).split(" Config:")[0])
     assert messages[0] == messages[1], "the blank port must get the omitted port's sentence"
+
+
+@pytest.mark.parametrize(
+    ("teleop_type", "scanned"), [("so101_leader", True), ("koch_leader", True), ("gamepad", False)]
+)
+def test_a_serial_leader_without_a_port_names_the_hosts_serial_devices(
+    teleop_type: str, scanned: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pytest.importorskip("lerobot")
+    monkeypatch.setattr("strands_robots._serial_discovery.scan_serial_devices", lambda: [])
+    try:
+        Teleoperator(teleop_type)
+        message = ""
+    except ValueError as exc:
+        message = str(exc)
+    assert ("No serial devices are present on this host." in message) is scanned, message
+    assert (f"Teleoperator({teleop_type!r}, port=...)" in message) is scanned, message

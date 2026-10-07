@@ -9,7 +9,7 @@ By the end of this page a Strands `Agent` holds a robot as a tool, you know whic
 ```python
 from strands import Agent
 from strands_robots import Robot
-from strands_robots import pose_tool, robot_mesh   # pose_tool needs pyserial
+from strands_robots import pose_tool, robot_mesh   # pose_tool needs strands-robots[serial]
 
 arm = Robot("so101")                       # sim, the default
 agent = Agent(tools=[arm, pose_tool, robot_mesh])

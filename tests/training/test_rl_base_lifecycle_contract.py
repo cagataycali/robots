@@ -26,6 +26,25 @@ import pytest
 
 from strands_robots.training.base import TrainSpec
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
+from strands_robots.training.rl.fast_sac import FastSacTrainer
+from strands_robots.training.rl.fast_td3 import FastTd3Trainer
+from strands_robots.training.rl.ppo import PpoTrainer
+
+# One loop and one checkpoint layout, owned by the base. A backend that defined
+# its own copy could drift from the others (a missing ``finally`` close, a
+# ``policy_meta.json`` field the deploy path cannot read) with every per-backend
+# smoke test still green; SAC's extra ``log_alpha`` goes through
+# ``_extra_checkpoint_state`` and the off-policy warmup through ``_ready_to_update``.
+SHARED_VERBS = (
+    "train",
+    "save_checkpoint",
+    "latest_checkpoint",
+    "export",
+    "hardware_floor",
+    "_checkpoint_dir",
+    "_norm_actor",
+    "_norm_critic",
+)
 
 
 class _BareRLAlgo(BaseRLAlgo):
@@ -113,3 +132,9 @@ def test_load_checkpoint_missing_policy_pt_raises(tmp_path) -> None:
 
     with pytest.raises(FileNotFoundError, match="no policy.pt in checkpoint dir"):
         algo.load_checkpoint(str(tmp_path))
+
+
+@pytest.mark.parametrize("trainer", [PpoTrainer, FastSacTrainer, FastTd3Trainer], ids=lambda c: c.__name__)
+def test_every_backend_runs_the_shared_loop_and_checkpoint(trainer: type[BaseRLAlgo]) -> None:
+    """No RL backend re-defines a verb the base owns."""
+    assert sorted(set(SHARED_VERBS) & set(vars(trainer))) == []

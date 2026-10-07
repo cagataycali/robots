@@ -294,7 +294,10 @@ class TestOnTheRealSim:
 
         sim = Robot("so101", mode="sim")
         try:
-            assert sim.start_recording(root=str(tmp_path), task="t", fps=30, repo_id="lab/wave")["status"] == "success"
+            assert (
+                sim.start_recording(root=str(tmp_path), task="t", fps=30, repo_id="lab/wave", cameras=[])["status"]
+                == "success"
+            )
             sim.set_joint_positions(robot_name="so101", positions=[0.3, 0, 0, 0, 0, 0], hold=True)
             sim.step(n_steps=300)
             assert sim.stop_recording()["status"] == "success"

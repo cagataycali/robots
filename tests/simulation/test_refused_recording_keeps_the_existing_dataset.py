@@ -96,13 +96,13 @@ def _marker_dataset(root: Path) -> str:
 
 
 def _record_one_episode(sim, root: Path, *, cameras: list[str] | None = None) -> None:
-    """Write a real single-episode LeRobotDataset at ``root``."""
+    """Write a real single-episode LeRobotDataset at ``root``, with no camera unless one is named."""
     started = sim.start_recording(
         repo_id="local/refused_recording",
         root=str(root),
         task="pan the arm",
         overwrite=True,
-        cameras=cameras,
+        cameras=[] if cameras is None else cameras,
     )
     assert started["status"] == "success", _text(started)
     rollout = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=6, control_frequency=30.0)

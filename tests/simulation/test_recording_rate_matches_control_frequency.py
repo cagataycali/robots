@@ -122,7 +122,7 @@ def _record(sim, tmp_path, fps: int, name: str = "ds") -> str:
     the first one's fps - which looks exactly like ``fps`` being ignored.
     """
     root = tmp_path / name
-    result = sim.start_recording(repo_id=f"local/{name}", task="hold", fps=fps, root=str(root))
+    result = sim.start_recording(repo_id=f"local/{name}", task="hold", fps=fps, root=str(root), cameras=[])
     assert result["status"] == "success"
     return str(root)
 
@@ -538,23 +538,25 @@ class TestARecordingOpenedAgainstARunningRolloutIsRefused:
     def test_the_library_defaults_are_refused(self, sim, tmp_path):
         """``control_frequency=50.0`` running, ``fps=30`` requested - the default pair."""
         with _running_rollout(sim, "arm", 50.0):
-            result = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))
+            result = sim.start_recording(
+                repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"), cameras=[]
+            )
         assert result["status"] == "error"
 
     def test_the_refusal_names_the_rollout_both_rates_and_the_distortion(self, sim, tmp_path):
         with _running_rollout(sim, "arm", 50.0):
-            text = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))[
-                "content"
-            ][0]["text"]
+            text = sim.start_recording(
+                repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"), cameras=[]
+            )["content"][0]["text"]
         assert "'arm' at 50 Hz" in text
         assert "30 fps" in text
         assert "1.667x" in text
 
     def test_the_refusal_names_both_remedies(self, sim, tmp_path):
         with _running_rollout(sim, "arm", 50.0):
-            text = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))[
-                "content"
-            ][0]["text"]
+            text = sim.start_recording(
+                repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"), cameras=[]
+            )["content"][0]["text"]
         assert "start_recording(fps=50)" in text
         assert "stop_policy(robot_name='arm')" in text
         assert "control_frequency=30" in text
@@ -563,29 +565,31 @@ class TestARecordingOpenedAgainstARunningRolloutIsRefused:
         """The refusal precedes dataset creation, so nothing is left on disk."""
         root = tmp_path / "inv"
         with _running_rollout(sim, "arm", 50.0):
-            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(root))
+            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(root), cameras=[])
         assert not root.exists() or not any(root.iterdir())
 
     def test_the_recording_session_is_not_left_open(self, sim, tmp_path):
         """A refused open must not flip the engine into a recording state."""
         with _running_rollout(sim, "arm", 50.0):
-            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))
+            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"), cameras=[])
             assert sim._is_recording() is False
             assert sim._active_recorder() is None
 
     def test_a_matching_rate_is_accepted_while_the_rollout_runs(self, sim, tmp_path):
         """The agreeing case is untouched - the guard refuses disagreement only."""
         with _running_rollout(sim, "arm", 50.0):
-            result = sim.start_recording(repo_id="local/agree", task="hold", fps=50, root=str(tmp_path / "agree"))
+            result = sim.start_recording(
+                repo_id="local/agree", task="hold", fps=50, root=str(tmp_path / "agree"), cameras=[]
+            )
             assert result["status"] == "success", result
             sim.stop_recording()
 
     def test_an_unusable_fps_is_still_reported_as_the_parameter_error(self, sim, tmp_path):
         """Name-and-value guards keep priority: ``fps`` itself is the complaint."""
         with _running_rollout(sim, "arm", 50.0):
-            text = sim.start_recording(repo_id="local/bad", task="hold", fps=2.7, root=str(tmp_path / "bad"))[
-                "content"
-            ][0]["text"]
+            text = sim.start_recording(
+                repo_id="local/bad", task="hold", fps=2.7, root=str(tmp_path / "bad"), cameras=[]
+            )["content"][0]["text"]
         assert "fps" in text
         assert "already running" not in text
 
@@ -596,22 +600,30 @@ class TestTheAdvisedRemedyIsUsableInTheInverseOrdering:
     def test_recording_at_the_rollouts_rate_records_cleanly(self, sim, tmp_path):
         """The message says: start_recording(fps=50). Do exactly that."""
         with _running_rollout(sim, "arm", 50.0):
-            refused = sim.start_recording(repo_id="local/r1", task="hold", fps=30, root=str(tmp_path / "r1"))
+            refused = sim.start_recording(
+                repo_id="local/r1", task="hold", fps=30, root=str(tmp_path / "r1"), cameras=[]
+            )
             assert refused["status"] == "error"
             assert "start_recording(fps=50)" in refused["content"][0]["text"]
-            accepted = sim.start_recording(repo_id="local/r1", task="hold", fps=50, root=str(tmp_path / "r1"))
+            accepted = sim.start_recording(
+                repo_id="local/r1", task="hold", fps=50, root=str(tmp_path / "r1"), cameras=[]
+            )
             assert accepted["status"] == "success", accepted
             sim.stop_recording()
 
     def test_restarting_the_rollout_at_the_recordings_rate_records_cleanly(self, sim, tmp_path):
         """The message says: stop_policy, then start_policy(control_frequency=30)."""
         with _running_rollout(sim, "arm", 50.0):
-            refused = sim.start_recording(repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"))
+            refused = sim.start_recording(
+                repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"), cameras=[]
+            )
             assert refused["status"] == "error"
         # The context already ran stop_policy(robot_name='arm'), the first half of
         # the remedy; now restart at the recording's rate as advised.
         with _running_rollout(sim, "arm", 30.0):
-            accepted = sim.start_recording(repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"))
+            accepted = sim.start_recording(
+                repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"), cameras=[]
+            )
             assert accepted["status"] == "success", accepted
             sim.stop_recording()
 
@@ -622,14 +634,14 @@ class TestConcurrentRolloutsAtDifferentRatesAreRefusedOutright:
     def test_two_rates_are_refused_even_when_fps_matches_one_of_them(self, two_arm_sim, tmp_path):
         with _running_rollout(two_arm_sim, "armA", 50.0), _running_rollout(two_arm_sim, "armB", 25.0):
             result = two_arm_sim.start_recording(
-                repo_id="local/multi", task="hold", fps=50, root=str(tmp_path / "multi")
+                repo_id="local/multi", task="hold", fps=50, root=str(tmp_path / "multi"), cameras=[]
             )
         assert result["status"] == "error"
 
     def test_the_refusal_names_every_rollout_and_its_rate(self, two_arm_sim, tmp_path):
         with _running_rollout(two_arm_sim, "armA", 50.0), _running_rollout(two_arm_sim, "armB", 25.0):
             text = two_arm_sim.start_recording(
-                repo_id="local/multi", task="hold", fps=30, root=str(tmp_path / "multi")
+                repo_id="local/multi", task="hold", fps=30, root=str(tmp_path / "multi"), cameras=[]
             )["content"][0]["text"]
         assert "'armA' at 50 Hz" in text
         assert "'armB' at 25 Hz" in text
@@ -638,7 +650,7 @@ class TestConcurrentRolloutsAtDifferentRatesAreRefusedOutright:
     def test_two_rollouts_at_one_shared_rate_may_record_at_that_rate(self, two_arm_sim, tmp_path):
         with _running_rollout(two_arm_sim, "armA", 40.0), _running_rollout(two_arm_sim, "armB", 40.0):
             result = two_arm_sim.start_recording(
-                repo_id="local/shared", task="hold", fps=40, root=str(tmp_path / "shared")
+                repo_id="local/shared", task="hold", fps=40, root=str(tmp_path / "shared"), cameras=[]
             )
             assert result["status"] == "success", result
             two_arm_sim.stop_recording()
@@ -648,7 +660,7 @@ class TestOnlyLiveRolloutsCanBlockARecording:
     """A finished rollout must not keep refusing a rate it no longer captures."""
 
     def test_no_rollout_running_never_refuses(self, sim, tmp_path):
-        result = sim.start_recording(repo_id="local/idle", task="hold", fps=30, root=str(tmp_path / "idle"))
+        result = sim.start_recording(repo_id="local/idle", task="hold", fps=30, root=str(tmp_path / "idle"), cameras=[])
         assert result["status"] == "success"
         sim.stop_recording()
 
@@ -657,7 +669,9 @@ class TestOnlyLiveRolloutsCanBlockARecording:
             assert sim._active_rollout_rates() == {"arm": 50.0}
         # The context stopped and joined the rollout; its rate must be gone.
         assert sim._active_rollout_rates() == {}
-        result = sim.start_recording(repo_id="local/after", task="hold", fps=30, root=str(tmp_path / "after"))
+        result = sim.start_recording(
+            repo_id="local/after", task="hold", fps=30, root=str(tmp_path / "after"), cameras=[]
+        )
         assert result["status"] == "success", result
         sim.stop_recording()
 
