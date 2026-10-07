@@ -2199,7 +2199,9 @@ class Mesh(SensorLoopsMixin):
             return
 
         obs = None
-        if hasattr(inner, "get_observation"):
+        # A native driver that reads its own cameras is read through them below:
+        # its ``get_observation`` would open the motor bus just to publish video.
+        if hasattr(inner, "get_observation") and getattr(inner, "reads_cameras", False) is not True:
             try:
                 # lerobot reads the MOTORS before it grabs any frame, so this is a
                 # bus reader too and must take the same lock as the probes.

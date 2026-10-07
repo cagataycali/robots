@@ -4427,6 +4427,34 @@ class Robot(TeleopMixin, AgentTool):
                 "task_status": "error",
             }
 
+    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Read the arm once through lerobot: joints and camera frames.
+
+        The hardware half of the call ``mode="sim"`` answers, so a loop written
+        against the simulation keeps its shape when ``mode="real"``. The keys
+        are lerobot's (``"<motor>.pos"`` plus one per camera), not the
+        simulation model's joint names. Connects on first use, as
+        :meth:`send_action` does, and reads under the bus lock the mesh shares.
+
+        Args:
+            robot_name: Ignored (single robot). Present for parity with sim.
+
+        Returns:
+            The lerobot robot's observation dict.
+
+        Raises:
+            Exception: Whatever the connect or the read raised, unchanged - a
+                port that will not open is the caller's to see, not an empty
+                observation.
+        """
+        del robot_name
+        try:
+            self._bring_up_robot()
+        except Exception:
+            self._close_open_devices()
+            raise
+        return dict(read_observation(self.robot))
+
     def send_action(
         self,
         action: dict[str, Any],
