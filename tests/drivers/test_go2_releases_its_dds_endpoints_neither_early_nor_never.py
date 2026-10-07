@@ -47,6 +47,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -55,6 +56,7 @@ import pytest
 import strands_robots.drivers.go2 as go2_module
 import strands_robots.drivers.unitree._dds_engine as engine_module
 from strands_robots.drivers.go2 import GO2_JOINT_INDEX, Go2Driver
+from tests.drivers.test_g1_cleanup_reads_the_loop_halt_outcome import SHIPPED_JOIN_BUDGET_S, shorten_the_join_budget
 from tests.drivers.test_g1_dds_engine_release import _install_channel, _RecordingEndpoint
 from tests.drivers.test_go2_driver import (
     _RecordingPublisher,
@@ -68,6 +70,9 @@ _DRIVER_LOGGER = "strands_robots.drivers.go2"
 #: Longer than :meth:`_ControlLoop.stop`'s join budget, so a policy parked on
 #: this event is guaranteed to outlast it.
 _LONGER_THAN_THE_JOIN_BUDGET = 30.0
+
+#: ``_ControlLoop.stop`` as shipped, captured before any cell shortens its budget.
+_SHIPPED_STOP = go2_module._ControlLoop.__dict__["stop"]
 
 
 class _RefusingEndpoint(_RecordingEndpoint):
@@ -165,9 +170,13 @@ class _RecordingSubscriberSet:
 
 @pytest.fixture
 def blocked_rollout(
+    monkeypatch: pytest.MonkeyPatch,
     stub_unitree_sdk: None,  # noqa: F811 - the imported fixture, requested by name
 ) -> Iterator[tuple[Go2Driver, _RecordingPublisher, _RecordingSubscriberSet, threading.Event]]:
     """A driver whose rollout is parked inside its policy, past the join budget.
+
+    The join budget is shortened: a parked policy outlasts any budget, so only
+    the cell that grades the wait itself puts the shipped one back.
 
     The policy blocks on an event rather than sleeping, so the loop is provably
     still inside the step when a teardown runs and the release is exact rather
@@ -179,6 +188,7 @@ def blocked_rollout(
         event that lets the parked policy return.
     """
     del stub_unitree_sdk
+    shorten_the_join_budget(monkeypatch, go2_module._ControlLoop)
     driver, pub = _released_driver()
     subs = _RecordingSubscriberSet()
     driver._subs = subs  # type: ignore[assignment]
@@ -321,11 +331,18 @@ class TestTeardownWaitsForTheLoopBeforeReleasingTheWire:
         self,
         blocked_rollout: tuple[Go2Driver, _RecordingPublisher, _RecordingSubscriberSet, threading.Event],
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``stop`` carries no envelope, so the log is the only place it can say so."""
+        """``stop`` carries no envelope, so the log is the only place it can say so.
+
+        The one cell on the shipped budget, so the wait itself is graded.
+        """
         driver, pub, _subs, _release = blocked_rollout
+        monkeypatch.setattr(go2_module._ControlLoop, "stop", _SHIPPED_STOP)
+        started = time.monotonic()
         with caplog.at_level(logging.ERROR, logger=_DRIVER_LOGGER):
             asyncio.run(driver.stop())
+        assert time.monotonic() - started >= SHIPPED_JOIN_BUDGET_S
         assert "still holds the wire" in caplog.text
         assert driver._pubs is pub, "stop() must leave the publisher open for the soft stop"
         assert pub.close_calls == 0

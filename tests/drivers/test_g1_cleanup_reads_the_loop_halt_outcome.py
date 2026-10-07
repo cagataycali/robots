@@ -16,12 +16,14 @@ by ``cleanup``, nor later when the policy returned.  That is the fall
 The shipped zero-torque test drives a policy that returns immediately, so its
 join always succeeds and the discarded value is always ``True``: the fast path
 cannot distinguish a checked halt from an unchecked one.  Every cell here that
-grades the fix therefore blocks a policy past the join budget, which is why they
-cost about two seconds each.
+grades the fix therefore blocks a policy past the join budget.  Their subject is
+the verdict, not the wait, so they run on a shortened budget; one premise cell
+drives the shipped one, so the budget itself stays graded.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 import sys
 import threading
@@ -87,6 +89,25 @@ _JOINT = "left_knee"
 #: Longer than :meth:`_ControlLoop.stop`'s join budget, so a policy parked on
 #: this event is guaranteed to outlast it.
 _LONGER_THAN_THE_JOIN_BUDGET = 30.0
+
+#: The join budget ``_ControlLoop.stop`` ships with, stated rather than read so
+#: the one cell that drives it grades the value instead of following it.
+SHIPPED_JOIN_BUDGET_S = 2.0
+
+#: The budget every other parked-policy cell waits: a parked policy outlasts any
+#: budget, so the verdict those cells read is the same at a tenth of a second.
+SHORT_JOIN_BUDGET_S = 0.1
+
+
+def shorten_the_join_budget(monkeypatch: pytest.MonkeyPatch, loop_class: type) -> None:
+    """Make ``loop_class.stop`` wait :data:`SHORT_JOIN_BUDGET_S` unless told otherwise.
+
+    Every teardown path calls ``stop`` without a ``timeout``, so binding the
+    keyword on the class shortens exactly the wait the shipped default sets.
+    A caller that passes its own ``timeout`` still gets it.
+    """
+    stop = loop_class.__dict__["stop"]
+    monkeypatch.setattr(loop_class, "stop", functools.partialmethod(stop, timeout=SHORT_JOIN_BUDGET_S))
 
 
 class _AlwaysReadyMotionSwitcher:
@@ -181,8 +202,9 @@ class _Rollout:
 
 
 @pytest.fixture
-def unjoined() -> Any:
-    """A rollout whose policy outlasts the join budget.  Always released."""
+def unjoined(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A rollout whose policy outlasts a shortened join budget.  Always released."""
+    shorten_the_join_budget(monkeypatch, _ControlLoop)
     rollout = _Rollout(blocking=True)
     try:
         yield rollout
@@ -203,9 +225,16 @@ def joins() -> Any:
 class TestThePremise:
     """The facts the regression cells rest on, stated independently."""
 
-    def test_stop_reports_whether_the_thread_joined(self, unjoined: Any) -> None:
-        assert unjoined.loop.stop("stop_task") is False
-        assert unjoined.loop.is_running
+    def test_stop_reports_whether_the_thread_joined(self) -> None:
+        """The one cell on the shipped budget, so the wait itself is graded."""
+        rollout = _Rollout(blocking=True)
+        try:
+            started = time.monotonic()
+            assert rollout.loop.stop("stop_task") is False
+            assert time.monotonic() - started >= SHIPPED_JOIN_BUDGET_S
+            assert rollout.loop.is_running
+        finally:
+            rollout.release()
 
     def test_a_returning_policy_joins_inside_the_budget(self, joins: Any) -> None:
         assert joins.loop.stop("stop_task") is True
