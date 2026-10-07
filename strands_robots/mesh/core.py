@@ -168,24 +168,50 @@ _bare_allow_warned: set[str] = set()
 _bare_allow_warned_lock = threading.Lock()
 
 
+def _scoped_allow_entries(action: str, actor: str | None) -> set[str]:
+    """The allowlist spellings that pre-approve *action* for exactly *actor* (none when nobody verifiable asked)."""
+    if actor is None:
+        return set()
+    return {f"{action}@{actor}", f"*@{actor}"}
+
+
 def allow_match(allowed: frozenset[str], action: str, actor: str | None) -> bool:
     """Whether the allowlist *allowed* pre-approves *action* for *actor*.
 
     ``<action>@<actor>`` and ``*@<actor>`` match exactly one verified actor. A
-    bare ``<action>`` or ``*`` matches every actor and is logged once per
-    spelling, naming the scoped form, so an operator who typed the fleet-wide
-    spelling learns the narrower one exists. An entry scoped to another actor
-    matches nothing. With no actor (``None``) only the bare spellings match:
-    an unattributed command cannot claim an entry that names someone.
+    bare ``<action>`` or ``*`` matches every actor. An entry scoped to another
+    actor matches nothing. With no actor (``None``) only the bare spellings
+    match: an unattributed command cannot claim an entry that names someone.
+
+    A pure predicate, by contract: the gate probes it with one-entry sets that
+    are not the operator's allowlist (``*`` and the verb, to spell the remedy),
+    so nothing here may log or remember. The once-per-spelling warning about a
+    bare entry is :func:`_warn_bare_allow`, run by :func:`remote_motion_refusal`
+    on the operator's real value after the decision.
     """
-    scoped = set()
-    if actor is not None:
-        scoped = {f"{action}@{actor}", f"*@{actor}"}
-    if scoped & allowed:
+    if _scoped_allow_entries(action, actor) & allowed:
         return True
+    return bool({"*", action} & allowed)
+
+
+def _warn_bare_allow(action: str, actor: str | None) -> None:
+    """WARN once per spelling when a BARE allowlist entry is what admitted *action*.
+
+    Reads the operator's actual ``STRANDS_ROBOT_COMMAND_ALLOW`` value: nothing
+    is said when it is unset, or when an entry scoped to *actor* matched (the
+    narrow spelling is in use), or when a spelling was already reported in
+    this process. Otherwise it names the scoped form, so an operator who typed
+    the fleet-wide spelling learns the narrower one exists.
+    """
+    raw = os.environ.get(WIRE_MOTION_ALLOW_ENV)
+    if raw is None:
+        return
+    allowed = frozenset(entry.strip() for entry in raw.split(",") if entry.strip())
+    if _scoped_allow_entries(action, actor) & allowed:
+        return
     bare = {"*", action} & allowed
     if not bare:
-        return False
+        return
     with _bare_allow_warned_lock:
         first = {entry for entry in bare if entry not in _bare_allow_warned}
         _bare_allow_warned.update(first)
@@ -198,7 +224,6 @@ def allow_match(allowed: frozenset[str], action: str, actor: str | None) -> bool
             action,
             action,
         )
-    return True
 
 
 def remote_motion_refusal(
@@ -266,7 +291,10 @@ def remote_motion_refusal(
         allow_env=WIRE_MOTION_ALLOW_ENV,
         allow_match=lambda allowed: allow_match(allowed, action, actor),
     )
-    return None if refusal is None else (refusal, what)
+    if refusal is not None:
+        return refusal, what
+    _warn_bare_allow(action, actor)
+    return None
 
 
 #: Sentinel stored in :attr:`Mesh._expected_responders` for
