@@ -15,7 +15,9 @@ Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--l
 
 ## What it serves
 
-The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators or both; every robot it shows is a mesh peer. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
+{{drawing:d15_dashboard_gateway}}
+
+The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators or both; every robot shown is a mesh peer. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
 
 | tab | shows |
 |---|---|
