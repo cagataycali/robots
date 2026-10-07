@@ -30,6 +30,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from strands_robots import dataset_recorder as dr
+from tests._package_ast import parse_file
 
 #: A remedy naming the bare ``lerobot`` distribution, which supplies the package
 #: but not its dataset stack. The lookahead lets ``pip install 'lerobot[dataset]'``
@@ -193,7 +194,7 @@ def test_the_recorder_writes_one_lerobot_install_remedy() -> None:
     docstring explaining why a bare lerobot install is not the instruction is the
     only place that spelling belongs.
     """
-    tree = ast.parse(Path(dr.__file__).read_text(encoding="utf-8"))
+    tree = parse_file(Path(dr.__file__))
     docstrings = {
         id(node.body[0].value)
         for node in [tree, *ast.walk(tree)]

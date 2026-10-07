@@ -47,6 +47,7 @@ import pytest
 
 import strands_robots.drivers.reachy as reachy_mod
 from strands_robots.drivers.reachy import ReachyDriver
+from tests._package_ast import parse_file
 
 #: The dependency the ``[device-connect]`` extra supplies. The transport leaf needs
 #: nothing from it; only the drivers its parent package ships do.
@@ -164,7 +165,7 @@ class TestTheExtraIsAPackagingAccident:
         that reading refuses nothing.
         """
         package = Path(reachy_mod.__file__).parent.parent / "device_connect"
-        module = ast.parse((package / "__init__.py").read_text(encoding="utf-8"))
+        module = parse_file(package / "__init__.py")
         imported: set[str] = set()
         pending: list[ast.AST] = [
             node for node in module.body if not (isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test))
@@ -287,7 +288,7 @@ class TestTheReasonPrescribesNothingItCannotEstablish:
         means that shows up here rather than in a reason nobody re-read.
         """
         package = Path(reachy_mod.__file__).parent
-        module = ast.parse((package / "reachy_transport.py").read_text(encoding="utf-8"))
+        module = parse_file(package / "reachy_transport.py")
         imported: set[str] = set()
         pending: list[ast.AST] = [
             node for node in module.body if not (isinstance(node, ast.If) and "TYPE_CHECKING" in ast.unparse(node.test))

@@ -44,6 +44,7 @@ import ast
 import pathlib
 
 import strands_robots
+from tests._package_ast import parse_source
 
 _PACKAGE_ROOT = pathlib.Path(strands_robots.__file__).parent
 
@@ -72,7 +73,7 @@ def _wall_clock_wait_decisions(source: str) -> list[tuple[int, str]]:
     reported.
     """
     found: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(parse_source(source)):
         if isinstance(node, ast.While) and _reads_wall_clock(node.test):
             found.append((node.lineno, "while-gate"))
         elif isinstance(node, ast.If) and _reads_wall_clock(node.test):

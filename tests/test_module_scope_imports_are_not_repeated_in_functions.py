@@ -58,6 +58,7 @@ import textwrap
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_source
 
 _PACKAGE_ROOT = pathlib.Path(inspect.getfile(strands_robots)).parent
 
@@ -105,7 +106,7 @@ def _function_scope_imports(tree: ast.Module) -> list[ast.Import | ast.ImportFro
 
 def repeated_imports(source: str) -> list[tuple[int, str]]:
     """``(line, spelling)`` for each function-scope import repeating a module-scope binding."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     at_scope = _module_scope_bindings(tree)
     findings: list[tuple[int, str]] = []
     for node in _function_scope_imports(tree):

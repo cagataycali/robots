@@ -81,6 +81,7 @@ import pytest
 
 import strands_robots
 from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
+from tests._package_ast import parse_source
 
 # ``strands_robots.tools.g1`` lazy-exports a ``use_unitree`` *tool* under the
 # same name as the module declaring it, so an attribute import would bind the
@@ -151,7 +152,7 @@ def _sdk_calls_by_guard(source: str) -> tuple[set[str], set[str]]:
                     (guarded if now_held else unguarded).add(name)
             walk(child, now_held)
 
-    walk(ast.parse(source), False)
+    walk(parse_source(source), False)
     return guarded, unguarded
 
 
@@ -168,7 +169,7 @@ def _unguarded_sites(source: str, operations: frozenset[str]) -> list[tuple[str,
                     sites.append((name, child.lineno))
             walk(child, now_held)
 
-    walk(ast.parse(source), False)
+    walk(parse_source(source), False)
     return sites
 
 
@@ -197,7 +198,7 @@ def _contract_owner_sources() -> dict[str, str]:
     return {
         rel: source
         for rel, source in _package_sources().items()
-        if any(_guards_the_shared_lock(node) for node in ast.walk(ast.parse(source)))
+        if any(_guards_the_shared_lock(node) for node in ast.walk(parse_source(source)))
     }
 
 

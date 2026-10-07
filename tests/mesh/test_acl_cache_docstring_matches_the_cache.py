@@ -71,7 +71,7 @@ _SUBJECT = "_load_acl_cached"
 
 def _module_tree() -> ast.Module:
     """Parse the ACL-config module the cache lives in."""
-    return ast.parse(Path(inspect.getfile(_acl_config)).read_text(encoding="utf-8"))
+    return parse_file(Path(inspect.getfile(_acl_config)))
 
 
 def _docstring_of(name: str) -> str:

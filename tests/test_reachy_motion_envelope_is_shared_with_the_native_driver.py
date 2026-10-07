@@ -67,6 +67,7 @@ from strands_robots.drivers.reachy_envelope import (
     envelope_error,
 )
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_file
 from tests.test_reachy_motion_domain import USABLE_MOTION_VALUES
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -254,7 +255,7 @@ class TestTheEnvelopeIsNotReImplemented:
         Read as numeric literals rather than as text, so a limit that appears in
         a docstring explaining the bound is not mistaken for a second copy of it.
         """
-        tree = ast.parse(pathlib.Path(str(rmd.__file__)).read_text(encoding="utf-8"))
+        tree = parse_file(pathlib.Path(str(rmd.__file__)))
         literals = {
             float(node.value)
             for node in ast.walk(tree)
@@ -405,7 +406,7 @@ class TestThePremisesThisRestsOn:
         late import inside a function costs nothing at import time.
         """
         module = importlib.import_module(module_name)
-        tree = ast.parse(pathlib.Path(str(module.__file__)).read_text(encoding="utf-8"))
+        tree = parse_file(pathlib.Path(str(module.__file__)))
         imported = {node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)} | {
             alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
         }
@@ -424,7 +425,7 @@ class TestThePremisesThisRestsOn:
         """The reason the old exclusion gave is what this refutes."""
         import strands_robots.drivers.reachy_envelope as shared
 
-        tree = ast.parse(pathlib.Path(str(shared.__file__)).read_text(encoding="utf-8"))
+        tree = parse_file(pathlib.Path(str(shared.__file__)))
         imported = {node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)} | {
             alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names
         }

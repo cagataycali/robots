@@ -50,6 +50,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.base import SimEngine
+from tests._package_ast import parse_file
 
 
 @pytest.fixture
@@ -209,7 +210,7 @@ class TestNoDeclaredDefaultDrifts:
         """``{method: signature string}`` from the class's own ``describe``."""
         source = inspect.getsourcefile(cls)
         assert source is not None
-        tree = ast.parse(Path(source).read_text(encoding="utf-8"))
+        tree = parse_file(Path(source))
         out: dict[str, str] = {}
         for klass in ast.walk(tree):
             if not (isinstance(klass, ast.ClassDef) and klass.name == cls.__name__):

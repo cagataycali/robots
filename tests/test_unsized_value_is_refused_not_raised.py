@@ -677,7 +677,7 @@ class TestTheLengthRuleHasOneOwner:
 
     def test_sequence_length_is_the_only_function_asking_len_of_a_caller_value(self) -> None:
         """One owner, by name, so the offender is named rather than merely counted."""
-        source = ast.parse(Path(inspect.getfile(sequence_length)).read_text())
+        source = parse_file(Path(inspect.getfile(sequence_length)))
         owners = {name for name, _ in _own_length_probes(source)}
         assert owners == {"sequence_length"}, (
             f"ask sequence_length() for the length and branch on None, rather than a second len(): {sorted(owners)}"

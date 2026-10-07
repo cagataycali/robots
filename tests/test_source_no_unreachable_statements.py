@@ -30,6 +30,7 @@ import ast
 from pathlib import Path
 
 import strands_robots
+from tests._package_ast import parse_source
 
 # A statement that transfers control out of its block unconditionally. Anything
 # the same block lists after one of these is dead by construction, with no
@@ -58,7 +59,7 @@ def unreachable_statements(source: str) -> list[tuple[int, str]]:
         the line number is the dead statement's own.
     """
     found: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(parse_source(source)):
         for field in _BLOCK_FIELDS:
             block = getattr(node, field, None)
             if not isinstance(block, list):

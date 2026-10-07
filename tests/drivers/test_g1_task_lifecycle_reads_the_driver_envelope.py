@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 
 from strands_robots.tools.g1.g1_task import _SNAPSHOT_FIELDS, g1_task
+from tests._package_ast import parse_file
 
 #: The actions the verb dispatches, and the driver method each one calls.
 ACTION_ACCESSOR: tuple[tuple[str, str], ...] = (
@@ -154,7 +155,7 @@ class TestTheVerbCarriesEverySnapshotFieldTheLoopWrites:
         widen on its side a failure on this one.
         """
         driver_module = importlib.import_module("strands_robots.drivers.g1")
-        tree = ast.parse(pathlib.Path(str(driver_module.__file__)).read_text(encoding="utf-8"))
+        tree = parse_file(pathlib.Path(str(driver_module.__file__)))
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef) or node.name != "snapshot":
                 continue

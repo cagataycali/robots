@@ -333,7 +333,7 @@ class TestTheScopeIsTheMujocoRequirement:
         """The discriminator, pinned: no mujoco requirement, so a different probe."""
         _, _, other_backend = _tree_survey()
         assert OTHER_BACKEND in other_backend
-        tree = ast.parse((_tests_root().parent / OTHER_BACKEND).read_text(encoding="utf-8"))
+        tree = parse_file(_tests_root().parent / OTHER_BACKEND)
         assert render_success_assertions(tree)
         assert not requires_mujoco(tree)
 

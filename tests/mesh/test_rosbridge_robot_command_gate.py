@@ -52,6 +52,7 @@ import pytest
 import strands_robots.drivers.ros as ros_pkg
 import strands_robots.rosbridge as transport_mod
 from strands_robots.drivers.ros import RosbridgeRobot
+from tests._package_ast import parse_file
 
 # ``/turtle1/cmd_vel`` matches the ``/cmd_vel`` blocklist entry on the
 # final-segment rule, so every command a robot on it sends is gated - which is
@@ -385,7 +386,7 @@ def _tools_property_ast(owner: type) -> ast.Module:
     """
     source_file = inspect.getsourcefile(owner.tools.fget)  # type: ignore[attr-defined]
     assert source_file is not None, f"cannot locate the source of {owner.__name__}.tools"
-    return ast.parse(pathlib.Path(source_file).read_text(encoding="utf-8"))
+    return parse_file(pathlib.Path(source_file))
 
 
 def _decorated_tools(tree: ast.Module) -> list[ast.FunctionDef]:

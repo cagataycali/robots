@@ -30,6 +30,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from tests._package_ast import parse_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = REPO_ROOT / "strands_robots"
 TEST_TREES = (REPO_ROOT / "tests", REPO_ROOT / "tests_integ")
@@ -66,7 +68,7 @@ def _scan() -> tuple[dict[str, list[str]], set[str], int]:
     read: set[str] = set()
     seen: set[str] = set()
     for path, source in sources.items():
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(parse_source(source)):
             if not isinstance(node, ast.Attribute):
                 continue
             name = node.attr

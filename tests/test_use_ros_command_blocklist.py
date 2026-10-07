@@ -32,6 +32,7 @@ from strands_robots._command_gate import (
 from strands_robots.ros import GATE_TOOL, never_gated
 from strands_robots.tools.use_ros import use_ros
 from tests._docs_hooks import docs_hook
+from tests._package_ast import parse_file
 
 ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 
@@ -419,7 +420,7 @@ def test_every_command_verb_branch_hands_the_transport_the_operator_gate() -> No
     command verb handed :func:`~strands_robots.ros.never_gated` - or handed
     nothing, which the transport refuses outright - cannot reach an operator.
     """
-    module = ast.parse(Path(str(ros_mod.__file__)).read_text(encoding="utf-8"))
+    module = parse_file(Path(str(ros_mod.__file__)))
     dispatch = next(node for node in ast.walk(module) if isinstance(node, ast.FunctionDef) and node.name == "use_ros")
     gated: set[str] = set()
     ungated: set[str] = set()

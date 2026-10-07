@@ -43,6 +43,7 @@ import docstring_parser
 import pytest
 
 import strands_robots.tools as tools_pkg
+from tests._package_ast import parse_file
 
 # Every bound agent tool in the package. Derived from the package object rather
 # than a path literal, so a module added later is covered without an edit.
@@ -101,7 +102,7 @@ def _placeholder(name: str) -> str:
 def _source_function(module_name: str, func_name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
     module = importlib.import_module(f"strands_robots.tools.{module_name}")
     assert module.__file__ is not None
-    tree = ast.parse(pathlib.Path(module.__file__).read_text())
+    tree = parse_file(pathlib.Path(module.__file__))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == func_name:
             return node

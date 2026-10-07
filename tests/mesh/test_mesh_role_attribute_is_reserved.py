@@ -25,6 +25,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._package_ast import parse_file
+
 # Spelled out rather than imported so this module collects against a tree that
 # has no reserved-key constant, which keeps every failure below behavioural.
 RESERVED = "strands-mesh-role"
@@ -307,7 +309,7 @@ class TestTheDoubleIsInstalledWhereTheSourceLooks:
 
     def test_this_module_holds_no_boto3_binding_to_patch(self) -> None:
         """Graded as an import statement: naming it in prose binds nothing."""
-        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        tree = parse_file(Path(__file__))
         bound = {
             alias.asname or alias.name.split(".")[0]
             for node in ast.walk(tree)

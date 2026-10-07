@@ -58,6 +58,7 @@ from strands_robots.mesh.security import (
     input_value_abs_by_key,
     validate_input_frame,
 )
+from tests._package_ast import parse_file
 
 #: One full revolution, in the degrees an SO leader publishes.
 FULL_TURN_DEG = 360.0
@@ -393,7 +394,7 @@ class TestEachJointIsBoundedInItsOwnDeclaredUnit:
         """
         import ast
 
-        tree = ast.parse(Path(security.__file__).read_text(encoding="utf-8"))
+        tree = parse_file(Path(security.__file__))
         imported = {
             node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
         } | {

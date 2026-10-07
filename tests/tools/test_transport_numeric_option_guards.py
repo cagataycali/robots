@@ -42,6 +42,7 @@ import strands_robots.ros as ros_transport_mod
 import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as participant_mod
 from strands_robots.tools._numeric_options import numeric_option_error
+from tests._package_ast import parse_file
 
 ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 rosbridge_mod = importlib.import_module("strands_robots.tools.use_rosbridge")
@@ -499,7 +500,7 @@ _ROS_FAMILY = ("use_ros", "use_rtps", "use_rosbridge")
 
 
 def _module_tree(stem: str) -> ast.Module:
-    return ast.parse((_TOOLS_DIR / f"{stem}.py").read_text(encoding="utf-8"))
+    return parse_file(_TOOLS_DIR / f"{stem}.py")
 
 
 def _local_guard_definitions(tree: ast.Module) -> list[str]:
@@ -535,7 +536,7 @@ def test_every_ros_transport_routes_through_the_shared_guard(stem: str) -> None:
 
 def test_the_shared_guard_has_exactly_one_definition() -> None:
     """The owning module defines the rule once, and the scan can find it."""
-    owner = ast.parse(Path(inspect.getfile(numeric_option_error)).read_text(encoding="utf-8"))
+    owner = parse_file(Path(inspect.getfile(numeric_option_error)))
 
     assert _local_guard_definitions(owner) == ["numeric_option_error"]
 

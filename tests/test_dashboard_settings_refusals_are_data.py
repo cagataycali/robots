@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.dashboard import settings
+from tests._package_ast import parse_file
 
 # Every function a settings write passes through. Spelled out rather than derived
 # so a rename cannot empty the roster and pass the pin vacuously; the cell below
@@ -116,7 +117,7 @@ def test_a_value_whose_own_repr_raises_is_still_reported(store):
 
 def test_no_function_on_the_write_path_names_the_exception_it_caught(store):
     """A reason that reaches a response body is composed by this module, not by a handler."""
-    module = ast.parse(Path(settings.__file__).read_text(encoding="utf-8"))
+    module = parse_file(Path(settings.__file__))
     functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
     present = [name for name in _WRITE_PATH if name in functions]
     # Graded before the roster is checked for completeness, so a tree that has not

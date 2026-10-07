@@ -64,6 +64,7 @@ from strands_robots.ros_telemetry import (
     _qos_history_depth_error,
 )
 from tests._blocked_module import blocked
+from tests._package_ast import parse_source
 
 #: Values that cannot name a KEEP_LAST history depth, one per way of missing it.
 UNUSABLE_DEPTHS: list[Any] = [
@@ -368,7 +369,7 @@ class TestEveryDepthSurfaceRoutesThroughTheDomain:
     def _classify(cls, source: str) -> dict[str, tuple[bool, bool]]:
         """Map ``function name -> (calls the guard, forwards the parameter)``."""
         found: dict[str, tuple[bool, bool]] = {}
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(parse_source(source)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             args = [a.arg for a in node.args.args + node.args.kwonlyargs]

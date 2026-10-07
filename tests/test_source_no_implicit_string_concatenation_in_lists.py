@@ -47,6 +47,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # The Python-bearing directories the CodeQL workflow scans. ``docs`` holds none.
@@ -84,7 +86,7 @@ def implicit_concatenations(source: str) -> list[tuple[int, int]]:
         One ``(line number, number of string parts)`` pair per offending
         element, where the line number is the element's first line.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     starts = _string_token_starts(source)
     found: list[tuple[int, int]] = []
     for node in ast.walk(tree):
