@@ -64,6 +64,7 @@ _PURPOSE: dict[str, str] = {
     "rby1": "Rainbow Robotics RB-Y1 driver",
     "spot": "Boston Dynamics Spot driver",
     "earthrover": "Earth Rover HTTP driver",
+    "serial": "Feetech and Dynamixel serial drivers, serial_tool, pose_tool",
     "ollama": "Ollama model provider for the agent",
     "inference": "WebSocket inference server",
     "sagemaker": "SageMaker endpoints",

@@ -7,9 +7,9 @@ dimension becomes an ``add_object`` call. The old versions of both pages were
 satisfiable only on some other page's terms:
 
 * The agents page's snippet imports ``pose_tool``, whose module body requires
-  ``pyserial``. No extra of this project declares that (it arrives inside
-  ``lerobot[feetech]``), and the Start pages install ``strands-robots[sim-mujoco]``,
-  so following the site top to bottom ends in ``ImportError``. The page that
+  ``pyserial`` (the ``[serial]`` extra), and the Start pages install
+  ``strands-robots[sim-mujoco]``, so following the site top to bottom ends in
+  ``ImportError``. The page that
   imports a guarded tool has to name the install line itself.
 * A "Common patterns" table once mapped "Add a 5cm red cube" to ``size=[0.025]*3``.
   ``size`` is the FULL extent, so that built a 2.5 cm cube, the half-extents MuJoCo
@@ -57,16 +57,26 @@ def _require_optional_call(node: ast.stmt) -> ast.Call | None:
 
 
 def _import_time_guarded_tools() -> dict[str, str]:
-    """Map each tool that needs a dependency to import to its ``pip install`` token."""
+    """Map each tool that needs a dependency to import to the install token its refusal names first.
+
+    That is ``strands-robots[<extra>]`` when the call names an extra, else the
+    ``pip_install`` distribution.
+    """
     guarded: dict[str, str] = {}
     for path in sorted(TOOLS_DIR.glob("*.py")):
         for node in parse_file(path).body:
             call = _require_optional_call(node)
             if call is None:
                 continue
-            for keyword in call.keywords:
-                if keyword.arg == "pip_install" and isinstance(keyword.value, ast.Constant):
-                    guarded[path.stem] = str(keyword.value.value)
+            given = {
+                k.arg: k.value.value
+                for k in call.keywords
+                if isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)
+            }
+            if "extra" in given:
+                guarded[path.stem] = f"strands-robots[{given['extra']}]"
+            elif "pip_install" in given:
+                guarded[path.stem] = str(given["pip_install"])
     return guarded
 
 
@@ -123,7 +133,7 @@ def test_a_page_importing_a_guarded_tool_names_the_install_it_needs(path: Path, 
     missing = sorted(name for name in names if GUARDED[name] not in text)
     assert not missing, (
         f"{path.relative_to(REPO_ROOT)} imports {missing} without naming "
-        f"{sorted({GUARDED[name] for name in missing})}, which no extra of this project declares"
+        f"{sorted({GUARDED[name] for name in missing})}, the install its refusal names"
     )
 
 

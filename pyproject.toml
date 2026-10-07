@@ -352,6 +352,13 @@ rby1 = [
 spot = [
     "bosdyn-client>=5.0.0,<6.0.0",
 ]
+# pyserial for the native Feetech and Dynamixel bus drivers
+# (strands_robots/drivers/feetech/bus.py, drivers/dynamixel/bus.py) and the
+# serial_tool and pose_tool agent tools. Pure Python, so a member of [all]; the
+# refusal at each of those doors names this extra, the way [earthrover]'s does.
+serial = [
+    "pyserial>=3.5,<4.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -791,7 +798,7 @@ dashboard = [
     "python-multipart>=0.0.9,<1.0",
     "PyJWT>=2.0,<3.0",
     # The device roster: serial ports for arms, cameras for previews and recording.
-    "pyserial>=3.5,<4.0",
+    "strands-robots[serial]",
     "opencv-python-headless>=4.8,<5.0",
     # The Train and Policies tabs search the Hub for LeRobot datasets and
     # checkpoints. Floor: see the [wbc] comment.
@@ -837,6 +844,7 @@ all = [
     "strands-robots[earthrover]",
     "strands-robots[xarm]",
     "strands-robots[spot]",
+    "strands-robots[serial]",
     "strands-robots[dashboard]",
     # Not [voice]: strands-agents[bidi] pins awscrt to one exact release through
     # aws-sdk-bedrock-runtime[awscrt], and awsiotsdk ([mesh-iot]) pins awscrt to

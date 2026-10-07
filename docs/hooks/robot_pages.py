@@ -89,7 +89,7 @@ DRIVERS: dict[str, dict[str, object]] = {
         "link": "Feetech STS/SMS serial bus",
         "port": 'serial device of the SCS bus, for example `"/dev/ttyACM0"` or `"/dev/tty.usbserial-*"`',
         "example": '"/dev/ttyACM0"',
-        "sdk": "`pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate`",
+        "sdk": "`pip install 'strands-robots[serial]'`; calibration file from `lerobot-calibrate`",
         "kwargs": '`baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`, `transport="serial"` or `"twin"`',
         "units": "degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos`",
         "checks": (
@@ -104,7 +104,7 @@ DRIVERS: dict[str, dict[str, object]] = {
         "link": "Dynamixel Protocol 2.0 serial bus",
         "port": 'serial device of the U2D2 or bus adapter, for example `"/dev/ttyUSB0"`',
         "example": '"/dev/ttyUSB0"',
-        "sdk": "`pyserial` (`pip install pyserial`); calibration file from `lerobot-calibrate` (`koch_follower`)",
+        "sdk": "`pip install 'strands-robots[serial]'`; calibration file from `lerobot-calibrate` (`koch_follower`)",
         "kwargs": "`baud_rate=1_000_000`, `calibration=<path or records>`, `motor_ids=()`, `timeout=1.0`",
         "units": "degrees per joint, `gripper` in percent open; keys `shoulder_pan` or `shoulder_pan.pos`",
         "checks": (
