@@ -323,9 +323,13 @@ def _helpers(trees: dict[Path, ast.Module]) -> dict[str, Helper]:
     parameters to a known helper (``_resolve_hz(env_name, default)`` calling
     ``hz_from_env(env_name)``).
     """
+    # Only a call or a subscript can be a read, so each function's are listed
+    # once, in walk order, with its once-bound locals; the fixed point then
+    # revisits those lists instead of re-walking every body on every pass.
     functions = [
-        (fn, _constants(tree))
+        (fn, constants, _locals_bound_once(fn), [n for n in ast.walk(fn) if isinstance(n, ast.Call | ast.Subscript)])
         for tree in trees.values()
+        for constants in [_constants(tree)]
         for fn in ast.walk(tree)
         if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
     ]
@@ -333,12 +337,11 @@ def _helpers(trees: dict[Path, ast.Module]) -> dict[str, Helper]:
     grew = True
     while grew:
         grew = False
-        for fn, constants in functions:
+        for fn, constants, bound, candidates in functions:
             if fn.name in out:
                 continue
             params = [a.arg for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]]
-            bound = _locals_bound_once(fn)
-            for node in ast.walk(fn):
+            for node in candidates:
                 target = _read_target(node)
                 if target:
                     found = _template(target[0], params, constants, bound)

@@ -376,24 +376,34 @@ def environment_resolvers(trees: dict[str, ast.AST]) -> dict[str, Resolver]:
     # aliases beside each function instead walked the whole module once for
     # every function it defines - 4,684 module walks over 311 files - and that
     # was 84% of this cell's time under a profile; 26 s -> 6 s for the file.
+    # Only a call or a subscript can be a read (``_read_key``), so each
+    # function's are listed once, in walk order, rather than re-walking every
+    # function body on every pass of the fixed point.
     functions: list[
-        tuple[ast.FunctionDef | ast.AsyncFunctionDef, dict[str, str], dict[str, str], dict[str, ast.AST]]
+        tuple[
+            ast.FunctionDef | ast.AsyncFunctionDef,
+            dict[str, str],
+            dict[str, str],
+            dict[str, ast.AST],
+            list[ast.Call | ast.Subscript],
+        ]
     ] = []
     for tree in trees.values():
         aliases = _import_aliases(tree)
         constants = _module_string_constants(tree)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                functions.append((node, aliases, constants, _locals_bound_once(node)))
+                candidates = [n for n in ast.walk(node) if isinstance(n, (ast.Call, ast.Subscript))]
+                functions.append((node, aliases, constants, _locals_bound_once(node), candidates))
     resolvers: dict[str, Resolver] = {}
     grown = True
     while grown:
         grown = False
-        for function, aliases, constants, bound_once in functions:
+        for function, aliases, constants, bound_once, candidates in functions:
             if function.name in resolvers:
                 continue
             parameters = [arg.arg for arg in function.args.posonlyargs + function.args.args]
-            for node in ast.walk(function):
+            for node in candidates:
                 key = _read_key(node, resolvers, aliases)
                 if key is None:
                     continue

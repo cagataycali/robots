@@ -36,6 +36,7 @@ the boundary.
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
 import re
 from typing import Any
@@ -240,7 +241,9 @@ def _imported_code_names(source: str) -> dict[str, str]:
     aliases rather than to a name this package does not declare.
     """
     bound: dict[str, str] = {}
-    for node in ast.walk(ast.parse(source)):
+    if "refusal_codes" not in source:
+        return bound  # no import can name the module the text never spells
+    for node in ast.walk(_tree(source)):
         if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("refusal_codes"):
             for alias in node.names:
                 bound[alias.asname or alias.name] = alias.name
@@ -276,18 +279,21 @@ def _code_keyword_sites(sources: list[tuple[str, str]]) -> list[tuple[str, int, 
     package does not declare on purpose, because grading the value belongs
     here -- so a spelling this scan cannot read is a code nothing checks.
     """
+    return [site for rel, source in sources for site in _code_keyword_sites_in(rel, source)]
+
+
+@functools.cache
+def _code_keyword_sites_in(rel: str, source: str) -> tuple[tuple[str, int, str | None, str], ...]:
+    """:func:`_code_keyword_sites` for one module, kept for every rule that asks again."""
     found: list[tuple[str, int, str | None, str]] = []
-    for rel, source in sources:
-        imported = _imported_code_names(source)
-        for node in ast.walk(ast.parse(source)):
-            if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
-                continue
-            for keyword in node.exc.keywords:
-                if keyword.arg == "code":
-                    found.append(
-                        (rel, node.lineno, _code_identifier(keyword.value, imported), ast.unparse(keyword.value))
-                    )
-    return found
+    imported = _imported_code_names(source)
+    for node in ast.walk(_tree(source)):
+        if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+            continue
+        for keyword in node.exc.keywords:
+            if keyword.arg == "code":
+                found.append((rel, node.lineno, _code_identifier(keyword.value, imported), ast.unparse(keyword.value)))
+    return tuple(found)
 
 
 def _coded_raise_sites() -> list[tuple[str, int, str]]:
@@ -315,14 +321,34 @@ def _unreadable_codes_in(sources: list[tuple[str, str]]) -> list[str]:
     ]
 
 
+#: The tree of every shipped module's source, keyed by that source, so a scan
+#: handed :func:`_package_sources` reuses the trees :func:`parse_file` already
+#: holds instead of parsing the package again for each rule.
+_PACKAGE_TREES: dict[str, ast.Module] = {}
+
+
+def _tree(source: str) -> ast.Module:
+    """The parsed ``source``: the shared tree for a shipped module, else a fresh parse."""
+    tree = _PACKAGE_TREES.get(source)
+    return tree if tree is not None else ast.parse(source)
+
+
+@functools.cache
+def _read_package() -> tuple[tuple[str, str], ...]:
+    sources = []
+    for path in sorted(_PACKAGE.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        _PACKAGE_TREES[source] = parse_file(path)
+        sources.append((str(path.relative_to(_PACKAGE.parent)), source))
+    return tuple(sources)
+
+
 def _package_sources() -> list[tuple[str, str]]:
-    """Every shipped module, as (path-for-messages, source)."""
-    return [
-        (str(path.relative_to(_PACKAGE.parent)), path.read_text(encoding="utf-8"))
-        for path in sorted(_PACKAGE.rglob("*.py"))
-    ]
+    """Every shipped module, as (path-for-messages, source), read once per process."""
+    return list(_read_package())
 
 
+@functools.cache
 def _code_carrying_exception_types() -> frozenset[str]:
     """Exception class names that can carry a refusal code, derived from the package.
 
@@ -335,7 +361,7 @@ def _code_carrying_exception_types() -> frozenset[str]:
     defines: set[str] = set()
     bases: dict[str, set[str]] = {}
     for _rel, source in _package_sources():
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(_tree(source)):
             if not isinstance(node, ast.ClassDef):
                 continue
             named_bases = {b.id for b in node.bases if isinstance(b, ast.Name)}
@@ -367,7 +393,7 @@ def _refusals_naming_an_env_var(sources: list[tuple[str, str]]) -> list[tuple[st
     carriers = _code_carrying_exception_types()
     found: list[tuple[str, int, list[str], bool]] = []
     for rel, source in sources:
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(_tree(source)):
             if not isinstance(node, ast.Raise) or node.exc is None:
                 continue
             exc = node.exc
