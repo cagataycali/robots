@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint, outside_joint_range
-from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.models import color_name, registered, registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -353,6 +353,30 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
     if body_id < -1 or body_id >= nbody:
         return None, error
     return body_id, None
+
+
+def object_rgba(mj: Any, model: Any, name: str, recorded: list[float]) -> list[float]:
+    """The colour object ``name`` renders with now, read off the compiled model.
+
+    ``set_geom_properties`` and ``randomize`` recolour the compiled geom, not
+    the scene record, so the record's ``color`` can be stale. A geom bound to a
+    material renders the material's rgba; any other geom renders its own.
+
+    Args:
+        mj: The ``mujoco`` module.
+        model: The compiled ``MjModel``.
+        name: The object name; its geom is ``f"{name}_geom"``.
+        recorded: The scene record's ``color``, returned when the geom is absent.
+
+    Returns:
+        ``[r, g, b, a]`` rounded to 3 decimals.
+    """
+    gid = mj_name_to_id(model, mj.mjtObj.mjOBJ_GEOM, f"{name}_geom")
+    if gid < 0:
+        return [round(float(c), 3) for c in recorded]
+    matid = int(model.geom_matid[gid])
+    rgba = model.mat_rgba[matid] if matid >= 0 else model.geom_rgba[gid]
+    return [round(float(c), 3) for c in rgba]
 
 
 def _dof_joint_names(mj: Any, model: Any) -> list[str | None]:
@@ -1750,6 +1774,9 @@ class PhysicsMixin:
             "mass": mass,
             "center_of_mass": com,
         }
+        obj = registry_entry(self._world.objects, mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id))
+        if obj is not None:
+            state["color"] = object_rgba(mj, model, obj.name, obj.color)
 
         text = (
             f"Body '{body_name}' (id={body_id}):\n"
@@ -1759,6 +1786,8 @@ class PhysicsMixin:
             f"  angvel: [{angvel[0]:.4f}, {angvel[1]:.4f}, {angvel[2]:.4f}]\n"
             f"  mass: {mass:.4f}kg, com: {com}"
         )
+        if obj is not None:
+            text += f"\n  color: {color_name(state['color'])} (rgba {state['color']})"
         if note := self._resolved_name_note(mj.mjtObj.mjOBJ_BODY, body_name, body_id):
             text += f"\n  {note}"
 

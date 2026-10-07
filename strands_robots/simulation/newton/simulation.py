@@ -64,6 +64,7 @@ from strands_robots.simulation.models import (
     SimRobot,
     SimWorld,
     canonical_shape,
+    color_name,
     registered,
     registry_entry,
 )
@@ -1169,7 +1170,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 else:
                     position = self._live_body_position(body_index)
-                lines.append(f"  - {name}: {obj.shape} at {position}, {mass}{suffix}")
+                lines.append(f"  - {name}: {obj.shape} at {position}, {mass}, {color_name(obj.color)}{suffix}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Observation / action

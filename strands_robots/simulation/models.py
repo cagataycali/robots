@@ -15,7 +15,7 @@ signatures reference them (e.g. ``create_world() → SimWorld``).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -136,6 +136,41 @@ def canonical_shape(shape: Any) -> Any:
     including a non-string, is returned unchanged for the caller to validate.
     """
     return SHAPE_ALIASES.get(shape, shape) if isinstance(shape, str) else shape
+
+
+# Reference colours for :func:`color_name`, in 0..1 RGB.
+_NAMED_COLORS: tuple[tuple[str, tuple[float, float, float]], ...] = (
+    ("red", (1.0, 0.0, 0.0)),
+    ("orange", (1.0, 0.5, 0.0)),
+    ("yellow", (1.0, 1.0, 0.0)),
+    ("green", (0.0, 0.8, 0.0)),
+    ("cyan", (0.0, 1.0, 1.0)),
+    ("blue", (0.0, 0.0, 1.0)),
+    ("purple", (0.5, 0.0, 0.5)),
+    ("magenta", (1.0, 0.0, 1.0)),
+    ("brown", (0.55, 0.3, 0.1)),
+    ("white", (1.0, 1.0, 1.0)),
+    ("grey", (0.5, 0.5, 0.5)),
+    ("black", (0.0, 0.0, 0.0)),
+)
+
+
+def color_name(rgba: Sequence[float]) -> str:
+    """The everyday name of the reference colour nearest to ``rgba``.
+
+    ``add_object(color=[1, 0, 0])`` is how a user says "this is the red cube";
+    an agent asked to "pick up the red one" can only ground the word if the
+    scene listing says it. The name is the nearest of a dozen reference colours
+    by RGB distance (alpha ignored), so ``[0.9, 0.1, 0.1]`` reads ``"red"``.
+
+    Args:
+        rgba: A colour in 0..1, ``[r, g, b]`` or ``[r, g, b, a]``.
+
+    Returns:
+        One of the reference names, e.g. ``"red"`` or ``"grey"``.
+    """
+    r, g, b = (float(c) for c in rgba[:3])
+    return min(_NAMED_COLORS, key=lambda nc: (nc[1][0] - r) ** 2 + (nc[1][1] - g) ** 2 + (nc[1][2] - b) ** 2)[0]
 
 
 @dataclass

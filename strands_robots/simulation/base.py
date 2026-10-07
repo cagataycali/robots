@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 # an import). The import-cycle pin keeps this module free of a module-level
 # import of ``policy_runner``.
 from strands_robots.simulation import capabilities as _caps
+from strands_robots.simulation.models import color_name
 from strands_robots.simulation.observers import RunPolicyObserver
 from strands_robots.simulation.seeds import MAX_EVAL_SEED, randomization_seed_error
 from strands_robots.simulation.video_config import VideoConfig
@@ -87,7 +88,9 @@ logger = logging.getLogger(__name__)
 _SETUP_KWARGS: tuple[str, ...] = ("robot_name", "robot")
 
 
-def scene_contents_sentence(objects: Iterable[str], cameras: Iterable[str]) -> str:
+def scene_contents_sentence(
+    objects: Iterable[str], cameras: Iterable[str], colors: Mapping[str, Sequence[float]] | None = None
+) -> str:
     """The tool-description sentence naming the objects and cameras a session holds.
 
     ``Robot("so100")`` followed by ``add_object`` / ``add_camera`` builds the
@@ -95,18 +98,24 @@ def scene_contents_sentence(objects: Iterable[str], cameras: Iterable[str]) -> s
     the agent a ``list_objects`` round-trip to learn what "the red cube" is.
     The free camera (:data:`~strands_robots.utils.FREE_CAMERA_TOKENS`) is in
     every session, so it is not named. At most six names per kind are shown.
+    An object with a known colour is named with it (``'cube_a' (red)``), so
+    "the red cube" resolves even when the name does not say red.
 
     Args:
         objects: Object names in the world.
         cameras: Camera names in the world, the free camera included or not.
+        colors: ``{object name: rgba}`` for the objects whose colour is known.
 
     Returns:
         The sentence with a trailing space, or ``""`` when nothing is named.
     """
+    colors = colors or {}
     parts = []
     for kind, names in (("object", list(objects)), ("camera", [c for c in cameras if c not in FREE_CAMERA_TOKENS])):
         if names:
-            shown = ", ".join(f"'{n}'" for n in names[:6]) + ("..." if len(names) > 6 else "")
+            shown = ", ".join(f"'{n}' ({color_name(colors[n])})" if n in colors else f"'{n}'" for n in names[:6]) + (
+                "..." if len(names) > 6 else ""
+            )
             parts.append(f"{len(names)} {kind}(s) {shown}")
     if not parts:
         return ""

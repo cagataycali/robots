@@ -69,8 +69,30 @@ def test_description_names_the_objects_and_cameras_the_user_added(ready_arm) -> 
     ready_arm.add_object(name="red_cube", shape="box", size=[0.05, 0.05, 0.05], position=[0.0, -0.2, 0.025])
     ready_arm.add_camera(name="front", position=[0.3, -0.7, 0.45], target=[0.0, -0.2, 0.03])
     head = ready_arm.tool_spec["description"].split("Scene mutations")[0]
-    assert "holds 1 object(s) 'red_cube' and 1 camera(s) 'front';" in head
+    assert "holds 1 object(s) 'red_cube' (grey) and 1 camera(s) 'front';" in head
     assert "'default'" not in head
+
+
+def test_every_discovery_surface_names_the_colour_an_object_renders_with(ready_arm) -> None:
+    """Neutrally named objects: "the red one" must resolve from the colour, not the name.
+
+    The colour is read off the compiled model, so a runtime recolour is what
+    every surface reports afterwards.
+    """
+    added = ready_arm.add_object(name="cube_a", shape="box", position=[0.0, -0.2, 0.025], color=[1.0, 0.0, 0.0])
+    ready_arm.add_object(name="cube_b", shape="box", position=[0.1, -0.2, 0.025], color=[0.0, 0.0, 1.0, 1.0])
+    assert added["content"][0]["text"].endswith(", red")
+    ready_arm.set_geom_properties(geom_name="cube_b_geom", color=[0.0, 0.8, 0.0, 1.0])
+
+    head = ready_arm.tool_spec["description"].split("Scene mutations")[0]
+    assert "2 object(s) 'cube_a' (red), 'cube_b' (green);" in head
+    listing = ready_arm.list_objects()["content"][0]["text"]
+    assert "  - cube_a: box at [0.0, -0.2, 0.025], 0.1kg, red\n" in listing
+    assert listing.endswith(", 0.1kg, green")
+    state = ready_arm.get_body_state("cube_b")["content"]
+    assert state[1]["json"]["color"] == [0.0, 0.8, 0.0, 1.0]
+    assert "color: green" in state[0]["text"]
+    assert "color" not in ready_arm.get_body_state("gripper")["content"][1]["json"]
 
 
 def test_long_joint_lists_are_truncated_not_dumped() -> None:
