@@ -155,6 +155,32 @@ def test_a_lerobot_policy_type_named_as_a_provider_is_sent_to_lerobot_local(spel
     assert policy_provider_error(spelling) == sentence
 
 
+@pytest.mark.parametrize(
+    ("spelling", "points_at"),
+    [
+        ("GR00T N1.7", "lerobot_local(policy_type='groot')"),
+        ("gr00t", "lerobot_local(policy_type='groot')"),
+        ("whole-body control", "policy_provider='wbc'"),
+        ("Whole_Body_Control", "policy_provider='wbc'"),
+        ("scripted", "register_policy"),
+    ],
+)
+def test_a_readme_name_that_is_not_a_provider_names_the_one_that_runs_it(spelling, points_at):
+    """The README's "Any policy" row names these; difflib finds no close provider for any of them."""
+    with pytest.raises(ValueError) as excinfo:
+        create_policy(spelling)
+    assert points_at in str(excinfo.value)
+    assert policy_provider_error(spelling) == str(excinfo.value)
+
+
+def test_no_provider_or_alias_folds_onto_a_refused_spelling():
+    """Folding separators must never shadow a real provider name."""
+    from strands_robots.registry.policies import list_policy_aliases, list_policy_providers, removed_provider_error
+
+    spellings = [*list_policy_providers(), *list_policy_aliases()]
+    assert [name for name in spellings if removed_provider_error(name)] == []
+
+
 class TestTrustRemoteCodeGate:
     """STRANDS_TRUST_REMOTE_CODE gate should block lerobot_local without opt-in."""
 

@@ -68,17 +68,30 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
 
 
 #: Spellings that are not providers, each with the one sentence that refuses
-#: it and names where it runs: ``groot``, removed in 1.0, and the LeRobot policy
-#: types the README lists by name. Such a name is refused, never rerouted:
+#: it and names where it runs: ``groot``, removed in 1.0, and the names the
+#: README lists that are not provider names (LeRobot policy types, "GR00T N1.7",
+#: "whole-body control", "scripted"). Matching ignores case, spaces, ``-``,
+#: ``_`` and ``.`` (:func:`removed_provider_error`). Such a name is refused, never rerouted:
 #: without this table ``create_policy("act")`` would fall through
 #: :func:`resolve_policy`'s last stage and reach ``lerobot_local`` as a
 #: checkpoint id, and the caller's next report would name a HuggingFace repo it
 #: never asked for.
+_GROOT_REFUSAL = (
+    "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
+    "lerobot_local(policy_type='groot'); for a remote GPU host run "
+    "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
+)
+
 REMOVED_PROVIDERS: dict[str, str] = {
-    "groot": (
-        "policy_provider 'groot' was removed in 1.0: GR00T N1.7 runs through "
-        "lerobot_local(policy_type='groot'); for a remote GPU host run "
-        "strands_robots.inference.server.PolicyServer there and use policy_provider='remote'."
+    **dict.fromkeys(("groot", "gr00t", "groot n1.7", "gr00t n1.7"), _GROOT_REFUSAL),
+    "whole-body control": (
+        "policy_provider 'whole-body control' is a kind of policy, not a provider: "
+        "use policy_provider='wbc' for the Unitree G1, or 'holosoma' for other humanoids."
+    ),
+    "scripted": (
+        "policy_provider 'scripted' is a kind of policy, not a provider: subclass "
+        "strands_robots.policies.Policy and add it with register_policy, or use "
+        "policy_provider='mock' to prove the loop first."
     ),
     **{
         policy_type: (
@@ -95,7 +108,8 @@ def removed_provider_error(name: Any) -> str | None:
     """Return the refusal for a provider spelling that was removed, else ``None``.
 
     Args:
-        name: Any spelling a caller may supply; matched case-insensitively.
+        name: Any spelling a caller may supply; matched ignoring case, spaces,
+            ``-``, ``_`` and ``.``, so ``"GR00T N1.7"`` and ``"gr00t-n1.7"`` match.
 
     Returns:
         The fixed sentence from :data:`REMOVED_PROVIDERS`, or ``None`` when the
@@ -103,7 +117,15 @@ def removed_provider_error(name: Any) -> str | None:
     """
     if not isinstance(name, str):
         return None
-    return REMOVED_PROVIDERS.get(name.strip().lower())
+    return _REMOVED_BY_KEY.get(_spelling_key(name))
+
+
+def _spelling_key(name: str) -> str:
+    """Fold case and the separators a README or a paper puts in a name."""
+    return re.sub(r"[\s._-]+", "", name.lower())
+
+
+_REMOVED_BY_KEY = {_spelling_key(name): sentence for name, sentence in REMOVED_PROVIDERS.items()}
 
 
 def policy_provider_resolves(name: str | None) -> bool:
