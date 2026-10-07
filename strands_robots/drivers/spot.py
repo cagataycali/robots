@@ -231,6 +231,10 @@ class SpotDriver:
                 "SpotDriver: no robot address - pass port='<hostname or IP>' (192.168.80.3 on its Wi-Fi)"
             )
             return self._connect_error
+        sdk = _resolve_sdk()
+        if isinstance(sdk, str):
+            self._connect_error = sdk
+            return sdk
         username = os.environ.get("BOSDYN_CLIENT_USERNAME")
         password = os.environ.get("BOSDYN_CLIENT_PASSWORD")
         if not username or not password:
@@ -238,10 +242,6 @@ class SpotDriver:
                 "SpotDriver: set BOSDYN_CLIENT_USERNAME and BOSDYN_CLIENT_PASSWORD to the robot's credentials"
             )
             return self._connect_error
-        sdk = _resolve_sdk()
-        if isinstance(sdk, str):
-            self._connect_error = sdk
-            return sdk
         errors = (OSError, RuntimeError, sdk.exceptions.Error)
         robot = None
         try:

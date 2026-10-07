@@ -290,10 +290,10 @@ def test_the_sdk_missing_is_a_reason_naming_the_extra(monkeypatch: pytest.Monkey
         raise ImportError(f"No module named {name!r}")
 
     monkeypatch.setattr(spot.importlib, "import_module", missing)
-    monkeypatch.setenv("BOSDYN_CLIENT_USERNAME", "user")
-    monkeypatch.setenv("BOSDYN_CLIENT_PASSWORD", "secret")
+    monkeypatch.delenv("BOSDYN_CLIENT_USERNAME", raising=False)
+    monkeypatch.delenv("BOSDYN_CLIENT_PASSWORD", raising=False)
     reason = SpotDriver("spot", port="192.168.80.3").connect_eagerly()
-    assert reason is not None and "strands-robots[spot]" in reason
+    assert reason is not None and "strands-robots[spot]" in reason and "BOSDYN" not in reason, reason
 
 
 def test_send_action_moves_the_arm_and_claw_in_one_command(robot: FakeRobot) -> None:
