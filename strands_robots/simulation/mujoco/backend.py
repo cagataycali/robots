@@ -34,7 +34,20 @@ logger = logging.getLogger(__name__)
 # recording) can all source the single string without a circular import -
 # an agent that learns the error from one action recognises it identically
 # from every other.
-_NO_WORLD_MSG = "No world. Call create_world (or load_scene) first."
+#
+# The documented end-user entry point is ``Robot(name, mode="sim")`` and the
+# documented teardown is ``.cleanup()`` (both used throughout README.md,
+# docs/index.md, docs/start/* and docs/concepts/*). ``create_world`` /
+# ``load_scene`` appear in **zero** user-entry docs: a user who followed the
+# quickstart and then re-ran a cell after ``cleanup()`` was being pointed at
+# methods they have never been shown. The message now names the documented
+# entry point first and keeps the internal names as a parenthetical for the
+# scene-mutation path.
+_NO_WORLD_MSG = (
+    "No world. The world was torn down (or never built); construct a fresh "
+    "robot with Robot(name, mode=\"sim\") "
+    "(internal entry points: create_world / load_scene)."
+)
 
 _mujoco = None
 _mujoco_viewer = None
