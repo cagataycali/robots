@@ -1,21 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``serial_tool`` and ``pose_tool`` without pyserial are refused with the install line.
+"""Every door that needs pyserial is refused with the ``[serial]`` extra's install line.
 
-Both tools drive a Feetech bus through pyserial, and pyserial is declared by no
-extra of this project on its own - it arrives only inside ``lerobot[feetech]``.
-Measured on a fresh ``pip install strands-robots`` (main ``6abbd1a25``)::
-
-    >>> from strands_robots import serial_tool
-    UserWarning: serial_tool not available (missing dependencies): No module named 'serial'
-    ImportError: cannot import name 'serial_tool' from 'strands_robots'
-
-The two modules imported ``serial`` bare at their top, so the only remedy text a
-customer had was the interpreter's. The Feetech *driver* next to them already
-does this right (``FeetechBus.connect`` -> ``require_optional("serial",
-pip_install="pyserial", ...)``). The tools now bind ``serial`` the same way at
-import, so the package's lazy door (``strands_robots.__getattr__``) carries the
-install line in its warning and a direct import raises it outright.
+Four doors talk to a serial bus through pyserial: the ``serial_tool`` and
+``pose_tool`` agent tools at import, and the native Feetech and Dynamixel buses
+at ``connect()``. ``[serial]`` declares pyserial with the project's bound, so the
+refusal names that extra first and the bare distribution second, the way every
+other native driver's refusal names its own extra. ``ImportError.name`` stays
+``"serial"`` so a caller can tell an absent extra from a broken package path
+(AGENTS.md convention 7).
 
 Cells use the shared :func:`blocked` helper (restores ``sys.modules`` and
 ``require_optional``'s memo) and :func:`reimport` (re-runs the module top level
@@ -24,25 +17,59 @@ and puts both of its bindings back), so nothing leaks into the session.
 
 from __future__ import annotations
 
+import tomllib
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 import strands_robots
+from strands_robots.drivers.dynamixel.bus import DynamixelBus
+from strands_robots.drivers.feetech.bus import FeetechBus
 from tests._blocked_module import blocked
 from tests._module_reimport import reimport
 
 TOOLS = ("serial_tool", "pose_tool")
+INSTALL_LINES = "Install with:\n  pip install 'strands-robots[serial]'\n  pip install pyserial"
 
 
-@pytest.mark.parametrize("name", TOOLS)
-def test_direct_import_without_pyserial_names_the_install_line(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
-    """Importing the tool module itself raises ``require_optional``'s refusal."""
+def _import_tool(name: str) -> Callable[[pytest.MonkeyPatch], object]:
+    return lambda monkeypatch: reimport(monkeypatch, f"strands_robots.tools.{name}")
+
+
+def _connect(bus: type[FeetechBus]) -> Callable[[pytest.MonkeyPatch], object]:
+    return lambda monkeypatch: bus(port="/dev/ttyACM0").connect()
+
+
+@pytest.mark.parametrize(
+    ("door", "purpose"),
+    [
+        (_import_tool("serial_tool"), "serial_tool"),
+        (_import_tool("pose_tool"), "pose_tool"),
+        (_connect(FeetechBus), FeetechBus.PURPOSE),
+        (_connect(DynamixelBus), DynamixelBus.PURPOSE),
+    ],
+    ids=["serial_tool", "pose_tool", "FeetechBus.connect", "DynamixelBus.connect"],
+)
+def test_without_pyserial_the_refusal_names_the_serial_extra(
+    monkeypatch: pytest.MonkeyPatch, door: Callable[[pytest.MonkeyPatch], object], purpose: str
+) -> None:
     with blocked("serial"), pytest.raises(ImportError) as info:
-        reimport(monkeypatch, f"strands_robots.tools.{name}")
+        door(monkeypatch)
 
     text = str(info.value)
     assert info.value.name == "serial", text
-    assert "pip install pyserial" in text, text
-    assert name in text, text  # the purpose names the door the caller came through
+    assert text.endswith(INSTALL_LINES), text
+    assert purpose in text, text  # the purpose names the door the caller came through
+
+
+def test_the_serial_extra_declares_pyserial_and_dashboard_reaches_it_through_the_extra() -> None:
+    extras = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"][
+        "optional-dependencies"
+    ]
+    assert extras["serial"] == ["pyserial>=3.5,<4.0"]
+    assert "strands-robots[serial]" in extras["dashboard"]
+    assert not [r for r in extras["dashboard"] if r.startswith("pyserial")], "a second pyserial bound can drift"
 
 
 @pytest.mark.parametrize("name", TOOLS)
@@ -54,5 +81,5 @@ def test_package_door_without_pyserial_warns_with_the_install_line(monkeypatch: 
     with blocked("serial"):
         with pytest.raises(ImportError):
             reimport(monkeypatch, f"strands_robots.tools.{name}")
-        with pytest.warns(UserWarning, match="pip install pyserial"), pytest.raises(AttributeError):
+        with pytest.warns(UserWarning, match=r"strands-robots\[serial\]"), pytest.raises(AttributeError):
             getattr(strands_robots, name)

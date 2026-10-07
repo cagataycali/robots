@@ -309,7 +309,7 @@ class TestStopWhenRecordingInterplay:
 
         sim = sim_with_robot_and_cube
         root = str(tmp_path / "stopwhen_ds")
-        r = sim.start_recording(repo_id="local/stopwhen", fps=50, root=root, overwrite=True)
+        r = sim.start_recording(repo_id="local/stopwhen", fps=50, root=root, overwrite=True, cameras=[])
         assert r["status"] == "success", r
 
         result = sim.run_policy(

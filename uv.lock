@@ -5714,6 +5714,9 @@ rosbridge = [
 sagemaker = [
     { name = "boto3" },
 ]
+serial = [
+    { name = "pyserial" },
+]
 sim = [
     { name = "robot-descriptions" },
 ]
@@ -5921,6 +5924,7 @@ requires-dist = [
     { name = "pyjwt", marker = "extra == 'dashboard'", specifier = ">=2.0,<3.0" },
     { name = "pyserial", marker = "extra == 'all'", specifier = ">=3.5,<4.0" },
     { name = "pyserial", marker = "extra == 'dashboard'", specifier = ">=3.5,<4.0" },
+    { name = "pyserial", marker = "extra == 'serial'", specifier = ">=3.5,<4.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=6.0,<10.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0,<6.0.0" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.0.0,<3.0.0" },
@@ -5988,7 +5992,7 @@ requires-dist = [
     { name = "xarm-python-sdk", marker = "extra == 'all'", specifier = ">=1.18.0,<2.0.0" },
     { name = "xarm-python-sdk", marker = "extra == 'xarm'", specifier = ">=1.18.0,<2.0.0" },
 ]
-provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rby1", "rl", "ros2", "rosbridge", "sagemaker", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "spot", "ur", "voice", "wbc", "xarm"]
+provides-extras = ["all", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "crazyflie", "curobo", "dashboard", "dev", "device-connect", "earthrover", "flux3", "foxglove", "groot", "holosoma", "inference", "kimodo", "lerobot", "mesh", "mesh-iot", "microduck", "molmoact2", "moveit2", "ollama", "protomotions", "rby1", "rl", "ros2", "rosbridge", "sagemaker", "serial", "sim", "sim-gs", "sim-isaac", "sim-mjlab", "sim-mujoco", "sim-newton", "sim-urdf", "smolvla", "spot", "ur", "voice", "wbc", "xarm"]
 
 [[package]]
 name = "sympy"

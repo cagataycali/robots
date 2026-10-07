@@ -88,6 +88,10 @@ class DegradedBindingPolicy(Policy):
     def provider_name(self) -> str:
         return "degraded_binding"
 
+    @property
+    def requires_images(self) -> bool:
+        return False
+
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
         return None
 
