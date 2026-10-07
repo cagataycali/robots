@@ -16,6 +16,7 @@ set the acknowledgement variable themselves.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import Any
 
@@ -24,6 +25,7 @@ import pytest
 from strands_robots.dashboard import device_manager
 from strands_robots.dashboard.device_manager import (
     INSECURE_ACK_ENV,
+    POSTURE_UNSETTLED_REFUSAL,
     DeviceManager,
     child_env,
     real_spawn_posture_refusal,
@@ -98,7 +100,35 @@ def test_the_dashboards_own_acknowledgement_lets_a_real_spawn_through() -> None:
 
 def test_a_misspelt_auth_mode_refuses_rather_than_guessing() -> None:
     why = real_spawn_posture_refusal({"STRANDS_MESH_AUTH_MODE": "mtsl"})
-    assert why is not None and "mtsl" in why
+    assert why is not None and why == POSTURE_UNSETTLED_REFUSAL
+    assert "STRANDS_MESH_AUTH_MODE" in why and "mtls" in why and "none" in why
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"STRANDS_MESH_AUTH_MODE": "mtsl"},
+        {"STRANDS_MESH_AUTH_MODE": "none"},
+        {"STRANDS_MESH_LOCAL_DEV": "1", "ZENOH_CONNECT": "tcp/10.0.0.5:7447"},
+    ],
+    ids=["misspelt", "none-without-its-second-factor", "local-dev-beyond-loopback"],
+)
+def test_a_rejected_posture_reaches_the_client_as_a_fixed_sentence_and_the_log_as_the_cause(
+    env: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """The refusal that a deploy snippet or spawn route sends back is the same fixed sentence
+    whatever the resolver said: the rejected environment value and the resolver's words stay
+    out of the HTTP body (CodeQL py/stack-trace-exposure) and go to the dashboard log instead."""
+    with caplog.at_level(logging.WARNING, logger="strands_robots.dashboard.device_manager"):
+        why = real_spawn_posture_refusal(env)
+    assert why == POSTURE_UNSETTLED_REFUSAL
+    assert "mtsl" not in why and "not supported" not in why and "disables BOTH" not in why
+    records = [r for r in caplog.records if "mesh auth resolver rejected" in r.getMessage()]
+    assert len(records) == 1 and records[0].levelno == logging.WARNING
+    cause = records[0].getMessage()
+    assert "STRANDS_MESH_AUTH_MODE" in cause or "STRANDS_MESH_LOCAL_DEV" in cause
+    if env.get("STRANDS_MESH_AUTH_MODE") == "mtsl":
+        assert "mtsl" in cause and "not supported" in cause
 
 
 # --- through DeviceManager.spawn --------------------------------------------------------------

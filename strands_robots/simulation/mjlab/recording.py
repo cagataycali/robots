@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
@@ -77,7 +78,7 @@ class MjlabRecordingMixin(DatasetRecordingMixin):
     def _recording_start_error(self, state: dict[str, Any] | None) -> dict[str, Any] | None:
         """Refuse without a world, and without a robot to declare a schema from."""
         if state is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._robots:
             return {"status": "error", "content": [{"text": "No robot in the scene. Call add_robot first."}]}
         return None

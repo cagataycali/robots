@@ -14,8 +14,6 @@ math are ported directly. Selected via ``create_trainer("ppo")``.
 
 from __future__ import annotations
 
-import json
-import os
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.training.base import TrainSpec
@@ -323,12 +321,6 @@ class PpoTrainer(BaseRLAlgo):
         self._obs = self.env.reset()
         self._batch: dict[str, torch.Tensor] = {}
 
-    def _norm_actor(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
-        return self.actor_norm(x, update=update) if self.actor_norm is not None else x
-
-    def _norm_critic(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
-        return self.critic_norm(x, update=update) if self.critic_norm is not None else x
-
     def collect_rollout(self) -> dict[str, float]:
         """Roll out ``rollout_steps`` transitions and compute GAE returns/advantages.
 
@@ -565,56 +557,3 @@ class PpoTrainer(BaseRLAlgo):
             "entropy": tot_entropy / max(1, n_updates),
             "latest_loss": tot_value / max(1, n_updates),
         }
-
-    def _checkpoint_dir(self, output_dir: str) -> str:
-        return os.path.join(output_dir, "checkpoints", "last")
-
-    def save_checkpoint(self, output_dir: str, iteration: int | None = None) -> str:
-        """Save the actor-critic, normalizers, and a deployable-policy metadata file."""
-        import torch
-
-        ckpt_dir = self._checkpoint_dir(output_dir)
-        os.makedirs(ckpt_dir, exist_ok=True)
-        state: dict[str, Any] = {
-            "actor_critic": self.actor_critic.state_dict(),
-            "iteration": iteration,
-            "provider": self.provider_name,
-        }
-        if self.actor_norm is not None:
-            state["actor_norm"] = self.actor_norm.state_dict()
-        if self.critic_norm is not None:
-            state["critic_norm"] = self.critic_norm.state_dict()
-        torch.save(state, os.path.join(ckpt_dir, "policy.pt"))
-
-        meta = {
-            "provider": self.provider_name,
-            "num_actor_obs": self.env.num_actor_obs,
-            "num_critic_obs": self.env.num_critic_obs,
-            "num_actions": self.env.num_actions,
-            "actor_obs_keys": self.env.actor_obs_keys,
-            # ``action_keys``, not a joint list: the field names what the
-            # ``num_actions`` outputs above it drive, so it must be the same
-            # vocabulary ``send_action`` binds a vector against. A tendon
-            # gripper's actuator has no matching joint name at all, and a
-            # Newton floating base is a joint with no commandable scalar.
-            "action_keys": (self.env.engine.robot_action_keys(self.env.robot_name) if self.env.robot_name else []),
-            "hidden_dims": list(self.spec.hidden_dims),
-            "iteration": iteration,
-        }
-        with open(os.path.join(ckpt_dir, "policy_meta.json"), "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2)
-        return ckpt_dir
-
-    def latest_checkpoint(self, output_dir: str) -> str | None:
-        """Return the checkpoint dir holding ``policy.pt`` under ``output_dir``."""
-        ckpt = self._checkpoint_dir(output_dir)
-        return ckpt if os.path.isfile(os.path.join(ckpt, "policy.pt")) else None
-
-    def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
-        """Return the loadable policy artifact (``policy.pt``) for inference."""
-        return os.path.join(checkpoint_dir, "policy.pt")
-
-    @property
-    def hardware_floor(self) -> dict[str, Any]:
-        """PPO on MuJoCo trains fine on CPU; no GPU floor."""
-        return {"min_gpus": 0, "min_vram_gb": 0, "multinode": False}

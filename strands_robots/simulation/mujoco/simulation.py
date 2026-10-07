@@ -85,6 +85,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import (
+    _NO_WORLD_MSG,
     SimEngine,
     close_match_hint,
     own_keyword_names,
@@ -124,7 +125,6 @@ from strands_robots.simulation.models import (
     registry_entry,
 )
 from strands_robots.simulation.mujoco.backend import (
-    _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
     mj_name_to_id,
@@ -1258,21 +1258,8 @@ class MuJoCoSimEngine(
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._world is not None and self._world._backend_state.get("recording"):
-            # T26: dataset recording needs every frame's image obs. Override
-            # the policy's skip hint when an active recorder is attached -- but
-            # only when the recorder actually keeps images. A recording scoped
-            # to no cameras (``start_recording(cameras=[])``) writes a dataset
-            # with no image features at all, and the frame hook drops every
-            # image array through ``_drop_unrecorded_cameras`` before add_frame.
-            # Overriding the hint there renders every scene camera once per
-            # control step only to discard the pixels, which on a robot like
-            # ``aloha`` (7 scene cameras) is the dominant cost of an
-            # action-only rollout. ``None`` means "record every camera" (the
-            # legacy default), so it still forces the render.
-            rec_cams = self._world._backend_state.get("recording_cameras")
-            if rec_cams is None or len(rec_cams) > 0:
-                skip_images = False
+        if skip_images and self._recording_keeps_images():
+            skip_images = False
         with self._lock:
             obs = self._get_sim_observation(robot_name, skip_images=skip_images)
         # Additive sensor noise (set_obs_noise). Exact no-op / same dict when
@@ -5439,18 +5426,22 @@ class MuJoCoSimEngine(
         concurrent ``mj_step`` mutates the position arrays.
 
         Returns:
-            A ``{status, content}`` tool result whose text enumerates the
-            objects (or reports that there are none). ``status`` is
-            ``"error"`` when no world exists, or when an object in the scene
-            record has no body in the compiled model.
+            A ``{status, content}`` tool result: a text block enumerating the
+            objects (or reporting that there are none) for the agent, then a
+            ``{"json": {"objects": {name: {shape, is_static, mass, position}}}}``
+            block for programmatic callers, the shape ``list_bodies`` and the
+            other backends use. ``status`` is ``"error"`` when no world exists,
+            or when an object in the scene record has no body in the compiled
+            model.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if not self._world.objects:
-            return {"status": "success", "content": [{"text": "No objects."}]}
+            return {"status": "success", "content": [{"text": "No objects."}, {"json": {"objects": {}}}]}
 
         model, data = self._world._model, self._world._data
         lines = ["Objects:\n"]
+        listing: dict[str, dict[str, Any]] = {}
         with self._lock:
             for name, obj in self._world.objects.items():
                 body_id = mj_name_to_id(model, self._mj.mjtObj.mjOBJ_BODY, name)
@@ -5469,7 +5460,13 @@ class MuJoCoSimEngine(
                     }
                 position = [round(float(v), 4) for v in data.xpos[body_id]]
                 lines.append(f"  - {name}: {obj.shape} at {position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
-        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
+                listing[name] = {
+                    "shape": obj.shape,
+                    "is_static": bool(obj.is_static),
+                    "mass": None if obj.is_static else float(obj.mass),
+                    "position": position,
+                }
+        return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"objects": listing}}]}
 
     def list_cameras_info(self) -> dict[str, Any]:
         """Agent-facing camera listing (tool-result form of :meth:`list_cameras`).

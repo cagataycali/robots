@@ -80,7 +80,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.base import _NO_WORLD_MSG, SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.mjlab.simulation import MjlabEngine
@@ -520,7 +520,7 @@ class TestATornDownWorldAborts:
 
         stub, _ = _newton_stub(lock)
         stub._model = None
-        assert "Call create_world first" in _text(NewtonSimEngine.step(stub, 3))
+        assert _text(NewtonSimEngine.step(stub, 3)) == _NO_WORLD_MSG
 
 
 # --------------------------------------------------------------------------- #
