@@ -145,6 +145,7 @@ def _drive_multi_policy(sim, n_steps: int = 200):
             instructions="carry the cube",
             n_steps=n_steps,
             control_frequency=50.0,
+            fast_mode=True,
         ),
         "run_multi_policy",
     )
@@ -272,7 +273,9 @@ class TestTheOtherStepPathsAndModesAreUnchanged:
         sim = sim_arm_and_cube
         _attach(sim)
         _ok(
-            sim.run_policy(robot_name="alpha", policy_provider="mock", n_steps=200, control_frequency=50.0),
+            sim.run_policy(
+                robot_name="alpha", policy_provider="mock", n_steps=200, control_frequency=50.0, fast_mode=True
+            ),
             "run_policy",
         )
         assert _carry_error(sim, _PARENT, _CHILD) < _CARRY_TOL_M

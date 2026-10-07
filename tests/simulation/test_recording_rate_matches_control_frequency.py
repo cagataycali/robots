@@ -901,9 +901,7 @@ class TestTheMultiRobotEntryPointRefusesTheSameDisagreement:
 
     def _run(self, sim, control_frequency: float):  # noqa: ANN001, ANN202
         return sim.run_multi_policy(
-            policies=self._policies(sim),
-            n_steps=10,
-            control_frequency=control_frequency,
+            policies=self._policies(sim), n_steps=10, control_frequency=control_frequency, fast_mode=True
         )
 
     def test_the_library_defaults_are_refused(self, two_arm_sim, tmp_path):

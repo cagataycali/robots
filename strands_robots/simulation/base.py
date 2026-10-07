@@ -4187,6 +4187,8 @@ class SimEngine(ABC):
         action_horizon: int | dict[str, int] = 8,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        *,
+        fast_mode: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots, each with its own policy, in ONE synchronized loop.
 
@@ -4249,6 +4251,11 @@ class SimEngine(ABC):
                 contract above).
             n_steps: Exact step horizon (overrides ``duration`` when set).
             max_steps: Legacy alias for ``n_steps``.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. When False
+                (default) the loop is paced on a deadline at
+                ``control_frequency``. Must be a boolean: a value of any other
+                type is refused rather than read by truthiness.
 
         Returns:
             A structured ``{"status": "error", ...}`` dict naming this

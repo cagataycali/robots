@@ -43,11 +43,14 @@ def test_a_synchronized_step_covers_the_same_sim_time_as_run_policy(sim, hz):
     multi = _advance(
         sim,
         lambda: sim.run_multi_policy(
-            policies={"so100": MockPolicy()}, instructions="x", n_steps=20, control_frequency=hz
+            policies={"so100": MockPolicy()}, instructions="x", n_steps=20, control_frequency=hz, fast_mode=True
         ),
     )
     single = _advance(
-        sim, lambda: sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=20, control_frequency=hz)
+        sim,
+        lambda: sim.run_policy(
+            robot_name="so100", policy_provider="mock", n_steps=20, control_frequency=hz, fast_mode=True
+        ),
     )
 
     assert multi == pytest.approx(20 / hz, abs=1e-9), f"20 steps at {hz} Hz advanced {multi:.4f} s"
@@ -63,8 +66,51 @@ class _Hold(MockPolicy):
 
 def test_a_servo_reaches_its_target_within_the_rollout(sim):
     """Measured: at 2 ms per step the elbow reached 0.040 of a 0.6 rad target; one period per step, 0.544."""
-    sim.run_multi_policy(policies={"so100": _Hold()}, instructions="x", n_steps=25, control_frequency=50.0)
+    sim.run_multi_policy(
+        policies={"so100": _Hold()}, instructions="x", n_steps=25, control_frequency=50.0, fast_mode=True
+    )
 
     elbow = next(k for k in sim.robot_action_keys("so100") if k.lower().startswith("elbow"))
     state = sim.get_observation("so100")
     assert state[elbow] > 0.5, state[elbow]
+
+
+@pytest.fixture
+def pacers(monkeypatch):
+    """Periods of every ``Ticker`` the loop acquires (the loop imports it lazily)."""
+    from strands_robots import _pacing
+
+    periods: list[float] = []
+
+    class _Ticker(_pacing.Ticker):
+        def __init__(self, period: float, *args, **kwargs) -> None:
+            periods.append(period)
+            super().__init__(period, *args, **kwargs)
+
+        def wait(self) -> bool:
+            return False
+
+    monkeypatch.setattr(_pacing, "Ticker", _Ticker)
+    return periods
+
+
+@pytest.mark.parametrize(("fast_mode", "expected"), [(False, [0.02]), (True, [])])
+def test_fast_mode_selects_the_pace_and_not_the_sim_time(sim, pacers, fast_mode, expected):
+    """``fast_mode`` decides only whether the loop waits on the wall clock, as on ``run_policy``."""
+    advanced = _advance(
+        sim,
+        lambda: sim.run_multi_policy(
+            policies={"so100": MockPolicy()}, n_steps=5, control_frequency=50.0, fast_mode=fast_mode
+        ),
+    )
+    assert pacers == expected
+    assert advanced == pytest.approx(5 / 50.0, abs=1e-9)
+
+
+def test_a_fast_mode_that_is_not_a_boolean_is_refused_before_a_step(sim, pacers):
+    start = sim._world._data.time
+    result = sim.run_multi_policy(policies={"so100": MockPolicy()}, n_steps=5, fast_mode="false")  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    assert result["content"][0]["text"].startswith("run_multi_policy:")
+    assert "fast_mode" in result["content"][0]["text"]
+    assert (sim._world._data.time, pacers) == (start, [])

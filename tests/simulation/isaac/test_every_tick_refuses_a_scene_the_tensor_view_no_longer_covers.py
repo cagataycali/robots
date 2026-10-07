@@ -183,7 +183,7 @@ class TestRunMultiPolicyRefusesInItsPreflight:
     def test_it_returns_an_error_before_any_step(self) -> None:
         engine = _engine(stale=True)
 
-        result = engine.run_multi_policy({"arm": "mock"}, duration=0.1)
+        result = engine.run_multi_policy({"arm": "mock"}, duration=0.1, fast_mode=True)
 
         assert result["status"] == "error"
         assert engine._world.step_calls == 0
@@ -191,7 +191,7 @@ class TestRunMultiPolicyRefusesInItsPreflight:
     def test_the_refusal_names_the_verb(self) -> None:
         engine = _engine(stale=True)
 
-        text = _text(engine.run_multi_policy({"arm": "mock"}, duration=0.1))
+        text = _text(engine.run_multi_policy({"arm": "mock"}, duration=0.1, fast_mode=True))
 
         assert "run_multi_policy" in text
         assert _REMEDY in text
@@ -201,7 +201,7 @@ class TestRunMultiPolicyRefusesInItsPreflight:
         rejected, so the caller fixes the scene rather than chasing the spec."""
         engine = _engine(stale=True)
 
-        text = _text(engine.run_multi_policy({}, duration=0.1))
+        text = _text(engine.run_multi_policy({}, duration=0.1, fast_mode=True))
 
         assert "tensor view" in text
 
