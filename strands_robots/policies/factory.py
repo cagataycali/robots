@@ -933,9 +933,13 @@ def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> Non
         **kwargs: Provider-specific parameters (the policy_config).
 
     Raises:
+        TypeError: When ``provider`` is not a string - a caller bug, not a
+            resolution failure, so it is not swallowed.
         ValueError: When the resolved provider's ``preflight`` rejects the
             configuration.
     """
+    if (type_error := _provider_type_error(provider, "provider")) is not None:
+        raise TypeError(type_error)
     try:
         _canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     except Exception as e:
@@ -988,6 +992,10 @@ def preflight_reason(
     Returns:
         The provider's refusal text, or ``None`` when the configuration passes,
         when there is no hook to run, or when the observation could not be read.
+
+    Raises:
+        TypeError: When ``provider`` is not a string, from
+            :func:`policy_overrides_preflight`.
     """
     if not policy_overrides_preflight(provider, **kwargs):
         return None
@@ -1045,7 +1053,13 @@ def policy_overrides_preflight(provider: str, **kwargs) -> bool:
         cannot be resolved at all - :func:`preflight_policy` swallows resolution
         failures and degrades to a no-op for such a name, so there is likewise
         no hook to feed here.
+
+    Raises:
+        TypeError: When ``provider`` is not a string - a caller bug, not a
+            resolution failure, so it is not answered as "no hook".
     """
+    if (type_error := _provider_type_error(provider, "provider")) is not None:
+        raise TypeError(type_error)
     try:
         _canonical, PolicyClass, _resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     except Exception as e:
