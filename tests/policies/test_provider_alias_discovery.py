@@ -305,16 +305,18 @@ def test_a_reported_alias_builds_the_same_policy_as_its_canonical_name(alias: st
 
 
 def test_a_runtime_alias_is_reported_too() -> None:
-    """``register_policy`` aliases are discoverable, as its provider names are.
+    """``register_policy`` aliases land in ``list_aliases``, never in ``list_providers``.
 
-    ``list_providers`` already reports runtime aliases, so a mapping that
-    covered only the JSON registry would advertise a spelling while leaving
-    the provider it resolves to unknowable.
+    The two surfaces are disjoint, as they are for the JSON registry, so
+    ``set(list_providers()) | set(list_aliases())`` names each spelling once
+    and a refusal listing the providers lists no alias as one.
     """
     from strands_robots.policies import list_aliases
 
     register_policy("alias_probe_provider", lambda: type(create_policy("mock")), aliases=["alias_probe"])
     assert list_aliases().get("alias_probe") == "alias_probe_provider"
+    assert "alias_probe_provider" in list_providers()
+    assert not set(list_providers()) & set(list_aliases())
 
 
 @pytest.mark.parametrize(
