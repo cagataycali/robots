@@ -215,8 +215,76 @@ def _build_teleop_config(teleop_type: str, **kwargs: Any) -> Any:
         return ConfigClass(**config_data)
     except (TypeError, ValueError) as e:
         raise ValueError(
-            f"Failed to construct {ConfigClass.__name__} for teleop_type {teleop_type!r}: {e}. Config: {config_data}"
+            _augment_config_construction_failure(
+                ConfigClass=ConfigClass,
+                teleop_type=teleop_type,
+                config_data=config_data,
+                valid_fields=valid_fields,
+                error=e,
+            )
         ) from e
+
+
+def _augment_config_construction_failure(
+    *,
+    ConfigClass: type,
+    teleop_type: str,
+    config_data: dict[str, Any],
+    valid_fields: set[str],
+    error: BaseException,
+) -> str:
+    """Base message plus a scan hint when the lerobot dataclass refused for want of ``port``.
+
+    The sibling path (:func:`~strands_robots.robot.Robot` with
+    ``driver='strands'``) refuses an empty serial driver by naming this host's
+    serial candidates
+    (:func:`~strands_robots._serial_discovery.describe_serial_candidates`) and
+    teaching that a port path is a position, not an identity
+    (:mod:`strands_robots.robot` around line 537). The leader arm the teleop
+    factory fronts IS a serial device of the same family, so the same scan
+    belongs on this refusal too. Without it the user who followed
+    ``docs/learn/hardware/teleoperation.md`` sees only lerobot's raw
+    ``__init__() missing 1 required positional argument: 'port'`` and has
+    nothing to make the next call with.
+
+    The hint is appended only when the refusal is in fact about ``port`` AND
+    the dataclass declares a ``port`` field; a teleoperator with no serial bus
+    (``gamepad``, ``keyboard``, ``phone``) is left with the base message
+    unchanged. The scan runs lazily so it costs nothing on refusals it cannot
+    apply to and nothing on an import-only test.
+    """
+    base = (
+        f"Failed to construct {ConfigClass.__name__} for teleop_type "
+        f"{teleop_type!r}: {error}. Config: {config_data}"
+    )
+    if "port" not in valid_fields:
+        return base
+    message = str(error)
+    looks_like_missing_port = (
+        "'port'" in message
+        and ("missing" in message or "required" in message)
+    )
+    if not looks_like_missing_port:
+        return base
+
+    # Lazy import: _serial_discovery pulls in pyserial.tools.list_ports, which
+    # a bare `from strands_robots import Teleoperator` has no reason to pay.
+    from strands_robots._serial_discovery import describe_serial_candidates, scan_serial_devices
+
+    try:
+        candidates = describe_serial_candidates(scan_serial_devices())
+    except Exception:  # pragma: no cover - never let a diagnostic break a refusal
+        return base
+
+    canonical = (
+        f"Teleoperator({teleop_type!r}, port=...) - "
+        "the serial device the leader arm presents when it is plugged in."
+    )
+    position_vs_identity = (
+        "A port path is a position on the bus, not an identity: it can change "
+        "when the device is replugged, while the usb id does not."
+    )
+    return f"{base} {canonical} {candidates} {position_vs_identity}"
 
 
 def Teleoperator(  # noqa: N802 - uppercase by design (factory mimicking a constructor)
