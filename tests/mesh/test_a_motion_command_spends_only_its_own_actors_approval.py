@@ -7,8 +7,10 @@ admitted every attributed peer, a dashboard grant for ``leader-1``'s pending
 command was spent by any peer sending the same shape, and after ten seconds of
 silence any peer could announce itself as ``leader-1``.
 
-With signed identity required, the actor is the certificate that signed the
-command, and every approval names its actor: a bare allowlist verb still admits
+With signed identity required, the actor is the peer id the signing
+certificate speaks for (the id a dashboard deposits its grants for, so a
+``<cn>__<suffix>`` child spends its own approvals), and every approval names
+its actor: a bare allowlist verb still admits
 only a verified signer, ``reset@leader-1`` refuses a correctly signed
 ``attacker``, a grant deposited for ``leader-1`` is not spent by ``attacker``'s
 identical command, and a presence for ``leader-1`` signed by ``attacker``'s
@@ -87,7 +89,14 @@ def world(require_signatures: EphemeralCA, tmp_path: Path, monkeypatch: pytest.M
     attacker = identity_for(require_signatures, "attacker", tmp_path / "leaves")
     robot._on_presence(signed_presence_sample(leader, "leader-1", zid=LEADER_ZID))
     robot._on_presence(signed_presence_sample(attacker, "attacker", zid=ATTACKER_ZID))
-    return {"arm": arm, "robot": robot, "audits": audits, "leader": leader, "attacker": attacker}
+    return {
+        "arm": arm,
+        "robot": robot,
+        "audits": audits,
+        "leader": leader,
+        "attacker": attacker,
+        "ca": require_signatures,
+    }
 
 
 def _deliver(robot: Mesh, sample: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,6 +218,48 @@ class TestStep2AGrantIsSpentOnlyByItsActor:
         _deliver(world["robot"], signed_cmd_sample(world["leader"], "leader-1", "so101-1", EXECUTE), monkeypatch)
         assert world["arm"].executed == ["wave"]
         assert _motion_grants.pending_grants() == []
+
+    def test_a_dashboard_whose_peer_id_is_a_child_of_its_cn_spends_the_grant_it_deposited(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The spend side, the deposit side and STRANDS_DASHBOARD_PEER_ID agree on one actor: the peer id.
+
+        Two dashboards sharing a certificate CN run as ``<cn>__<suffix>``
+        children (the only shape STRANDS_DASHBOARD_PEER_ID offers them). The
+        dashboard deposits its grants for its peer id, so the robot must
+        spend them for the peer id its signer speaks for, not for the CN,
+        or every operator yes is deposited unspendable.
+        """
+        operator = identity_for(world["ca"], "lab-op", tmp_path / "op")
+        dashboard_id = "lab-op__dash-2"
+        world["robot"]._on_presence(signed_presence_sample(operator, dashboard_id, zid="c0ffee" * 5 + "c0"))
+        # The dashboard approved its own pending execute: a yes FOR its peer id (agent_console deposits bridge.peer_id).
+        _motion_grants.deposit_grant("so101", EXECUTE_SHOWN, actor=dashboard_id)
+
+        _deliver(world["robot"], signed_cmd_sample(operator, dashboard_id, "so101-1", EXECUTE), monkeypatch)
+
+        assert world["arm"].executed == ["wave"]
+        assert _motion_grants.pending_grants() == []
+        assert [p for e, p in world["audits"] if e == "wire_motion_refused"] == []
+
+    def test_verb_at_peer_names_the_peer_id_not_the_certificate_cn(
+        self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """``reset@lab-op__dash-2`` admits that child; ``reset@lab-op`` (the CN) does not, so the rule is one-way."""
+        operator = identity_for(world["ca"], "lab-op", tmp_path / "op")
+        dashboard_id = "lab-op__dash-2"
+        world["robot"]._on_presence(signed_presence_sample(operator, dashboard_id, zid="c0ffee" * 5 + "c0"))
+
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "reset@lab-op")
+        _deliver(world["robot"], signed_cmd_sample(operator, dashboard_id, "so101-1", RESET), monkeypatch)
+        assert world["arm"].resets == 0
+        refused = [p for e, p in world["audits"] if e == "wire_motion_refused"]
+        assert refused[0]["reason"] == "no operator approval"
+        assert refused[0]["sender"] == dashboard_id and refused[0]["signer"] == "lab-op"
+
+        monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", f"reset@{dashboard_id}")
+        _deliver(world["robot"], signed_cmd_sample(operator, dashboard_id, "so101-1", RESET), monkeypatch)
+        assert world["arm"].resets == 1
 
     def test_an_in_process_grant_is_not_spendable_over_the_wire(
         self, world: dict[str, Any], monkeypatch: pytest.MonkeyPatch

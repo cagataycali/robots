@@ -192,7 +192,7 @@ def allow_match(allowed: frozenset[str], action: str, actor: str | None) -> bool
     if first:
         logger.warning(
             "[safety] %s names %s, which pre-approves %r for EVERY peer the mesh admits; scope it to one sender "
-            "with %s@<peer> (the sender's certificate CN).",
+            "with %s@<peer> (the sender's peer id, which its certificate speaks for).",
             WIRE_MOTION_ALLOW_ENV,
             ", ".join(sorted(first)),
             action,
@@ -222,8 +222,10 @@ def remote_motion_refusal(
             remote surface moves the robot with (a Device Connect RPC name).
         tool_name: The robot's tool name; keys the grant and the allowlist.
         cmd: The command as the operator would be shown it.
-        actor: The verified sender asking: the certificate CN the mesh
-            attributed the command to, or the Device Connect caller id.
+        actor: The verified sender asking: the peer id the mesh attributed
+            the command to (bound to its signing certificate's common name
+            when signatures are required; the same id a dashboard deposits
+            its grants for), or the Device Connect caller id.
             ``None`` means nobody verifiable asked, so only a bare allowlist
             entry or the bypass flag can admit it.
 
@@ -3680,11 +3682,14 @@ class Mesh(SensorLoopsMixin):
                 },
             )
             return refusal
-        # The actor an approval is spent for: the verified signer when
-        # signatures are required, else the attributed sender id.
-        actor = None
-        if source is not None:
-            actor = source.signer if self._signing_required() else source.sender_id
+        # The actor an approval is spent for is the attributed sender id on
+        # both paths: with signatures required it is already bound to the
+        # signing certificate (cn_speaks_for above), so it carries the
+        # signer's authority while matching what the dashboard deposits
+        # (its peer id, STRANDS_DASHBOARD_PEER_ID) and what the legacy
+        # session-id path attributes. One rule for verb@<peer>, deposits
+        # and audit rows, whichever signing mode the mesh runs in.
+        actor = source.sender_id if source is not None else None
         if (refused := remote_motion_refusal(action, tool_name, cmd, actor=actor)) is None:
             return None
         refusal, what = refused
