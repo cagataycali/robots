@@ -111,10 +111,9 @@ def register_policy(
 
 
 def list_providers() -> list[str]:
-    """List all available policy provider names (JSON + runtime)."""
+    """List the canonical policy provider names (JSON + runtime); aliases are in :func:`list_aliases`."""
     names = list_policy_providers()
     names.extend(_runtime_registry.keys())
-    names.extend(_runtime_aliases.keys())
     return sorted(set(names))
 
 
