@@ -246,14 +246,16 @@ class TestUsableHorizonsAreUnchanged:
     @pytest.mark.parametrize("good", USABLE)
     @pytest.mark.parametrize("param", HORIZON_PARAMS)
     def test_run_multi_policy_executes_exactly_that_many_steps(self, sim, param, good):
-        result = sim.run_multi_policy({"arm1": MockPolicy()}, **{param: good})
+        result = sim.run_multi_policy({"arm1": MockPolicy()}, fast_mode=True, **{param: good})
         assert result["status"] == "success", result
         assert _report(result)["steps"] == good
 
     @pytest.mark.parametrize(("good", "frequency"), LOSSY)
     @pytest.mark.parametrize("param", HORIZON_PARAMS)
     def test_run_multi_policy_executes_a_lossy_horizon_exactly(self, sim, param, frequency, good):
-        result = sim.run_multi_policy({"arm1": MockPolicy()}, control_frequency=frequency, **{param: good})
+        result = sim.run_multi_policy(
+            {"arm1": MockPolicy()}, control_frequency=frequency, fast_mode=True, **{param: good}
+        )
         assert result["status"] == "success", result
         assert _report(result)["steps"] == good
 
@@ -261,7 +263,7 @@ class TestUsableHorizonsAreUnchanged:
     def test_a_horizon_the_loop_truncated_to_zero_is_not_reported_as_completed(self, sim, good, frequency):
         # The sharpest form of the finding: a rollout that never stepped came
         # back as a completed success, so the report and the world disagreed.
-        result = sim.run_multi_policy({"arm1": MockPolicy()}, n_steps=good, control_frequency=frequency)
+        result = sim.run_multi_policy({"arm1": MockPolicy()}, n_steps=good, control_frequency=frequency, fast_mode=True)
         assert _report(result)["steps"] > 0, _text(result)
 
     def test_the_duration_path_needs_no_horizon(self, sim):

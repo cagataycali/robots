@@ -162,10 +162,7 @@ def _record_one_synchronized_episode(sim: Any, root: pathlib.Path) -> dict[str, 
     _open_recording(sim, root)
     assert (
         sim.run_multi_policy(
-            policies={"alice": MockPolicy()},
-            instructions="probe",
-            n_steps=5,
-            control_frequency=10.0,
+            policies={"alice": MockPolicy()}, instructions="probe", n_steps=5, control_frequency=10.0, fast_mode=True
         )["status"]
         == "success"
     )

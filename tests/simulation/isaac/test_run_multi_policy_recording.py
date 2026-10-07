@@ -148,6 +148,7 @@ def test_synchronized_two_robot_rollout_records_merged_frames(sim_two_robots, tm
         instructions={"alice": "pour", "bob": "catch"},
         n_steps=n_steps,
         control_frequency=30.0,
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     assert tool_json(r)["steps"] == n_steps
@@ -206,6 +207,7 @@ def test_round_trip_episode_and_frame_counts(sim_two_robots, tmp_path) -> None:
             instructions="handover",
             n_steps=5,
             control_frequency=30.0,
+            fast_mode=True,
         )
         assert r["status"] == "success", r
         saved = sim.save_episode()
@@ -248,6 +250,7 @@ def test_recorded_task_is_first_robots_instruction_with_shared_warning(sim_two_r
             instructions={"alice": "pour", "bob": "catch"},
             n_steps=3,
             control_frequency=30.0,
+            fast_mode=True,
         )
     assert r["status"] == "success", r
     warnings = [rec.message for rec in caplog.records if "distinct per-robot instructions" in rec.message]
@@ -283,6 +286,7 @@ def test_cameras_recorded_once_per_step_into_the_merged_frame(fake_isaacsim_type
         instructions="look",
         n_steps=4,
         control_frequency=30.0,
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     assert sim.stop_recording()["status"] == "success"
@@ -336,6 +340,7 @@ def test_failed_rollout_discards_partial_episode(sim_two_robots, tmp_path) -> No
             n_steps=5,
             control_frequency=30.0,
             action_horizon=1,
+            fast_mode=True,
         )
     # The dangling frame from the completed first step was discarded.
     recorder = sim._recording_state_dict["dataset_recorder"]
@@ -347,6 +352,7 @@ def test_failed_rollout_discards_partial_episode(sim_two_robots, tmp_path) -> No
         instructions="recovered",
         n_steps=3,
         control_frequency=30.0,
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     assert sim.stop_recording()["status"] == "success"

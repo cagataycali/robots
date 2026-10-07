@@ -6847,6 +6847,7 @@ class IsaacSimulation(
         n_steps: int | None = None,
         max_steps: int | None = None,
         *,
+        fast_mode: bool = False,
         reset_between: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots with their own policies in ONE synchronized control loop.
@@ -6903,6 +6904,10 @@ class IsaacSimulation(
                 physics-tensor views (#1895), so a mid-run reset would leave
                 every robot unobservable; requesting one returns a structured
                 error rather than silently skipping the reset.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. Must be a
+                boolean; any other type is refused rather than read by
+                truthiness.
 
         Returns:
             The standard status dict; on success ``content`` carries a text
@@ -6933,6 +6938,8 @@ class IsaacSimulation(
         if stale := _physics_view_stale_error(self, "run_multi_policy"):
             return stale
         if err := self._validate_multi_policies(policies, "run_multi_policy"):
+            return err
+        if err := self._validate_posture_flags("run_multi_policy", fast_mode=fast_mode):
             return err
 
         # Validate every robot exists.
@@ -7174,8 +7181,8 @@ class IsaacSimulation(
         # documented in wall-clock seconds. Missed deadlines are dropped rather
         # than chased, so a slow step does not fire a burst of back-to-back
         # actions at the robots. ``_validate_positive_frequency`` above has
-        # already refused a non-positive rate, so the period is always usable and
-        # the pace is unconditional. Acquired with ``with``: the ticker owns a
+        # already refused a non-positive rate, so the period is always usable;
+        # ``fast_mode`` skips the pace. Acquired on a stack: the ticker owns a
         # selector and a socketpair, so releasing it is the language's job rather
         # than this loop's to remember. Every paced loop in the package is held
         # to that, so constructing a bare ``Ticker(...)`` here is a suite failure
@@ -7183,7 +7190,8 @@ class IsaacSimulation(
         try:
             from strands_robots._pacing import Ticker
 
-            with Ticker(1.0 / control_frequency) as ticker:
+            with contextlib.ExitStack() as pacing:
+                ticker = None if fast_mode else pacing.enter_context(Ticker(1.0 / control_frequency))
                 while step_count < total_steps:
                     # --- 1. Observe every robot (one main-thread hop). No lock is
                     # held across the marshal (#1896); get_observation takes it.
@@ -7242,7 +7250,8 @@ class IsaacSimulation(
                     for rname in policies:
                         self._robots[rname].policy_steps = step_count
 
-                    ticker.wait()
+                    if ticker is not None:
+                        ticker.wait()
 
             completed_cleanly = True
         except CooperativeStop:
