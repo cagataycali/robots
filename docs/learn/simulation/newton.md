@@ -41,11 +41,11 @@ sim.destroy()
 
 ## Solvers
 
-`strands_robots.simulation.newton.backend.solver_registry()` maps friendly names to Newton classes: `mujoco`, `featherstone`, `xpbd`, `semi_implicit`, `vbd`, `style3d`, `mpm`, `kamino`. `articulated_solvers()` returns the subset that can drive a robot: `mujoco`, `featherstone` and `kamino`. The rest are refused with the reason: `xpbd` and `semi_implicit` step without integrating rigid bodies and leave the world frozen, `vbd` needs per-body colouring the build does not apply, `style3d` is a cloth solver, `mpm` needs a config object this backend does not build.
+`strands_robots.simulation.newton.backend.solver_registry()` maps friendly names to Newton classes: `mujoco`, `featherstone`, `xpbd`, `semi_implicit`, `vbd`, `style3d`, `mpm`, `kamino`. `articulated_solvers()` returns the subset that can drive a robot: `mujoco`, `featherstone` and `kamino`. The rest are refused with the reason: `xpbd` and `semi_implicit` never integrate rigid bodies (the world freezes), `vbd` needs per-body colouring the build does not apply, `style3d` is a cloth solver, `mpm` needs a config object this backend does not build.
 
 ## Same API, same rules
 
-`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
+`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature and behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
 
 ## Limits
 
