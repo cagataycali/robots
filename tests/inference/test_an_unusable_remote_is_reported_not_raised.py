@@ -7,7 +7,7 @@ Two ways ``run_policy(policy_provider="remote")`` left its ``status`` envelope:
   ``connect(..., legacy=True)``, which such a release forwards to
   ``socket.create_connection``: ``TypeError: ... unexpected keyword argument
   'legacy'`` on the first rollout step, naming neither the package nor the fix.
-  Both WebSocket clients now refuse at construction with the missing-dependency
+  Both WebSocket clients and the server now refuse at construction with the missing-dependency
   ``ImportError`` every optional provider gives, naming the extra.
 * the client connects lazily, and the first contact is the rollout's
   ``requires_images`` read, made before the loop whose handler reports a policy
@@ -24,11 +24,13 @@ from typing import Any
 import pytest
 
 from strands_robots.inference.client import RemotePolicy
+from strands_robots.inference.server import PolicyServer
 from strands_robots.policies.cosmos3.client import Cosmos3WebsocketClient
 
 CLIENTS = [
     (RemotePolicy, {}, "inference"),
     (Cosmos3WebsocketClient, {"host": "127.0.0.1", "port": 1}, "cosmos3-service"),
+    (PolicyServer, {"policy_provider": "mock", "port": 0}, "inference"),
 ]
 
 
