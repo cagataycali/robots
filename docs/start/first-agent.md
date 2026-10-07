@@ -69,13 +69,13 @@ robot.cleanup()
 
 {{drawing:d04_gate_chain}}
 
-A `mode="real"` robot built through the lerobot driver has eight actions. Six read or halt and are never gated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. Two move: `execute` and `start` dispatch a policy rollout to real actuators, and both stop for a human first. This runs on a laptop with no arm: the gate runs before the driver opens `port="/dev/null"`, so the interrupt is reached (approving would then fail to connect):
+The SO-101 defaults to its native driver, which is not a Strands tool, so this call spells `driver="lerobot"`. That tool has eight actions. Six read or halt, ungated: `get_state`, `get_robot_state`, `list_cameras`, `render`, `status`, `stop`. `execute` and `start` dispatch a policy rollout to real actuators once a human approves. No arm is needed: the gate runs before the driver opens `port="/dev/null"`, so the interrupt is reached (approving then fails to connect):
 
 ```python
 from strands import Agent
 from strands_robots import Robot
 
-arm = Robot("so101", mode="real", port="/dev/null")
+arm = Robot("so101", mode="real", driver="lerobot", port="/dev/null")
 agent = Agent(tools=[arm], callback_handler=None)
 result = agent("Run the mock policy on so101 for 2 seconds with the instruction 'wave'. Call the tool directly.")
 print(result.stop_reason)

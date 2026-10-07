@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from strands.types.tools import AgentTool
 
 import strands_robots
 import strands_robots.hardware_robot as hardware_robot
@@ -295,6 +296,62 @@ def _native_driver_the_call_builds(name: str, driver: str | None) -> type[Any] |
     if resolve_driver(canonical, driver) != "strands":
         return None
     return get_native_driver_class(canonical)
+
+
+def _robots_handed_to_an_agent(block: str) -> list[tuple[int, str, str | None]]:
+    """Return each ``Robot(..., mode="real")`` a fence binds and then lists in ``Agent(tools=[...])``.
+
+    Strands registers a tool by ``isinstance(tool, AgentTool)`` and only logs a
+    warning for anything else, so a robot that is not one leaves the agent with
+    no tool and every call after it fails by a name the reader never sees.
+
+    Args:
+        block: The source text of one ``python`` fence.
+
+    Returns:
+        ``(line, robot name, driver literal or None)`` for each handed-over robot.
+    """
+    try:
+        tree = ast.parse(block)
+    except SyntaxError:
+        return []
+    bound: dict[str, tuple[int, str, str | None]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+            continue
+        call = node.value
+        written = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        mode, driver = written.get("mode"), written.get("driver")
+        if not (
+            isinstance(call.func, ast.Name)
+            and call.func.id == "Robot"
+            and isinstance(mode, ast.Constant)
+            and mode.value == "real"
+            and call.args
+            and isinstance(call.args[0], ast.Constant)
+        ):
+            continue
+        spelled = driver.value if isinstance(driver, ast.Constant) and isinstance(driver.value, str) else None
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                bound[target.id] = (node.lineno, str(call.args[0].value), spelled)
+    handed = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "Agent":
+            for kw in node.keywords:
+                if kw.arg == "tools" and isinstance(kw.value, ast.List | ast.Tuple):
+                    handed += [bound[e.id] for e in kw.value.elts if isinstance(e, ast.Name) and e.id in bound]
+    return handed
+
+
+def _handoffs_that_register_no_tool(block: str) -> list[str]:
+    """Return a message per robot in *block* that ``Agent(tools=[...])`` would drop."""
+    dropped = []
+    for line, name, driver in _robots_handed_to_an_agent(block):
+        built = _native_driver_the_call_builds(name, driver)
+        if built is not None and not issubclass(built, AgentTool):
+            dropped.append(f"line {line}: Robot({name!r}, mode='real') builds {built.__name__}, not an AgentTool")
+    return dropped
 
 
 def _names_no_registered_robot(name: str) -> bool:
@@ -646,3 +703,26 @@ class TestADocumentedDefaultDriverIsTheResolvedOne:
     )
     def test_a_planted_wrong_default_is_reported(self, text: str, reported: int) -> None:
         assert len(_default_driver_mismatches(text, [(1, "so101")])) == reported
+
+
+class TestARobotHandedToAnAgentIsAStrandsTool:
+    """A fence that hands a real robot to ``Agent(tools=[...])`` must build one Strands registers."""
+
+    def test_every_documented_handoff_registers_a_tool(self) -> None:
+        sources = sorted((_REPO_ROOT / "docs").rglob("*.md")) + [_REPO_ROOT / "README.md"]
+        dropped = [
+            f"{path.relative_to(_REPO_ROOT)} fence at line {text[: f.start()].count(chr(10)) + 1}, {msg}"
+            for path in sources
+            for text in [path.read_text(encoding="utf-8")]
+            for f in _PYTHON_FENCE.finditer(text)
+            for msg in _handoffs_that_register_no_tool(f.group(1))
+        ]
+        assert not dropped, "documented Agent(tools=[...]) calls that register no tool:\n  " + "\n  ".join(dropped)
+
+    @pytest.mark.parametrize(
+        ("driver", "dropped"),
+        [("", 1), (', driver="strands"', 1), (', driver="lerobot"', 0)],
+    )
+    def test_the_first_agent_gate_fence_is_graded_by_its_driver(self, driver: str, dropped: int) -> None:
+        block = f'arm = Robot("so101", mode="real"{driver}, port="/dev/null")\nagent = Agent(tools=[arm])\n'
+        assert len(_handoffs_that_register_no_tool(block)) == dropped
