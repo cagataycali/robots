@@ -112,6 +112,18 @@ def test_every_generated_page_states_its_verified_checkpoints(name: str) -> None
         assert "learn/data/record.md" in body, f"robots/{name}.md does not tell the reader how to record one"
 
 
+def test_a_robot_with_its_own_provider_names_a_checkpoint_that_ran() -> None:
+    """A body with a provider written for it ships weights that run, so its page cannot say none did."""
+    hook = _hook()
+    contradicted = [
+        name
+        for name in sorted(_registry())
+        if "Providers written for this body" in (body := hook.robot_page(name).split(_HEADING, 1)[1])
+        and _NONE_LINE in body
+    ]
+    assert not contradicted, f"robot pages name a provider for the body but no verified checkpoint: {contradicted}"
+
+
 def test_the_committed_pages_are_the_generator_output() -> None:
     """The pages are committed; a stale one would show a section the hook no longer writes."""
     hook = _hook()

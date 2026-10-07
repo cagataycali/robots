@@ -4,7 +4,7 @@ description: microduck runs Pollen Robotics' ONNX locomotion skills for the 14-D
 
 # microduck
 
-By the end of this page you can make the Microduck walk, stand, or run any other shipped skill from a single ONNX file, hot-swap skills mid-rollout, and know what the observation must carry.
+By the end of this page you can make the Microduck walk, stand or run any shipped ONNX skill, hot-swap skills mid-rollout, and know what the observation carries.
 
 ```bash
 pip install 'strands-robots[microduck]'    # onnxruntime + huggingface_hub; CPU is enough
@@ -12,9 +12,9 @@ pip install 'strands-robots[microduck]'    # onnxruntime + huggingface_hub; CPU 
 
 ## What it is
 
-The Microduck is Pollen Robotics' open 14-DOF biped. Its skills ship as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
+The Microduck, Pollen Robotics' open 14-DOF biped, ships its skills as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
 
-The weight file is the skill: provider `microduck` runs whichever export `onnx_path` names. A bare filename like `alpha_walking.onnx` missing from the working directory is fetched from `pollen-robotics/microduck-policies` on first use.
+The weight file is the skill: provider `microduck` runs whichever export `onnx_path` names. A bare name like `alpha_walking.onnx` not in the working directory is fetched from `pollen-robotics/microduck-policies`.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
@@ -31,7 +31,7 @@ All keyword-only, no `**kwargs`. `providers` defaults to `["CPUExecutionProvider
 
 ## Observation
 
-`build_observation` in `strands_robots/policies/microduck/observation.py` assembles `[command, base_ang_vel(3), projected_gravity(3), joint_pos, joint_vel, last_action]`, 48 non-command floats for 14 joints. The observation dict must carry the base blocks the sim backends and the Microduck driver both emit; a missing block or a non-finite value is refused with the key named.
+`build_observation` in `strands_robots/policies/microduck/observation.py` assembles `[command, base_ang_vel(3), projected_gravity(3), joint_pos, joint_vel, last_action]`, 48 non-command floats for 14 joints. The sim backends and the driver both emit these blocks; a missing block or a non-finite value is refused with the key named.
 
 ## Per-call keywords
 
@@ -42,7 +42,7 @@ All keyword-only, no `**kwargs`. `providers` defaults to `["CPUExecutionProvider
 
 ## Skills as a bundle
 
-`MicroduckPolicyBundle` in `strands_robots.policies.microduck.composite` holds several `MicroduckPolicy` instances warm and exposes one as active. `bundle.switch("stand")` swaps mid-rollout to the skill held under that key. `switch_on_velocity=<threshold>` with `move_key` and `idle_key` auto-selects between two skills by the magnitude of the commanded twist each tick; both keys must name held skills when the gate is on.
+`MicroduckPolicyBundle` in `strands_robots.policies.microduck.composite` holds several `MicroduckPolicy` instances warm and exposes one as active. `bundle.switch("stand")` swaps to that skill mid-rollout. `switch_on_velocity=<threshold>` with `move_key` and `idle_key` auto-selects between two skills by the magnitude of the commanded twist each tick; both keys must name held skills when the gate is on.
 
 ```python title="sketch"
 from strands_robots.policies.microduck import MicroduckPolicy
@@ -60,7 +60,7 @@ sim.run_policy(robot_name="microduck", policy_object=bundle, policy_kwargs={"tar
 
 ## Skill scenes
 
-A weight and the scene it was trained in are one pair. `Robot("microduck")` resolves the entry's declared asset, flat ground with no props; four skills need more, shipped in the same asset directory. A skill on the wrong scene is not an error: a roller policy without wheels stands, a ball kick swings at nothing, both report success.
+A weight and its training scene are one pair. `Robot("microduck")` resolves flat ground with no props; four skills need a scene shipped beside it. A skill on the wrong scene is not an error: a roller policy without wheels stands, a ball kick swings at nothing, both report success.
 
 | skill | scene | the scene adds |
 |---|---|---|
@@ -79,8 +79,6 @@ Reach a variant by path: find `scene_rollers.xml` under `microduck/` on `strands
 Actions decode as `default_pose + raw_action * action_scale`, so the stance is the origin of the network's output. It ships as `MICRODUCK_DEFAULT_POSE` and as the `STAND` keyframe of `scene.xml` and `scene_rollers.xml`: `Robot("microduck", urdf_path=str(scene), keyframe="STAND")` seats it and every `reset()` restores it; on `scene_rollers.xml` add `position=[0, 0, 0.0207]`. Without it the robot starts 0.458 rad off at the widest joint. `scene_ball.xml` has no keyframe; seat the stance yourself.
 
 ## Run it
-
-Needs the extra; the weights download on first use.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -103,4 +101,4 @@ print(result["status"])
 
 - Microduck only. The joint names come from the graph's metadata and must match the robot's.
 - One skill per policy; the bundle is how several coexist.
-- No re-normalisation means an export without the fused normaliser produces wrong actions with no error. Use Pollen's shipped exports.
+- An export without the fused normaliser produces wrong actions silently. Use Pollen's exports.

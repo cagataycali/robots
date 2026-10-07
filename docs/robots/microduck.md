@@ -33,7 +33,10 @@ Aliases: `micro_duck`, `pollen_microduck`.
 
 ## Policies verified on this robot
 
-No checkpoint verified on this robot yet. Record one: [Record](../learn/data/record.md), then [train](../learn/training/lerobot.md) and run it with `run_policy`.
+| Checkpoint | Provider | Where | What happened |
+|---|---|---|---|
+| alpha_walking.onnx (Pollen's RL gait) | `microduck` | sim | 250 of 250 actions, 0 errors; a 0.15 m/s command moved the base 0.35 m forward in 5 s, upright. Source: examples/microduck/microduck_walk_sim.py --vx 0.15 --duration 5, 2026-10-07 |
+| alpha_stand.onnx (Pollen's RL stand) | `microduck` | sim | 250 of 250 actions, 0 errors; upright for 5 s, drifting 0.12 m, or 3 mm from the STAND keyframe. Source: examples/microduck/microduck_walk_sim.py --onnx alpha_stand.onnx --vx 0, 2026-10-07 |
 
 Providers written for this body: `microduck`; the rest are in the [policy matrix](../learn/policies/index.md).
 
