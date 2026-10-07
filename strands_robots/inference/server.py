@@ -33,6 +33,7 @@ import traceback
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
+from strands_robots.policies._ws_wire import require_held_connect
 from strands_robots.policies.base import Policy, collect_required_bodies
 from strands_robots.utils import tcp_port_error
 
@@ -303,6 +304,18 @@ class PolicyServer:
         # A previous stop() left the flag set; this run's teardown has not begun.
         self._stopping.clear()
 
+        # Refuse a base install (no ``[inference]`` extra) with the actionable
+        # install hint, matching the client half's ``require_held_connect`` at
+        # ``RemotePolicy._connect`` (client.py:225). Without this gate the bare
+        # ``from websockets.sync.server import serve`` below raises a
+        # ``ModuleNotFoundError: No module named 'websockets'`` that names
+        # neither the extra nor this package - the one install the operator
+        # needs is reported for the client half of the pair and not for the
+        # server half, so the GPU-host operator who followed
+        # docs/learn/policies/remote.md literally hits a dead end that the
+        # robot host does not.
+        require_held_connect(type(self).__name__, "inference")
+
         from websockets.sync.server import serve
 
         # Match the client's connect() options: an observation carrying camera
@@ -361,6 +374,11 @@ class PolicyServer:
         Convenience entry point for a standalone server process. Blocks the
         calling thread; use :meth:`start`/:meth:`stop` for programmatic control.
         """
+        # See start(): refuse a base install with the install hint before the
+        # bare import fails, so a standalone-server process reports the extra
+        # the same way the ``start()``/``RemotePolicy`` paths do.
+        require_held_connect(type(self).__name__, "inference")
+
         from websockets.sync.server import serve
 
         # See start(): lift the default 1 MiB frame limit (and disable compression)
