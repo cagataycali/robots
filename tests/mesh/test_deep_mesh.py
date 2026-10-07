@@ -550,11 +550,15 @@ def _until_published(calls: list, *topics: str, timeout: float = 10.0) -> bool:
     Each sensor loop publishes on its first tick and then once per period, so a
     loop that works answers in milliseconds. A fixed sleep had to cover the
     slowest period instead (5.5 s for the 0.2 Hz map loop) and still guessed.
+
+    Each topic is matched as a key suffix: the heartbeat publishes
+    ``strands/<peer_id>/presence`` meanwhile, and a peer id such as ``odom-1``
+    puts ``/odom`` inside that key.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         keys = [key for key, _ in list(calls)]
-        if all(any(topic in key for key in keys) for topic in topics):
+        if all(any(key.endswith(topic) for key in keys) for topic in topics):
             return True
         time.sleep(0.01)
     return False
@@ -600,7 +604,7 @@ class TestSensorLoops:
         assert _until_published(mock_put, "/imu")
         m.stop()
 
-        imu_puts = [(k, d) for k, d in mock_put if "/imu" in k]
+        imu_puts = [(k, d) for k, d in mock_put if k.endswith("/imu")]
         assert len(imu_puts) > 0
 
     def test_odom_loop(self, mock_session, mock_put):
