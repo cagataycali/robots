@@ -26,7 +26,7 @@
     "fence": 1,
     "video": {
       "fps": 30,
-      "every": 1
+      "slowdown": 16
     }
   }
 }

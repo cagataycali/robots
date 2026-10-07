@@ -32,7 +32,7 @@ print(sim.export_xml()["status"], sim.get_total_mass()["status"], sim.get_energy
 sim.cleanup()
 ```
 
-{{sim:mujoco-1|one frame per physics step (slow motion): the cube falls and settles, apply_force lifts it, load_state puts it back}}
+{{sim:mujoco-1|slow motion: the cube falls and settles, apply_force lifts it, load_state puts it back}}
 
 You should see the cube's `pos:` line with `z` near `0.015` (fallen and settled), then three `success` values.
 

@@ -18,12 +18,14 @@ Which fences produce a frame is declared in ``docs/hooks/data/sim_frames.json``:
 ``check_fences.py`` numbers them; ``"sketches": true`` counts the page's ``sketch``
 fences too (a GPU backend's fence, rendered on a box that has the backend). A
 ``script`` entry runs a capture script (an agent transcript, say) that writes the
-listed frames itself. An entry with ``"video": {"fps": 30, "every": 1}`` also records
-a clip: every ``every``-th physics step of the fence (``mj_step`` is wrapped) is
-rendered from one fixed camera and encoded to ``<id>.webm`` (VP9, no audio); the
-default ``every`` is one frame per ``1 / fps`` seconds of simulated time, so the clip
-plays in real time, and a smaller value is slow motion. The ``.png`` is then the
-clip's last frame, so the poster and the clip share a camera. Frames are committed:
+listed frames itself. An entry with ``"video": {"fps": 30, "slowdown": 1}`` also
+records a clip: the fence's physics loop is wrapped (``mujoco.mj_step``, Newton's
+``_advance``, mjlab's ``Simulation.step``) and a frame is rendered each time the
+simulated clock passes ``1 / (fps * slowdown)`` seconds, so ``slowdown`` 1 plays in real
+time and 16 is slow motion; MuJoCo frames come from one fixed camera framed like the
+still, GPU backends render their own default view. Frames are encoded to ``<id>.webm``
+(VP9, no audio) and the ``.png`` is the clip's last frame, so poster and clip share a
+camera. Frames are committed:
 the build needs no GPU, no display and no MuJoCo; ``--check`` reports a manifest entry
 with no frame (or a video entry with no clip) and a file with no entry, which is what
 ``tests/test_docs_visual_tokens_resolve.py`` grades against the pages.
@@ -83,10 +85,10 @@ def _frame_camera(engine):
     return [float(x) for x in position], [float(x) for x in target]
 
 _VIDEO = os.environ.get("STRANDS_DOCS_VIDEO")
-_rec = {"steps": 0, "every": 0, "cam": None, "renderer": None, "model": None, "writer": None, "last": None, "frames": 0}
+_rec = {"t": 0.0, "interval": 0.0, "cam": None, "renderer": None, "model": None, "writer": None, "last": None, "frames": 0}
 
 def _free_camera(mujoco, model, data):
-    """The fixed camera of the clip: the same framing as the still, as an MjvCamera."""
+    """The fixed camera of a MuJoCo clip: the same framing as the still, as an MjvCamera."""
     import math
     import numpy as np
     pts = np.asarray(data.xpos[1:]) if model.nbody > 1 else np.zeros((1, 3))
@@ -107,9 +109,8 @@ def _free_camera(mujoco, model, data):
     cam.elevation = math.degrees(math.asin(forward[2]))
     return cam
 
-def _capture(mujoco, model, data):
-    """Render one clip frame of ``data`` and stream it to the encoder."""
-    import imageio.v2 as imageio
+def _mujoco_frame(mujoco, model, data):
+    """One clip frame of a MuJoCo world, rendered by this script's own renderer and camera."""
     if _rec["model"] is not model:
         if _rec["renderer"] is not None:
             _rec["renderer"].close()
@@ -117,35 +118,73 @@ def _capture(mujoco, model, data):
         _rec["model"] = model
     if _rec["cam"] is None:
         _rec["cam"] = _free_camera(mujoco, model, data)
-    if _rec["writer"] is None:
-        fps = int(os.environ["STRANDS_DOCS_VIDEO_FPS"])
-        _rec["writer"] = imageio.get_writer(
-            _VIDEO, format="FFMPEG", mode="I", fps=fps, codec="libvpx-vp9", pixelformat="yuv420p",
-            output_params=["-b:v", "0", "-crf", "34", "-row-mt", "1", "-an"], macro_block_size=1,
-        )
     _rec["renderer"].update_scene(data, camera=_rec["cam"])
-    frame = _rec["renderer"].render()
-    _rec["writer"].append_data(frame)
-    _rec["last"] = frame
-    _rec["frames"] += 1
+    return _rec["renderer"].render()
+
+def _engine_frame(engine):
+    """One clip frame from the engine's own default camera (GPU backends render for us)."""
+    import io
+    import imageio.v2 as imageio
+    out = engine.render(camera_name="default", width=_W, height=_H)
+    png = next(b["image"]["source"]["bytes"] for b in out["content"] if "image" in b)
+    return imageio.imread(io.BytesIO(png))[:, :, :3]
+
+def _tick(dt, frame):
+    """Advance the clip clock by ``dt`` simulated seconds; render when the next frame is due."""
+    import imageio.v2 as imageio
+    if not _rec["interval"]:
+        fps = int(os.environ["STRANDS_DOCS_VIDEO_FPS"])
+        _rec["interval"] = 1.0 / (fps * float(os.environ.get("STRANDS_DOCS_VIDEO_SLOWDOWN", "1")))
+    _rec["t"] += dt
+    if _rec["t"] + 1e-9 < _rec["frames"] * _rec["interval"]:
+        return
+    try:
+        pixels = frame()
+        if _rec["writer"] is None:
+            _rec["writer"] = imageio.get_writer(
+                _VIDEO, format="FFMPEG", mode="I", fps=int(os.environ["STRANDS_DOCS_VIDEO_FPS"]),
+                codec="libvpx-vp9", pixelformat="yuv420p", macro_block_size=1,
+                output_params=["-b:v", "0", "-crf", "34", "-row-mt", "1", "-an"],
+            )
+        _rec["writer"].append_data(pixels)
+        _rec["last"] = pixels
+        _rec["frames"] += 1
+    except Exception as exc:  # the fence's own output matters more than the clip
+        print(f"[sim_frames] clip frame dropped: {exc!r}", file=sys.stderr)
 
 def _record():
-    """Wrap ``mujoco.mj_step`` so every ``every``-th physics step becomes a clip frame."""
-    import mujoco
-    orig = mujoco.mj_step
-    def mj_step(model, data, nstep=1):
-        orig(model, data, nstep)
-        if not _rec["every"]:
-            configured = int(os.environ.get("STRANDS_DOCS_VIDEO_EVERY", "0"))
-            fps = int(os.environ["STRANDS_DOCS_VIDEO_FPS"])
-            _rec["every"] = configured or max(1, round(1.0 / (fps * float(model.opt.timestep))))
-        _rec["steps"] += nstep
-        if _rec["steps"] % _rec["every"] < nstep:
-            try:
-                _capture(mujoco, model, data)
-            except Exception as exc:  # the fence's own output matters more than the clip
-                print(f"[sim_frames] clip frame dropped: {exc!r}", file=sys.stderr)
-    mujoco.mj_step = mj_step
+    """Hook the physics loop of every backend this interpreter may run, into the clip clock."""
+    try:
+        import mujoco
+        orig_mj_step = mujoco.mj_step
+        def mj_step(model, data, nstep=1):
+            orig_mj_step(model, data, nstep)
+            _tick(float(model.opt.timestep) * nstep, lambda: _mujoco_frame(mujoco, model, data))
+        mujoco.mj_step = mj_step
+    except ImportError:
+        pass
+    try:
+        from strands_robots.simulation.newton import simulation as _newton
+        orig_advance = _newton.NewtonSimEngine._advance
+        def _advance(self, n_steps):
+            orig_advance(self, n_steps)
+            _tick(float(self._world.timestep) * max(1, n_steps), lambda: _engine_frame(self))
+        _newton.NewtonSimEngine._advance = _advance
+    except ImportError:
+        pass
+    try:
+        from mjlab.sim import Simulation as _MjlabSim
+        orig_sim_step = _MjlabSim.step
+        def step(self, *a, **k):
+            out = orig_sim_step(self, *a, **k)
+            engine = _live[-1] if _live else None
+            if engine is not None:
+                dt = float(getattr(engine, "_timestep", None) or engine._default_timestep)
+                _tick(dt, lambda: _engine_frame(engine))
+            return out
+        _MjlabSim.step = step
+    except ImportError:
+        pass
 
 def _finish_clip():
     """Close the encoder; the poster is the clip's last frame. False when nothing was recorded."""
@@ -154,7 +193,7 @@ def _finish_clip():
     import imageio.v2 as imageio
     _rec["writer"].close()
     imageio.imwrite(_OUT, _rec["last"])
-    print(f"[sim_frames] clip: {_rec['frames']} frames, one per {_rec['every']} physics steps", file=sys.stderr)
+    print(f"[sim_frames] clip: {_rec['frames']} frames over {_rec['t']:.3f} s simulated", file=sys.stderr)
     return True
 
 def _shoot(engine):
@@ -174,17 +213,30 @@ def _shoot(engine):
     except Exception as exc:  # the fence's own output matters more than the frame
         print(f"[sim_frames] no frame: {exc!r}", file=sys.stderr)
 
+def _engines():
+    """The engine classes this interpreter can import: cleanup is wrapped on each."""
+    found = []
+    for module, name in (
+        ("strands_robots.simulation.mujoco.simulation", "MuJoCoSimEngine"),
+        ("strands_robots.simulation.newton.simulation", "NewtonSimEngine"),
+        ("strands_robots.simulation.mjlab.simulation", "MjlabEngine"),
+    ):
+        try:
+            found.append(getattr(__import__(module, fromlist=[name]), name))
+        except Exception:
+            pass
+    return found
+
 def _install():
-    from strands_robots.simulation.mujoco import simulation as _sim
-    Engine = _sim.MuJoCoSimEngine
-    orig_init, orig_cleanup = Engine.__init__, Engine.cleanup
-    def __init__(self, *a, **k):
-        orig_init(self, *a, **k)
-        _live.append(self)
-    def cleanup(self, *a, **k):
-        _shoot(self)
-        return orig_cleanup(self, *a, **k)
-    Engine.__init__, Engine.cleanup = __init__, cleanup
+    for Engine in _engines():
+        orig_init, orig_cleanup = Engine.__init__, Engine.cleanup
+        def __init__(self, *a, _orig=orig_init, **k):
+            _orig(self, *a, **k)
+            _live.append(self)
+        def cleanup(self, *a, _orig=orig_cleanup, **k):
+            _shoot(self)
+            return _orig(self, *a, **k)
+        Engine.__init__, Engine.cleanup = __init__, cleanup
     atexit.register(lambda: [_shoot(e) for e in _live])
     if _VIDEO:
         _record()
@@ -267,7 +319,7 @@ def render_one(ident: str, entry: dict, python: str) -> bool:
         env.update(
             STRANDS_DOCS_VIDEO=str(clip),
             STRANDS_DOCS_VIDEO_FPS=str(video.get("fps", 30)),
-            STRANDS_DOCS_VIDEO_EVERY=str(video.get("every", 0)),
+            STRANDS_DOCS_VIDEO_SLOWDOWN=str(video.get("slowdown", 1)),
         )
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / f"{ident}.py"
