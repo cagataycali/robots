@@ -1136,16 +1136,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         scene at the new transform.
 
         Returns:
-            Agent-tool dict whose ``text`` block mirrors the MuJoCo backend's
-            human-readable object listing. ``status`` is ``"error"`` when there
-            is no world, or when a dynamic object in the scene record has no
-            body in the finalized model.
+            Agent-tool dict with the MuJoCo backend's two blocks: the
+            human-readable ``text`` listing, then ``{"json": {"objects":
+            {name: {shape, is_static, mass, position}}}}``. ``status`` is
+            ``"error"`` when there is no world, or when a dynamic object in the
+            scene record has no body in the finalized model.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if not self._world.objects:
-            return {"status": "success", "content": [{"text": "No objects."}]}
+            return {"status": "success", "content": [{"text": "No objects."}, {"json": {"objects": {}}}]}
         lines = ["Objects:\n"]
+        listing: dict[str, dict[str, Any]] = {}
         with self._lock:
             for name, obj in self._world.objects.items():
                 is_static = obj.is_static or obj.mass <= 0
@@ -1170,7 +1172,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 else:
                     position = self._live_body_position(body_index)
                 lines.append(f"  - {name}: {obj.shape} at {position}, {mass}{suffix}")
-        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
+                listing[name] = {
+                    "shape": obj.shape,
+                    "is_static": is_static,
+                    "mass": None if is_static else float(obj.mass),
+                    "position": [float(v) for v in position],
+                }
+        return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"objects": listing}}]}
 
     # Observation / action
 
