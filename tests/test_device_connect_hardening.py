@@ -472,6 +472,9 @@ def _authorized_reachy(monkeypatch):
         path to.
     """
     monkeypatch.setenv("DEVICE_CONNECT_RPC_ALLOW", "op-1")
+    # Authorized is not approved: ``playMove`` moves the head, so the operator
+    # on this host pre-approves it for this one caller.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "playMove@op-1")
     import strands_robots.device_connect.reachy_mini_driver as rmd_mod
 
     monkeypatch.setattr(rmd_mod, "get_rpc_source_device", lambda: "op-1")

@@ -131,3 +131,16 @@ def _restore_peer_roster():
     with session._PEERS_LOCK:
         session._PEERS.clear()
         session._PEERS.update(before)
+
+
+@pytest.fixture
+def require_signatures(monkeypatch, tmp_path):
+    """Run the test on a mesh that requires signed wire identity; returns the test CA.
+
+    The opt-out from the ``none`` default above, done the documented way: sets
+    ``STRANDS_MESH_AUTH_MODE=mtls`` with a CA and leaf under ``tmp_path`` and
+    ``STRANDS_MESH_REQUIRE_SIGNED_IDENTITY=1`` (see ``tests/_wire_identity.py``).
+    """
+    from tests._wire_identity import require_signed_identity
+
+    return require_signed_identity(monkeypatch, tmp_path)

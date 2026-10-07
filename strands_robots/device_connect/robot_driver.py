@@ -200,7 +200,7 @@ class RobotDeviceDriver(DeviceDriver):
             "policy_provider": policy_provider,
             "duration": duration,
         }
-        if (refused := remote_motion_refusal("execute", tool_name, cmd)) is not None:
+        if (refused := remote_motion_refusal("execute", tool_name, cmd, actor=caller)) is not None:
             refusal, what = refused
             logger.warning("[safety] refused Device Connect execute from %r: %s", caller, what)
             log_safety_event(

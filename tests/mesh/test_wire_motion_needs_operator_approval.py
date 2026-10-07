@@ -181,7 +181,9 @@ class TestOperatorApprovalIsHonoured:
 
     def test_a_dashboard_grant_for_the_exact_call_is_spent_once(self, mesh: Mesh, arm: _HardwareArm) -> None:
         call = {"action": "teleop_receive", "source_peer_id": "leader-1", "device_name": "leader"}
-        _motion_grants.deposit_grant("so101", call)
+        # The dashboard deposits a yes FOR the peer it sends as; the robot
+        # spends it only on a command attributed to that same actor.
+        _motion_grants.deposit_grant("so101", call, actor="leader-1")
 
         assert mesh._dispatch(dict(call), source=FROM_LEADER)["status"] == "success"
         assert "error" in mesh._dispatch(dict(call), source=FROM_LEADER)

@@ -9,7 +9,7 @@ broker drop the shared session: the dashboard's IoT leg died the moment the
 operator sent the first command, and any reply addressed to
 ``strands/<dashboard>-safety/response/...`` was one the operator could never
 subscribe to. On a backend with an IoT leg the rail's peer id is therefore the
-Thing name; on plain Zenoh it stays ``<dashboard>-safety``.
+Thing name; on plain Zenoh it is the dashboard peer id itself.
 """
 
 from __future__ import annotations
@@ -25,12 +25,12 @@ from strands_robots.dashboard.mesh_bridge import MeshBridge, safety_rail_peer_id
 @pytest.mark.parametrize(
     ("backend", "thing", "expected"),
     [
-        ("zenoh", "", "dash-safety"),
-        ("zenoh", "dashiot-op", "dash-safety"),
+        ("zenoh", "", "dash"),
+        ("zenoh", "dashiot-op", "dash"),
         ("bridge", "dashiot-op", "dashiot-op"),
         ("iot", "dashiot-op", "dashiot-op"),
-        ("bridge", "", "dash-safety"),
-        ("", "dashiot-op", "dash-safety"),
+        ("bridge", "", "dash"),
+        ("", "dashiot-op", "dash"),
     ],
 )
 def test_the_rail_speaks_as_the_thing_where_the_broker_binds_the_topic_root(

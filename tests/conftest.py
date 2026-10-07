@@ -119,10 +119,13 @@ def named_rpc_caller(monkeypatch: pytest.MonkeyPatch) -> str:
     # the stop tests here arrive from other named devices ("other-robot"); any
     # named caller may stop. A test that grades an ignored stop sets its own.
     monkeypatch.setenv("DEVICE_CONNECT_ESTOP_ALLOW", "*")
-    # An admitted ``execute`` still needs the operator's yes on the robot host;
-    # this operator pre-approved it. The refusal is graded in
-    # ``tests/test_device_connect_execute_needs_operator_approval.py``.
-    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", "execute")
+    # An admitted motion RPC (``execute``, the Reachy Mini head moves) still
+    # needs the operator's yes on the robot host; this operator pre-approved
+    # every verb FOR ITSELF (``*@<caller>``), so another caller is still
+    # refused. The refusals are graded in
+    # ``tests/test_device_connect_execute_needs_operator_approval.py`` and
+    # ``tests/test_reachy_device_connect_motion_is_gated.py``.
+    monkeypatch.setenv("STRANDS_ROBOT_COMMAND_ALLOW", f"*@{caller}")
 
     def _named() -> str:
         return caller
@@ -535,7 +538,7 @@ def _audit_process_state_is_left_as_found() -> Iterator[None]:
 
 #: Every "warn once per process" memo in the package, as ``(module, name)``: a
 #: module-level container of the keys already reported, born empty, whose only
-#: job is to stop a repeat. Seventeen of them across twelve modules. Emptied by
+#: job is to stop a repeat. Nineteen of them across thirteen modules. Emptied by
 #: :func:`_warn_once_memos_are_left_empty` below, and discovered rather than
 #: trusted in ``tests/test_process_globals_do_not_cross_a_test_boundary.py``, so
 #: an eighteenth cannot appear without a row here.
@@ -548,11 +551,13 @@ WARN_ONCE_MEMOS: tuple[tuple[str, str], ...] = (
     ("strands_robots.mesh._backend_select", "_UNKNOWN_WARNED"),
     ("strands_robots.mesh._zenoh_config", "_NON_POSIX_TLS_WARNED_KEYS"),
     ("strands_robots.mesh.core", "_POSTURE_WARNINGS_EMITTED"),
+    ("strands_robots.mesh.core", "_bare_allow_warned"),
     ("strands_robots.mesh.iot.provision", "_UNVERIFIED_CA_WARNED"),
     ("strands_robots.mesh.session", "_RETENTION_WARNED"),
     ("strands_robots.mesh.session", "_unencodable_topics_warned"),
     ("strands_robots.mesh.session", "_zenoh_missing_warned"),
     ("strands_robots.mesh.transport.bridge_transport", "_WARNED_HALF_BRIDGED_HEADS"),
+    ("strands_robots.mesh.wire_identity", "_required_warned"),
     ("strands_robots.policies.lerobot_local.embodiment", "_WARNED_STATE_KEY_MISMATCH"),
     ("strands_robots.simulation.mujoco.backend", "_software_render_warned"),
     ("strands_robots.simulation.predicates", "_RESOLUTION_WARNED"),
