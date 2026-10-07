@@ -61,6 +61,12 @@ _PURPOSE: dict[str, str] = {
     "ollama": "Ollama model provider for the agent",
     "inference": "WebSocket inference server",
     "sagemaker": "SageMaker endpoints",
+    "xarm": "UFACTORY xArm driver (xarm-python-sdk)",
+    "spot": "Boston Dynamics Spot SDK driver",
+    "rby1": "Rainbow Robotics RB-Y1 SDK driver",
+    "voice": "speech-to-speech dashboard (bidi) through strands-agents",
+    "holosoma": "Holosoma ONNX policy runtime (checkpoints from the Hub)",
+    "flux3": "Flux 3 action policy (install the upstream package yourself; see docs/learn/policies/flux3-action.md)",
     "all": "a curated bundle; GPU backends, cosmos3, ros2 and the hardware drivers stay opt-in",
     "dev": "tests and linters",
 }
