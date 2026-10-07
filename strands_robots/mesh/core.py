@@ -1793,10 +1793,16 @@ class Mesh(SensorLoopsMixin):
             )
             return
 
-        if self._signing_required():
-            if not self._bind_peer_cert(peer_id, data):
-                return
-        elif not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
+        # When signatures are required the certificate IS the identity: an
+        # unsigned or mis-signed presence is dropped here. The session hint is
+        # still recorded afterwards, because it is a different thing: it is
+        # what ``InputReceiver`` binds an approved teleop stream's FRAMES to
+        # (frames are unsigned), so without it the leader's signed presence
+        # would admit the peer and ``teleop_receive`` would still refuse it as
+        # "never announced from any session".
+        if self._signing_required() and not self._bind_peer_cert(peer_id, data):
+            return
+        if not self._bind_peer_wire_zid(peer_id, _extract_sample_source_zid(sample)):
             return
 
         is_new = update_peer(
@@ -1978,10 +1984,13 @@ class Mesh(SensorLoopsMixin):
         leg whose broker binds the response topic to the sender; on Zenoh
         such a peer stays on the roster and is reported silent by an e-stop.
 
-        This is the legacy table, consulted only when signatures are not
-        required (:meth:`_signing_required`): the zid is a label the publisher
-        attached and could have copied, so it stops an accidental second
-        session, not an attacker. :meth:`_bind_peer_cert` is the signed one.
+        The zid is a label the publisher attached and could have copied, so
+        this table stops an accidental second session, not an attacker. When
+        signatures are not required (:meth:`_signing_required`) it is also the
+        identity the reply check keys on; when they are, :meth:`_bind_peer_cert`
+        decides identity first and this table is kept as the session HINT that
+        :class:`~strands_robots.mesh.input.InputReceiver` binds an approved
+        teleop stream's unsigned frames to.
         """
         if wire_zid is None:
             return True
