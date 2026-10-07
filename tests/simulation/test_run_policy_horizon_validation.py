@@ -9,9 +9,10 @@ non-positive frequency is a caller error, not a silent no-op or a ZeroDivision.
 Per the agent-tool contract every method returns a structured
 ``{"status": ..., "content": [...]}`` dict rather than raising past dispatch,
 so each guard is asserted to return ``status="error"`` with an actionable,
-ASCII-only message naming the offending parameter. The legacy ``max_steps``
-alias shares ``n_steps``'s domain but is validated *before* it is normalized
-away, so the refusal names whichever of the two the caller actually wrote.
+ASCII-only message naming the offending parameter. The step horizon itself
+(``n_steps`` / ``max_steps``: its domain, the name a refusal quotes, and that
+the executed count is exact at every rate) is pinned in
+``tests/simulation/test_rollout_step_horizon_domain.py``.
 """
 
 from __future__ import annotations
@@ -46,13 +47,7 @@ def _err_text(result: dict) -> str:
 
 
 class TestRunPolicyHorizonGuards:
-    """run_policy must reject malformed step horizons before stepping physics."""
-
-    @pytest.mark.parametrize("bad", [0, -1, -50])
-    def test_non_positive_n_steps_errors(self, sim, bad):
-        text = _err_text(sim.run_policy("arm1", n_steps=bad))
-        assert "n_steps must be a positive integer" in text
-        assert str(bad) in text
+    """run_policy must reject a non-positive control frequency before stepping physics."""
 
     @pytest.mark.parametrize("bad_freq", [0, -10.0])
     def test_non_positive_control_frequency_errors(self, sim, bad_freq):
@@ -63,27 +58,6 @@ class TestRunPolicyHorizonGuards:
         text = _err_text(sim.run_policy("arm1", n_steps=5, control_frequency=bad_freq))
         assert "control_frequency must be a positive finite number" in text
 
-    def test_legacy_max_steps_alias_is_refused_under_its_own_name(self, sim):
-        # max_steps is normalized to n_steps, but it is validated BEFORE that
-        # normalization so the refusal names the parameter the caller actually
-        # wrote. This assertion used to expect the n_steps message: the alias
-        # was normalized first, so a caller who passed max_steps was pointed at
-        # a parameter they never passed.
-        text = _err_text(sim.run_policy("arm1", max_steps=0))
-        assert "max_steps must be a positive integer" in text
-        assert "n_steps" not in text
-
-    def test_error_message_is_ascii(self, sim):
-        text = _err_text(sim.run_policy("arm1", n_steps=-1))
-        text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
-
-    def test_guard_runs_before_robot_lookup(self, sim):
-        # A non-positive horizon is reported even when the robot name is also
-        # wrong: the horizon guard short-circuits ahead of the robot lookup,
-        # so the caller sees the horizon problem first.
-        text = _err_text(sim.run_policy("ghost", n_steps=0))
-        assert "n_steps must be a positive integer" in text
-
 
 class TestStartPolicyHorizonGuards:
     """start_policy must validate the horizon synchronously.
@@ -93,10 +67,6 @@ class TestStartPolicyHorizonGuards:
     a false "started" success while the rollout silently errors in the
     future, and the robot is left marked as running.
     """
-
-    def test_non_positive_n_steps_errors_synchronously(self, sim):
-        text = _err_text(sim.start_policy("arm1", n_steps=-1))
-        assert "n_steps must be a positive integer" in text
 
     def test_non_positive_control_frequency_errors_synchronously(self, sim):
         text = _err_text(sim.start_policy("arm1", n_steps=5, control_frequency=0))
@@ -373,45 +343,6 @@ def _reported_n_steps(result: dict) -> int:
     return int(payloads[0]["n_steps"])
 
 
-class TestNStepsExactHorizon:
-    """run_policy(n_steps=N) must execute EXACTLY N control steps at every rate.
-
-    The step horizon used to round-trip through a float wall-clock duration
-    (``duration = n_steps / control_frequency``) which the runner then
-    reconverted with ``int(duration * control_frequency)``. Floating-point
-    error truncated the count on any frequency that does not divide the horizon
-    evenly: ``n_steps=1 @ 49 Hz`` reconverted to ``int(1/49*49) == 0``, so the
-    rollout returned ``status="success"`` having executed ZERO steps. The
-    integer horizon is now forwarded to the runner verbatim, so the executed
-    count equals the requested count exactly and independently of the rate.
-    """
-
-    @pytest.mark.parametrize("control_frequency", list(range(1, 121)))
-    def test_single_step_runs_exactly_one_step(self, sim, control_frequency):
-        # n_steps=1 is the canonical regression: pre-fix this ran 0 steps at
-        # every frequency where 1/f*f floors below 1 (e.g. 49, 90, 98 Hz).
-        result = sim.run_policy("arm1", n_steps=1, control_frequency=float(control_frequency), fast_mode=True)
-        assert _reported_n_steps(result) == 1
-
-    @pytest.mark.parametrize("n_steps", [1, 13, 15, 37, 100])
-    @pytest.mark.parametrize("control_frequency", [11.0, 49.0, 50.0, 90.0, 120.0])
-    def test_arbitrary_horizon_runs_exact_count(self, sim, n_steps, control_frequency):
-        # e.g. 13 @ 90 Hz reconverted to 12, 15 @ 11 Hz to 14 pre-fix.
-        result = sim.run_policy("arm1", n_steps=n_steps, control_frequency=control_frequency, fast_mode=True)
-        assert _reported_n_steps(result) == n_steps
-
-    def test_legacy_max_steps_alias_runs_exact_count(self, sim):
-        # max_steps is normalized to n_steps, so it must be exact too.
-        result = sim.run_policy("arm1", max_steps=1, control_frequency=49.0, fast_mode=True)
-        assert _reported_n_steps(result) == 1
-
-    def test_duration_path_unchanged_when_n_steps_omitted(self, sim):
-        # When no explicit horizon is given the wall-clock duration path still
-        # governs: 0.2 s @ 50 Hz -> 10 steps.
-        result = sim.run_policy("arm1", duration=0.2, control_frequency=50.0, fast_mode=True)
-        assert _reported_n_steps(result) == 10
-
-
 class TestDurationGuards:
     """The wall-clock ``duration`` horizon must be guarded like the step count.
 
@@ -531,19 +462,11 @@ class TestRunMultiPolicyHorizonGuards:
         text = _err_text(sim.run_multi_policy(policies, duration=bad))
         assert "run_multi_policy: duration must be a positive finite number" in text
 
-    def test_non_positive_n_steps_errors(self, sim, policies):
-        text = _err_text(sim.run_multi_policy(policies, n_steps=0))
-        assert "run_multi_policy: n_steps must be a positive integer" in text
-
     def test_non_positive_control_frequency_errors_on_duration_path(self, sim, policies):
         # Pre-fix the frequency was only checked alongside n_steps, so the
         # duration path reached 1 / control_frequency with a zero divisor.
         text = _err_text(sim.run_multi_policy(policies, duration=0.2, control_frequency=0))
         assert "run_multi_policy: control_frequency must be a positive finite number" in text
-
-    def test_valid_horizon_still_runs(self, sim, policies):
-        result = sim.run_multi_policy(policies, n_steps=2, control_frequency=50.0)
-        assert result["status"] == "success", result
 
 
 class _CountingMockPolicy(MockPolicy):

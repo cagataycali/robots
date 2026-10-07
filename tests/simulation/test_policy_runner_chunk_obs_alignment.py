@@ -54,6 +54,7 @@ def _make_recording_sim() -> tuple[Simulation, RecorderStandIn]:
     sim._world._backend_state["recording"] = True
     sim._world._backend_state["trajectory"] = []
     sim._world._backend_state["dataset_recorder"] = rec
+    sim._world._backend_state["recording_cameras"] = []
     return sim, rec
 
 

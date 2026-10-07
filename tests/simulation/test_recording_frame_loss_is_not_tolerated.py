@@ -94,6 +94,7 @@ def _recording_sim(recorder: Any) -> Simulation:
     sim._world._backend_state["recording"] = True
     sim._world._backend_state["trajectory"] = []
     sim._world._backend_state["dataset_recorder"] = recorder
+    sim._world._backend_state["recording_cameras"] = []
     return sim
 
 

@@ -89,7 +89,7 @@ def test_a_recording_made_through_the_seam_verifies_as_one_episode(g1: Any, tmp_
     """Source -> retarget -> sim -> recorder -> verify, at the blog's 50 fps."""
     device = WholeBodyTeleoperator(MockPoseSource(period_s=2.0), _identity_map(), layout="g1_joint_29")
     started = g1.start_recording(
-        repo_id="local/wholebody_proof", task="wave both arms", fps=int(HZ), root=str(tmp_path)
+        repo_id="local/wholebody_proof", task="wave both arms", fps=int(HZ), root=str(tmp_path), cameras=[]
     )
     assert started["status"] == "success", started
 

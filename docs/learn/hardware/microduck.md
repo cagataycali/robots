@@ -4,7 +4,7 @@ description: A Microduck walks on intents; no per-joint write, and the same walk
 
 # Microduck
 
-At the end of this page a Pollen Robotics Microduck walks on intents from `Robot("microduck", mode="real")`, you know why there is no per-joint write on this robot, and that the walking policy on the duck is byte for byte the one you run in simulation.
+At the end of this page a Microduck walks on intents from `Robot("microduck", mode="real")`, and you know why it has no per-joint write and that its walking policy is the one you run in simulation.
 
 This needs a duck on the network running `robotd`. No `port` is needed for the common case:
 
@@ -36,7 +36,7 @@ duck.send_action({"vx": 0.1, "vyaw": 0.0})                   # a twist intent, m
 | `robot.do` (skills), `robot.enable`, `robot.relax`, `robot.init`, `robot.stop` | request, reply awaited | discrete |
 | `robot.state` | request | read |
 
-`send_action` accepts `vx`, `vy`, `vyaw` (twist), `neck_pitch`, `head_pitch`, `head_yaw`, `head_roll` (radians), `z`, `roll`, `pitch`, `active` (standing pose), `open` (mouth, 0 to 1) and `skill` (one of `SKILLS`, sent as `robot.do`). `run_policy` and `start_task` refuse and name the intent path; the driver does not pretend to stream 14 joint targets to a wire with no method for them.
+`send_action` accepts `vx`, `vy`, `vyaw` (twist), `neck_pitch`, `head_pitch`, `head_yaw`, `head_roll` (radians), `z`, `roll`, `pitch`, `active` (standing pose), `open` (mouth, 0 to 1) and `skill` (one of `SKILLS`, sent as `robot.do`). `run_policy` and `start_task` refuse and name the intent path; the wire has no method for 14 joint targets.
 
 `read_state` publishes 14 joints, the locomotion set the policy speaks. `robotd`'s own `JOINT_NAMES` is 15 wide with `mouth` at index 9; the driver drops it, and the mouth travels through `robot.mouth`.
 
