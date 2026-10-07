@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -42,6 +43,7 @@ from tests.mesh._pki import EphemeralCA  # noqa: E402
 
 LEADER_ZID = "a1b2c3d4e5f60718a1b2c3d4e5f60718"
 ATTACKER_ZID = "0f0e0d0c0b0a09080f0e0d0c0b0a0908"
+CONSOLE_ZID = "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
 
 
 class _HardwareArm:
@@ -270,6 +272,63 @@ class TestStep2AGrantIsSpentOnlyByItsActor:
 
         assert world["arm"].executed == []
         assert _motion_grants.consume_grant("so101", EXECUTE_SHOWN) is True
+
+
+class TestStep5TheDashboardsApprovalIsSpentForTheIdItSendsAs:
+    @pytest.mark.parametrize("signed", [True, False], ids=["signatures-required", "legacy-unsigned"])
+    def test_a_yes_given_in_the_dashboard_moves_the_robot_its_rail_commands(
+        self, signed: bool, request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The operator's yes is deposited by the console's hook and spent by the command its rail sends.
+
+        The console deposits for one id and ``MeshBridge.send_cmd`` publishes
+        through the rail Mesh under another, so both must be the same name, and
+        on a signed mesh it must be one the dashboard's certificate speaks for.
+        Before, the rail was ``<dashboard>-safety``: unsigned, the grant sat
+        unspent under ``lab-console``; signed, the rail's presence was dropped.
+        """
+        pytest.importorskip("fastapi", reason="needs the [dashboard] extra")
+        from unittest.mock import MagicMock
+
+        from strands_robots.dashboard import agent_console
+        from strands_robots.dashboard.mesh_bridge import MeshBridge
+
+        monkeypatch.delenv("STRANDS_MESH_BACKEND", raising=False)
+        monkeypatch.delenv("STRANDS_IOT_THING_NAME", raising=False)
+        bridge = MeshBridge(peer_id="lab-console")
+        console = agent_console.Console(safety=object(), model=MagicMock(), bridge=bridge)
+        hook = console._hook
+        assert hook is not None
+        hook.adopt({"so101": frozenset({"execute"})}, {"so101": "so101-1"})
+        approval = SimpleNamespace(
+            tool_use={"name": "so101", "input": dict(EXECUTE_SHOWN)},
+            interrupt=lambda *_a, **_k: True,
+            cancel_tool=None,
+        )
+        hook._gate(approval)
+        assert approval.cancel_tool is None
+
+        arm = _HardwareArm()
+        robot = Mesh(arm, peer_id="so101-1", peer_type="robot")
+        monkeypatch.setattr(robot, "_reply", lambda *a, **k: None)
+        refused: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            robot, "_audit_local", lambda e, p: refused.append(p) if e == "wire_motion_refused" else None
+        )
+        operator = None
+        if signed:
+            ca = request.getfixturevalue("require_signatures")
+            arm_receiver(robot, ca)
+            operator = identity_for(ca, "lab-console", tmp_path / "op")
+        robot._on_presence(signed_presence_sample(operator, bridge.rail_peer_id, zid=CONSOLE_ZID))
+
+        _deliver(
+            robot, signed_cmd_sample(operator, bridge.rail_peer_id, "so101-1", EXECUTE, zid=CONSOLE_ZID), monkeypatch
+        )
+
+        assert refused == []
+        assert arm.executed == ["wave"]
+        assert _motion_grants.pending_grants() == []
 
 
 class TestStep3ANameCannotBeTakenOverByAnotherCertificate:

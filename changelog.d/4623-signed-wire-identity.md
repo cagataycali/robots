@@ -45,3 +45,7 @@ move the head (`look`, `antennas`, `body`, `enableMotors`, `playMove`, `nod`,
 gated, and every RPC on the driver is classified in one of the two sets.
 `STRANDS_DASHBOARD_PEER_ID` pins the dashboard's own mesh peer id to the name
 its certificate speaks for, in place of the per-start `dashboard-<host>-<hex>`.
+On Zenoh the dashboard's signed safety rail now sends as that peer id, not
+`<dashboard>-safety`, and its approvals are deposited for the id the rail
+sends as, so an operator's yes in the dashboard is spent by the command it
+approved (on an IoT leg both are the Thing name).
