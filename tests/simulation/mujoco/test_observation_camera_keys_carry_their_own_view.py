@@ -38,6 +38,7 @@ case                                                pre-fix
 short key carries its own robot's view               FAILS (shows overview)
 two short keys carry two different views             FAILS (identical)
 key with no compiled camera is absent                FAILS (shows overview)
+both spellings of one camera carry one frame         FAILS (2 renders)
 model-named keys unaffected                          passes
 joint state survives an unrenderable key             passes
 ==================================================  =========================
@@ -297,3 +298,42 @@ def test_joint_state_survives_a_key_with_no_compiled_camera(sim: Simulation) -> 
     observation = sim.get_observation("arm0")
     assert observation["shoulder"] == pytest.approx(0.0, abs=1e-6)
     assert "shoulder.vel" in observation
+
+
+@requires_gl
+def test_both_spellings_of_one_camera_carry_one_frame(sim: Simulation, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``wrist`` and ``arm0/wrist`` name one camera, so it renders once for both keys.
+
+    Rendering per KEY drew each robot camera twice, and two renders of one
+    camera are not guaranteed to match byte for byte, so a dataset recorded
+    under one spelling could hold different pixels than one recorded under the
+    other. The oracle is the count of distinct compiled cameras.
+    """
+    assert sim.add_robot("arm0", urdf_path=_write(TWO_CAMERA_ROBOT_XML))["status"] == "success"
+    renders = 0
+    get_renderer = sim._get_renderer
+    counting: set[int] = set()
+
+    def counting_renderer(width: int, height: int) -> Any:
+        renderer = get_renderer(width, height)
+        if id(renderer) in counting:  # the renderer is cached; count each once
+            return renderer
+        counting.add(id(renderer))
+        render = renderer.render
+
+        def counted() -> np.ndarray:
+            nonlocal renders
+            renders += 1
+            return render()
+
+        monkeypatch.setattr(renderer, "render", counted)
+        return renderer
+
+    monkeypatch.setattr(sim, "_get_renderer", counting_renderer)
+    images = _image_keys(sim.get_observation("arm0"))
+
+    assert {"wrist", "arm0/wrist", "side", "arm0/side"} <= set(images)
+    assert renders == len({sim._camera_id(key) for key in images})
+    for short in ("wrist", "side"):
+        assert np.array_equal(images[short], images[f"arm0/{short}"])
+        assert images[short] is not images[f"arm0/{short}"], "each key owns its buffer"
