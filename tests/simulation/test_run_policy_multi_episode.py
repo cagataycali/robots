@@ -182,7 +182,7 @@ class TestEpisodeBoundaryFlush:
         pytest.importorskip("lerobot")
         repo_id = "local/multi_ep_test"
         root = str(tmp_path / "ds")
-        assert sim.start_recording(repo_id=repo_id, task="pick", fps=30, root=root)["status"] == "success"
+        assert sim.start_recording(repo_id=repo_id, task="pick", fps=30, root=root, cameras=[])["status"] == "success"
         assert sim._is_recording() is True
 
         result = sim.run_policy("arm1", n_steps=6, n_episodes=4, control_frequency=30.0)

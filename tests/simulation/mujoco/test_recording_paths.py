@@ -75,7 +75,7 @@ def test_start_recording_no_world_returns_graceful_error(tmp_path):
     from strands_robots.simulation import Simulation
 
     s = Simulation()
-    r = s.start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"), task="t")
+    r = s.start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"), task="t", cameras=[])
     assert r["status"] == "error"
     assert "No world" in r["content"][0]["text"]
     s.destroy()
@@ -101,7 +101,7 @@ def test_get_recording_status_shows_active_and_idle(sim_with_two_robots, tmp_pat
     assert r["status"] == "success"
 
     # Start → active
-    r = sim.start_recording(repo_id="local/status_probe", fps=20, root=str(tmp_path), overwrite=True)
+    r = sim.start_recording(repo_id="local/status_probe", fps=20, root=str(tmp_path), overwrite=True, cameras=[])
     assert r["status"] == "success"
 
     r = sim.get_recording_status()
@@ -127,10 +127,7 @@ def test_start_recording_overwrite_wipes_existing_dir(sim_with_two_robots, tmp_p
     assert junk.exists()
 
     r = sim_with_two_robots.start_recording(
-        repo_id="local/overwrite_probe",
-        fps=20,
-        root=str(tmp_path),
-        overwrite=True,
+        repo_id="local/overwrite_probe", fps=20, root=str(tmp_path), overwrite=True, cameras=[]
     )
     assert r["status"] == "success"
     # The junk should be gone (dir was wiped)
@@ -146,7 +143,9 @@ def test_start_recording_namespaced_joint_prefix_with_two_robots(sim_with_two_ro
     if not has_lerobot_dataset():
         pytest.skip("lerobot not installed")
 
-    r = sim_with_two_robots.start_recording(repo_id="local/namespace_probe", fps=20, root=str(tmp_path), overwrite=True)
+    r = sim_with_two_robots.start_recording(
+        repo_id="local/namespace_probe", fps=20, root=str(tmp_path), overwrite=True, cameras=[]
+    )
     assert r["status"] == "success"
 
     from strands_robots.policies.mock import MockPolicy
@@ -185,7 +184,7 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     root = str(tmp_path / "multiep")
 
     # Episode 1 (fresh)
-    r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
     sim.run_policy(
         robot_name="alpha",
@@ -199,7 +198,7 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     assert r["status"] == "success", r
 
     # Episode 2 (append - overwrite=False on existing dir must NOT crash)
-    r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=False)
+    r = sim.start_recording(repo_id="local/multiep", fps=20, root=root, overwrite=False, cameras=[])
     assert r["status"] == "success", f"B12 regression - resume failed: {r}"
     sim.run_policy(
         robot_name="alpha",
@@ -237,7 +236,7 @@ def test_resume_at_a_different_fps_is_refused_and_leaves_the_dataset_intact(sim_
     sim = sim_with_two_robots
     root = str(tmp_path / "fpsmix")
 
-    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
     sim.run_policy(
         robot_name="alpha",
@@ -249,7 +248,7 @@ def test_resume_at_a_different_fps_is_refused_and_leaves_the_dataset_intact(sim_
     )
     assert sim.stop_recording()["status"] == "success"
 
-    r = sim.start_recording(repo_id="local/fpsmix", fps=40, root=root, overwrite=False)
+    r = sim.start_recording(repo_id="local/fpsmix", fps=40, root=root, overwrite=False, cameras=[])
     assert r["status"] == "error", f"resume at a different fps must be refused: {r}"
     text = r["content"][0]["text"]
     assert "fps" in text and "on-disk=20" in text and "requested=40" in text, text
@@ -262,7 +261,7 @@ def test_resume_at_a_different_fps_is_refused_and_leaves_the_dataset_intact(sim_
     assert ds.meta.total_episodes == 1
 
     # The same rate still appends, so the guard only rejects the unhonorable case.
-    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=False)
+    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=False, cameras=[])
     assert r["status"] == "success", r
     sim.run_policy(
         robot_name="alpha",
@@ -297,7 +296,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
 
     sim = sim_with_two_robots
     root = str(tmp_path / "sync")
-    r = sim.start_recording(repo_id="local/sync_multi", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/sync_multi", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
@@ -331,6 +330,43 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     assert both == len(ds) and len(ds) > 0, f"B4: only {both}/{len(ds)} frames had both robots co-observed"
 
 
+def test_run_multi_policy_renders_each_camera_once_per_recorded_step(sim_with_two_robots, tmp_path, monkeypatch):
+    """A recorded multi-robot step renders the scene's cameras once, not once per robot.
+
+    The frame takes its images from the first robot's observation; rendering them
+    again for every other robot only to drop them doubles the cost of a two-arm
+    recording on a software renderer.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    from strands_robots.policies import create_policy
+
+    sim = sim_with_two_robots
+    calls: list[tuple[int, int]] = []
+    lookup = sim._get_renderer
+
+    def counted(width: int, height: int):
+        calls.append((width, height))
+        return lookup(width, height)
+
+    monkeypatch.setattr(sim, "_get_renderer", counted)
+    sim.get_observation("alpha")
+    one_observation = len(calls)
+    assert one_observation > 0, "the scene has no camera to render"
+
+    r = sim.start_recording(repo_id="local/render_once", fps=20, root=str(tmp_path / "once"), overwrite=True)
+    assert r["status"] == "success", r
+    calls.clear()
+    pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
+    r = sim.run_multi_policy(policies=pols, n_steps=3, control_frequency=20.0)
+    assert r["status"] == "success", r
+    assert len(calls) == 3 * one_observation
+    sim.stop_recording()
+
+
 def test_multi_robot_recording_action_columns_keyed_by_actuators(sim_with_two_robots, tmp_path):
     """Recorded action columns are keyed by each robot's ACTUATORS, not its
     joints, so every frame carries both arms' commanded actions.
@@ -361,7 +397,7 @@ def test_multi_robot_recording_action_columns_keyed_by_actuators(sim_with_two_ro
 
     sim = sim_with_two_robots
     root = str(tmp_path / "act_keys")
-    r = sim.start_recording(repo_id="local/act_keys", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/act_keys", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     # The declared action schema follows the actuator keys (namespaced), not
@@ -450,7 +486,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     sim = sim_with_two_robots
 
     # horizon=10 over 20 steps → ceil(20/10) = 2 inference calls per robot.
-    r = sim.start_recording(repo_id="local/hz", fps=20, root=str(tmp_path / "hz"), overwrite=True)
+    r = sim.start_recording(repo_id="local/hz", fps=20, root=str(tmp_path / "hz"), overwrite=True, cameras=[])
     assert r["status"] == "success", r
     pa, pb = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
     r = sim.run_multi_policy(policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=20.0, action_horizon=10)
@@ -460,7 +496,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     sim.stop_recording()
 
     # Per-robot horizon: alpha closed-loop (every step), beta batched.
-    r = sim.start_recording(repo_id="local/hz2", fps=20, root=str(tmp_path / "hz2"), overwrite=True)
+    r = sim.start_recording(repo_id="local/hz2", fps=20, root=str(tmp_path / "hz2"), overwrite=True, cameras=[])
     assert r["status"] == "success", r
     pa2, pb2 = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
     r = sim.run_multi_policy(
@@ -514,7 +550,7 @@ def test_run_multi_policy_raises_on_empty_action_chunk(sim_with_two_robots, tmp_
             return []  # degenerate: no actions
 
     sim = sim_with_two_robots
-    r = sim.start_recording(repo_id="local/empty", fps=20, root=str(tmp_path / "empty"), overwrite=True)
+    r = sim.start_recording(repo_id="local/empty", fps=20, root=str(tmp_path / "empty"), overwrite=True, cameras=[])
     assert r["status"] == "success", r
     with pytest.raises(RuntimeError, match="empty action chunk"):
         sim.run_multi_policy(
@@ -566,7 +602,7 @@ def test_run_multi_policy_discards_partial_episode_on_empty_chunk(sim_with_two_r
             return [{k: 0.05 for k in keys}]
 
     sim = sim_with_two_robots
-    r = sim.start_recording(repo_id="local/partial", fps=20, root=str(tmp_path / "partial"), overwrite=True)
+    r = sim.start_recording(repo_id="local/partial", fps=20, root=str(tmp_path / "partial"), overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     # action_horizon=1 -> the policy is re-queried every step, so the empty
@@ -652,7 +688,9 @@ def test_start_recording_without_lerobot_points_at_mp4_fallback(sim_with_two_rob
     reason = "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'"
     monkeypatch.setattr(dr, "lerobot_dataset_import_error", lambda: reason)
 
-    r = sim_with_two_robots.start_recording(repo_id="local/no_lerobot", root=str(tmp_path / "dataset"), task="t")
+    r = sim_with_two_robots.start_recording(
+        repo_id="local/no_lerobot", root=str(tmp_path / "dataset"), task="t", cameras=[]
+    )
     assert r["status"] == "error"
     text = r["content"][0]["text"]
     # The diagnosis is surfaced verbatim: a caller must be told WHICH
@@ -680,7 +718,7 @@ def test_start_recording_resolves_namespaced_repo_id_under_hf_cache(sim_with_two
     stale = cache_dir / "stale.txt"
     stale.write_text("old")
 
-    r = sim_with_two_robots.start_recording(repo_id="user/name", root=None, overwrite=True)
+    r = sim_with_two_robots.start_recording(repo_id="user/name", root=None, overwrite=True, cameras=[])
     assert r["status"] == "success"
     # The resolved HF-cache dir (not cwd) was the one wiped by overwrite.
     assert not stale.exists()
@@ -700,7 +738,7 @@ def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots
     stale = local_dir / "stale.txt"
     stale.write_text("old")
 
-    r = sim_with_two_robots.start_recording(repo_id="bare_local", root=None, overwrite=True)
+    r = sim_with_two_robots.start_recording(repo_id="bare_local", root=None, overwrite=True, cameras=[])
     assert r["status"] == "success"
     assert not stale.exists()
 
@@ -726,7 +764,7 @@ def test_start_recording_refuses_a_target_that_holds_the_working_directory(
     (cwd / "my_code.py").write_text("keep")
     monkeypatch.chdir(cwd)
 
-    r = sim_with_two_robots.start_recording(repo_id=repo_id, root=root, overwrite=True)
+    r = sim_with_two_robots.start_recording(repo_id=repo_id, root=root, overwrite=True, cameras=[])
 
     assert r["status"] == "error"
     assert f"repo_id={repo_id!r}" in r["content"][0]["text"]
@@ -747,7 +785,7 @@ def test_start_recording_recorder_init_failure_clears_recording_flag(sim_with_tw
 
     monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(_boom))
 
-    r = sim_with_two_robots.start_recording(repo_id="local/boom", root=str(tmp_path), overwrite=True)
+    r = sim_with_two_robots.start_recording(repo_id="local/boom", root=str(tmp_path), overwrite=True, cameras=[])
     assert r["status"] == "error"
     assert "codec unavailable" in r["content"][0]["text"]
     assert sim_with_two_robots._world._backend_state.get("recording") is False
@@ -790,7 +828,7 @@ def test_save_episode_delimits_one_episode_per_rollout(sim_with_one_robot, tmp_p
 
     sim = sim_with_one_robot
     root = str(tmp_path / "perep")
-    r = sim.start_recording(repo_id="local/perep", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/perep", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     n_episodes = 3
@@ -833,7 +871,10 @@ def test_without_save_episode_rollouts_collapse_into_one_episode(sim_with_one_ro
 
     sim = sim_with_one_robot
     root = str(tmp_path / "collapsed")
-    assert sim.start_recording(repo_id="local/collapsed", fps=20, root=root, overwrite=True)["status"] == "success"
+    assert (
+        sim.start_recording(repo_id="local/collapsed", fps=20, root=root, overwrite=True, cameras=[])["status"]
+        == "success"
+    )
 
     for i in range(3):
         sim.run_policy(
@@ -872,7 +913,9 @@ def test_save_episode_empty_buffer_is_idempotent(sim_with_one_robot, tmp_path):
 
     sim = sim_with_one_robot
     root = str(tmp_path / "empty")
-    assert sim.start_recording(repo_id="local/empty", fps=20, root=root, overwrite=True)["status"] == "success"
+    assert (
+        sim.start_recording(repo_id="local/empty", fps=20, root=root, overwrite=True, cameras=[])["status"] == "success"
+    )
 
     # No run_policy yet -> nothing buffered.
     r = sim.save_episode()
@@ -902,7 +945,7 @@ def test_reset_flushes_pending_recording_episode(sim_with_one_robot, tmp_path):
 
     sim = sim_with_one_robot
     root = str(tmp_path / "reset_flush")
-    r = sim.start_recording(repo_id="local/reset_flush", fps=20, root=root, overwrite=True)
+    r = sim.start_recording(repo_id="local/reset_flush", fps=20, root=root, overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     n_episodes = 4
@@ -966,7 +1009,10 @@ def test_reset_empty_buffer_during_recording_does_not_create_episode(sim_with_on
 
     sim = sim_with_one_robot
     root = str(tmp_path / "reset_empty")
-    assert sim.start_recording(repo_id="local/reset_empty", fps=20, root=root, overwrite=True)["status"] == "success"
+    assert (
+        sim.start_recording(repo_id="local/reset_empty", fps=20, root=root, overwrite=True, cameras=[])["status"]
+        == "success"
+    )
 
     # reset with empty buffer -> plain reset, no flush note.
     r1 = sim.reset()
@@ -1017,9 +1063,9 @@ def test_reset_surfaces_save_episode_failure_without_resetting(sim_with_one_robo
 
     sim = sim_with_one_robot
     root = str(tmp_path / "reset_flush_fail")
-    assert sim.start_recording(repo_id="local/reset_flush_fail", fps=20, root=root, overwrite=True)["status"] == (
-        "success"
-    )
+    assert sim.start_recording(repo_id="local/reset_flush_fail", fps=20, root=root, overwrite=True, cameras=[])[
+        "status"
+    ] == ("success")
 
     # Buffer a real rollout so reset() takes the flush path (episode_frame_count > 0).
     rp = sim.run_policy(
@@ -1083,7 +1129,7 @@ def test_start_recording_existing_empty_root_records(sim_with_two_robots, tmp_pa
     root = str(tmp_path)
     assert os.path.isdir(root) and not os.listdir(root)
 
-    r = sim.start_recording(repo_id="local/empty_root_probe", fps=20, root=root, overwrite=False)
+    r = sim.start_recording(repo_id="local/empty_root_probe", fps=20, root=root, overwrite=False, cameras=[])
     assert r["status"] == "success", f"empty-root start_recording failed: {r}"
     sim.run_policy(
         robot_name="alpha",
@@ -1137,7 +1183,7 @@ def test_run_multi_policy_single_robot_records_unnamespaced_columns(tmp_path):
     sim.step(5)
     try:
         root = str(tmp_path / "solo")
-        r = sim.start_recording(repo_id="local/solo_multi", fps=20, root=root, overwrite=True)
+        r = sim.start_recording(repo_id="local/solo_multi", fps=20, root=root, overwrite=True, cameras=[])
         assert r["status"] == "success", r
 
         r = sim.run_multi_policy(
@@ -1197,7 +1243,7 @@ def test_get_state_reports_live_recording_progress(sim_with_two_robots, tmp_path
     assert idle["status"] == "success"
     assert "[recording]" not in idle["content"][0]["text"]
 
-    r = sim.start_recording(repo_id="local/state_progress", fps=20, root=str(tmp_path), overwrite=True)
+    r = sim.start_recording(repo_id="local/state_progress", fps=20, root=str(tmp_path), overwrite=True, cameras=[])
     assert r["status"] == "success", r
 
     from strands_robots.policies.mock import MockPolicy

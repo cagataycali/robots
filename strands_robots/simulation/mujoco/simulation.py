@@ -6025,8 +6025,13 @@ class MuJoCoSimEngine(
         actions: dict[str, dict[str, Any]] = {}
         images: dict[str, Any] = {}
         now = time.time()
-        for robot_name, robot in world.robots.items():
-            obs = self._get_sim_observation(robot_name)
+        recorded_cameras = world._backend_state.get("recording_cameras")
+        for index, (robot_name, robot) in enumerate(world.robots.items()):
+            # Every robot's observation carries every scene camera, so the frame
+            # is rendered once, by the first robot, and not at all for a session
+            # scoped to no camera: pixels the recorder drops are pure cost.
+            skip_images = index > 0 or (recorded_cameras is not None and not recorded_cameras)
+            obs = self._get_sim_observation(robot_name, skip_images=skip_images)
             pfx = robot.namespace or ""
             act: dict[str, Any] = {}
             for key in self.robot_action_keys(robot_name):
@@ -7885,7 +7890,14 @@ class MuJoCoSimEngine(
                     camera_imgs: dict[str, Any] = {}
                     first = True
                     for rname in policies:
-                        obs = self.get_observation(robot_name=rname, skip_images=(skip_images or not first))
+                        if first:
+                            obs = self.get_observation(robot_name=rname, skip_images=skip_images)
+                        else:
+                            # Not get_observation: during a recording it turns the
+                            # skip back off so the recorder gets its frame, which
+                            # here would render every camera again per robot.
+                            with self._lock:
+                                obs = self._apply_obs_noise(self._get_sim_observation(rname, skip_images=True))
                         # Split scalars (joints) from ndarrays (camera images).
                         scal = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
                         per_robot_obs[rname] = scal

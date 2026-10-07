@@ -84,6 +84,7 @@ class NamesNoKey(Policy):
     """
 
     provider_name = "names_no_key"
+    requires_images = False
 
     def __init__(self) -> None:
         self.calls = 0
@@ -106,6 +107,7 @@ class DrivesOneJoint(Policy):
     """
 
     provider_name = "drives_one_joint"
+    requires_images = False
 
     def __init__(self, key: str) -> None:
         self.key = key
@@ -236,6 +238,7 @@ class TestThePerStepToleranceIsUnchanged:
     def test_a_single_empty_action_among_commanded_ones_is_not_refused(self, actuated):
         class OneStall(Policy):
             provider_name = "one_stall"
+            requires_images = False
 
             def __init__(self) -> None:
                 self.n = 0

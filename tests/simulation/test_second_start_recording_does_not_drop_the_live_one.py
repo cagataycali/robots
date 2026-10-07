@@ -57,12 +57,12 @@ def sim():
 
 def test_second_start_is_refused_and_the_first_recording_still_saves(sim, tmp_path):
     root1, root2 = str(tmp_path / "live"), str(tmp_path / "other")
-    assert sim.start_recording(repo_id="lab/live", root=root1, fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/live", root=root1, fps=30, cameras=[])["status"] == "success"
     r = sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert r["status"] == "success", _text(r)
     assert "[recording] 15 steps buffered in the open episode" in _text(sim.get_recording_status())
 
-    second = sim.start_recording(repo_id="lab/other", root=root2, fps=30)
+    second = sim.start_recording(repo_id="lab/other", root=root2, fps=30, cameras=[])
     assert second["status"] == "error"
     assert _text(second) == (
         "start_recording: already recording 'lab/live' (15 frame(s) buffered since the last saved episode, "
@@ -84,14 +84,14 @@ def test_second_start_is_refused_and_the_first_recording_still_saves(sim, tmp_pa
     assert "lab/live -- 15 frames, 1 episode(s)" in _text(stop)
 
     # And after stop the second dataset starts normally.
-    assert sim.start_recording(repo_id="lab/other", root=root2, fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/other", root=root2, fps=30, cameras=[])["status"] == "success"
     sim.stop_recording()
 
 
 def test_same_repo_id_twice_is_the_same_refusal_not_a_schema_error(sim, tmp_path):
     root = str(tmp_path / "ds")
     assert sim.start_recording(repo_id="lab/same", root=root, fps=30, cameras=[])["status"] == "success"
-    again = sim.start_recording(repo_id="lab/same", root=root, fps=30)
+    again = sim.start_recording(repo_id="lab/same", root=root, fps=30, cameras=[])
     assert again["status"] == "error"
     assert _text(again).startswith("start_recording: already recording 'lab/same' (0 frame(s) buffered")
     assert "schema" not in _text(again)
@@ -110,17 +110,17 @@ def test_the_episode_count_is_this_sessions_not_the_resumed_datasets(sim, tmp_pa
     ``stop_recording`` reports its own "+N episode(s) this session".
     """
     root = str(tmp_path / "ds")
-    assert sim.start_recording(repo_id="lab/resumed", root=root, fps=30)["status"] == "success"
+    assert sim.start_recording(repo_id="lab/resumed", root=root, fps=30, cameras=[])["status"] == "success"
     sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert "1 episode(s)" in _text(sim.stop_recording())
 
     # Second session RESUMES that dataset, captures frames, saves no episode.
-    resumed = sim.start_recording(repo_id="lab/resumed", root=root, fps=30)
+    resumed = sim.start_recording(repo_id="lab/resumed", root=root, fps=30, cameras=[])
     assert resumed["status"] == "success", _text(resumed)
     sim.run_policy("so101", policy_provider="mock", duration=0.5, control_frequency=30.0)
     assert int(sim._active_recorder().episode_count) == 1, "the recorder carries the dataset's total"
 
-    refusal = sim.start_recording(repo_id="lab/third", root=str(tmp_path / "third"), fps=30)
+    refusal = sim.start_recording(repo_id="lab/third", root=str(tmp_path / "third"), fps=30, cameras=[])
     assert refusal["status"] == "error"
     assert "0 episode(s) saved this session" in _text(refusal)
     assert _json(refusal)["episodes_saved_this_session"] == 0
@@ -172,7 +172,7 @@ def test_newton_refuses_a_second_start_and_keeps_the_live_session(tmp_path):
         }
     )
 
-    second = engine.start_recording(repo_id="lab/other", root=str(tmp_path), fps=30)
+    second = engine.start_recording(repo_id="lab/other", root=str(tmp_path), fps=30, cameras=[])
 
     assert second["status"] == "error"
     assert _text(second).startswith(
