@@ -1028,6 +1028,10 @@ class RenderingMixin:
         """
 
         unresolved: list[str] = []
+        # Every value this call wrote beyond the bounds its actuator is held
+        # to, so :meth:`send_action` can name them in its envelope on EVERY
+        # call - the log warning is de-duplicated, the envelope is not.
+        self._clamped_action_values: dict[str, dict[str, Any]] = {}
         for key, value in action_dict.items():
             ai, reason = self._action_key_actuator(model, key, pfx, mj, robot_name)
             if ai < 0:
@@ -1038,7 +1042,9 @@ class RenderingMixin:
                 self._warn_unresolved_action_key(robot_name, pfx, key, reason, batch_refused=False)
                 unresolved.append(key)
                 continue
-            self._write_ctrl(model, data, ai, pfx, key, value, mj)
+            breach = self._write_ctrl(model, data, ai, pfx, key, value, mj)
+            if breach is not None:
+                self._clamped_action_values[key] = {"commanded": float(value), "bounds": list(breach)}
 
         return unresolved
 
@@ -1088,7 +1094,7 @@ class RenderingMixin:
         key: str,
         value: Any,
         mj: Any,
-    ) -> None:
+    ) -> tuple[float, float] | None:
         """Write one action value to ``data.ctrl[act_id]``, unit-mapping tendon drives.
 
         The single ctrl-write path for BOTH spellings an action key may take -
@@ -1115,11 +1121,17 @@ class RenderingMixin:
             key: Action key as the caller spelled it, for warnings.
             value: Commanded value in the caller's logical units.
             mj: The ``mujoco`` module.
+
+        Returns:
+            The ``(lo, hi)`` bounds the written value breaches, so the command
+            is not reproduced, or ``None`` when it is within them.
         """
         ctrl_value = self._scale_ctrl_for_actuator(model, act_id, float(value), mj)
+        breach = None
         if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
-            self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
+            breach = self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
         data.ctrl[act_id] = ctrl_value
+        return breach
 
     def _warn_unresolved_action_key(
         self, robot_name: str, pfx: str, key: str, reason: str, *, batch_refused: bool
@@ -1227,7 +1239,9 @@ class RenderingMixin:
             return None
         return bounds, "driven joint range"
 
-    def _warn_ctrl_clamp(self, model: Any, act_id: int, pfx: str, key: str, value: float, mj: Any) -> None:
+    def _warn_ctrl_clamp(
+        self, model: Any, act_id: int, pfx: str, key: str, value: float, mj: Any
+    ) -> tuple[float, float] | None:
         """Warn once when an action value is outside the range its actuator holds it to.
 
         The direct-actuator branch of :meth:`_apply_action_by_name` writes the
@@ -1242,24 +1256,30 @@ class RenderingMixin:
         gripper action in ``[0, 1]`` replayed onto a joint-position gripper whose
         ctrlrange is a few radians, or a degrees-valued chunk applied as
         radians), or of a policy emitting out-of-distribution commands. Surface
-        it once per ``(prefix, key)`` so a 50Hz control loop never spams the log,
-        and check the dedup FIRST so a breaching key costs one bounds resolution
-        rather than one per step. A small tolerance absorbs boundary rounding.
+        it in the log once per ``(prefix, key)`` so a 50Hz control loop never
+        spams it. The breach is returned on every call regardless, because
+        :meth:`send_action` names it in the envelope: a log line de-duplicated
+        at the first offending tick is no signal for the ticks after it. A
+        small tolerance absorbs boundary rounding.
+
+        Returns:
+            The breached ``(lo, hi)`` bounds, or ``None`` when ``value`` is
+            within them or the actuator holds it to none.
         """
+        try:
+            breach = self._exceeded_ctrl_bounds(model, act_id, float(value), mj)
+        except (IndexError, TypeError, ValueError):
+            return None
+        if breach is None:
+            return None
+        (lo, hi), source = breach
         warned = getattr(self, "_warned_ctrl_clamp_keys", None)
         if warned is None:
             warned = set()
             self._warned_ctrl_clamp_keys = warned
         dedup = (pfx, key)
         if dedup in warned:
-            return
-        try:
-            breach = self._exceeded_ctrl_bounds(model, act_id, float(value), mj)
-        except (IndexError, TypeError, ValueError):
-            return
-        if breach is None:
-            return
-        (lo, hi), source = breach
+            return lo, hi
         if source == "actuator ctrlrange":
             bounds_phrase = f"outside its ctrlrange [{lo:.4g}, {hi:.4g}]"
             mechanism = "MuJoCo will clamp it"
@@ -1282,6 +1302,7 @@ class RenderingMixin:
             bounds_phrase,
             mechanism,
         )
+        return lo, hi
 
     def _get_valid_action_keys(self, robot_name: str) -> list[str]:
         """Return the action keys :meth:`send_action` resolves for ``robot_name``.
