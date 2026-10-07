@@ -84,6 +84,24 @@
         "result": "evaluate_benchmark ran one episode in 1.19 s and ended it at step 27 of 1000 on the failure clause (the test motion tips the robot), avg_reward 0.49, pass 0 of 1. The scene robot must be spelled unitree_go2: the alias go2 is refused by the benchmark (#4160)",
         "source": "interface sweep 2026-09-28 scripts sim-policies/04 and 04b and issue #4160"
       }
+    ],
+    "microduck": [
+      {
+        "checkpoint": "alpha_walking.onnx",
+        "kind": "Pollen's RL gait",
+        "provider": "microduck",
+        "where": "sim",
+        "result": "250 of 250 actions, 0 errors; a 0.15 m/s command moved the base 0.35 m forward in 5 s, upright",
+        "source": "examples/microduck/microduck_walk_sim.py --vx 0.15 --duration 5, 2026-10-07"
+      },
+      {
+        "checkpoint": "alpha_stand.onnx",
+        "kind": "Pollen's RL stand",
+        "provider": "microduck",
+        "where": "sim",
+        "result": "250 of 250 actions, 0 errors; upright for 5 s, drifting 0.12 m, or 3 mm from the STAND keyframe",
+        "source": "examples/microduck/microduck_walk_sim.py --onnx alpha_stand.onnx --vx 0, 2026-10-07"
+      }
     ]
   }
 }
