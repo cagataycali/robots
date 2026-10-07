@@ -155,6 +155,10 @@ class _Jitter(Policy):
     def provider_name(self) -> str:
         return "jitter"
 
+    @property
+    def requires_images(self) -> bool:
+        return False
+
     def set_robot_state_keys(self, keys: list[str]) -> None:
         self.keys = list(keys)
 

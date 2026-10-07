@@ -116,7 +116,7 @@ def _episode_count(root: Path) -> int | None:
 
 def _record_one_episode(sim, root: Path, **kwargs: Any) -> dict[str, Any]:
     """Open a session, drive four control steps, save. Returns the start result."""
-    started = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), **kwargs)
+    started = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), **kwargs, cameras=[])
     if started["status"] == "success":
         rollout = sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=4, control_frequency=30.0)
         assert rollout["status"] == "success", rollout
@@ -165,7 +165,7 @@ class TestOverwriteNoLongerDeletesTheDatasetItWasOptingOutOf:
         assert _record_one_episode(sim, root)["status"] == "success"
         assert _episode_count(root) == 1
 
-        refused = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), overwrite=value)
+        refused = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), overwrite=value, cameras=[])
 
         assert refused["status"] == "error", refused
         assert "overwrite" in _text(refused)
@@ -191,7 +191,9 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
     @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
     def test_start_recording_refuses_before_the_session_opens(self, sim, tmp_path, value):
         root = tmp_path / "dataset"
-        refused = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), push_to_hub=value)
+        refused = sim.start_recording(
+            repo_id="local/posture_flag", fps=30, root=str(root), push_to_hub=value, cameras=[]
+        )
 
         assert refused["status"] == "error", refused
         assert "push_to_hub" in _text(refused)
@@ -213,7 +215,7 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
         monkeypatch.setattr(dataset_recorder.DatasetRecorder, "push_to_hub", spy)
 
         root = tmp_path / "dataset"
-        started = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root))
+        started = sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), cameras=[])
         assert started["status"] == "success", started
         assert (
             sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=4, control_frequency=30.0)["status"]
@@ -240,7 +242,9 @@ class TestPushToHubNoLongerPublishesWhenOptedOut:
         )
 
         root = tmp_path / "dataset"
-        assert sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root))["status"] == "success"
+        assert (
+            sim.start_recording(repo_id="local/posture_flag", fps=30, root=str(root), cameras=[])["status"] == "success"
+        )
         assert (
             sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=4, control_frequency=30.0)["status"]
             == "success"
@@ -273,10 +277,7 @@ class TestTheRefusalPrecedesTheLerobotProbe:
         monkeypatch.setattr(dataset_recorder, "lerobot_dataset_import_error", fatal)
 
         refused = sim.start_recording(
-            repo_id="local/posture_flag",
-            fps=30,
-            root=str(tmp_path / "dataset"),
-            **{param: "false"},
+            repo_id="local/posture_flag", fps=30, root=str(tmp_path / "dataset"), **{param: "false"}, cameras=[]
         )
 
         assert refused["status"] == "error"
