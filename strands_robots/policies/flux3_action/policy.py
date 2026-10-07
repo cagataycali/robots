@@ -194,11 +194,24 @@ class Flux3ActionPolicy(Policy):
         self.tick_ms: list[float] = []
         self.inference_ms: list[float] = []
 
-        self._torch: Any = require_optional("torch", extra="lerobot", purpose="FLUX 3 Action inference (CUDA)")
+        # Preflight the git-only inference library first: its ``system_install``
+        # hint names the full prerequisite set (torch/CUDA, NATTEN wheel pair,
+        # the git URL for flux-action), so if the user is missing any one of
+        # them the one message reachable here is the one that supplies all of
+        # them. Checking ``torch`` before ``flux_action`` would surface a
+        # generic torch error whose extra does NOT match this provider -
+        # ``[lerobot]`` caps torch<2.12 (see pyproject.toml) while flux3 needs
+        # torch>=2.10 paired with a NATTEN wheel from https://whl.natten.org/;
+        # the useful FLUX3_SYSTEM_INSTALL_HINT would be unreachable.
         require_optional(
             "flux_action",
             system_install=FLUX3_SYSTEM_INSTALL_HINT,
             purpose="FLUX 3 Action inference",
+        )
+        self._torch: Any = require_optional(
+            "torch",
+            system_install=FLUX3_SYSTEM_INSTALL_HINT,
+            purpose="FLUX 3 Action inference (CUDA)",
         )
         self.natten_backend = self._select_natten_backend(natten_backend)
         _forward_natten_backend_to_neighborhood_calls()
