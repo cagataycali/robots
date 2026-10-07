@@ -225,28 +225,20 @@ class TestTheDomainIsTheSharedCountRule:
 # --- why the domain exists: the bound is derived, and the clamp hides that ----
 
 
-def _train_loop_sources() -> dict[str, str]:
-    """Source of every RL training loop, read via the class not a path."""
-    from strands_robots.training.rl.base_algo import BaseRLAlgo
-    from strands_robots.training.rl.fast_sac import FastSacTrainer
-
-    return {
-        "BaseRLAlgo.train": inspect.getsource(BaseRLAlgo.train),
-        "FastSacTrainer.train": inspect.getsource(FastSacTrainer.train),
-    }
-
-
 class TestTheLoopBoundIsDerivedThroughAClamp:
     """The premise the domain rests on, asserted rather than described.
 
     If a later change drops the ``max(1, ...)`` clamp or stops deriving the bound
     from these two fields, these fail and the gate's stated reason gets
-    re-examined instead of quietly becoming wrong.
+    re-examined instead of quietly becoming wrong. Every RL backend runs
+    ``BaseRLAlgo.train`` (pinned in ``test_rl_base_lifecycle_contract.py``), so
+    that one loop is the one to read.
     """
 
-    @pytest.mark.parametrize("name", ["BaseRLAlgo.train", "FastSacTrainer.train"])
-    def test_the_bound_is_the_clamped_quotient_of_the_two_factors(self, name: str) -> None:
-        source = _train_loop_sources()[name]
+    def test_the_bound_is_the_clamped_quotient_of_the_two_factors(self) -> None:
+        from strands_robots.training.rl.base_algo import BaseRLAlgo
+
+        source = inspect.getsource(BaseRLAlgo.train)
         assert "num_iters = max(1, spec.total_timesteps // steps_per_iter)" in source
         assert "for it in range(num_iters):" in source
 

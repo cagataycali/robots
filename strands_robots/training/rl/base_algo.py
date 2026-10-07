@@ -282,9 +282,9 @@ class RLTrainSpec(TrainSpec):
 class BaseRLAlgo(Trainer):
     """Abstract from-scratch RL trainer (peer of supervised ``Trainer``).
 
-    Concrete on-policy algorithms implement :meth:`setup`, :meth:`collect_rollout`,
-    :meth:`update`, and :meth:`save_checkpoint`; the default :meth:`train` runs the
-    on-policy loop over them. ``steps_per_iter`` (set in :meth:`setup`) is the env
+    Concrete algorithms implement :meth:`setup`, :meth:`collect_rollout` and
+    :meth:`update`; :meth:`train` runs the one loop over them and
+    :meth:`save_checkpoint` writes the one checkpoint layout. ``steps_per_iter`` (set in :meth:`setup`) is the env
     steps consumed per iteration, used to translate ``total_timesteps`` into an
     iteration count.
     """
@@ -293,9 +293,15 @@ class BaseRLAlgo(Trainer):
     # Subclass-provided attributes (set during setup()); declared so the shared
     # train()/evaluate()/load_checkpoint() type-check against the abstract base.
     actor_critic: Any  # torch.nn.Module (actor-critic network)
+    actor_norm: Any = None  # EmpiricalNormalization, or None when normalize_obs is off
+    critic_norm: Any = None
     env: SimEnv | VecSimEnv
     device: torch.device
+    spec: RLTrainSpec
     _history: TrainingHistory | None = None
+    # Env steps actually collected, for backends that count them (off-policy);
+    # None means the run reports ``iterations x steps_per_iter``.
+    _collected_steps: int | None = None
 
     @abstractmethod
     def setup(self, spec: RLTrainSpec) -> None:
@@ -312,14 +318,85 @@ class BaseRLAlgo(Trainer):
     def update(self) -> dict[str, float]:
         """Run the policy/value update on the collected batch; return loss metrics."""
 
-    @abstractmethod
+    def _norm_actor(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
+        return self.actor_norm(x, update=update) if self.actor_norm is not None else x
+
+    def _norm_critic(self, x: torch.Tensor, update: bool = True) -> torch.Tensor:
+        return self.critic_norm(x, update=update) if self.critic_norm is not None else x
+
+    def _ready_to_update(self, spec: RLTrainSpec) -> bool:
+        """Whether this iteration learns. On-policy: every collected batch does."""
+        return True
+
+    def _extra_checkpoint_state(self) -> dict[str, Any]:
+        """Backend state ``policy.pt`` carries beside the shared keys (SAC's ``log_alpha``)."""
+        return {}
+
+    def _checkpoint_dir(self, output_dir: str) -> str:
+        return os.path.join(output_dir, "checkpoints", "last")
+
     def save_checkpoint(self, output_dir: str, iteration: int | None = None) -> str:
-        """Persist a loadable checkpoint; return its directory."""
+        """Save the actor-critic, normalizers, and a deployable-policy metadata file.
+
+        Every RL backend writes this one ``policy.pt`` + ``policy_meta.json``
+        contract, so :meth:`load_checkpoint` and the deploy path read any of
+        them. Target networks travel inside the actor-critic state dict; other
+        backend state comes from :meth:`_extra_checkpoint_state`.
+        """
+        import torch
+
+        ckpt_dir = self._checkpoint_dir(output_dir)
+        os.makedirs(ckpt_dir, exist_ok=True)
+        state: dict[str, Any] = {
+            "actor_critic": self.actor_critic.state_dict(),
+            **self._extra_checkpoint_state(),
+            "iteration": iteration,
+            "provider": self.provider_name,
+        }
+        if self.actor_norm is not None:
+            state["actor_norm"] = self.actor_norm.state_dict()
+        if self.critic_norm is not None:
+            state["critic_norm"] = self.critic_norm.state_dict()
+        torch.save(state, os.path.join(ckpt_dir, "policy.pt"))
+
+        meta = {
+            "provider": self.provider_name,
+            "num_actor_obs": self.env.num_actor_obs,
+            "num_critic_obs": self.env.num_critic_obs,
+            "num_actions": self.env.num_actions,
+            "actor_obs_keys": self.env.actor_obs_keys,
+            # ``action_keys``, not a joint list: the field names what the
+            # ``num_actions`` outputs above it drive, so it must be the same
+            # vocabulary ``send_action`` binds a vector against. A tendon
+            # gripper's actuator has no matching joint name at all, and a
+            # Newton floating base is a joint with no commandable scalar.
+            "action_keys": (self.env.engine.robot_action_keys(self.env.robot_name) if self.env.robot_name else []),
+            "hidden_dims": list(self.spec.hidden_dims),
+            "iteration": iteration,
+        }
+        with open(os.path.join(ckpt_dir, "policy_meta.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        return ckpt_dir
+
+    def latest_checkpoint(self, output_dir: str) -> str | None:
+        """Return the checkpoint dir holding ``policy.pt`` under ``output_dir``."""
+        ckpt = self._checkpoint_dir(output_dir)
+        return ckpt if os.path.isfile(os.path.join(ckpt, "policy.pt")) else None
+
+    def export(self, spec: TrainSpec, checkpoint_dir: str) -> str:
+        """Return the loadable policy artifact (``policy.pt``) for inference."""
+        return os.path.join(checkpoint_dir, "policy.pt")
+
+    @property
+    def hardware_floor(self) -> dict[str, Any]:
+        """From-scratch RL on MuJoCo trains fine on CPU; no GPU floor."""
+        return {"min_gpus": 0, "min_vram_gb": 0, "multinode": False}
 
     def train(self, spec: TrainSpec) -> TrainResult:
-        """Default on-policy training loop: setup -> (collect, update)* -> save.
+        """The training loop every RL backend runs: setup -> (collect, update)* -> save.
 
-        Off-policy algorithms override this. ``spec`` MUST be an
+        An off-policy backend skips the update while :meth:`_ready_to_update`
+        says its buffer is still warming up. ``spec`` MUST be an
         :class:`RLTrainSpec`; :meth:`validate` is called first and fails closed.
         The env built by :meth:`setup` is closed in ``finally`` when the run
         leaves this method - see :meth:`_close_env` for why the trainer is the
@@ -346,7 +423,7 @@ class BaseRLAlgo(Trainer):
             ckpt_dir: str | None = None
             for it in range(num_iters):
                 rollout_metrics = self.collect_rollout()
-                loss_metrics = self.update()
+                loss_metrics = self.update() if self._ready_to_update(spec) else {}
                 last_metrics = {**rollout_metrics, **loss_metrics, "iteration": it + 1}
                 history.record(last_metrics)
                 if spec.log_interval and (it % spec.log_interval == 0 or it == num_iters - 1):
@@ -354,7 +431,8 @@ class BaseRLAlgo(Trainer):
             if ckpt_dir is None:
                 ckpt_dir = self.save_checkpoint(spec.output_dir, iteration=num_iters)
 
-            last_metrics.setdefault("latest_step", num_iters * steps_per_iter)
+            collected = self._collected_steps
+            last_metrics.setdefault("latest_step", num_iters * steps_per_iter if collected is None else collected)
             last_metrics.update(history.summary())
             return TrainResult(
                 status="success",
