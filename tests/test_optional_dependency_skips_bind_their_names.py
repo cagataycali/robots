@@ -75,6 +75,7 @@ before deciding to skip is that shape and is deliberately left alone.
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 import pytest
@@ -185,6 +186,8 @@ def _conditionally_bound_names(source: str) -> list[tuple[int, str]]:
         bound earlier in the same statement list is excluded: pre-binding is a
         valid fix for this shape and is in use in the tree.
     """
+    if not any(call in source for call in _SKIPPING_CALLS):
+        return []  # no handler can leave through a call the text never spells
     tree = ast.parse(source)
     findings: set[tuple[int, str]] = set()
     for parent in ast.walk(tree):
@@ -216,6 +219,8 @@ def _count_try_statements(source: str) -> int:
     Returns:
         The number of ``try`` statements, used as a non-vacuity floor.
     """
+    if "try" not in source:
+        return 0
     return sum(1 for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Try))
 
 
@@ -273,6 +278,8 @@ def _reasons_reading_an_ungated_attribute(source: str) -> list[tuple[int, str]]:
         diagnostic is the first to make.
     """
     offenders: set[tuple[int, str]] = set()
+    if "importorskip" not in source:
+        return []  # nothing is gated, so no read can be ungated
     for function in ast.walk(ast.parse(source)):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -304,17 +311,18 @@ def _reasons_reading_an_ungated_attribute(source: str) -> list[tuple[int, str]]:
     return sorted(offenders)
 
 
-def _test_sources() -> list[tuple[Path, str]]:
-    """Read every Python file under the test roots.
+@functools.cache
+def _test_sources() -> tuple[tuple[Path, str], ...]:
+    """Read every Python file under the test roots, once per process.
 
     Returns:
         ``(path, source)`` pairs, sorted by path.
     """
-    sources: list[tuple[Path, str]] = []
-    for root in _TEST_ROOTS:
-        for path in sorted((_REPO_ROOT / root).rglob("*.py")):
-            sources.append((path, path.read_text(encoding="utf-8")))
-    return sources
+    return tuple(
+        (path, path.read_text(encoding="utf-8"))
+        for root in _TEST_ROOTS
+        for path in sorted((_REPO_ROOT / root).rglob("*.py"))
+    )
 
 
 class TestASkippingGuardBindsItsNames:
@@ -435,6 +443,7 @@ class TestASkipReasonCannotBeWhatFails:
         gated = sum(
             1
             for _, source in sources
+            if "importorskip" in source
             for function in ast.walk(ast.parse(source))
             if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and _gated_module_names(function)
         )

@@ -661,7 +661,7 @@ class MotionPrimitivesCore:
                 carry_note += (
                     f" The arm pushed '{rec['body']}' {rec['moved_m']:.3f} m on the way (move_to is not "
                     f"collision-aware): it is now at {where}, not where move_to aimed. Read it again with "
-                    "get_body_state before the next move."
+                    f"get_body_state(body_name='{rec['body']}') before the next move."
                 )
         if reached:
             return {
@@ -955,7 +955,10 @@ class MotionPrimitivesCore:
                         f"effector, at {where} - if the approach pushed it, that is where it went."
                     )
                 else:
-                    text += " Find the object with get_body_state, open, then move_to it."
+                    text += (
+                        " Find the object with get_body_state(body_name=<the name add_object gave it>), "
+                        "open, then move_to it."
+                    )
         return {
             "status": "success",
             "content": [{"text": text}, {"json": payload}],

@@ -10,6 +10,10 @@ that touched nothing says so and names where the nearest object is.
 
 from __future__ import annotations
 
+import inspect
+import re
+
+import numpy as np
 import pytest
 
 pytest.importorskip("mujoco")
@@ -228,3 +232,39 @@ def test_the_ground_is_not_something_the_gripper_closed_on(tmp_path):
         assert payload["holding"] == []
     finally:
         s.cleanup()
+
+
+def _advice_texts():
+    pushed = MotionPrimitivesCore._move_to_result(
+        "so100",
+        np.array([0.15, -0.15, 0.02]),
+        0.015,
+        400,
+        reached=True,
+        steps_used=38,
+        position_error=0.01,
+        ik_residual=0.0,
+        ee_pos=[0.15, -0.15, 0.02],
+        ee_quat=[1.0, 0.0, 0.0, 0.0],
+        frame_name="so100/tcp",
+        frame_type="site",
+        pushed=[{"body": "red_cube", "moved_m": 0.026, "position": [0.15, -0.12, 0.02]}],
+    )
+    missed = MotionPrimitivesCore._set_gripper_result("so100", "close", 12, ["Jaw"], {}, {}, {}, held={})
+    return {"move_to pushed an object": pushed, "close touched nothing, none near": missed}
+
+
+@pytest.mark.parametrize("case", sorted(_advice_texts()))
+def test_get_body_state_advice_spells_a_call_that_runs(so100, case):
+    """The reply that sends the caller to get_body_state spells the keyword it takes.
+
+    A caller who had just written ``add_object(name=...)`` guessed
+    ``get_body_state(name=...)`` from the bare verb and hit a TypeError.
+    """
+    text = _advice_texts()[case]["content"][0]["text"]
+    call = re.search(r"get_body_state\((\w+)=([^)]*)\)", text)
+    assert call, text
+    assert call.group(1) in inspect.signature(so100.get_body_state).parameters
+    if call.group(2).startswith("'"):
+        result = so100.get_body_state(**{call.group(1): call.group(2).strip("'")})
+        assert result["status"] == "success", result

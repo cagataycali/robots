@@ -105,6 +105,20 @@ def test_an_invalid_tool_name_is_refused_before_the_backend_builds(bad, monkeypa
         Robot("so101", mode="sim", tool_name=bad)
 
 
+# The default tool name is derived from the name as typed, while the registry
+# lookup forgives surrounding whitespace - so the derived name is screened too.
+@pytest.mark.parametrize("name", ["so101 ", " so101", "so101\t"])
+def test_a_name_whose_derived_tool_name_is_invalid_is_refused_before_the_backend_builds(name, monkeypatch):
+    import strands_robots.simulation as simulation_pkg
+
+    def _never_build(*args, **kwargs):
+        raise AssertionError("a refused tool name must not reach the backend")
+
+    monkeypatch.setattr(simulation_pkg, "create_simulation", _never_build)
+    with pytest.raises(ValueError, match=r"write the name as Robot\('so101'\) or pass tool_name="):
+        Robot(name, mode="sim")
+
+
 # Every dispatch path names the robot it built by the string the caller passed,
 # whatever the tool name. Native and lerobot construction open no link and no
 # port (the bus is touched on first connect), so a bogus path is enough.

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import functools
 import importlib
 import sys
 from pathlib import Path
@@ -142,22 +143,19 @@ def _resolve(expr: str, imports: dict[str, str]) -> type[BaseException] | None:
     return None
 
 
-def redundant_tuple_members(source: str) -> list[tuple[int, str]]:
-    """Members of an ``except`` tuple that another member of it already covers.
+def _tuple_handlers(tree: ast.Module) -> list[ast.ExceptHandler]:
+    """Every ``except`` handler in ``tree`` whose type is a tuple."""
+    return [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Tuple)]
 
-    Args:
-        source: Python source text.
 
-    Returns:
-        ``(lineno, "Narrow < Broad")`` per redundancy, sorted. A member this
-        rule cannot resolve is skipped rather than reported.
-    """
+def _redundancies(tree: ast.Module, handlers: list[ast.ExceptHandler]) -> list[tuple[int, str]]:
+    """The covered members of ``handlers``, resolved through ``tree``'s imports."""
+    if not handlers:
+        return []
     found: list[tuple[int, str]] = []
-    tree = ast.parse(source)
     imports = _import_map(tree)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ExceptHandler) or not isinstance(node.type, ast.Tuple):
-            continue
+    for node in handlers:
+        assert isinstance(node.type, ast.Tuple)
         members = [(ast.unparse(e), _resolve(ast.unparse(e), imports)) for e in node.type.elts]
         for narrow_name, narrow in members:
             for broad_name, broad in members:
@@ -168,39 +166,51 @@ def redundant_tuple_members(source: str) -> list[tuple[int, str]]:
     return sorted(set(found))
 
 
+def redundant_tuple_members(source: str) -> list[tuple[int, str]]:
+    """Members of an ``except`` tuple that another member of it already covers.
+
+    Args:
+        source: Python source text.
+
+    Returns:
+        ``(lineno, "Narrow < Broad")`` per redundancy, sorted. A member this
+        rule cannot resolve is skipped rather than reported.
+    """
+    tree = ast.parse(source)
+    return _redundancies(tree, _tuple_handlers(tree))
+
+
 def _scanned_files() -> list[Path]:
     """Every Python file the rule grades."""
     return sorted(p for tree in _TREES for p in (_REPO_ROOT / tree).rglob("*.py"))
 
 
-def _tuple_count() -> int:
-    """How many ``except`` tuples the scan reaches, for the vacuity floor."""
-    total = 0
+@functools.cache
+def _scan() -> tuple[int, tuple[str, ...]]:
+    """One pass over the graded trees: how many tuples it reached, and the offenders.
+
+    Both tests read this, so each file is parsed and walked once per process,
+    and a module's imports are mapped only when it has a tuple to resolve.
+    """
+    count = 0
+    offenders: list[str] = []
     for path in _scanned_files():
         try:
             tree = parse_file(path)
-        except SyntaxError:
+        except (OSError, SyntaxError):  # pragma: no cover - unreadable or unparseable file
             continue
-        total += sum(1 for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Tuple))
-    return total
+        handlers = _tuple_handlers(tree)
+        count += len(handlers)
+        rel = path.relative_to(_REPO_ROOT)
+        offenders.extend(f"{rel}:{line}  {pair}" for line, pair in _redundancies(tree, handlers))
+    return count, tuple(offenders)
 
 
 class TestNoExceptTupleOverstatesItsNarrowness:
     """The headline rule, plus the vacuity floor that keeps it meaningful."""
 
     def test_no_tuple_names_a_class_a_sibling_already_covers(self) -> None:
-        offenders: list[str] = []
-        for path in _scanned_files():
-            try:
-                source = path.read_text(encoding="utf-8")
-            except OSError:  # pragma: no cover - unreadable file
-                continue
-            try:
-                hits = redundant_tuple_members(source)
-            except SyntaxError:  # pragma: no cover - unparseable file
-                continue
-            rel = path.relative_to(_REPO_ROOT)
-            offenders.extend(f"{rel}:{line}  {pair}" for line, pair in hits)
+        offenders = list(_scan()[1])
         assert offenders == [], (
             "An `except` tuple names a class another member of the same tuple already "
             "covers, so the narrow name contributes no scope and the tuple reads as a "
@@ -213,7 +223,7 @@ class TestNoExceptTupleOverstatesItsNarrowness:
     def test_the_scan_reaches_the_trees_it_claims_to_grade(self) -> None:
         names = {p.relative_to(_REPO_ROOT).parts[0] for p in _scanned_files()}
         assert set(_TREES) <= names, f"the scan reached only {sorted(names)}, not {sorted(_TREES)}"
-        count = _tuple_count()
+        count = _scan()[0]
         assert count >= _MINIMUM_TUPLES, (
             f"the scan graded only {count} `except` tuples; below {_MINIMUM_TUPLES} a clean "
             "result says nothing about the trees"

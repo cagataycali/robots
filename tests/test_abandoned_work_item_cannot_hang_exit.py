@@ -309,10 +309,22 @@ def _abandons_a_work_item(tree: ast.AST) -> bool:
     )
 
 
+def _may_abandon(path: pathlib.Path) -> bool:
+    """Whether ``path``'s text spells both halves of the shape, so it is worth parsing.
+
+    A module that never writes ``_executor`` nor calls ``hardware_robot_on``
+    assigns no executor, and one without both ``result`` and ``timeout`` cannot
+    wait with one, so skipping it changes no verdict and saves parsing the
+    whole test tree.
+    """
+    text = path.read_text(encoding="utf-8")
+    return ("_executor" in text or "hardware_robot_on" in text) and "result" in text and "timeout" in text
+
+
 def _unsafe_modules(files: list[pathlib.Path]) -> dict[str, list[int]]:
     """Modules that abandon a work item on a non-daemon fixture executor."""
     offenders: dict[str, list[int]] = {}
-    for path in files:
+    for path in filter(_may_abandon, files):
         tree = parse_file(path)
         constructors = _executor_constructors(tree)
         if not constructors or not _abandons_a_work_item(tree):
@@ -348,7 +360,7 @@ class TestEveryAbandoningFixtureUsesTheDaemonExecutor:
         abandoning = {
             path.name
             for path in sorted(_TESTS_DIR.rglob("test_*.py"))
-            if _executor_constructors(tree := parse_file(path)) and _abandons_a_work_item(tree)
+            if _may_abandon(path) and _executor_constructors(tree := parse_file(path)) and _abandons_a_work_item(tree)
         }
         assert abandoning == {
             "test_hardware_after_shutdown.py",
