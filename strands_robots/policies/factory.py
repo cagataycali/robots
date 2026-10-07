@@ -768,6 +768,16 @@ def policy_kwargs_error(provider: str, PolicyClass: type, kwargs: Mapping[str, A
         The refusal, or ``None`` when every name is usable.
     """
     accepted, tolerates_unknown = _constructor_keywords(PolicyClass)
+    # ``policy_config`` is the name the rollout entry points give the bag they
+    # unpack into this call; handed here un-unpacked it is one opaque key that
+    # misspells nothing, so a sink would swallow every setting inside it.
+    if "policy_config" in kwargs and "policy_config" not in accepted:
+        return (
+            f"{PolicyClass.__name__} (policy provider {provider!r}) was given policy_config=... as one "
+            "keyword. create_policy takes the provider's keywords flat; run_policy, start_policy and "
+            "eval_policy unpack their policy_config into it. Write "
+            f"create_policy({provider!r}, **policy_config)."
+        )
     if not accepted:
         return None
     if (collision := _provider_collision_error(provider, PolicyClass)) is not None:
