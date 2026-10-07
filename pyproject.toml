@@ -1313,9 +1313,10 @@ warn_return_any = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --cov=strands_robots --cov-report=term-missing --cov-fail-under=80 --strict-markers --timeout=120"
-# A passed test's tmp_path is removed at its own teardown. Every test here
-# creates one - the autouse store redirects in tests/conftest.py request it -
-# and pytest's default "all" keeps each until the session ends, while
+# A passed test's tmp_path is removed at its own teardown. Every test that asks
+# for one creates one (the autouse store redirects in tests/conftest.py build
+# none for a test that does not), and pytest's default "all" keeps each until
+# the session ends, while
 # make_numbered_dir lists the whole base temp to name the next one. So a
 # worker's N-th test scans the N-1 directories before it: ~10-20 ms of setup
 # on each of 29,000 tests, which no per-cell tail shows. Measured on the
