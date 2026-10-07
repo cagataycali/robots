@@ -1313,7 +1313,12 @@ class MuJoCoSimEngine(
             carries a ``json`` block with ``unresolved_keys`` (and an empty
             ``applied``) so callers can self-correct and resend. ``status`` is
             ``"error"`` when ``n_substeps`` is outside that domain, and nothing
-            is written when it is.
+            is written when it is. A value outside the range its actuator is
+            held to (a ``ctrlrange``, or the range of the joint an unlimited
+            position servo drives) is still written and stepped, but the
+            ``"success"`` text names it and a ``json`` block maps each such key
+            to its ``commanded`` value and the ``bounds`` it is held to, on
+            every call.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1362,9 +1367,11 @@ class MuJoCoSimEngine(
                 if refused:
                     return self._unresolved_action_refusal(robot_name, refused, applied=[])
             self._unresolved_action_keys: list[str] = []
+            self._clamped_action_values: dict[str, dict[str, Any]] = {}
             unstable_before = instability_counts(self._mj, self._world._data)
             self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
             unresolved = self._unresolved_action_keys
+            clamped = self._clamped_action_values
             diverged = divergence_error(self._mj, self._world._model, self._world._data, unstable_before, "send_action")
         if diverged is not None:
             return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
@@ -1373,7 +1380,19 @@ class MuJoCoSimEngine(
             # Reached only when an installed action controller raised and the
             # name-lookup fallback ran after it: the resolved keys were written.
             return self._unresolved_action_refusal(robot_name, unresolved, applied=applied)
-        return {"status": "success", "content": [{"text": send_action_summary(robot_name, len(applied), n_substeps)}]}
+        text = send_action_summary(robot_name, len(applied), n_substeps)
+        if not clamped:
+            return {"status": "success", "content": [{"text": text}]}
+        # The batch was written and the world advanced, so this is not an
+        # error - a policy holding a joint at its limit must keep running - but
+        # the caller learns, on every call, which commands the robot cannot
+        # reproduce and the bounds it will sit at instead.
+        named = ", ".join(
+            f"{key}={entry['commanded']:.4g} (held to [{entry['bounds'][0]:.4g}, {entry['bounds'][1]:.4g}])"
+            for key, entry in clamped.items()
+        )
+        text += f" Not reproduced, outside the range the actuator is held to: {named}."
+        return {"status": "success", "content": [{"text": text}, {"json": {"clamped": clamped, "applied": applied}}]}
 
     def _unresolved_action_refusal(self, robot_name: str, unresolved: list[str], applied: list[str]) -> dict[str, Any]:
         """The ``send_action`` error naming ``unresolved`` keys and the robot's valid ones.
