@@ -63,7 +63,7 @@ from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimiti
 from strands_robots.simulation.isaac.randomization import IsaacRandomizationMixin
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.isaac.site_drives import SiteDrive, mjcf_site_drive, site_wrenches
-from strands_robots.simulation.models import registered, registry_entry
+from strands_robots.simulation.models import SHAPE_ALIASES, canonical_shape, registered, registry_entry
 from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
 from strands_robots.simulation.recording import RecordedFrame
 from strands_robots.simulation.terrain import validate_difficulty
@@ -361,14 +361,6 @@ class SimulationAppLaunchConfig(TypedDict, total=False):
     sync_loads: bool
     hide_ui: bool
     anti_aliasing: int
-
-
-# Shape-name aliases accepted by :meth:`IsaacSimulation.add_object`.
-# Maps an alias -> the canonical shape name. ``"cuboid"`` mirrors Isaac's
-# ``DynamicCuboid`` / ``FixedCuboid`` class names and the vocabulary used
-# throughout the docs; it normalizes to the canonical ``"box"`` (see #88).
-# A unit test pins this mapping so docs and code can't drift apart again.
-_SHAPE_ALIASES: dict[str, str] = {"cuboid": "box"}
 
 
 def _resolve_registry_description(data_config: str | None, lookup_name: str) -> tuple[str | None, str | None]:
@@ -4197,17 +4189,13 @@ class IsaacSimulation(
             if (name_err := entity_name_error("add_object", "name", name)) is not None:
                 return {"status": "error", "content": [{"text": name_err}]}
 
-            # Normalize shape aliases. ``"cuboid"`` is accepted as an
-            # alias for ``"box"`` because it matches Isaac's underlying
-            # ``DynamicCuboid`` / ``FixedCuboid`` class names and is the
-            # vocabulary used throughout the docs (see robots-sim#88). The
-            # canonical name stored / reported is ``"box"``.
-            shape = _SHAPE_ALIASES.get(shape, shape)
+            # ``"cube"`` / ``"cuboid"`` build a box, as on every backend.
+            shape = canonical_shape(shape)
 
             # Validate shape
             valid_shapes = ("box", "sphere", "capsule", "cylinder", "mesh")
             if shape not in valid_shapes:
-                accepted = valid_shapes + tuple(_SHAPE_ALIASES)
+                accepted = valid_shapes + tuple(SHAPE_ALIASES)
                 close = difflib.get_close_matches(str(shape).lower(), accepted, n=1, cutoff=0.6)
                 hint = f" Did you mean {close[0]!r}?" if close else ""
                 return {
