@@ -469,3 +469,29 @@ class TestBareImportLeavesNumpyUnloaded:
         assert not foreign, (
             f"strands_robots._mujoco_gl imports {foreign} at module scope; that lands on every import strands_robots"
         )
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # A stub left in sys.modules (pytest-mock, frozen apps): __spec__ is None.
+        "import sys, types; sys.modules['mujoco'] = types.ModuleType('mujoco')",
+        # A sandboxed meta-path finder that refuses the name outright.
+        """
+import sys
+class Refuse:
+    def find_spec(self, name, path=None, target=None):
+        if name == 'mujoco': raise ImportError('refused')
+sys.meta_path.insert(0, Refuse()); sys.modules.pop('mujoco', None)
+""",
+    ],
+    ids=["stub-without-spec", "finder-raises"],
+)
+def test_the_import_survives_a_mujoco_spec_lookup_that_raises(setup):
+    """The GL hint is best effort: a ``find_spec('mujoco')`` that raises skips it."""
+    import subprocess
+    import sys
+
+    code = setup + "\nimport strands_robots\nassert callable(strands_robots.create_policy)"
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr

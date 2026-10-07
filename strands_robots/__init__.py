@@ -246,7 +246,13 @@ __all__ = [
 # numpy - which ``__getattr__`` below promises this import does not do (#3587).
 import importlib.util as _importlib_util  # noqa: E402
 
-if _importlib_util.find_spec("mujoco") is not None:
+try:
+    # find_spec raises ValueError for a sys.modules entry with __spec__ None (a stub
+    # or mock) and propagates ImportError from a finder; neither may break the import.
+    _mujoco_spec = _importlib_util.find_spec("mujoco")
+except (ImportError, ValueError):
+    _mujoco_spec = None
+if _mujoco_spec is not None:
     try:
         from strands_robots._mujoco_gl import _configure_gl_backend
 
