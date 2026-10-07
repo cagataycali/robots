@@ -86,20 +86,32 @@ def test_a_curated_name_that_also_has_a_urdf_description_is_served_by_the_curate
 
 def test_list_robots_reports_urdf_robots_with_their_source_and_sim_flag() -> None:
     pytest.importorskip("robot_descriptions")
+    from strands_robots.drivers.registry import get_native_driver_class
+
     table = _table()
     listed = {r["name"]: r for r in list_robots()}
     for name, entry in table.items():
         assert name in listed, name
         assert listed[name]["source"] == "urdf"
         assert listed[name]["has_sim"] is entry["has_sim"]
-        assert listed[name]["has_real"] is False
+        # A URDF robot has no ``hardware`` block in the synthesized entry; its
+        # ``has_real`` reflects native-driver registration only. Most URDF
+        # robots have no native driver and so are has_real=False; a handful
+        # (the Universal Robots long tail, Go2's b2 cousin) have a native
+        # driver registered against the same canonical name and so are
+        # has_real=True -- the same answer ``list_driver_coverage`` gives.
+        assert listed[name]["has_real"] is (get_native_driver_class(name) is not None)
         assert listed[name]["category"] == entry["category"]
         if entry["has_sim"]:
             assert listed[name]["joints"] == entry["joints"]
     curated = [r for r in listed.values() if r["source"] == "curated"]
     assert curated, "the curated registry still lists"
     assert all(r["source"] == "urdf" for r in list_robots(mode="sim") if r["name"] in table)
-    assert not [r for r in list_robots(mode="real") if r["name"] in table]
+    # A URDF robot shows up in ``mode='real'`` iff a native driver is
+    # registered for it; the URDF discovery alone never grants ``has_real``.
+    real_urdf = {r["name"] for r in list_robots(mode="real") if r["name"] in table}
+    expected_real_urdf = {n for n in table if get_native_driver_class(n) is not None}
+    assert real_urdf == expected_real_urdf
 
 
 def test_get_robot_synthesizes_an_asset_block_the_downloader_recognizes() -> None:

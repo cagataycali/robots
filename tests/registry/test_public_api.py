@@ -400,7 +400,16 @@ class TestRobotRegistry:
         robots = list_robots("real")
         for r in robots:
             assert r["has_real"] is True
-        assert "ur5e" not in [r["name"] for r in robots]
+        # ``real`` is "a native driver can build it, or an entry declares a
+        # hardware block" -- joins the two halves of ``list_driver_coverage``.
+        # ``ur5e`` has no ``hardware`` block (``has_hardware`` is False) but
+        # ``URDriver`` is in ``_NATIVE_DRIVERS``, so a user who asked "which
+        # robots can I drive for real" sees it where ``has_hardware`` alone
+        # would hide it.
+        names = [r["name"] for r in robots]
+        assert "ur5e" in names
+        assert "panda" in names
+        assert "spot" in names
 
     def test_list_robots_both(self):
         robots = list_robots("both")
@@ -410,8 +419,12 @@ class TestRobotRegistry:
         names = [r["name"] for r in robots]
         assert "so100" in names
         assert "lekiwi" in names  # sim + real
-        assert "reachy2" not in names
-        assert "ur5e" not in names
+        assert "reachy2" not in names  # real-only (no sim asset)
+        # ``ur5e`` has both now that ``has_real`` reflects native-driver
+        # registration (``URDriver``) alongside the entry's lack of a
+        # ``hardware`` block -- the one truth ``list_driver_coverage`` already
+        # reported.
+        assert "ur5e" in names
 
     def test_list_robots_unknown_mode_raises(self):
         # A plausible-but-unsupported filter (hardware-capable robots) must not

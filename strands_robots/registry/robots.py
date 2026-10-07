@@ -256,11 +256,13 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
             - ``"all"``: every registered robot (no filter).
             - ``"sim"``: robots ``Robot(name)`` can simulate (``has_sim``); an
               ``auto_download: false`` entry is listed once its asset is on disk.
-            - ``"real"``: robots *declaring* a hardware backend
-              (``has_hardware``). A robot a native driver can build without a
-              declaration is not in this list;
-              :func:`~strands_robots.drivers.list_driver_coverage` is the
-              complete answer.
+            - ``"real"``: robots a native driver can build or that declare a
+              hardware backend (``has_hardware``). Joins the two halves
+              of :func:`~strands_robots.drivers.list_driver_coverage` so a user
+              who asks "which robots can I drive for real" gets a complete
+              answer in one call: a robot gaining a native driver (Franka,
+              Universal Robots, Spot, Stretch, Unitree H1, xArm) is listed
+              without requiring the maintainer to re-touch ``robots.json``.
             - ``"both"``: robots that have BOTH sim and real.
 
     Returns:
@@ -293,10 +295,21 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     aliases_of: dict[str, list[str]] = {}
     for alias, canonical in sorted(list_aliases().items()):
         aliases_of.setdefault(canonical, []).append(alias)
+    # Late-import to avoid a circular with ``strands_robots.drivers.registry``,
+    # which imports from this module. Reports native-driver registration -- a
+    # hardware fact the entry does not have to declare because
+    # :func:`~strands_robots.drivers.register_native_driver` records it
+    # separately. Without this join, 25 of the 49 robots a native driver can
+    # build (every Universal Robots arm, Franka Panda, Spot, Stretch, Unitree
+    # H1, xArm7) are absent from ``mode="real"``'s result; the docstring names
+    # :func:`~strands_robots.drivers.list_driver_coverage` as the complete
+    # answer but the two lists have no reason to disagree on the ``bool``.
+    from strands_robots.drivers.registry import get_native_driver_class
+
     results = []
     for name, info in sorted(entries.items()):
         _has_sim = "asset" in info and (info["asset"].get("auto_download") is not False or has_sim(name))
-        _has_real = "hardware" in info
+        _has_real = "hardware" in info or get_native_driver_class(name) is not None
 
         if mode == "sim" and not _has_sim:
             continue
