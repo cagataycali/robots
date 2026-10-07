@@ -53,6 +53,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: The two test trees a merge gates on.
@@ -85,7 +87,7 @@ def _gates_in_a_decorator(source: str) -> list[int]:
         grades.
     """
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []
     return sorted(

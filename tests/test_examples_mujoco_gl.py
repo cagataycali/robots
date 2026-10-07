@@ -74,6 +74,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _NOTEBOOKS_DIR = _REPO_ROOT / "examples" / "notebooks"
 
@@ -246,7 +248,7 @@ def _module_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
                 found.append((getattr(child, "lineno", 0), ast.unparse(value)))
             visit(child)
 
-    visit(ast.parse(source))
+    visit(parse_source(source))
     return found
 
 
