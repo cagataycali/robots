@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
+from tests._package_ast import parse_file
 
 
 class TestEagerLightSymbols:
@@ -457,7 +458,7 @@ class TestBareImportLeavesNumpyUnloaded:
 
         import strands_robots._mujoco_gl as gl_mod
 
-        tree = ast.parse(Path(gl_mod.__file__).read_text(encoding="utf-8"))
+        tree = parse_file(Path(gl_mod.__file__))
         imported = set()
         for node in tree.body:
             if isinstance(node, ast.Import):

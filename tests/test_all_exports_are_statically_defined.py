@@ -111,7 +111,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 PACKAGE_ROOT = Path(strands_robots.__file__).parent
 
@@ -191,7 +191,7 @@ def declared_all(tree: ast.Module) -> tuple[bool, list[str] | None]:
 
 def undefined_exports(source: str) -> list[str]:
     """Names promised by a literal ``__all__`` that the module never binds."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     declares, names = declared_all(tree)
     if not declares or names is None:
         return []
@@ -207,7 +207,7 @@ def private_exports(source: str) -> list[str]:
     because a module re-exporting ``__version__`` is naming a documented
     attribute rather than reaching into a private one.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     declares, names = declared_all(tree)
     if not declares or names is None:
         return []
@@ -219,7 +219,7 @@ def scanned_modules() -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        declares, names = declared_all(ast.parse(source))
+        declares, names = declared_all(parse_source(source))
         if not declares or names is None:
             continue
         found[path.relative_to(PACKAGE_ROOT).as_posix()] = undefined_exports(source)
@@ -397,8 +397,8 @@ class TestTheReviewedFinding:
     )
     def test_the_lazily_exported_engine_is_statically_defined(self, module, symbols):
         source = (PACKAGE_ROOT / module).read_text(encoding="utf-8")
-        bound = module_scope_bindings(ast.parse(source))
-        _, exported = declared_all(ast.parse(source))
+        bound = module_scope_bindings(parse_source(source))
+        _, exported = declared_all(parse_source(source))
         for symbol in symbols:
             assert exported is not None and symbol in exported, f"{module} no longer exports {symbol}"
             assert symbol in bound, (

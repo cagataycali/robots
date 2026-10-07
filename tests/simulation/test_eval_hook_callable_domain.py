@@ -45,6 +45,7 @@ import strands_robots.simulation.policy_runner as runner_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import optional_callable_error
+from tests._package_ast import parse_file
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 
@@ -177,7 +178,7 @@ def _callback_params(func: Any) -> set[str]:
 
 def _guarded_params(module: Any, cls_name: str, method_name: str) -> set[str]:
     """Parameter names this method passes to ``optional_callable_error``."""
-    tree = ast.parse(pathlib.Path(inspect.getfile(module)).read_text())
+    tree = parse_file(pathlib.Path(inspect.getfile(module)))
     func = next(
         m
         for node in ast.walk(tree)
@@ -255,7 +256,7 @@ class TestEveryCallerSuppliedCallbackOwnsTheDomain:
 
     def test_the_evaluate_guard_precedes_the_benchmark_delegation(self) -> None:
         """The spec route inherits it: ``_evaluate_with_spec`` is reached later."""
-        tree = ast.parse(pathlib.Path(inspect.getfile(runner_mod)).read_text())
+        tree = parse_file(pathlib.Path(inspect.getfile(runner_mod)))
         func = next(
             m
             for node in ast.walk(tree)

@@ -48,6 +48,8 @@ from typing import NamedTuple
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Areas that must be reached however the tree grows. A directory added later
@@ -113,7 +115,7 @@ def parameter_deletes(source: str, path: str) -> list[ParameterDelete]:
     Returns:
         One :class:`ParameterDelete` per qualifying statement, in source order.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: list[ParameterDelete] = []
     for function in ast.walk(tree):
         if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):

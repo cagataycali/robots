@@ -143,7 +143,7 @@ class TestTheRemedyNamesAStep:
         """
         assert policy_mod._GTP_G1_HF_REPO == REPO_ID
         assert policy_mod._GTP_G1_ONNX_FILENAME == ONNX_FILENAME
-        source = ast.unparse(ast.parse(_PACKAGE.joinpath("policy.py").read_text(encoding="utf-8")))
+        source = ast.unparse(parse_file(_PACKAGE.joinpath("policy.py")))
         raised = [line for line in source.splitlines() if "ONNX artifact not found" in line]
         assert len(raised) == 1, raised
         assert "_GTP_G1_HF_REPO" in raised[0], raised[0]

@@ -165,7 +165,7 @@ from packaging.version import Version  # noqa: E402
 
 from tests._blocked_module import blocked  # noqa: E402
 from tests._docs_hooks import docs_hook  # noqa: E402
-from tests._package_ast import parse_file  # noqa: E402
+from tests._package_ast import parse_file, parse_source  # noqa: E402
 
 
 def _lerobot_extra_requirement() -> Requirement:
@@ -1746,7 +1746,7 @@ def _remedy_node(source: str) -> ast.expr:
     Returns:
         The expression the call passes as ``system_install=``.
     """
-    statement = ast.parse(source).body[0]
+    statement = parse_source(source).body[0]
     assert isinstance(statement, ast.Expr), source
     call = statement.value
     assert isinstance(call, ast.Call), source

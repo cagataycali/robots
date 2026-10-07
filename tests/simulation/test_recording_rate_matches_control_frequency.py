@@ -69,6 +69,7 @@ from strands_robots.simulation.recording import (  # noqa: E402
     rollout_rate_mismatch_error,
     rollout_rate_mismatch_reason,
 )
+from tests._package_ast import parse_file
 
 _ARM = """<mujoco><worldbody><body name="l1">
 <joint name="j1" type="hinge" axis="0 0 1" range="-1.5 1.5" damping="4"/>
@@ -950,7 +951,7 @@ _RUNNER_ENTRY_POINTS = {
 
 def _self_calls(module: str, method: str) -> set[str]:
     """Names of the ``self.x(...)`` calls made anywhere inside ``module::method``."""
-    tree = ast.parse(Path(module).read_text())
+    tree = parse_file(Path(module))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == method:
             return {

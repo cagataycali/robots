@@ -101,7 +101,7 @@ import pytest
 
 from strands_robots.mesh import _acl_config
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
@@ -408,7 +408,7 @@ def test_the_derivation_is_derived_not_hardcoded() -> None:
         'os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL")\n'
         'os.getenv("STRANDS_MESH_ACCEPT_PERMISSIVE_ACL_SCOPED")\n'
     )
-    tree = ast.parse(probe_src)
+    tree = parse_source(probe_src)
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func) == "os.getenv":

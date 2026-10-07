@@ -42,6 +42,7 @@ from strands_robots.assets.download import (
 )
 from strands_robots.registry import get_robot, list_robots
 from strands_robots.registry.user_registry import _invalidate_cache, register_robot
+from tests._package_ast import parse_file
 
 
 def _mjcf(*, meshdir: str | None = None, declares: tuple[str, ...] = ()) -> str:
@@ -272,7 +273,7 @@ class TestOnlyOneReaderAnswersTheQuestion:
 
     @staticmethod
     def _tree() -> ast.Module:
-        return ast.parse(Path(inspect.getfile(manager)).read_text())
+        return parse_file(Path(inspect.getfile(manager)))
 
     def test_the_resolver_asks_the_owner(self):
         calls = {

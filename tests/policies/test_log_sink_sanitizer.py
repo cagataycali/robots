@@ -69,6 +69,7 @@ from strands_robots.policies.curobo.policy import CuroboPolicy
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.moveit2.policy import MoveIt2Policy
 from strands_robots.policies.wbc.policy import WBCPolicy
+from tests._package_ast import parse_file
 
 # A payload shaped like the thing an operator would see in a forged line: the
 # second half looks like a record this process never wrote.
@@ -176,7 +177,7 @@ def _returned_replace_chain() -> list[ast.Call]:
     on the ``return`` rather than on the function body because a ``.replace`` whose
     result is discarded escapes nothing the caller receives.
     """
-    module = ast.parse(Path(log_safety.__file__).read_text(encoding="utf-8"))
+    module = parse_file(Path(log_safety.__file__))
     function = next(
         node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "sanitize_log_value"
     )
@@ -444,7 +445,7 @@ _PACKAGE_DIR = Path(policies_pkg.__file__).parent
 
 def _sanitized_arguments(relative_path: str) -> dict[str, list[str]]:
     """Map ``Class.method`` -> sorted ``sanitize_log_value`` argument sources."""
-    tree = ast.parse((_PACKAGE_DIR / relative_path).read_text(encoding="utf-8"))
+    tree = parse_file(_PACKAGE_DIR / relative_path)
     found: dict[str, list[str]] = {}
 
     def visit(node: ast.AST, scope: list[str]) -> None:

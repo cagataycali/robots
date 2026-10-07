@@ -47,6 +47,7 @@ from strands_robots.drivers.feetech.protocol import (
     sync_write_packet,
     write_packet,
 )
+from tests._package_ast import parse_file
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +564,7 @@ class TestTheWireFormatIsDecidedInOnePlace:
 
     @pytest.mark.parametrize("module_path", _WRITE_PATH)
     def test_no_consumer_restates_the_full_scale(self, module_path: str) -> None:
-        tree = ast.parse((_REPO_ROOT / module_path).read_text(encoding="utf-8"))
+        tree = parse_file(_REPO_ROOT / module_path)
         literals = sorted(
             node.lineno
             for node in ast.walk(tree)

@@ -31,6 +31,7 @@ from strands_robots.simulation.models import SimRobot, SimWorld, registered, reg
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests._package_ast import parse_source  # noqa: E402
 from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
@@ -617,7 +618,7 @@ def _raw_lookups(source: str) -> list[tuple[str, int]]:
     cannot be a caller value - see :func:`_code_owned_names` for the two shapes
     that cannot, which are skipped structurally rather than by name.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     owner: dict[int, str] = {}
     scopes: dict[int, ast.AST] = {}
 

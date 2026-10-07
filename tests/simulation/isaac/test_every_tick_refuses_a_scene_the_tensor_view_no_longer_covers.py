@@ -52,6 +52,7 @@ from strands_robots.simulation.isaac.simulation import (  # noqa: E402 - after i
     _physics_view_stale_error,
     _RobotState,
 )
+from tests._package_ast import parse_file
 from tests.simulation._isaac_engine import isaac_engine
 
 #: The remedy every refusal owes its caller.
@@ -330,7 +331,7 @@ class TestTheRefusalHasOneOwner:
         assert package_file is not None, "the isaac package has no source file to read"
         sources = sorted(pathlib.Path(package_file).parent.glob("*.py"))
         assert len(sources) > 1, "the isaac package collapsed to one module; re-scope this sweep"
-        tree = ast.parse("\n".join(path.read_text(encoding="utf-8") for path in sources))
+        tree = ast.Module(body=[node for path in sources for node in parse_file(path).body], type_ignores=[])
 
         # A site that advances the clock is one whose body holds BOTH a
         # ``self._sim_time += ...`` and a ``self._world.step(...)``. The nested

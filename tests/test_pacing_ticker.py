@@ -32,6 +32,7 @@ from strands_robots import _pacing as pacing
 from strands_robots._pacing import Ticker, sleep_penalty_s
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_finite_number_error
+from tests._package_ast import parse_source
 
 
 class TestARefusedPeriodCannotBusySpinAHardwareLoop:
@@ -383,7 +384,7 @@ def _structurally_released(tree: ast.AST) -> set[int]:
 
 def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
     """``(lineno, release_is_structural)`` for every ticker built in ``source``."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     names, modules = _ticker_names(tree)
     released = _structurally_released(tree)
     found = []
@@ -555,7 +556,7 @@ class TestTheDoorbellIsSomethingEverySelectorAccepts:
         source = pathlib.Path(inspect.getfile(pacing)).read_text()
         piped = [
             node.lineno
-            for node in ast.walk(ast.parse(source))
+            for node in ast.walk(parse_source(source))
             if isinstance(node, ast.Call) and ast.unparse(node.func) in {"os.pipe", "pipe"}
         ]
         assert not piped, (

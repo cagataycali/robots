@@ -33,6 +33,7 @@ import numpy as np
 import pytest
 
 import strands_robots.streaming_dataset as sd
+from tests._package_ast import parse_file
 
 # Values no consumer of these knobs can honor, grouped by why.
 UNUSABLE_TOLERANCES = [-1.0, -1e-9, float("nan"), float("inf"), float("-inf"), True, "1e-4", None, [1e-4]]
@@ -120,7 +121,7 @@ def _open_node() -> Any:
     import inspect
     import pathlib
 
-    tree = ast.parse(pathlib.Path(inspect.getfile(sd)).read_text(encoding="utf-8"))
+    tree = parse_file(pathlib.Path(inspect.getfile(sd)))
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "open":
             return node
@@ -535,7 +536,7 @@ def test_the_module_needs_no_simulation_import(monkeypatch: pytest.MonkeyPatch) 
     import inspect
     import pathlib
 
-    tree = ast.parse(pathlib.Path(inspect.getfile(sd)).read_text(encoding="utf-8"))
+    tree = parse_file(pathlib.Path(inspect.getfile(sd)))
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module is not None}
     assert not any(m.startswith("strands_robots.simulation") for m in imported), imported
     assert "strands_robots.utils" in imported

@@ -338,7 +338,7 @@ def _owned_bus_operations() -> set[str]:
     Read off that module rather than restated here, so an operation it learns to
     serialise later is graded without touching this file.
     """
-    tree = ast.parse((PACKAGE / "bus_access.py").read_text(encoding="utf-8"))
+    tree = parse_file(PACKAGE / "bus_access.py")
     operations: set[str] = set()
     for function in [node for node in tree.body if isinstance(node, ast.FunctionDef)]:
         # The device parameter, plus any name bound from it (``bus = getattr(device, "bus", ...)``).

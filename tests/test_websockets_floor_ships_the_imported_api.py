@@ -79,6 +79,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 import strands_robots
+from tests._package_ast import parse_source
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
@@ -191,7 +192,7 @@ def _imported_websockets_names(source: str) -> set[tuple[str, str]]:
     Only maximal attribute chains are reported, so ``a.b.c`` yields
     ``("<pkg>.b", "c")`` rather than also ``("<pkg>", "b")``.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: set[tuple[str, str]] = set()
     # Local name -> real module path, for both `import websockets` and
     # `import websockets.sync.client as _wsc`.

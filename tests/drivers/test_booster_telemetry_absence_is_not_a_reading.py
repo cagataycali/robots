@@ -65,6 +65,7 @@ from strands_robots.drivers.booster import (
     UPPER_BODY_SLOTS,
     parse_low_state,
 )
+from tests._package_ast import parse_file
 
 from .test_booster_driver import _FakeSdk, _live_driver, install_booster_sdk
 
@@ -312,7 +313,7 @@ class TestTheModuleReadsThroughTheOneOwnerOfThisRule:
 
     def test_no_telemetry_read_carries_a_typed_default(self) -> None:
         """``getattr(msg, field, 0.0)`` is the defect; a sentinel name is not."""
-        tree = ast.parse(Path(inspect.getfile(booster)).read_text(encoding="utf-8"))
+        tree = parse_file(Path(inspect.getfile(booster)))
         defaulted = [
             f"line {node.lineno}: {ast.unparse(node)}"
             for node in ast.walk(tree)

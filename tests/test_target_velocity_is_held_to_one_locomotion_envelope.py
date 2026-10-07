@@ -23,6 +23,7 @@ import pytest
 from strands_robots import locomotion_envelope as env
 from strands_robots.mesh import security as sec
 from strands_robots.policies.wbc.policy import WBCPolicy
+from tests._package_ast import parse_file
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,7 +45,7 @@ def _default_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_the_envelope_module_is_standard_library_only() -> None:
     """Both readers sit in layers that must not import each other; the shared module stays light."""
-    tree = ast.parse((ROOT / "strands_robots" / "locomotion_envelope.py").read_text())
+    tree = parse_file(ROOT / "strands_robots" / "locomotion_envelope.py")
     imported: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

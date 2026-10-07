@@ -54,6 +54,7 @@ import mujoco as mj  # noqa: E402
 
 from strands_robots.simulation.mujoco.physics import PhysicsMixin  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine, Simulation  # noqa: E402
+from tests._package_ast import parse_file
 
 _ARM = """<mujoco model="arm"><compiler angle="radian"/>
  <worldbody><body name="base" pos="0 0 0.05"><geom name="pad" type="box" size="0.05 0.05 0.05"/>
@@ -420,7 +421,7 @@ def _mixin_methods() -> list[ast.FunctionDef]:
     """Every method defined on ``PhysicsMixin``, parsed from its own source."""
     source = inspect.getsourcefile(PhysicsMixin)
     assert source is not None
-    tree = ast.parse(pathlib.Path(source).read_text(encoding="utf-8"))
+    tree = parse_file(pathlib.Path(source))
     mixin = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == PhysicsMixin.__name__)
     return [node for node in mixin.body if isinstance(node, ast.FunctionDef)]
 

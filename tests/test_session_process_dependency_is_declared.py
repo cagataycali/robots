@@ -299,7 +299,7 @@ def test_the_declared_floor_ships_the_api_the_session_verbs_call() -> None:
 
     used: set[str] = set()
     for module in _PSUTIL_IMPORTERS:
-        tree = ast.parse((_PACKAGE_ROOT / module).read_text(encoding="utf-8"))
+        tree = parse_file(_PACKAGE_ROOT / module)
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "psutil":
                 used.add(node.attr)

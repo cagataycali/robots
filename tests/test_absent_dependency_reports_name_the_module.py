@@ -47,6 +47,7 @@ import pytest
 
 import strands_robots
 from strands_robots.utils import require_optional, require_optionals
+from tests._package_ast import parse_source
 
 # The consumer this change was made for. Imported rather than restated so the
 # cell below grades the guard's real classification, not a copy of it.
@@ -132,7 +133,7 @@ def _import_error_sites(source: str, label: str) -> list[_Site]:
                 )
             self.generic_visit(node)
 
-    Visitor().visit(ast.parse(source))
+    Visitor().visit(parse_source(source))
     return sites
 
 
