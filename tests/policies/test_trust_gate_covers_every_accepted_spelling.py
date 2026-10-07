@@ -35,6 +35,7 @@ silently canonicalised into something else.
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -223,3 +224,19 @@ def test_an_unknown_spelling_is_reported_rather_than_canonicalised() -> None:
     assert _canonical("no_such_provider") == "no_such_provider"
     with pytest.raises(ValueError, match="no_such_provider"):
         _resolve_policy_class("no_such_provider")
+
+
+@pytest.mark.parametrize(
+    ("page", "sentence_with"),
+    [("README.md", "`trust_remote_code` gate"), ("docs/learn/policies/index.md", "STRANDS_TRUST_REMOTE_CODE=1")],
+)
+def test_the_prose_that_scopes_the_gate_names_every_gated_provider(page: str, sentence_with: str) -> None:
+    """The README Security section and the policies index name the gate's scope.
+
+    Both once named only ``lerobot_local``, so a reader of either took ``kimodo``
+    to load without the opt-in. Reads the set, so a newly gated provider fails here.
+    """
+    text = " ".join((Path(__file__).resolve().parents[2] / page).read_text(encoding="utf-8").split())
+    sentence = next(s for s in text.split(". ") if sentence_with in s)
+    missing = sorted(p for p in _HF_REMOTE_CODE_PROVIDERS if f"`{p}`" not in sentence)
+    assert not missing, f"{page} scopes the trust gate without {missing}: {sentence!r}"

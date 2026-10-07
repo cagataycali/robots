@@ -128,7 +128,7 @@ Conventions and review learnings are in [AGENTS.md](AGENTS.md);
 ## Security
 
 Found a vulnerability? **Do not** open a public issue - follow
-[SECURITY.md](SECURITY.md). The `trust_remote_code` gate on `lerobot_local`, the
+[SECURITY.md](SECURITY.md). The `trust_remote_code` gate on `lerobot_local` and `kimodo`, the
 mesh CA-pinning controls and the ordered
 [CA Pin Rotation Runbook](https://strands-labs.github.io/robots/reference/configuration/#ca-pin-rotation-runbook)
 are documented in the [Configuration](https://strands-labs.github.io/robots/reference/configuration/) matrix.
