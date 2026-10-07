@@ -49,3 +49,19 @@ On Zenoh the dashboard's signed safety rail now sends as that peer id, not
 `<dashboard>-safety`, and its approvals are deposited for the id the rail
 sends as, so an operator's yes in the dashboard is spent by the command it
 approved (on an IoT leg both are the Thing name).
+
+A signed presence that verifies also records the session its leader published
+from, because an approved `teleop_receive` stream is bound to that session
+(teleop frames are not signed; the session is a hint, not proof), so a leader
+the certificate admitted can open the stream it was approved for. The
+once-per-spelling warning about a bare allowlist entry is logged by
+`remote_motion_refusal` after a command is admitted, from the operator's
+actual value; the allowlist matcher itself is pure, so the gate's remedy
+probes no longer log or spend the warning. Posture for a mixed fleet under
+`auto`: a peer whose leaf no certificate in the `STRANDS_MESH_TLS_CA` bundle
+issued directly (verification is direct issuance against each certificate in
+the bundle) is treated as unsigned, so an AWS-generated IoT device certificate
+beside an mTLS fleet is dropped from the roster and its replies and motion
+commands refused, while stop and read stay available; a fleet whose IoT
+certificates come from its own registered CA with the Thing name as CN adds
+that CA to the bundle, and a fleet that cannot runs `=0`.
