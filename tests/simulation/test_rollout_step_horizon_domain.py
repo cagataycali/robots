@@ -148,44 +148,29 @@ class _CountingPolicy(MockPolicy):
 
 
 class TestTheStepHorizonIsAWholeNumberOfSteps:
-    """An unusable horizon is a caller error, not a truncated rollout."""
+    """An unusable horizon is a caller error, not a truncated rollout.
 
-    @pytest.mark.parametrize("param", HORIZON_PARAMS)
-    @pytest.mark.parametrize("bad", UNUSABLE)
-    def test_run_policy_refuses_it(self, sim, param, bad):
-        result = sim.run_policy("arm1", policy_provider="mock", **{param: bad})
-        assert result["status"] == "error", result
-        assert f"{param} must be a positive integer" in _text(result)
-
-    @pytest.mark.parametrize("param", HORIZON_PARAMS)
-    @pytest.mark.parametrize("bad", UNUSABLE)
-    def test_the_refusal_quotes_the_offending_value(self, sim, param, bad):
-        text = _text(sim.run_policy("arm1", policy_provider="mock", **{param: bad}))
-        assert repr(bad) in text or str(bad) in text
-
-    @pytest.mark.parametrize("bad", UNUSABLE)
-    def test_the_message_is_ascii(self, sim, bad):
-        _text(sim.run_policy("arm1", policy_provider="mock", n_steps=bad)).encode("ascii")
-
-
-class TestTheRefusalNamesTheParameterTheCallerPassed:
-    """The legacy alias is validated before it is normalized away.
-
-    Pre-fix ``max_steps`` was rewritten to ``n_steps`` first, so the refusal
-    named a parameter the caller had not written.
+    The legacy alias is validated before it is normalized away: pre-fix
+    ``max_steps`` was rewritten to ``n_steps`` first, so the refusal named a
+    parameter the caller had not written.
     """
 
+    @pytest.mark.parametrize("param", HORIZON_PARAMS)
     @pytest.mark.parametrize("bad", UNUSABLE)
-    def test_max_steps_is_named_and_n_steps_is_not(self, sim, bad):
-        text = _text(sim.run_policy("arm1", policy_provider="mock", max_steps=bad))
-        assert "max_steps must be a positive integer" in text
-        assert "n_steps" not in text
+    def test_run_policy_refuses_it_under_the_name_the_caller_wrote(self, sim, param, bad):
+        result = sim.run_policy("arm1", policy_provider="mock", **{param: bad})
+        assert result["status"] == "error", result
+        text = _text(result)
+        assert f"{param} must be a positive integer" in text
+        other = "n_steps" if param == "max_steps" else "max_steps"
+        assert other not in text
+        assert repr(bad) in text or str(bad) in text
+        text.encode("ascii")
 
-    @pytest.mark.parametrize("bad", UNUSABLE)
-    def test_n_steps_is_named_when_it_is_the_one_supplied(self, sim, bad):
-        text = _text(sim.run_policy("arm1", policy_provider="mock", n_steps=bad))
+    def test_the_horizon_is_refused_before_the_robot_lookup(self, sim):
+        # A caller who got both wrong sees the horizon problem first.
+        text = _text(sim.run_policy("ghost", n_steps=0))
         assert "n_steps must be a positive integer" in text
-        assert "max_steps" not in text
 
     def test_n_steps_is_the_effective_knob_when_both_are_supplied(self, sim):
         # n_steps wins, so a bad max_steps alongside a usable n_steps is not
@@ -413,16 +398,14 @@ class TestEveryRolloutLoopHonoursTheResolvedStepCount:
     """
 
     def test_every_loop_in_the_package_honours_it(self):
-        adrift = [label for label, honours in _bounds_in(_package_root()) if not honours]
-        assert adrift == [], adrift
-
-    def test_the_sweep_really_reaches_the_rollout_loops(self):
-        # Non-vacuity: a sweep that selected nothing would read as a clean tree.
-        # Floored well below the three loops shipped so a fourth needs no edit.
         found = _bounds_in(_package_root())
+        # Non-vacuity first: a sweep that selected nothing would read as a clean
+        # tree. Floored well below the three loops shipped so a fourth needs no edit.
         assert len(found) >= 3, found
         assert any("policy_runner.py" in label for label, _ in found), found
         assert any("isaac" in label or "mujoco" in label for label, _ in found), found
+        adrift = [label for label, honours in found if not honours]
+        assert adrift == [], adrift
 
     @pytest.mark.parametrize(
         ("body", "expected"),
