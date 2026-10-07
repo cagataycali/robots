@@ -1,7 +1,7 @@
 """Native provider for the Pollen Microduck 14-DOF locomotion policies.
 
 The Microduck (Pollen Robotics' open 14-DOF biped) ships a family of ONNX
-policies - ``alpha_walking``, ``alpha_stand``, ``alpha_sitstand``, ``roulade``,
+policies - ``velstand``, ``alpha_walking``, ``alpha_stand``, ``alpha_sitstand``, ``roulade``,
 ``ball_kick_*``, ``roller*``, ``alpha_ground_pick`` - each an actor with the
 input normaliser fused into the graph. :class:`MicroduckPolicy` adapts one such
 export to the :class:`~strands_robots.policies.base.Policy` interface so it runs
