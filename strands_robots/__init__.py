@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from strands_robots.streaming_dataset import StreamingDatasetReader, stream_dataset
     from strands_robots.teleoperator import Teleoperator
     from strands_robots.tools.download_assets import download_assets
+    from strands_robots.training import create_trainer, list_trainers, register_trainer
     from strands_robots.tools.episode_judge import (
         create_judge_agent,
         load_episode,
@@ -127,6 +128,16 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "create_simulation": ("strands_robots.simulation.factory", "create_simulation"),
     "list_backends": ("strands_robots.simulation.factory", "list_backends"),
     "register_backend": ("strands_robots.simulation.factory", "register_backend"),
+    # Training - peer of policies/* and simulation/* (see
+    # strands_robots/training/__init__.py:3-4 "Peer of ``strands_robots.policies``:
+    # where ``Policy`` is inference, ``Trainer`` is post-tuning. Selected by the
+    # SAME provider name via ``create_trainer``."). Lazy because `training.rl`
+    # pulls torch on first call, but the factory module itself is torch-free, so
+    # the triplet is safe to re-export the same way `create_simulation` /
+    # `list_backends` / `register_backend` above are.
+    "create_trainer": ("strands_robots.training", "create_trainer"),
+    "list_trainers": ("strands_robots.training", "list_trainers"),
+    "register_trainer": ("strands_robots.training", "register_trainer"),
     "SimWorld": ("strands_robots.simulation", "SimWorld"),
     "SimRobot": ("strands_robots.simulation", "SimRobot"),
     "SimObject": ("strands_robots.simulation", "SimObject"),
@@ -194,6 +205,9 @@ __all__ = [
     "create_simulation",
     "list_backends",
     "register_backend",
+    "create_trainer",
+    "list_trainers",
+    "register_trainer",
     "download_assets",
     "harness_memory",
     "create_judge_agent",
