@@ -69,7 +69,7 @@ import threading
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import policy_step, refuse, undeclared_verb_error
+from strands_robots.drivers.base import policy_step, refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.registry import resolve_name
 from strands_robots.utils import (
@@ -1100,6 +1100,8 @@ class URDriver:
 
     def get_observation(self) -> dict[str, float]:
         """The six joint positions (name -> radians) for the mesh joint read."""
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         with self._lock:
             receive = self._receive
         if receive is not None:

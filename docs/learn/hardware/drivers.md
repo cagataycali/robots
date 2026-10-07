@@ -35,7 +35,7 @@ Generated from `_SHIPPED_DRIVERS` and each module's `SUPPORTED_ROBOTS`:
 
 {{driver_facts}}
 
-Every native driver imports its SDK in `connect_eagerly()`, so a missing SDK is a refusal naming the install line.
+Each native driver imports its SDK in `connect_eagerly()`, refusing a missing one with the install line. Unconnected, `get_observation()` logs why it returns `{}`.
 
 ## The contract
 

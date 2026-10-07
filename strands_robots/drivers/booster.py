@@ -58,6 +58,7 @@ from strands_robots.drivers.base import (
     refuse,
     telemetry_float,
     telemetry_float_list,
+    unconnected_observation,
     undeclared_verb_error,
 )
 from strands_robots.drivers.unitree._common import _DDS_INIT_LOCK
@@ -1004,6 +1005,8 @@ class BoosterDriver:
             ``{joint_name: radians}`` for as many slots as the robot reported,
             or ``{}`` before the first frame.
         """
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         with self._cache_lock:
             joints = list((self._last_state or {}).get("joints") or [])
         by_slot = {slot: name for name, slot in BOOSTER_JOINT_INDEX.items()}
