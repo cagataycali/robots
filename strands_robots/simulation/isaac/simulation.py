@@ -5790,16 +5790,10 @@ class IsaacSimulation(
             # camera whose RTX product hasn't warmed up is omitted rather than
             # failing the whole observation.
             #
-            # Recording override (parity with MuJoCo/Newton): a non-image
-            # policy (requires_images=False, e.g. the default mock) makes
-            # PolicyRunner pass skip_images=True, but while a dataset
-            # recording is active the recorded frames MUST carry the camera
-            # images the schema declared - so images are forced on for the
-            # duration of the session.
-            if skip_images:
-                rec_state = self._recording_state()
-                if rec_state is not None and rec_state.get("recording", False):
-                    skip_images = False
+            # A recording that keeps cameras overrides the skip hint, as on
+            # every backend (DatasetRecordingMixin._recording_keeps_images).
+            if skip_images and self._recording_keeps_images():
+                skip_images = False
             if not skip_images and self._config.render_mode != "headless":
                 # Multi-camera refresh: a single ``world.step(render=True)`` in
                 # the substep loop reliably refreshes only the PRIMARY render

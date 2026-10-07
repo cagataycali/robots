@@ -1138,6 +1138,24 @@ class DatasetRecordingMixin:
             return None
         return world._backend_state
 
+    def _recording_keeps_images(self) -> bool:
+        """Whether an active recording needs camera frames on every observation.
+
+        ``get_observation(skip_images=True)`` is a caller's hint that it reads
+        no pixels (``PolicyRunner`` passes it for a policy with
+        ``requires_images=False``). While a dataset recording is active, the
+        recorded frames must still carry the image columns the schema declared,
+        so every backend turns the hint off when this answers ``True``. A
+        recording scoped to no cameras (``start_recording(cameras=[])``)
+        declares no image column, so rendering for it would only discard the
+        pixels; ``None`` in ``recording_cameras`` means "every camera".
+        """
+        state = self._recording_state()
+        if not state or not state.get("recording"):
+            return False
+        cameras = state.get("recording_cameras")
+        return cameras is None or len(cameras) > 0
+
     #: The plain-video alternative a missing-lerobot refusal names (see
     #: :meth:`_dataset_recorder_or_refusal`); each backend names its own.
     _RECORDING_VIDEO_HINT: ClassVar[str] = "For plain MP4 video, use start_cameras_recording instead."
