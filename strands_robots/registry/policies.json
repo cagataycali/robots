@@ -425,6 +425,34 @@
         "rsl_rl_onnx",
         "mjlab_onnx"
       ]
+    },
+    "plastic_wam": {
+      "module": "strands_robots.policies.plastic_wam",
+      "class": "PlasticWAMPolicy",
+      "description": "plastic-wam self-learning VLA: frozen Qwen3.5-4B (loopl-4b) System 2 + flow-matching DiT System 1 with TTT fast weights; bounded, reversible plastic LoRA learns online from corrections (learn_from_correction / reset_plastic / brain.pt). SO-101 checkpoint speaks LeRobot degrees + gripper percent; joint_units='rad' converts for MuJoCo.",
+      "requires": [],
+      "config_keys": [
+        "pretrained_name_or_path",
+        "device",
+        "camera_map",
+        "joint_units",
+        "embodiment",
+        "execute_steps",
+        "plastic",
+        "plastic_lr",
+        "token"
+      ],
+      "defaults": {
+        "pretrained_name_or_path": "cagataydev/plastic-wam-small-r1",
+        "device": "cuda",
+        "joint_units": "rad",
+        "execute_steps": 16
+      },
+      "shorthands": [
+        "plastic_wam",
+        "plastic-wam",
+        "pwam"
+      ]
     }
   }
 }
