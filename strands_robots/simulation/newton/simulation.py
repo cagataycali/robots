@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
-from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
+from strands_robots.registry import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import (
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,

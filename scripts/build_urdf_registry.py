@@ -38,8 +38,11 @@ from strands_robots.assets.urdf import (  # noqa: E402
     read_asset_info,
 )
 from strands_robots.drivers import list_native_drivers  # noqa: E402
-from strands_robots.registry import NATIVE_DRIVER  # noqa: E402
-from strands_robots.registry.discovery import list_urdf_only, urdf_descriptions_module  # noqa: E402
+from strands_robots.registry import (  # noqa: E402
+    NATIVE_DRIVER,
+    list_urdf_only,
+    urdf_descriptions_module,
+)
 from strands_robots.utils import get_assets_dir  # noqa: E402
 
 OUT = REPO / "strands_robots" / "registry" / "urdf_robots.json"
