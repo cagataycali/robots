@@ -5,7 +5,7 @@ lifted, and reported a successful pick - the reply "gripper commanded close"
 reads the same whether the fingers met an object or air. The MuJoCo backend
 now reads the contacts after the last tick: bodies outside the robot that
 touch the finger subtree are named with their contact counts, and a close
-that touched nothing says so and points at the fix.
+that touched nothing says so and names where the nearest object is.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _parts(result):
 def test_close_on_air_says_nothing_is_held(so100):
     text, payload = _parts(so100.set_gripper(robot_name="so100", state="close"))
     assert "Closed on nothing" in text
-    assert "move_to the object first" in text
+    assert payload["nearest_object"]["body"] == "red_cube"
     assert payload["holding"] == []
     assert payload["finger_contacts"] == {}
 
