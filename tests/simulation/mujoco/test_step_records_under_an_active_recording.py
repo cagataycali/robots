@@ -47,8 +47,16 @@ def sim():
     s.cleanup()
 
 
-def _open_fake_recording(sim, *, fps: int = 10, task: str = "three poses") -> MagicMock:
-    """Open a recording session around a fake recorder - the shape start_recording leaves."""
+def _open_fake_recording(
+    sim, *, fps: int = 10, task: str = "three poses", cameras: set[str] | None = frozenset()
+) -> MagicMock:
+    """Open a recording session around a fake recorder - the shape start_recording leaves.
+
+    ``cameras`` is the session's camera scope (``start_recording(cameras=...)``):
+    empty by default, because a cell counting frames or reading joints has no use
+    for the overview camera's pixels, and rendering it costs every frame. Pass
+    ``None`` to record every scene camera, as a cell about the images does.
+    """
     recorder = MagicMock()
     recorder.episode_frame_count = 0
 
@@ -62,6 +70,7 @@ def _open_fake_recording(sim, *, fps: int = 10, task: str = "three poses") -> Ma
     state["dataset_recorder"] = recorder
     state["recording_fps"] = fps
     state["recording_task"] = task
+    state["recording_cameras"] = None if cameras is None else set(cameras)
     state.pop("step_recording_due", None)
     return recorder
 
@@ -150,7 +159,7 @@ class TestTheFrameIsTheSceneAsCommanded:
         assert kwargs["observation"][keys[1]] == pytest.approx(0.6, abs=0.05)
 
     def test_observation_is_what_the_rollout_hook_supplies(self, sim) -> None:
-        recorder = _open_fake_recording(sim, fps=10)
+        recorder = _open_fake_recording(sim, fps=10, cameras=None)
         sim.step(n_steps=1)
         obs = recorder.add_frame.call_args.kwargs["observation"]
         expected = sim.get_observation("so101")
@@ -159,8 +168,7 @@ class TestTheFrameIsTheSceneAsCommanded:
         assert "default" in images, "the overview camera the schema declares is missing"
 
     def test_camera_scope_from_start_recording_is_honoured(self, sim) -> None:
-        recorder = _open_fake_recording(sim, fps=10)
-        sim._world._backend_state["recording_cameras"] = set()  # record no camera
+        recorder = _open_fake_recording(sim, fps=10, cameras=set())  # record no camera
         sim.step(n_steps=1)
         obs = recorder.add_frame.call_args.kwargs["observation"]
         assert not any(isinstance(v, np.ndarray) and v.ndim >= 2 for v in obs.values())
@@ -183,8 +191,7 @@ class TestTheFrameIsTheSceneAsCommanded:
         one_observation = len(calls)
         assert one_observation > 0, "the scene has no camera to render"
         calls.clear()
-        _open_fake_recording(sim, fps=10)
-        sim._world._backend_state["recording_cameras"] = scope
+        _open_fake_recording(sim, fps=10, cameras=scope)
         sim.step(n_steps=1)
         assert len(calls) == (0 if scope == set() else one_observation)
 

@@ -7851,12 +7851,13 @@ class MuJoCoSimEngine(
         if recording:
             frame.required_action_keys()
 
-        # Whether ANY policy needs images (renders are expensive; skip if none
-        # need them AND we're not recording - recording always needs frames).
+        # Whether ANY policy needs images (renders are expensive). A recording
+        # that keeps cameras turns the skip back off inside get_observation
+        # (_recording_keeps_images), so one scoped to no camera renders nothing.
         any_needs_images, unreachable = policy_reads_images(policies.values())
         if unreachable is not None:
             return unreachable
-        skip_images = not (any_needs_images or recording)
+        skip_images = not any_needs_images
 
         # Honour the RESOLVED step count. ``_resolve_horizon`` above returns both
         # the wall-clock ``duration`` and the normalized ``n_steps``, and the
