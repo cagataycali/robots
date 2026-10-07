@@ -111,10 +111,18 @@ def register_policy(
 
 
 def list_providers() -> list[str]:
-    """List all available policy provider names (JSON + runtime)."""
+    """List all available policy provider names (JSON + runtime).
+
+    Reports canonical names only, mirroring the JSON surface
+    :func:`strands_robots.registry.policies.list_policy_providers`.
+    Alias spellings live in :func:`list_aliases`; the two surfaces are
+    disjoint so the published union pattern enumerates every
+    registered spelling exactly once::
+
+        registered = set(list_providers()) | set(list_aliases())
+    """
     names = list_policy_providers()
     names.extend(_runtime_registry.keys())
-    names.extend(_runtime_aliases.keys())
     return sorted(set(names))
 
 
