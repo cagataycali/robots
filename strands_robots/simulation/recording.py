@@ -201,6 +201,63 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     return None
 
 
+def dataset_recording_task_error(method: str, task: Any) -> dict[str, Any] | None:
+    """Reject a ``task`` label that is not a string.
+
+    Sibling of :func:`dataset_recording_option_error` for the one remaining
+    scalar kwarg on the same ``start_recording`` signature. The design intent
+    is already codified in
+    :meth:`~strands_robots.simulation.base.SimEngine._validate_rollout_target`:
+
+        "A non-string instruction (None from a task lookup, a nested list) ran
+         to status='success' and was written into the result metadata and the
+         recorded ``task`` column"
+
+    That guard refuses a non-str ``instruction`` on every rollout entry point
+    (``run_policy``, ``eval_policy``, ``evaluate_benchmark``). The ``task``
+    kwarg on ``start_recording`` reaches the SAME recorded ``task`` column -
+    it is stashed as ``state['recording_task']`` and forwarded to
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` as the
+    ``default_task``, which
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame` composes
+    with ``frame["task"] = task or self.default_task or "untitled"`` -
+    so the two sides of the asymmetry are refused by one rule.
+
+    Without this guard a non-str task was reported as ``status="success"``
+    and then either (a) landed verbatim in the parquet ``task`` column where
+    pyarrow string-schema enforcement rejects the frame or a LeRobot reader
+    sees a malformed label, or (b) when falsy (``0``, ``False``, ``[]``,
+    ``{}``, ``""``, ``None``), was silently rewritten to ``"untitled"`` by
+    the ``or``-fall-through - the caller's explicit intent dropped with no
+    notification. The whole point of ``start_recording(task=X)`` is to label
+    every frame of every episode in this recording with ``X``.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        task: Caller-supplied task label.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming ``task``, or
+        ``None`` when the value is a string.
+    """
+    if not isinstance(task, str):
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: 'task' must be a string, got "
+                        f"{type(task).__name__}. The value is forwarded to "
+                        "DatasetRecorder.create as the default task label and "
+                        "written into the parquet 'task' column of every frame "
+                        "a rollout does not label itself."
+                    )
+                }
+            ],
+        }
+    return None
+
+
 def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict[str, Any] | None:
     """Reject a recording posture flag that was not supplied as a boolean.
 
@@ -1302,6 +1359,8 @@ class DatasetRecordingMixin:
         # string or repeats a name, and a rate a rollout in flight is not
         # capturing at.
         if error := dataset_recording_option_error("start_recording", fps):
+            return error
+        if error := dataset_recording_task_error("start_recording", task):
             return error
         for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
             if error := dataset_recording_posture_error("start_recording", _flag, _value):
