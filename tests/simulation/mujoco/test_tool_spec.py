@@ -1116,3 +1116,38 @@ def test_an_unknown_parameter_names_the_actions_that_take_it(
         assert "is taken by" not in text, text
     else:
         assert text.endswith(taken_by), text
+
+
+def _advertised_default(param: str, label: str) -> float:
+    """The ``default <x>`` the schema states for ``label`` in ``param``'s description."""
+    description = _tool_spec_properties()[param]["description"]
+    match = re.search(rf"{label}[^)]*?default ([0-9.]+)", description)
+    assert match, f"{param!r} description no longer states a default for {label!r}: {description!r}"
+    return float(match.group(1))
+
+
+@pytest.mark.parametrize(
+    ("param", "label", "backend", "method"),
+    [
+        ("tol", "meters for move_to", "mujoco", "move_to"),
+        ("tol", "meters for move_to", "isaac", "move_to"),
+        ("tol", "radians for rotate_wrist", "mujoco", "rotate_wrist"),
+        ("tol", "radians for rotate_wrist", "isaac", "rotate_wrist"),
+    ],
+)
+def test_a_default_the_schema_advertises_is_the_one_the_method_uses(
+    param: str, label: str, backend: str, method: str
+) -> None:
+    """An agent plans from the schema's number; the backend converges on the signature's."""
+    from strands_robots.simulation.isaac.motion_primitives import IsaacMotionPrimitivesMixin
+    from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
+
+    mixin = {"mujoco": MotionPrimitivesMixin, "isaac": IsaacMotionPrimitivesMixin}[backend]
+    actual = inspect.signature(getattr(mixin, method)).parameters[param].default
+    assert _advertised_default(param, label) == actual
+
+
+def test_the_advertised_orientation_tol_default_is_the_one_move_to_applies() -> None:
+    from strands_robots.simulation.motion_primitives_base import _DEFAULT_ORIENTATION_TOL_RAD
+
+    assert _advertised_default("orientation_tol", "RADIANS") == _DEFAULT_ORIENTATION_TOL_RAD
