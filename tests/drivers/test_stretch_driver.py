@@ -161,7 +161,7 @@ def _import_raising(error: BaseException) -> Any:
     [
         ("/dev/ttyUSB0", True, None, "names nothing"),
         (None, False, None, "another process may hold the robot"),
-        (None, True, ImportError("No module named 'stretch_body'"), "pip install hello-robot-stretch-body"),
+        (None, True, ImportError("No module named 'stretch_body'"), "pip install 'strands-robots[stretch]'"),
         # stretch_body reads the fleet calibration at import time.
         (None, True, KeyError("HELLO_FLEET_PATH"), "no robot configuration (KeyError"),
         (None, True, SystemExit(1), "no robot configuration (SystemExit"),

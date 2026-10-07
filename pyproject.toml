@@ -352,6 +352,12 @@ rby1 = [
 spot = [
     "bosdyn-client>=5.0.0,<6.0.0",
 ]
+# Hello Robot client for the Stretch native driver (strands_robots/drivers/stretch.py).
+# Not a member of [all]: the wheel pulls open3d, pyrealsense2, jupyter and the
+# Stretch factory tools, which belong on the robot's own computer.
+stretch = [
+    "hello-robot-stretch-body>=0.7.0",
+]
 # pyserial for the native Feetech and Dynamixel bus drivers
 # (strands_robots/drivers/feetech/bus.py, drivers/dynamixel/bus.py) and the
 # serial_tool and pose_tool agent tools. Pure Python, so a member of [all]; the
@@ -955,6 +961,10 @@ conflicts = [
     [
         { extra = "sim-mjlab" },
         { extra = "all" },
+    ],
+    [
+        { extra = "stretch" },
+        { extra = "sim-mjlab" },
     ],
 ]
 # SECURITY floors for transitive packages. Each of these arrives only through
