@@ -799,6 +799,32 @@ class FeetechDriver(TeleopMixin):
             "content": [{"json": {"joint_state": joints, "unit": "degrees (gripper: percent open)"}}],
         }
 
+    def get_observation(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Read the arm once: every joint plus one frame per open camera.
+
+        Shaped like lerobot's own SO-arm observation - ``{"<joint>.pos":
+        degrees, ..., "<camera>": frame}``, percent open for the gripper - so
+        code written against ``Robot(name, mode="real")`` reads the same keys
+        whichever driver built the arm. The bus opens on first use, as it does
+        for :meth:`send_action`.
+
+        Args:
+            robot_name: Unused; this driver fronts exactly one arm.
+
+        Returns:
+            The joint positions and camera frames, by key.
+
+        Raises:
+            Exception: Whatever opening the port or the read raised, unchanged.
+                Unlike the tool verbs this is a data read, and an empty dict
+                would pass for an arm with no joints.
+        """
+        del robot_name
+        with bus_lock(self):
+            self._connect_if_needed()
+            observation: dict[str, Any] = dict(read_joints(self))
+        return {**observation, **self.camera_frames()}
+
     def _set_torque_envelope(self, enabled: bool) -> dict[str, Any]:
         """Energize or release the arm, reporting any motor that stayed driven."""
         try:
