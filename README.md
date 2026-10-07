@@ -98,7 +98,7 @@ in sim runs on the metal by changing `mode`.
 | **Train** with LeRobot (ACT to GR00T N1.7), Cosmos 3 or RL (PPO / FastSAC), locally or as a SageMaker job, then run the checkpoint in sim and on hardware | [Training](https://strands-labs.github.io/robots/learn/training/lerobot/) |
 | **Simulate** with an agent-callable MuJoCo tool: worlds, terrain, domain randomization, rendering, dataset capture; Newton and Isaac backends | [Simulation](https://strands-labs.github.io/robots/learn/simulation/) |
 | **Mesh** every `Robot(mesh=True)` as a Zenoh peer (on one machine set `STRANDS_MESH_LOCAL_DEV=true`; across hosts, mTLS and an ACL): `robot.mesh.tell(peer, instruction, policy_provider=...)` asks another robot to run a policy; broadcast an E-STOP, bridge fleets over AWS IoT Core | [Mesh](https://strands-labs.github.io/robots/learn/mesh/fleet/) |
-| **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), expose a running sim | [ROS 2](https://strands-labs.github.io/robots/learn/ros2/) |
+| **ROS 2** - observe and command any graph (`use_ros`), act as a node without rclpy (`use_rtps`), bridge a real arm to the graph over `rclpy` or pure DDS, or publish a running sim's `joint_states` + `image_raw` on a sourced ROS 2 distro | [ROS 2](https://strands-labs.github.io/robots/learn/ros2/) |
 | **Configure** every environment variable the package reads, with its default and its guard | [Configuration](https://strands-labs.github.io/robots/reference/configuration/) |
 
 <p align="center">
