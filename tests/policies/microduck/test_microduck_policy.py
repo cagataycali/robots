@@ -121,8 +121,8 @@ class TestObservation:
 
 
 class TestPolicyUnit:
-    def test_requires_session_or_path(self):
-        with pytest.raises(ValueError):
+    def test_a_missing_weight_names_the_skill_files(self):
+        with pytest.raises(ValueError, match=r"needs onnx_path: the weight file is the skill.*'alpha_stand\.onnx'"):
             MicroduckPolicy()
 
     def test_provider_name(self):
