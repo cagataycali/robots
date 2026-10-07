@@ -21,8 +21,6 @@ from typing import Any
 from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered
 
-_NO_WORLD_MSG = _NO_WORLD_MSG
-
 
 class IsaacIntrospectionMixin:
     """``get_robot_state`` / ``get_features`` / ``list_objects`` / ``list_cameras``."""
