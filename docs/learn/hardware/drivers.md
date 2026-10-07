@@ -25,9 +25,9 @@ print(list_driver_coverage()["ability_hand"])    # ()
 | `"lerobot"` (`DEFAULT_DRIVER`, what `auto` falls back to) | `strands_robots.hardware_robot.Robot` around a lerobot robot class | any robot whose registry entry has `hardware.lerobot_type` (`so101_follower`, `koch_follower`, `lekiwi`, `bi_so_follower`, ...) |
 | `"auto"` (the default) | the registry's `hardware.driver` if set, else a registered native driver, else lerobot | everything |
 
-Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; other robots in the table below need none: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver` with no lerobot extra, with the arm's lerobot calibration. `omx`, `openarm` and `reachy2` have no native driver and fall back to lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for teleop reads. `driver="strands"` on a robot with no native driver is refused by name.
+Robots lerobot has no type for (`unitree_go2`, `robotiq_2f85`, `reachy_mini`, `microduck`, `booster_t1`, `crazyflie`, `yahboom_m3pro`) declare `hardware.driver = "strands"`; other robots in the table below need none: `Robot("so101", mode="real", port="/dev/ttyACM0")` builds `FeetechDriver` with no lerobot extra, with the arm's lerobot calibration. `omx`, `openarm` and `reachy2` have no native driver and use lerobot; `driver="lerobot"` pins that path, and `earthrover` declares it for teleop reads. `driver="strands"` on a robot with no native driver is refused by name.
 
-`port=` is a Feetech serial path, a controller IP, a `radio://` URI for a Crazyflie, `host:port` for a daemon. An undeclared keyword is refused.
+`port=` is a Feetech serial path, a controller IP, a `radio://` URI for a Crazyflie, `host:port` for a daemon. A keyword the driver does not declare is refused.
 
 ## Shipped native drivers
 
