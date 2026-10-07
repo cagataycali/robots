@@ -275,8 +275,8 @@ class MicroduckPolicy(Policy):
     ) -> None:
         if session is None and onnx_path is None:
             raise ValueError(
-                "MicroduckPolicy requires either `onnx_path` (real weights) or "
-                "`session` (injected for tests). Neither was supplied."
+                "microduck needs onnx_path: the weight file is the skill, e.g. 'alpha_walking.onnx' "
+                f"or 'alpha_stand.onnx' (a bare name is fetched from {MICRODUCK_POLICIES_HF_REPO})."
             )
 
         self._session: MicroduckSession | None = session

@@ -82,6 +82,7 @@ UNUSABLE_FPS: list[Any] = [0, -5, 2.7, float("nan"), float("inf"), True, "30", N
 POSTURE_FLAGS = ("push_to_hub", "overwrite")
 TRUTHY_NON_BOOLEANS: list[Any] = ["false", "no", "off", "0", 1, float("nan")]
 UNUSABLE_CAMERA_LISTS: list[Any] = ["wrist", ["front", "front"], {"front": 1}, ["front", 3], ["front", ""]]
+NON_STRING_TASKS: list[Any] = [None, 0, False, 123, 3.14, ["pick", "cube"], {"a": 1}, b"pick"]
 
 
 def _isaac_engine() -> Any:
@@ -214,6 +215,17 @@ class TestEveryBackendReturnsTheCameraListRefusal:
         assert _text(_start(factory, cameras=cameras)) == name_list_error(cameras, "cameras", "start_recording")
 
 
+class TestEveryBackendReturnsTheTaskRefusal:
+    """``task`` labels the recorded ``task`` column, so it is a string - as ``instruction`` is."""
+
+    @pytest.mark.parametrize("factory", BACKENDS)
+    @pytest.mark.parametrize("task", NON_STRING_TASKS, ids=repr)
+    def test_the_call_is_refused_and_names_the_parameter(self, factory: Any, task: Any) -> None:
+        result = _start(factory, task=task)
+        assert result["status"] == "error"
+        assert _text(result) == f"start_recording: 'task' must be a string, got {type(task).__name__}."
+
+
 class TestARefusedStartTouchesNoDataset:
     """Each refusal is returned before anything on disk or in state moves."""
 
@@ -225,6 +237,7 @@ class TestARefusedStartTouchesNoDataset:
             pytest.param({"overwrite": "false"}, id="overwrite"),
             pytest.param({"push_to_hub": "no"}, id="push_to_hub"),
             pytest.param({"cameras": "wrist"}, id="cameras"),
+            pytest.param({"task": None}, id="task"),
         ],
     )
     def test_no_dataset_directory_is_created(self, factory: Any, kwargs: Any, tmp_path: Path) -> None:
@@ -239,6 +252,7 @@ class TestARefusedStartTouchesNoDataset:
             pytest.param({"fps": 2.7}, id="fps"),
             pytest.param({"overwrite": "false"}, id="overwrite"),
             pytest.param({"cameras": "wrist"}, id="cameras"),
+            pytest.param({"task": None}, id="task"),
         ],
     )
     def test_recording_is_not_marked_active(self, factory: Any, kwargs: Any, tmp_path: Path) -> None:
@@ -256,6 +270,7 @@ class TestARefusedStartTouchesNoDataset:
             pytest.param({"fps": 2.7}, id="fps"),
             pytest.param({"overwrite": "false"}, id="overwrite"),
             pytest.param({"cameras": "wrist"}, id="cameras"),
+            pytest.param({"task": None}, id="task"),
         ],
     )
     def test_the_refusal_precedes_the_lerobot_extra_probe(

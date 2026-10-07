@@ -16,6 +16,7 @@ from strands_robots.policies import (
     list_providers,
     policy_overrides_preflight,
     preflight_policy,
+    preflight_reason,
     register_policy,
 )
 from strands_robots.policies.factory import policy_provider_error, provider_can_be_created
@@ -90,10 +91,19 @@ class TestCreatePolicy:
     ],
 )
 def test_a_non_string_provider_is_a_type_error_naming_the_parameter(provider, points_at_policy_object):
-    """Every non-string is refused by name, not as a raw .strip()/unhashable error."""
-    with pytest.raises(TypeError, match=r"^provider must be a string, got ") as raised:
-        create_policy(provider)
-    assert ("policy_object=" in str(raised.value)) is points_at_policy_object
+    """Every non-string is refused by name, not as a raw .strip()/unhashable error.
+
+    The preflight helpers refuse it the same way rather than answering "no hook".
+    """
+    for call in (
+        lambda: create_policy(provider),
+        lambda: preflight_policy(provider, {"j1"}),
+        lambda: policy_overrides_preflight(provider),
+        lambda: preflight_reason(provider, lambda: {"j1"}),
+    ):
+        with pytest.raises(TypeError, match=r"^provider must be a string, got ") as raised:
+            call()
+        assert ("policy_object=" in str(raised.value)) is points_at_policy_object
     assert provider_can_be_created(provider) is False
 
 
@@ -153,6 +163,17 @@ def test_a_lerobot_policy_type_named_as_a_provider_is_sent_to_lerobot_local(spel
     with pytest.raises(ValueError, match="LeRobot policy type"):
         resolve_policy(spelling)
     assert policy_provider_error(spelling) == sentence
+
+
+@pytest.mark.parametrize(
+    ("shorthand", "weight"), [("microduck_walk", "alpha_walking.onnx"), ("microduck_stand", "alpha_stand.onnx")]
+)
+def test_a_microduck_skill_shorthand_is_refused_with_the_weight_that_runs_it(shorthand, weight):
+    """The name never chose the weight, so ``microduck_stand`` ran whatever ``onnx_path`` said."""
+    with pytest.raises(ValueError) as excinfo:
+        create_policy(shorthand, onnx_path="alpha_walking.onnx")
+    assert f"policy_provider='microduck' with onnx_path={weight!r}" in str(excinfo.value)
+    assert policy_provider_resolves(shorthand) is False
 
 
 @pytest.mark.parametrize(

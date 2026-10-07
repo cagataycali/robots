@@ -38,10 +38,14 @@ from ._overlay import parse_user_robots, user_registry_source
 from .discovery import (
     descriptions_module,
     discover_robot,
+    discover_urdf_path,
     is_discoverable,
+    is_urdf_discoverable,
     is_urdf_only,
     list_discoverable,
+    list_urdf_discoverable,
     list_urdf_only,
+    urdf_descriptions_module,
     urdf_registry,
     urdf_registry_entry,
 )
@@ -106,6 +110,10 @@ __all__ = [
     "urdf_registry",
     "urdf_registry_entry",
     "discover_robot",
+    "urdf_descriptions_module",
+    "is_urdf_discoverable",
+    "list_urdf_discoverable",
+    "discover_urdf_path",
     # Policy registry
     "get_policy_provider",
     "list_policy_providers",

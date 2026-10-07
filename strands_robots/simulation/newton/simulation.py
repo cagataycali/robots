@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
-from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
+from strands_robots.registry import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import (
     LIST_POLICIES_RUNNING_DESCRIBE_ENTRY,
     SimEngine,
@@ -47,6 +47,7 @@ from strands_robots.simulation.base import (
     reject_misspelled_kwargs,
     reject_setup_kwargs,
     send_action_summary,
+    twist_keys_hint,
 )
 from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.model_registry import (
@@ -1376,6 +1377,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                         "text": (
                             f"Keys {unresolved} are not commandable joints on '{robot_name}'. Nothing was "
                             f"applied and the world did not advance. Valid keys: {sorted(valid)}"
+                            f"{twist_keys_hint(robot_name, unresolved)}"
                         )
                     },
                     {"json": {"unresolved_keys": unresolved, "applied": []}},

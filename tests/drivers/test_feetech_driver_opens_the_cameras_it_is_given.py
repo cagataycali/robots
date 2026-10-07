@@ -255,6 +255,7 @@ class TestTheMeshPublishesTheNativeDriversCameras:
     def test_the_camera_tick_publishes_the_drivers_frames(self, monkeypatch: pytest.MonkeyPatch) -> None:
         driver = _driver()
         driver.connect_eagerly()
+        monkeypatch.setattr(driver.bus, "connect", lambda: pytest.fail("publishing video opened the motor bus"))
         mesh = self._mesh(driver)
         published: list[tuple[dict[str, Any], list[str]]] = []
         monkeypatch.setattr(mesh, "_encode_and_publish_frames", lambda obs, names: published.append((obs, names)))

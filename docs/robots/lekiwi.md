@@ -37,6 +37,8 @@ robot = Robot("lekiwi", mode="real", port="/dev/ttyACM0")  # lerobot lekiwi
 | `Wrist_Roll` | `wrist_roll` |
 | `Jaw` | `gripper` |
 
+These are `mode="sim"` keys; on hardware `get_observation()` returns lerobot's `<motor>.pos`.
+
 Gripper `Jaw`: the low end closes, the high end opens.
 
 ## Hardware

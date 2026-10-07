@@ -134,3 +134,24 @@ def test_chunk_mode_declares_the_chunk_it_returns(
     assert policy.actions_per_step == expected
     assert policy.execution_horizon == expected
     assert resolve_chunk_length(policy, 8) == max(8, expected)
+
+
+@pytest.mark.parametrize("missing", ["torch", "flux_action"])
+def test_a_missing_dependency_names_the_whole_install(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    """Fails before the fix: a missing torch named only ``[lerobot]`` + ``pip install torch``.
+
+    torch is checked first, so its refusal is the one a fresh install sees; it
+    must carry the same remedy as flux_action's (lerobot's torch, the git-only
+    library, the NATTEN wheel for that build) instead of hiding it a round later.
+    """
+    from strands_robots import utils
+
+    monkeypatch.setattr(utils, "_lazy_modules", {})
+    present = "flux_action" if missing == "torch" else "torch"
+    monkeypatch.setitem(sys.modules, present, types.ModuleType(present))
+    monkeypatch.setitem(sys.modules, missing, None)
+    with pytest.raises(ImportError) as excinfo:
+        module.Flux3ActionPolicy(device="cpu")
+    assert excinfo.value.name == missing
+    assert module.FLUX3_SYSTEM_INSTALL_HINT in str(excinfo.value)
+    assert "pip install torch" not in str(excinfo.value)
