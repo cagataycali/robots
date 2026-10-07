@@ -81,18 +81,35 @@ def test_every_discovery_surface_names_the_colour_an_object_renders_with(ready_a
     """
     added = ready_arm.add_object(name="cube_a", shape="box", position=[0.0, -0.2, 0.025], color=[1.0, 0.0, 0.0])
     ready_arm.add_object(name="cube_b", shape="box", position=[0.1, -0.2, 0.025], color=[0.0, 0.0, 1.0, 1.0])
+    # A material does not override an explicit colour: MuJoCo draws the geom's own rgba.
+    matte = {"specular": 0.0, "shininess": 0.0}
+    ready_arm.add_object(name="cube_c", shape="box", position=[0.2, -0.2, 0.025], color=[1, 0, 0], material=matte)
+    ready_arm.add_object(name="cube_d", shape="box", position=[0.3, -0.2, 0.025], color=[1, 0, 0], material=matte)
     assert added["content"][0]["text"].endswith(", red")
     ready_arm.set_geom_properties(geom_name="cube_b_geom", color=[0.0, 0.8, 0.0, 1.0])
+    ready_arm.set_geom_properties(geom_name="cube_d_geom", color=[0.0, 0.8, 0.0, 1.0])
 
     head = ready_arm.tool_spec["description"].split("Scene mutations")[0]
-    assert "2 object(s) 'cube_a' (red), 'cube_b' (green);" in head
+    assert "4 object(s) 'cube_a' (red), 'cube_b' (green), 'cube_c' (red), 'cube_d' (green);" in head
     listing = ready_arm.list_objects()["content"][0]["text"]
     assert "  - cube_a: box at [0.0, -0.2, 0.025], 0.1kg, red\n" in listing
+    assert "  - cube_c: box at [0.2, -0.2, 0.025], 0.1kg, red\n" in listing
     assert listing.endswith(", 0.1kg, green")
     state = ready_arm.get_body_state("cube_b")["content"]
     assert state[1]["json"]["color"] == [0.0, 0.8, 0.0, 1.0]
     assert "color: green" in state[0]["text"]
     assert "color" not in ready_arm.get_body_state("gripper")["content"][1]["json"]
+
+    # Every reported colour is the one MuJoCo's own scene update draws.
+    import mujoco
+
+    model, data = ready_arm._world._model, ready_arm._world._data
+    scene = mujoco.MjvScene(model, maxgeom=2000)
+    mujoco.mjv_updateScene(model, data, mujoco.MjvOption(), None, mujoco.MjvCamera(), mujoco.mjtCatBit.mjCAT_ALL, scene)
+    drawn = {int(g.objid): [round(float(c), 3) for c in g.rgba] for g in scene.geoms[: scene.ngeom]}
+    for name in ("cube_a", "cube_b", "cube_c", "cube_d"):
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"{name}_geom")
+        assert ready_arm.get_body_state(name)["content"][1]["json"]["color"] == drawn[gid], name
 
 
 def test_long_joint_lists_are_truncated_not_dumped() -> None:

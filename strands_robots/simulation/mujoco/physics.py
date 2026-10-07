@@ -355,12 +355,18 @@ def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | No
     return body_id, None
 
 
+# MuJoCo's compiler default for geom rgba; a geom still at it shows its material.
+_MJ_DEFAULT_GEOM_RGBA = (0.5, 0.5, 0.5, 1.0)
+
+
 def object_rgba(mj: Any, model: Any, name: str, recorded: list[float]) -> list[float]:
     """The colour object ``name`` renders with now, read off the compiled model.
 
     ``set_geom_properties`` and ``randomize`` recolour the compiled geom, not
-    the scene record, so the record's ``color`` can be stale. A geom bound to a
-    material renders the material's rgba; any other geom renders its own.
+    the scene record, so the record's ``color`` can be stale. The rule is the
+    renderer's: a geom's own rgba wins whenever it differs from MuJoCo's
+    default ``(0.5, 0.5, 0.5, 1)``; only a geom left at that default and bound
+    to a material renders the material's rgba.
 
     Args:
         mj: The ``mujoco`` module.
@@ -375,7 +381,9 @@ def object_rgba(mj: Any, model: Any, name: str, recorded: list[float]) -> list[f
     if gid < 0:
         return [round(float(c), 3) for c in recorded]
     matid = int(model.geom_matid[gid])
-    rgba = model.mat_rgba[matid] if matid >= 0 else model.geom_rgba[gid]
+    rgba = model.geom_rgba[gid]
+    if matid >= 0 and tuple(float(c) for c in rgba) == _MJ_DEFAULT_GEOM_RGBA:
+        rgba = model.mat_rgba[matid]
     return [round(float(c), 3) for c in rgba]
 
 
