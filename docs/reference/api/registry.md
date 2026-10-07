@@ -44,6 +44,10 @@ The registry is `strands_robots/registry/robots.json` and `policies.json`, read 
         - list_discoverable
         - discover_robot
         - descriptions_module
+        - is_urdf_discoverable
+        - list_urdf_discoverable
+        - discover_urdf_path
+        - urdf_descriptions_module
 
 ## User robots
 

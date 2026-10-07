@@ -4,7 +4,7 @@ description: Three ROS 2 transports, when to use each, one operator gate, what a
 
 # ROS 2
 
-At the end of this page you know the three ways an agent or a `Robot` reaches a ROS 2 graph, which one fits your machine, how a real arm becomes a ROS 2 participant in both directions, and where the operator gate sits on every one of them.
+This page shows the three ways an agent or a `Robot` reaches a ROS 2 graph, which one fits your machine, how a real arm joins the graph in both directions, and where the operator gate sits on each.
 
 ```python title="sketch"
 from strands import Agent
@@ -22,7 +22,7 @@ agent("List the topics on the graph, then echo /odom once.")
 | `use_rosbridge` | WebSocket to `rosbridge_server` on the robot | `pip install 'strands-robots[rosbridge]'` (roslibpy), nothing else; works from macOS and CI | ROS 1 and ROS 2 robots running rosbridge with `rosapi`; port 9090 | `status`, `list_topics`, `list_services`, `echo`, `publish`, `service_call` |
 | `use_rtps` | raw DDS/RTPS as a first-class participant | `pip install 'strands-robots[ros2]'` (cyclonedds); no distro, no `rclpy` | every ROS 2 distro (Humble, Jazzy, Rolling) over one implementation; topics only | `status`, `types`, `advertise`, `publish`, `subscribe`, `echo` |
 
-Pick `use_ros` on the robot or a ROS workstation when you need services or actions; `use_rosbridge` from a laptop when the robot already runs rosbridge; `use_rtps` when no ROS install is near the agent, or when the agent must *be* a robot: an RTPS participant advertises topics a node consumes and subscribes to command topics.
+Pick `use_ros` on the robot or a ROS workstation for services or actions; `use_rosbridge` from a laptop when the robot runs rosbridge; `use_rtps` with no ROS install near the agent, or when the agent must *be* a robot: an RTPS participant advertises topics a node consumes and subscribes to command topics.
 
 Types are resolved dynamically on `use_ros` (`rosidl_runtime_py`, any interface installed in the distro) and on `use_rosbridge` (ROS 1 style two-segment names, `geometry_msgs/Twist`). `use_rtps` must own a type definition locally, so it ships a curated IDL bundle of common messages (`strands_robots.rtps.idl`, listed by `action="types"`); a custom message waits on dynamic types in cyclonedds. Graph metadata differs too ([below](#what-a-ros-2-node-can-still-tell-apart)).
 
@@ -46,9 +46,11 @@ arm = Robot("so101", mode="real", port="/dev/ttyACM0", driver="lerobot",
                                  "permissions": "file:perm.p7s"})
 ```
 
-`ros2_bridge=True` on the lerobot-backed `Robot` publishes `/<robot>/joint_states` (`sensor_msgs/msg/JointState`) and `/<robot>/<camera>/image_raw` (`sensor_msgs/msg/Image`, `rgb8`) from the control loop, and subscribes `/<robot>/joint_command` (`JointState`), forwarding each message into `send_action` so MoveIt or a teleop node can drive the arm. `ros2_transport` is `"rclpy"` (`HardwareRosBridge`) or `"rtps"` (`HardwareRtpsBridge`); `ros2_commands=False` is publish-only; `joint_limits=` clamps inbound targets per joint.
+`ros2_bridge=True` on the lerobot-backed `Robot` publishes `/<robot>/joint_states` (`sensor_msgs/msg/JointState`) and `/<robot>/<camera>/image_raw` (`sensor_msgs/msg/Image`, `rgb8`) from the control loop, and subscribes `/<robot>/joint_command` (`JointState`), forwarding each into `send_action` so MoveIt or teleop can drive the arm. `ros2_transport` is `"rclpy"` (`HardwareRosBridge`) or `"rtps"` (`HardwareRtpsBridge`); `ros2_commands=False` is publish-only; `joint_limits=` clamps inbound targets per joint.
 
 On the `rtps` transport an enabled command surface lets any DDS participant on the domain move the arm, so it requires `dds_security_config` (identity CA, certificate, private key, governance, permissions, each a path or `file:`/`data:` URI) or the explicit opt-out `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`. A missing `rclpy` on the `rclpy` transport is a named refusal suggesting `ros2_transport='rtps'`.
+
+A sim `Robot(..., ros2_bridge=True)` publishes `joint_states` and `image_raw` over `rclpy` only.
 
 ## What a ROS 2 node can still tell apart
 

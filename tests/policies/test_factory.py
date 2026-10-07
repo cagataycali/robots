@@ -166,6 +166,17 @@ def test_a_lerobot_policy_type_named_as_a_provider_is_sent_to_lerobot_local(spel
 
 
 @pytest.mark.parametrize(
+    ("shorthand", "weight"), [("microduck_walk", "alpha_walking.onnx"), ("microduck_stand", "alpha_stand.onnx")]
+)
+def test_a_microduck_skill_shorthand_is_refused_with_the_weight_that_runs_it(shorthand, weight):
+    """The name never chose the weight, so ``microduck_stand`` ran whatever ``onnx_path`` said."""
+    with pytest.raises(ValueError) as excinfo:
+        create_policy(shorthand, onnx_path="alpha_walking.onnx")
+    assert f"policy_provider='microduck' with onnx_path={weight!r}" in str(excinfo.value)
+    assert policy_provider_resolves(shorthand) is False
+
+
+@pytest.mark.parametrize(
     ("spelling", "points_at"),
     [
         ("GR00T N1.7", "lerobot_local(policy_type='groot')"),

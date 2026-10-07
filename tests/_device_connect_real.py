@@ -54,6 +54,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import importlib
+import itertools
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -169,16 +170,58 @@ def bound_to_a_fake(module: ModuleType, prefix: str = INTEGRATION_PREFIX) -> boo
     return _holds_a_fake(vars(module), prefix, set())
 
 
-def held_modules(prefix: str = INTEGRATION_PREFIX) -> dict[str, ModuleType]:
+def held_modules(
+    prefix: str = INTEGRATION_PREFIX, modules: Mapping[str, ModuleType] | None = None
+) -> dict[str, ModuleType]:
     """Every module registered under *prefix*, to hand back later.
 
     Args:
         prefix: Dotted package path, matched exactly or as a parent.
+        modules: The registry to read; ``sys.modules`` when omitted.
 
     Returns:
-        The ``sys.modules`` entries under *prefix*, as a plain snapshot.
+        The entries under *prefix*, as a plain snapshot.
     """
-    return {name: module for name, module in sys.modules.items() if name == prefix or name.startswith(f"{prefix}.")}
+    registry = sys.modules if modules is None else modules
+    return {name: module for name, module in registry.items() if name == prefix or name.startswith(f"{prefix}.")}
+
+
+@contextlib.contextmanager
+def integration_put_back(prefix: str = INTEGRATION_PREFIX) -> Iterator[None]:
+    """On exit, :func:`restore` the entries under *prefix* if the body changed them.
+
+    The snapshot is a copy of the whole registry, not of the entries under
+    *prefix*. Copying a dict and comparing two are each one pass in C; picking
+    the prefix out is a Python-level ``startswith`` over every key. A suite
+    worker holds about 9,700 modules late in a run, where one scan costs about
+    3.5 ms, and every test paid for two of them through the autouse fixture in
+    ``tests/conftest.py``.
+
+    On exit the registry is copied again and the names appended after the
+    snapshot's length are dropped from the copy, unless they fall under
+    *prefix*. If the copy then equals the snapshot, every entry under *prefix*
+    is the one it was, and the scan would have found nothing to restore. That
+    covers nearly every test: they add ``isaacsim``, which the autouse
+    ``_no_real_isaac_sim`` blocks with a ``monkeypatch`` that is undone only
+    after this exits, and the modules they import for the first time. Any other
+    change pays the scan, and then makes the comparison the per-prefix snapshot
+    made.
+
+    Args:
+        prefix: The package whose entries are put back.
+    """
+    before = sys.modules.copy()
+    try:
+        yield
+    finally:
+        now = sys.modules.copy()
+        for name in list(itertools.islice(now, len(before), None)):
+            if name != prefix and not name.startswith(f"{prefix}."):
+                del now[name]
+        if now != before:
+            held = held_modules(prefix, before)
+            if held_modules(prefix) != held:
+                restore(held, prefix)
 
 
 def purge(prefix: str = INTEGRATION_PREFIX) -> None:

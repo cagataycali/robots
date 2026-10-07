@@ -358,9 +358,7 @@
         "command_names"
       ],
       "shorthands": [
-        "microduck",
-        "microduck_walk",
-        "microduck_stand"
+        "microduck"
       ]
     },
     "flux3_action": {
