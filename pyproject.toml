@@ -190,6 +190,10 @@ curobo = []
 # Like curobo, the extra is empty on purpose: pinning a git URL here would break
 # the PyPI publish. See policies/flux3_action/ and docs/learn/policies/flux3-action.md.
 flux3 = []
+# plastic-wam self-learning VLA (strands_robots.policies.plastic_wam). The model code lives in the
+# `plastic_wam` package, which is NOT on PyPI: `pip install "plastic-wam @ git+https://github.com/cagataycali/plastic-model"`
+# (brings torch/transformers/av). Like flux3, the extra is empty on purpose - a git URL here would break the PyPI publish.
+plastic-wam = []
 # GR00T Whole-Body-Control (SONIC) locomotion policy. Runs the ONNX
 # controllers in-process via onnxruntime (no torch, no sidecar) - a light
 # extra, like the client side of moveit2. Model weights are NOT bundled;

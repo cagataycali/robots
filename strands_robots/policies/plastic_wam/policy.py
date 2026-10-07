@@ -87,9 +87,9 @@ class PlasticWAMPolicy(_Base):
     # ------------------------------------------------------------------ self-learning hooks
     def learn_from_correction(self, corrected_chunk_robot_units: list[list[float]], updates: int = 2) -> dict | None:
         """Corrected chunk for the LAST observation (robot units) → bounded plastic update."""
-        from plastic_wam.plastic import Record
         if self.learner is None:
             raise RuntimeError("construct with plastic=True")
+        from plastic_wam.plastic import Record
         conv = [self.units.robot_to_model(c) if self.units else c for c in corrected_chunk_robot_units]
         e = self._w.emb; aq, asp = self._w.aq, self._w.asp
         canon = np.stack([e.to_canonical(np.asarray(c, np.float32)) for c in conv])
