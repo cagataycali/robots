@@ -52,14 +52,39 @@ def test_every_visual_token_resolves_to_committed_files() -> None:
     hook = docs_hook("visuals")
     missing = []
     for kind, ident in sorted(_references()):
-        out = hook.drawing_html(ident, "") if kind == "drawing" else hook.sim_html(ident, None, "")
+        if kind == "drawing":
+            out = hook.drawing_html(ident, "")
+        elif kind == "sim":
+            out = hook.sim_html(ident, None, "")
+        else:
+            out = hook.shot_html(ident, None, "")
         if out is None:
             missing.append(f"{{{{{kind}:{ident}}}}}")
     assert not missing, (
         f"visual tokens with no files: {missing}. A drawing needs docs/drawings/scenes/<id>.py and both "
         "docs/assets/drawings/<id>.{paper,dark}.svg (run docs/drawings/_tools/scene.py --all); a sim frame needs "
-        "docs/assets/sim/<id>.png."
+        "docs/assets/sim/<id>.png; a shot needs docs/assets/dashboard/<id>.paper.png and <id>.dark.png."
     )
+
+
+def test_every_committed_dashboard_shot_is_placed_and_has_both_schemes() -> None:
+    """A screenshot pair nobody places is dead weight; a lone scheme would vanish on the palette toggle."""
+    shots_dir = _DOCS / "assets" / "dashboard"
+    if not shots_dir.is_dir():
+        return
+    placed = {ident for kind, ident in _references() if kind == "shot"}
+    by_id: dict[str, set[str]] = {}
+    for png in shots_dir.glob("*.png"):
+        ident, _, scheme = png.stem.rpartition(".")
+        by_id.setdefault(ident, set()).add(scheme)
+    assert sorted(by_id) == sorted(placed), f"shots on disk {sorted(by_id)} vs placed {sorted(placed)}"
+    for ident, schemes in by_id.items():
+        assert schemes == {"paper", "dark"}, f"{ident}: schemes {sorted(schemes)}"
+        for scheme in schemes:
+            size = (shots_dir / f"{ident}.{scheme}.png").stat().st_size
+            assert size <= 300_000, f"{ident}.{scheme}.png is {size} bytes; keep a shot under 300 KB"
+    html = docs_hook("visuals").shot_html(next(iter(by_id)), "caption", "")
+    assert html is not None and html.count('loading="lazy"') == 2 and "#only-light" in html and "#only-dark" in html
 
 
 def test_every_committed_drawing_is_placed_on_a_page() -> None:

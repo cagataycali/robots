@@ -15,7 +15,7 @@ Flags: `--host` (default `127.0.0.1`), `--port` (default `8090`), `--open`, `--l
 
 ## What it serves
 
-The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators, or both, and every robot it shows or commands is a mesh peer. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime. Each screen's rules live in the `strands_robots.dashboard` module named for it.
+The process joins the Zenoh mesh as a robot-less gateway, under the same posture as your peers (`STRANDS_MESH_LOCAL_DEV=true` on one machine): one page drives hardware, simulators or both; every robot it shows is a mesh peer. The UI is a built React SPA under `strands_robots/dashboard/static/`; no node at runtime.
 
 | tab | shows |
 |---|---|
@@ -23,7 +23,15 @@ The process joins the Zenoh mesh as a robot-less gateway, under the same posture
 | Devices | local serial ports and cameras; spawn a robot process per port or network address (a mesh child), assign cameras, read logs, despawn |
 | Calibrate | the LeRobot calibration wizard, with a confirm before the arm moves |
 | Agent | a Strands Agent whose tools are the fleet's peers; anything that moves a real robot pauses on a consent card; a microphone opens voice |
-| Settings | agent model and prompt, mesh endpoints, voice provider, editable `.env` keys (a closed set; gates read-only), static token shown only as set / unset |
+| Settings | agent model and prompt, mesh endpoints, voice provider, editable `.env` keys (a closed set; gates read-only), static token shown as set / unset |
+
+{{shot:fleet|Fleet: a simulated so101, cameras and joints}}
+
+{{shot:devices|Devices: managed child, spawn form, local cameras}}
+
+{{shot:agent|Agent: the fleet agent's dock}}
+
+{{shot:settings|Settings: the connection tab}}
 
 Every path a client names is resolved and must sit under its home (`HF_LEROBOT_HOME`, `STRANDS_TRAIN_OUTPUT_DIR`, the Hub cache); anything else gets one refusal that never reveals whether the path exists. A port must be a `/dev/...` path, a robot id one segment, a camera name `[A-Za-z0-9._-]`: each becomes a file name or argv.
 
@@ -37,7 +45,7 @@ One dependency, `access.require_session`, guards every route but the login scree
 2. The static `security.auth_token`, compared in constant time.
 3. The bootstrap token as bearer, only while no passkey is enrolled, from this machine's own browser: loopback socket, no proxy header, a loopback `Host`, an `Origin` naming the same host.
 
-The first passkey closes the third door. Both need `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`, or the token the process minted into a `0600` file beside the credential store. `STRANDS_DASH_AUTH_ORIGIN` and `STRANDS_DASH_AUTH_RP_ID` pin the WebAuthn origin and relying party behind a proxy; `STRANDS_DASH_AUTH_TOKEN_TTL` (86400 s), `..._SESSION_MAX_AGE` (2592000 s) and `..._HANDOFF_TTL` (300 s) bound a session; a non-integer value is refused, not defaulted. A device handoff takes a fresh passkey tap and yields a one-time code. `STRANDS_DASH_CONNECT_ORIGINS` lists origins the page may dial.
+The first passkey closes the third door. Both need `STRANDS_DASH_AUTH_BOOTSTRAP_TOKEN`, or the token the process minted into a `0600` file beside the credential store. `STRANDS_DASH_AUTH_ORIGIN` and `STRANDS_DASH_AUTH_RP_ID` pin the WebAuthn origin and relying party behind a proxy; `STRANDS_DASH_AUTH_TOKEN_TTL` (86400 s), `..._SESSION_MAX_AGE` (2592000 s) and `..._HANDOFF_TTL` (300 s) bound a session; a non-integer value is refused. A device handoff takes a fresh passkey tap and yields a one-time code. `STRANDS_DASH_CONNECT_ORIGINS` lists origins the page may dial.
 
 Signing out or removing a passkey ends its sessions, open sockets included (re-checked every 2 s). Adding a passkey or removing the last needs the bootstrap proof.
 
@@ -47,10 +55,10 @@ Signing out or removing a passkey ends its sessions, open sockets included (re-c
 
 ## The agent in the browser
 
-`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). The agent holds no robot of its own: `fleet` lists the peers, `spawn_robot` starts a registry robot in simulation as a new peer, and each peer is a tool named after it. Its `emergency_stop` shares the HTTP routes' `Safety` object, so the e-stop refuses the agent like a button. A motion verb on a real arm raises the real-hardware hook's interrupt (`MotionInterruptHook`, see [agents](agents.md)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` lasts the conversation and dies with the socket. One turn per socket; a second `say` is refused, not queued.
+`/ws/agent` takes `{"type": "say", "text": ...}` and streams the console's events back (text, tool_use, tool_result, interrupt, done, error). The agent holds no robot of its own: `fleet` lists the peers, `spawn_robot` starts a registry robot in simulation as a new peer, and each peer is a tool named after it. Its `emergency_stop` shares the HTTP routes' `Safety` object, so the e-stop refuses the agent too. A motion verb on a real arm raises the real-hardware hook's interrupt (`MotionInterruptHook`, see [agents](agents.md)); the browser shows a consent card and `{"type": "resume", "id": ..., "approve": true, "always": false}` resumes the turn; `always` lasts the conversation and dies with the socket. One turn per socket; a second `say` is refused.
 
 Two switches, off by default, matter once a physical peer is reachable: `STRANDS_DASH_AGENT_PHYSICAL_MOTION=1` lets the agent's tools move metal; `STRANDS_DASH_TASK_REQUIRES_CONFIRM=1` makes a real-motion task or teleop POST carry a boolean confirmation (strings are refused). Neither touches a simulated peer; both are granted and revoked from a consent card, never from Settings.
 
 ## Logs
 
-Every log line passes `log_redaction`: tokens, cookies and credential ids are masked first.
+Every log line passes `log_redaction`: tokens, cookies and credential ids are masked.
