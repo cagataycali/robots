@@ -16,6 +16,7 @@ from strands_robots.policies import (
     list_providers,
     policy_overrides_preflight,
     preflight_policy,
+    preflight_reason,
     register_policy,
 )
 from strands_robots.policies.factory import policy_provider_error, provider_can_be_created
@@ -90,10 +91,19 @@ class TestCreatePolicy:
     ],
 )
 def test_a_non_string_provider_is_a_type_error_naming_the_parameter(provider, points_at_policy_object):
-    """Every non-string is refused by name, not as a raw .strip()/unhashable error."""
-    with pytest.raises(TypeError, match=r"^provider must be a string, got ") as raised:
-        create_policy(provider)
-    assert ("policy_object=" in str(raised.value)) is points_at_policy_object
+    """Every non-string is refused by name, not as a raw .strip()/unhashable error.
+
+    The preflight helpers refuse it the same way rather than answering "no hook".
+    """
+    for call in (
+        lambda: create_policy(provider),
+        lambda: preflight_policy(provider, {"j1"}),
+        lambda: policy_overrides_preflight(provider),
+        lambda: preflight_reason(provider, lambda: {"j1"}),
+    ):
+        with pytest.raises(TypeError, match=r"^provider must be a string, got ") as raised:
+            call()
+        assert ("policy_object=" in str(raised.value)) is points_at_policy_object
     assert provider_can_be_created(provider) is False
 
 
