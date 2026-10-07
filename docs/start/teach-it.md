@@ -22,7 +22,7 @@ At the end of this rung a checkpoint trained on episodes you recorded runs on th
 
 ## 4. Train
 
-[Training](../learn/training/index.md), then [LeRobot](../learn/training/lerobot.md). `create_trainer("lerobot_local", ...)` with a `TrainSpec` naming the dataset, the base checkpoint and the run size; `validate()` refuses a spec it will not run before anything is built. A laptop trains a small ACT in an evening; a GPU host or the SageMaker trainer runs the same spec faster.
+[Training](../learn/training/index.md), then [LeRobot](../learn/training/lerobot.md). `create_trainer("lerobot_local", ...)` with a `TrainSpec` naming the dataset, the base checkpoint and the run size; `validate()` refuses a bad spec before anything is built. A laptop trains a small ACT in an evening; a GPU host or SageMaker runs it faster.
 
 ## 5. Deploy and measure
 
