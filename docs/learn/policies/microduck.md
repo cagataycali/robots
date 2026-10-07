@@ -14,7 +14,7 @@ pip install 'strands-robots[microduck]'    # onnxruntime + huggingface_hub; CPU 
 
 The Microduck is Pollen Robotics' open 14-DOF biped. Its skills ship as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
 
-The weight file is the skill: one provider, `microduck`, runs whichever export `onnx_path` names. A bare filename such as `alpha_walking.onnx` is fetched from `pollen-robotics/microduck-policies` on first use when it is not in the working directory.
+The weight file is the skill: provider `microduck` runs whichever export `onnx_path` names. A bare filename like `alpha_walking.onnx` missing from the working directory is fetched from `pollen-robotics/microduck-policies` on first use.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
