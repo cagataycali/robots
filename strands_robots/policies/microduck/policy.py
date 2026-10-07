@@ -1,11 +1,15 @@
 """Native provider for the Pollen Microduck 14-DOF locomotion policies.
 
-The Microduck (Pollen Robotics' open 14-DOF biped) ships a family of ONNX
-policies - ``alpha_walking``, ``alpha_stand``, ``alpha_sitstand``, ``roulade``,
-``ball_kick_*``, ``roller*``, ``alpha_ground_pick`` - each an actor with the
-input normaliser fused into the graph. :class:`MicroduckPolicy` adapts one such
-export to the :class:`~strands_robots.policies.base.Policy` interface so it runs
+The Microduck is Pollen Robotics' open 14-DOF biped. Its skills ship as a family
+of ONNX policies (``velstand``, ``alpha_walking``, ``alpha_stand``,
+``alpha_sitstand``, ``roulade``, ``ball_kick_*``, ``roller*``,
+``alpha_ground_pick``), each an actor with the input normaliser fused into the
+graph. :class:`MicroduckPolicy` adapts one such export to the
+:class:`~strands_robots.policies.base.Policy` interface so it runs
 through the standard ``Robot(...).run_policy`` seam in MuJoCo or on hardware.
+``velstand.onnx`` is the Pollen-manifest-declared default walk policy since the
+v5 weights release; the pre-v5 ``alpha_walking`` / ``alpha_stand`` split is kept
+on the Hub for reproducibility.
 
 Two things make this provider almost configuration-free:
 

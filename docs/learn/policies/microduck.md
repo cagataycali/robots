@@ -12,15 +12,16 @@ pip install 'strands-robots[microduck]'    # onnxruntime + huggingface_hub; CPU 
 
 ## What it is
 
-The Microduck, Pollen Robotics' open 14-DOF biped, ships its skills as ONNX actors (`alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
+The Microduck, Pollen Robotics' open 14-DOF biped, ships its skills as ONNX actors (`velstand`, `alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `ball_kick_*`, `roller*`, `alpha_ground_pick`) with the input normaliser fused into the graph. `MicroduckPolicy` adapts one export to the `Policy` contract: the ONNX metadata carries `joint_names`, `default_joint_pos`, `action_scale` and `command_names`, so pointing the policy at a different file reconfigures it. The observation is fed raw, never re-normalised, and the decode is `motor_target = DEFAULT_POSE + action * action_scale`. The raw action feeds the next tick's `last_action` block, matching Pollen's reference deployment. `requires_images` is `False`.
 
-The weight file is the skill: provider `microduck` runs whichever export `onnx_path` names. A bare name like `alpha_walking.onnx` not in the working directory is fetched from `pollen-robotics/microduck-policies`.
+The weight file is the skill: provider `microduck` runs whichever export `onnx_path` names. A bare name like `velstand.onnx` not in the working directory is fetched from `pollen-robotics/microduck-policies`. The Hub's own `manifest.json` names `velstand.onnx` the default walking policy since the v5 weights release ("walking gait that also stands still at zero command; no separate standing network"); `alpha_walking.onnx` and `alpha_stand.onnx` are the pre-v5 split that remains shipped for reproducibility.
 
 ```python title="sketch"
 from strands_robots.policies import create_policy
 
-walk = create_policy("microduck", onnx_path="alpha_walking.onnx", command=[0.15, 0.0, 0.0])
-stand = create_policy("microduck", onnx_path="alpha_stand.onnx")
+walk = create_policy("microduck", onnx_path="velstand.onnx", command=[0.15, 0.0, 0.0])  # the v5+ default
+walk_legacy = create_policy("microduck", onnx_path="alpha_walking.onnx", command=[0.15, 0.0, 0.0])
+stand_legacy = create_policy("microduck", onnx_path="alpha_stand.onnx")
 ```
 
 ## Constructor keywords
@@ -64,7 +65,7 @@ A weight and its training scene are one pair. `Robot("microduck")` resolves flat
 
 | skill | scene | the scene adds |
 |---|---|---|
-| `alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `alpha_ground_pick` | `scene.xml` (the declared asset) | nothing |
+| `velstand`, `alpha_walking`, `alpha_stand`, `alpha_sitstand`, `roulade`, `alpha_ground_pick` | `scene.xml` (the declared asset) | nothing |
 | `roller`, `roller_crouch` | `scene_rollers.xml` | four passive ankle wheels |
 | `ball_kick_left`, `ball_kick_right` | `scene_ball.xml` | a 70 mm ball in front of the duck |
 
