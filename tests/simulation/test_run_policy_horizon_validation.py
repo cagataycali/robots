@@ -459,13 +459,13 @@ class TestRunMultiPolicyHorizonGuards:
 
     @pytest.mark.parametrize("bad", [0, -1.0, float("nan"), "2.0"])
     def test_bad_duration_errors(self, sim, policies, bad):
-        text = _err_text(sim.run_multi_policy(policies, duration=bad))
+        text = _err_text(sim.run_multi_policy(policies, duration=bad, fast_mode=True))
         assert "run_multi_policy: duration must be a positive finite number" in text
 
     def test_non_positive_control_frequency_errors_on_duration_path(self, sim, policies):
         # Pre-fix the frequency was only checked alongside n_steps, so the
         # duration path reached 1 / control_frequency with a zero divisor.
-        text = _err_text(sim.run_multi_policy(policies, duration=0.2, control_frequency=0))
+        text = _err_text(sim.run_multi_policy(policies, duration=0.2, control_frequency=0, fast_mode=True))
         assert "run_multi_policy: control_frequency must be a positive finite number" in text
 
 
@@ -516,13 +516,15 @@ class TestRunMultiPolicyActionHorizonGuards:
 
     @pytest.mark.parametrize("bad", [0, -1, -8, 2.7, "4", None, float("nan")])
     def test_rejects_horizon_it_cannot_honor(self, two_robot_sim, policies, bad):
-        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon=bad))
+        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon=bad, fast_mode=True))
         assert "run_multi_policy: action_horizon must be a positive integer" in text
         text.encode("ascii")  # no non-ASCII leaks into the error path
 
     @pytest.mark.parametrize("bad", [0, -3, 2.9, "x"])
     def test_rejects_per_robot_horizon_it_cannot_honor(self, two_robot_sim, policies, bad):
-        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm1": bad}))
+        text = _err_text(
+            two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm1": bad}, fast_mode=True)
+        )
         # The message names the offending ENTRY, not just the parameter.
         assert "run_multi_policy: action_horizon['arm1'] must be a positive integer" in text
 
@@ -532,18 +534,20 @@ class TestRunMultiPolicyActionHorizonGuards:
         # clamped to 1 and reported success, i.e. it ran THIS cadence while the
         # caller had asked for something else entirely.
         coarse = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
-        assert two_robot_sim.run_multi_policy(coarse, n_steps=8, action_horizon=4)["status"] == "success"
+        assert (
+            two_robot_sim.run_multi_policy(coarse, n_steps=8, action_horizon=4, fast_mode=True)["status"] == "success"
+        )
         assert [p.calls for p in coarse.values()] == [2, 2]
 
         fine = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
-        assert two_robot_sim.run_multi_policy(fine, n_steps=8, action_horizon=1)["status"] == "success"
+        assert two_robot_sim.run_multi_policy(fine, n_steps=8, action_horizon=1, fast_mode=True)["status"] == "success"
         assert [p.calls for p in fine.values()] == [8, 8]
 
     def test_per_robot_mapping_leaves_omitted_robots_on_the_default(self, two_robot_sim):
         # A partial mapping is an override layer: arm1 re-queries every 4 steps,
         # arm2 keeps the default horizon of 8 and is queried once for 8 steps.
         pols = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
-        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={"arm1": 4})
+        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={"arm1": 4}, fast_mode=True)
         assert result["status"] == "success", result
         assert pols["arm1"].calls == 2
         assert pols["arm2"].calls == 1
@@ -552,7 +556,7 @@ class TestRunMultiPolicyActionHorizonGuards:
         # {} expresses "no per-robot override", which the loop CAN honor - it is
         # identical to omitting the argument, so it is not a caller error.
         pols = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
-        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={})
+        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={}, fast_mode=True)
         assert result["status"] == "success", result
         assert [p.calls for p in pols.values()] == [1, 1]
 
@@ -574,14 +578,18 @@ class TestRunMultiPolicyPerRobotMappingKeys:
         return {"arm1": MockPolicy(), "arm2": MockPolicy()}
 
     def test_unknown_instruction_key_rejected(self, two_robot_sim, policies):
-        text = _err_text(two_robot_sim.run_multi_policy(policies, instructions={"arm11": "pick cube"}, n_steps=4))
+        text = _err_text(
+            two_robot_sim.run_multi_policy(policies, instructions={"arm11": "pick cube"}, n_steps=4, fast_mode=True)
+        )
         assert "run_multi_policy: instructions names a robot not driven by this call" in text
         assert "arm11" in text
         assert "Did you mean: arm1" in text
         assert "['arm1', 'arm2']" in text
 
     def test_unknown_action_horizon_key_rejected(self, two_robot_sim, policies):
-        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm3": 4}))
+        text = _err_text(
+            two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm3": 4}, fast_mode=True)
+        )
         assert "run_multi_policy: action_horizon names a robot not driven by this call" in text
         assert "arm3" in text
 
@@ -591,14 +599,18 @@ class TestRunMultiPolicyPerRobotMappingKeys:
         from strands_robots.policies import MockPolicy
 
         text = _err_text(
-            two_robot_sim.run_multi_policy({"arm1": MockPolicy()}, instructions={"arm2": "hold"}, n_steps=4)
+            two_robot_sim.run_multi_policy(
+                {"arm1": MockPolicy()}, instructions={"arm2": "hold"}, n_steps=4, fast_mode=True
+            )
         )
         assert "instructions names a robot not driven by this call" in text
         assert "['arm1']" in text
 
     def test_non_mapping_instructions_rejected(self, two_robot_sim, policies):
         # A list reached mapping.get() and escaped as a bare AttributeError.
-        text = _err_text(two_robot_sim.run_multi_policy(policies, instructions=["pick", "hold"], n_steps=4))
+        text = _err_text(
+            two_robot_sim.run_multi_policy(policies, instructions=["pick", "hold"], n_steps=4, fast_mode=True)
+        )
         assert "run_multi_policy: 'instructions' must be a string" in text
         assert "list" in text
 
@@ -608,5 +620,6 @@ class TestRunMultiPolicyPerRobotMappingKeys:
             instructions={"arm1": "pick cube", "arm2": "hold tray"},
             n_steps=4,
             action_horizon={"arm1": 2, "arm2": 4},
+            fast_mode=True,
         )
         assert result["status"] == "success", result

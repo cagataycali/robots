@@ -4400,7 +4400,7 @@ class MuJoCoSimEngine(
         base["methods"]["run_multi_policy"] = (
             "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
             "control_frequency=None (the open recording's fps, else 50.0), action_horizon=8 | dict, n_steps=None, "
-            "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
+            "max_steps=None, fast_mode=False) -> dict  # drive MULTIPLE robots, each with its own "
             "Policy, in one synchronized loop that records ALL robots into ONE "
             "merged frame per timestep (prefixed state/action, e.g. "
             "'alice__shoulder_pan'); the concurrent multi-robot sibling of "
@@ -7686,6 +7686,8 @@ class MuJoCoSimEngine(
         action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        *,
+        fast_mode: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots with their own policies in a SINGLE
         synchronized control loop, recording ALL robots into ONE merged frame
@@ -7753,6 +7755,11 @@ class MuJoCoSimEngine(
                 duration, which truncates at any rate the count does not
                 divide evenly (``29`` at 50 Hz, ``1`` at 49 Hz).
             max_steps: Legacy alias for ``n_steps``.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. When False
+                (default) the loop is paced on a deadline at
+                ``control_frequency``. Must be a boolean: a value of any other
+                type is refused rather than read by truthiness.
 
         Returns:
             Standard status dict with per-robot step counts.
@@ -7765,6 +7772,8 @@ class MuJoCoSimEngine(
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._validate_multi_policies(policies, "run_multi_policy"):
+            return err
+        if err := self._validate_posture_flags("run_multi_policy", fast_mode=fast_mode):
             return err
 
         # Validate every robot exists.
@@ -7903,8 +7912,8 @@ class MuJoCoSimEngine(
         # seconds. Missed deadlines are dropped rather than chased, so a slow
         # step does not fire a burst of back-to-back actions at the robots.
         # ``_validate_positive_frequency`` above has already refused a
-        # non-positive rate, so the period is always usable and the pace is
-        # unconditional. Acquired with ``with``: the ticker owns a selector and a
+        # non-positive rate, so the period is always usable; ``fast_mode`` skips
+        # the pace, as it does for ``run_policy``. Acquired on a stack: the ticker owns a selector and a
         # socketpair, so releasing it is the language's job rather than this
         # loop's to remember. Every paced loop in the package is held to that, so
         # constructing a bare ``Ticker(...)`` here is a suite failure rather than
@@ -7912,7 +7921,8 @@ class MuJoCoSimEngine(
         try:
             from strands_robots._pacing import Ticker
 
-            with Ticker(1.0 / control_frequency) as ticker:
+            with contextlib.ExitStack() as pacing:
+                ticker = None if fast_mode else pacing.enter_context(Ticker(1.0 / control_frequency))
                 while step_count < total_steps:
                     # --- 1. Observe every robot + render cameras ONCE (under lock).
                     # get_observation renders ALL cameras, so we only need to fetch
@@ -8027,7 +8037,8 @@ class MuJoCoSimEngine(
                     for rname in policies:
                         self._world.robots[rname].policy_steps = step_count
 
-                    ticker.wait()
+                    if ticker is not None:
+                        ticker.wait()
 
             completed_cleanly = diverged is None
         except CooperativeStop:

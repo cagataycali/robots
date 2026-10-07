@@ -109,10 +109,7 @@ class TestRunMultiPolicyKeying:
         sim.add_robot("so101")
         pols = {"xarm7": MockPolicy(), "so101": MockPolicy()}
         result = sim.run_multi_policy(
-            policies=pols,
-            instructions="move",
-            n_steps=10,
-            control_frequency=50.0,
+            policies=pols, instructions="move", n_steps=10, control_frequency=50.0, fast_mode=True
         )
         assert result["status"] == "success", result
         # Each policy was told its robot's actuator short-names, NOT the joints.

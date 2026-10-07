@@ -63,7 +63,8 @@ def register_policy(
         policy = create_policy("my_provider", ...)
 
     Args:
-        name: Provider name :func:`create_policy` will accept.
+        name: Provider name :func:`create_policy` will accept. Surrounding
+            whitespace is stripped before it is stored, as for aliases.
         loader: Zero-argument callable returning the :class:`Policy` subclass.
         aliases: Extra spellings that resolve to ``name``.
         overwrite: Allow ``name`` or an alias to reuse a spelling a built-in
@@ -89,6 +90,7 @@ def register_policy(
             raise TypeError(
                 f"register_policy(): {param} must be a non-empty str, got {type(spelling).__name__}: {spelling!r}."
             )
+    name, aliases = name.strip(), [alias.strip() for alias in aliases or []]
     if not overwrite:
         builtin_aliases = list_policy_aliases()
         builtin_names = set(list_policy_providers())
@@ -96,7 +98,7 @@ def register_policy(
             f"'{spelling}' is the built-in provider"
             if spelling in builtin_names
             else f"'{spelling}' is an alias of the built-in provider '{builtin_aliases[spelling]}'"
-            for spelling in dict.fromkeys([name, *(aliases or [])])
+            for spelling in dict.fromkeys([name, *aliases])
             if spelling in builtin_names or spelling in builtin_aliases
         ]
         if taken:
@@ -105,9 +107,8 @@ def register_policy(
                 "create_policy(); pick another name, or pass overwrite=True to shadow it."
             )
     _runtime_registry[name] = loader
-    if aliases:
-        for alias in aliases:
-            _runtime_aliases[alias] = name
+    for alias in aliases:
+        _runtime_aliases[alias] = name
 
 
 def list_providers() -> list[str]:

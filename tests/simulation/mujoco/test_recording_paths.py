@@ -301,7 +301,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
 
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
     r = sim.run_multi_policy(
-        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
+        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0, fast_mode=True
     )
     assert r["status"] == "success", r
     assert tool_json(r)["steps"] > 0
@@ -361,7 +361,7 @@ def test_run_multi_policy_renders_each_camera_once_per_recorded_step(sim_with_tw
     assert r["status"] == "success", r
     calls.clear()
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
-    r = sim.run_multi_policy(policies=pols, n_steps=3, control_frequency=20.0)
+    r = sim.run_multi_policy(policies=pols, n_steps=3, control_frequency=20.0, fast_mode=True)
     assert r["status"] == "success", r
     assert len(calls) == 3 * one_observation
     sim.stop_recording()
@@ -416,7 +416,7 @@ def test_multi_robot_recording_action_columns_keyed_by_actuators(sim_with_two_ro
 
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
     r = sim.run_multi_policy(
-        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
+        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0, fast_mode=True
     )
     assert r["status"] == "success", r
     assert tool_json(r)["steps"] > 0
@@ -441,8 +441,8 @@ def test_run_multi_policy_validates_robots(sim_with_two_robots):
     from strands_robots.policies import create_policy
 
     sim = sim_with_two_robots
-    assert sim.run_multi_policy(policies={})["status"] == "error"
-    r = sim.run_multi_policy(policies={"ghost": create_policy("mock")}, duration=0.1)
+    assert sim.run_multi_policy(policies={}, fast_mode=True)["status"] == "error"
+    r = sim.run_multi_policy(policies={"ghost": create_policy("mock")}, duration=0.1, fast_mode=True)
     assert r["status"] == "error"
     assert "not found" in r["content"][0]["text"].lower()
 
@@ -489,7 +489,9 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     r = sim.start_recording(repo_id="local/hz", fps=20, root=str(tmp_path / "hz"), overwrite=True, cameras=[])
     assert r["status"] == "success", r
     pa, pb = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
-    r = sim.run_multi_policy(policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=20.0, action_horizon=10)
+    r = sim.run_multi_policy(
+        policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=20.0, action_horizon=10, fast_mode=True
+    )
     assert r["status"] == "success", r
     assert pa.calls == 2, f"expected 2 inference calls (20 steps / horizon 10), got {pa.calls}"
     assert pb.calls == 2, f"expected 2, got {pb.calls}"
@@ -504,6 +506,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
         n_steps=20,
         control_frequency=20.0,
         action_horizon={"alpha": 1, "beta": 10},
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     assert pa2.calls == 20, f"alpha horizon=1 → every step, expected 20, got {pa2.calls}"
@@ -557,6 +560,7 @@ def test_run_multi_policy_raises_on_empty_action_chunk(sim_with_two_robots, tmp_
             policies={"alpha": _EmptyChunkPolicy(), "beta": _EmptyChunkPolicy()},
             n_steps=5,
             control_frequency=20.0,
+            fast_mode=True,
         )
     sim.stop_recording()
 
@@ -613,6 +617,7 @@ def test_run_multi_policy_discards_partial_episode_on_empty_chunk(sim_with_two_r
             n_steps=30,
             control_frequency=20.0,
             action_horizon=1,
+            fast_mode=True,
         )
 
     recorder = sim._world._backend_state.get("dataset_recorder")
@@ -1191,6 +1196,7 @@ def test_run_multi_policy_single_robot_records_unnamespaced_columns(tmp_path):
             instructions="wave",
             duration=0.5,
             control_frequency=20.0,
+            fast_mode=True,
         )
         assert r["status"] == "success", r
         assert tool_json(r)["steps"] > 0
