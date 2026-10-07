@@ -442,6 +442,16 @@ INSECURE_ACK_ENV = "STRANDS_MESH_I_KNOW_THIS_IS_INSECURE"
 #: read as a decision about a physical arm.
 REAL_SPAWN_ACK_ENV = "STRANDS_DASH_REAL_SPAWN_WITHOUT_MESH_AUTH"
 
+#: The sentence a real spawn or a real-mode deploy snippet answers when the mesh auth resolver
+#: rejects the dashboard's posture. Fixed on purpose: it names the knob and the values it accepts,
+#: never the rejected environment value or the resolver's exception text, which the dashboard log
+#: carries instead (see :func:`real_spawn_posture_refusal`).
+POSTURE_UNSETTLED_REFUSAL = (
+    "refused: a real arm cannot start until the mesh auth mode is settled. The dashboard's "
+    "STRANDS_MESH_AUTH_MODE must be mtls or none (none also needs the mesh's own acknowledgement); "
+    "the dashboard log names what the resolver rejected. Nothing was started."
+)
+
 _TRUTHY = ("1", "true", "yes")
 
 #: What every child gets when the dashboard did not say otherwise. Nothing about the mesh posture
@@ -482,7 +492,11 @@ def real_spawn_posture_refusal(env: Mapping[str, str] | None = None) -> str | No
     :data:`REAL_SPAWN_ACK_ENV` themselves: the mesh's generic acknowledgement
     is satisfied by ``LOCAL_DEV`` on its own, so it cannot tell a decision about
     physical hardware from a lab default. A value the resolver rejects (a
-    misspelt mode) refuses too, quoting the resolver, rather than guessing.
+    misspelt mode, or ``none`` without its second factor) refuses too, rather
+    than guessing: the refusal names the knob and the two values it accepts,
+    and the resolver's own sentence goes to this module's log at WARNING, so
+    the operator reads the cause in the dashboard log while the client never
+    sees the raw environment value (CodeQL py/stack-trace-exposure).
     """
     env = os.environ if env is None else env
     if str(env.get(REAL_SPAWN_ACK_ENV, "")).strip().lower() in _TRUTHY:
@@ -493,7 +507,8 @@ def real_spawn_posture_refusal(env: Mapping[str, str] | None = None) -> str | No
         with _environment(env):
             mode = resolve_auth_mode()
     except ValueError as exc:
-        return f"refused: a real arm cannot start until the mesh auth mode is settled ({exc}). Nothing was started."
+        logger.warning("real spawn refused: the mesh auth resolver rejected the dashboard's posture: %s", exc)
+        return POSTURE_UNSETTLED_REFUSAL
     if mode == "mtls":
         return None
     return (
