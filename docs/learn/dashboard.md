@@ -27,11 +27,11 @@ The process joins the Zenoh mesh as a robot-less gateway, under the same posture
 | Agent | a Strands Agent whose tools are the fleet's peers; anything that moves a real robot pauses on a consent card; a microphone opens voice |
 | Settings | agent model and prompt, mesh endpoints, voice provider, editable `.env` keys (a closed set; gates read-only), static token shown as set / unset |
 
-{{shot:fleet|Fleet: a simulated so101, cameras and joints}}
+{{shot:fleet|Fleet: a simulated so101, cameras, joints}}
 
-{{shot:devices|Devices: managed child, spawn form, local cameras}}
+{{shot:devices|Devices: managed child, spawn form, cameras}}
 
-{{shot:agent|Agent: the fleet agent's dock}}
+{{shot:agent|Agent: the fleet dock}}
 
 {{shot:settings|Settings: the connection tab}}
 
