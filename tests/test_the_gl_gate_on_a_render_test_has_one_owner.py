@@ -40,7 +40,7 @@ import sys
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Names that answer "can this host render offscreen". A ``skipif`` condition
 #: mentioning one of these is a GL gate whichever spelling it uses.
@@ -62,7 +62,7 @@ def _tests_root() -> pathlib.Path:
 def gl_gating_markers(tree: ast.AST) -> list[int]:
     """Line numbers of every ``pytest.mark.skipif`` built from a GL probe."""
     lines = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr != "skipif":

@@ -48,7 +48,7 @@ from typing import NamedTuple
 
 import pytest
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -117,7 +117,7 @@ def parameter_deletes(source: str, path: str) -> list[ParameterDelete]:
     """
     tree = parse_source(source)
     found: list[ParameterDelete] = []
-    for function in ast.walk(tree):
+    for function in walk_tree(tree):
         if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         params = _parameter_names(function)

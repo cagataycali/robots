@@ -78,7 +78,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _TESTS_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _TESTS_ROOT.parent
@@ -785,7 +785,7 @@ def _root_symbols_that_resolve_to_nothing(module_path: Path) -> dict[str, str]:
     """
     tree = parse_file(module_path)
     unresolved: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ImportFrom) or not node.module or node.level:
             continue
         if node.module != _cwtg.PACKAGE and not node.module.startswith(f"{_cwtg.PACKAGE}."):
@@ -795,7 +795,7 @@ def _root_symbols_that_resolve_to_nothing(module_path: Path) -> dict[str, str]:
             if _cwtg.module_file(dotted, _REPO_ROOT) is None:
                 unresolved[alias.asname or alias.name] = dotted
     handed: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
         if node.func.attr not in _cwtg.MODULE_FILE_FUNCS or not node.args:

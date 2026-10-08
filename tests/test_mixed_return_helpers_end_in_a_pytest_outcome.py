@@ -50,7 +50,7 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -167,7 +167,7 @@ def _mixed_return_helpers(path: Path) -> list[tuple[_MixedReturnHelper, tuple[st
     tree = parse_file(path)
     aliases = _imported_callees(tree)
     found: list[tuple[_MixedReturnHelper, tuple[str, str] | None]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         tails = _call_tails(node.body)

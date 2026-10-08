@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PKG_ROOT = Path(strands_robots.__file__).resolve().parent
 
@@ -85,7 +85,7 @@ def _regex_literals() -> list[tuple[Path, int, str]]:
         if "__pycache__" in path.parts:
             continue
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)

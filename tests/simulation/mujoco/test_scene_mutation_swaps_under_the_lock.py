@@ -41,7 +41,7 @@ import pytest
 
 import strands_robots.simulation.mujoco as mujoco_pkg
 from strands_robots.simulation import create_simulation
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.simulation.mujoco._contended_lock import ContendedLock
 
 # Upper bound on the reader's hold. It is reached only when the verb neither asks
@@ -230,7 +230,7 @@ def test_every_call_that_swaps_the_live_model_holds_the_lock():
     unlocked = []
     for path in sorted(Path(mujoco_pkg.__file__).parent.glob("*.py")):
         tree = parse_file(path)
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             # Skip the swappers' own definitions, which live in scene_ops and

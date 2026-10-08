@@ -56,7 +56,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco import simulation as simulation_mod  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.simulation.mujoco._contended_lock import ContendedLock  # noqa: E402
 
 # An upper bound only: the wait ends as soon as the reader asks for the lock
@@ -216,7 +216,7 @@ def _mjdata_touches() -> dict[str, list[tuple[int, str, bool]]]:
     out: dict[str, list[tuple[int, str, bool]]] = {}
     for path in sorted(package.rglob("*.py")):
         tree = parse_file(path)
-        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        for cls in (n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)):
             for fn in (m for m in cls.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)):
                 if fn.name.startswith("_"):
                     continue

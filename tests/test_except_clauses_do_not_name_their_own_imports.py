@@ -55,7 +55,7 @@ from typing import Any
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: The shipped package. Reached through the imported module so a layout change
 #: cannot silently narrow the scan to nothing.
@@ -107,7 +107,7 @@ def unevaluatable_handlers(tree: ast.AST) -> list[tuple[int, str, int]]:
         ``(handler_line, name, import_line)`` per violation.
     """
     found: list[tuple[int, str, int]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Try):
             continue
         imported = _names_bound_by_imports(node.body)
@@ -121,7 +121,7 @@ def unevaluatable_handlers(tree: ast.AST) -> list[tuple[int, str, int]]:
 
 def _guarded_import_count(tree: ast.AST) -> int:
     """Number of ``try`` statements in *tree* whose body imports something."""
-    return sum(1 for node in ast.walk(tree) if isinstance(node, ast.Try) and bool(_names_bound_by_imports(node.body)))
+    return sum(1 for node in walk_tree(tree) if isinstance(node, ast.Try) and bool(_names_bound_by_imports(node.body)))
 
 
 class TestTheRuleHoldsAcrossThePackage:

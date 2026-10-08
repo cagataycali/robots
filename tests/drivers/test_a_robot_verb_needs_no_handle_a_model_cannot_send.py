@@ -40,7 +40,7 @@ import strands_robots
 import strands_robots.tools
 from strands_robots.drivers.base import declared_verbs
 from strands_robots.drivers.earthrover import EarthRoverDriver
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_ROOT = pathlib.Path(strands_robots.__file__).resolve().parent
 
@@ -112,7 +112,7 @@ def _scan() -> tuple[int, dict[str, int]]:
     handle_taking: dict[str, int] = {}
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or not _is_agent_tool(node):
                 continue
             total += 1

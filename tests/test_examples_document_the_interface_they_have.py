@@ -92,7 +92,7 @@ import pytest
 
 from strands_robots.drivers.unitree._common import UNITREE_SDK_INSTALL, sdk_missing
 from strands_robots.training.lerobot import _LEROBOT_CALL_TIME_PACKAGES
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -492,7 +492,7 @@ def _goal_keys_policies_read() -> frozenset[str]:
     keys: set[str] = set()
     for path in sorted((_REPO_ROOT / "strands_robots" / "policies").rglob("*.py")):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             receiver = node.func.value

@@ -45,7 +45,7 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_count_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Values no integer failure counter can be compared against. ``None`` is
 # excluded deliberately: it is this parameter's documented "use the runner's own
@@ -370,7 +370,7 @@ def _public_surfaces() -> list[tuple[str, str, ast.AST]]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        for cls in [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]:
             if cls.name.startswith("_"):
                 continue
             for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:

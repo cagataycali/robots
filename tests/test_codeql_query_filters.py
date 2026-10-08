@@ -43,7 +43,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
@@ -219,7 +219,7 @@ class _Handler(NamedTuple):
 def _owning_definition(tree: ast.AST, lineno: int) -> str:
     """Name of the innermost def/class containing ``lineno``."""
     best: ast.AST | None = None
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
             end = node.end_lineno or node.lineno
             if node.lineno <= lineno <= end and (best is None or node.lineno > best.lineno):  # type: ignore[attr-defined]
@@ -245,7 +245,7 @@ def _base_exception_handlers() -> tuple[_Handler, ...]:
                 parsed = parse_file(path)
             except (OSError, SyntaxError):  # pragma: no cover - unreadable source
                 continue
-            for node in ast.walk(parsed):
+            for node in walk_tree(parsed):
                 if not isinstance(node, ast.ExceptHandler) or node.type is None:
                     continue
                 named = {n.id for n in ast.walk(node.type) if isinstance(n, ast.Name)}

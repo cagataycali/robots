@@ -80,7 +80,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 import strands_robots
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
@@ -199,7 +199,7 @@ def _imported_websockets_names(source: str) -> set[tuple[str, str]]:
     # `import websockets.sync.client as _wsc`.
     bound: dict[str, str] = {}
 
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not _is_dep(alias.name):
@@ -217,8 +217,8 @@ def _imported_websockets_names(source: str) -> set[tuple[str, str]]:
                 found.add((module, alias.name))
 
     # `a.b.c` is not maximal if it is the receiver of another attribute access.
-    receivers = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-    for node in ast.walk(tree):
+    receivers = {id(n.value) for n in walk_tree(tree) if isinstance(n, ast.Attribute)}
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Attribute) or id(node) in receivers:
             continue
         parts: list[str] = []

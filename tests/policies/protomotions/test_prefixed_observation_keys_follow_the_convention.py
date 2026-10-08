@@ -61,7 +61,7 @@ import pytest
 import strands_robots.policies.protomotions.policy as policy_mod
 from strands_robots.policies.protomotions import ProtoMotionsPolicy
 from strands_robots.policies.protomotions.state_utils import mujoco_wxyz_to_xyzw
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 from tests.policies.protomotions.test_observation_state_reads_the_same_through_every_convention import (
     _policy,
 )
@@ -120,7 +120,7 @@ def _ladders_in_source(source: str) -> list[tuple[int, list[str], str]]:
     """
     tree = parse_source(source)
     sites: list[ast.expr] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.For):
             sites.append(node.iter)
         elif isinstance(node, ast.Call):

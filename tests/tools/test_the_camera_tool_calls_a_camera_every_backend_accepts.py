@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.tools._camera_stand_in import CONTRACTS
 
 cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
@@ -83,7 +83,7 @@ def _camera_calls() -> list[CameraCall]:
     """Every call on a camera this module builds, in source order."""
     tree = parse_file(_SOURCE)
     calls: list[CameraCall] = []
-    for scope in ast.walk(tree):
+    for scope in walk_tree(tree):
         if not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         cameras: dict[str, str] = {}
@@ -141,7 +141,7 @@ def test_the_factory_is_called_the_way_it_declares() -> None:
     signature = inspect.signature(cam_mod._create_camera)
     sites = [
         node
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_create_camera"
     ]
     assert len(sites) >= 6, [site.lineno for site in sites]

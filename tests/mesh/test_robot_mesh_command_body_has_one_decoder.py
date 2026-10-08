@@ -46,7 +46,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
@@ -265,7 +265,7 @@ class TestOneOwnerDecodesEveryCommandBody:
         owner = rmt._decoded_command_body.__name__
         offenders: list[str] = []
         found_in_owner = False
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             for call in ast.walk(node):

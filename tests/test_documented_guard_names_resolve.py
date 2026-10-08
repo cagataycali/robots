@@ -44,7 +44,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -115,7 +115,7 @@ def _defined_names() -> frozenset[str]:
             tree = parse_file(path)
         except (SyntaxError, UnicodeDecodeError):
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 names.add(node.name)
             elif isinstance(node, ast.Assign):

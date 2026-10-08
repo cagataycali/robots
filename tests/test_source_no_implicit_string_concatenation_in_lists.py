@@ -47,7 +47,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -89,7 +89,7 @@ def implicit_concatenations(source: str) -> list[tuple[int, int]]:
     tree = parse_source(source)
     starts = _string_token_starts(source)
     found: list[tuple[int, int]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.List):
             continue
         for element in node.elts:

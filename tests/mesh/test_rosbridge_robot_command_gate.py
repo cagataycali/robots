@@ -52,7 +52,7 @@ import pytest
 import strands_robots.drivers.ros as ros_pkg
 import strands_robots.rosbridge as transport_mod
 from strands_robots.drivers.ros import RosbridgeRobot
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # ``/turtle1/cmd_vel`` matches the ``/cmd_vel`` blocklist entry on the
 # final-segment rule, so every command a robot on it sends is gated - which is
@@ -392,7 +392,7 @@ def _tools_property_ast(owner: type) -> ast.Module:
 def _decorated_tools(tree: ast.Module) -> list[ast.FunctionDef]:
     return [
         node
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.FunctionDef)
         and any(isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "tool" for dec in node.decorator_list)
     ]

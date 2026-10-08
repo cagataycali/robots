@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -370,7 +370,7 @@ class TestEveryAreaThatShipsPythonIsSwept:
         """
         module = parse_file(Path(__file__))
         derivations = []
-        for node in ast.walk(module):
+        for node in walk_tree(module):
             if not isinstance(node, ast.SetComp | ast.ListComp | ast.GeneratorExp):
                 continue
             for generator in node.generators:

@@ -50,7 +50,7 @@ import ast
 import functools
 import pathlib
 
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PACKAGE = _REPO_ROOT / "strands_robots"
@@ -105,7 +105,7 @@ def _rclpy_probing_classes() -> set[str]:
     classes: dict[str, list[str]] = {}
     probing: set[str] = set()
     for tree in _package_trees():
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
             classes[node.name] = [b.id for b in node.bases if isinstance(b, ast.Name)]
@@ -139,7 +139,7 @@ def _rclpy_probing_functions() -> set[str]:
     return {
         node.name
         for tree in _package_trees()
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name != "__init__" and _probes_rclpy(node)
     }
 
@@ -177,7 +177,7 @@ def _offending_cells(surfaces: frozenset[str] | set[str], tests_root: pathlib.Pa
         if _EXPECTED_NAME not in source:
             continue
         tree = parse_source(source)
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, ast.FunctionDef) or not func.name.startswith("test_"):
                 continue
             # One pass over the cell for everything the rule reads: the names it

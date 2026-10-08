@@ -79,7 +79,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots import Simulation  # noqa: E402  - after the mujoco probe
 from strands_robots.policies import Policy  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Values no RNG can be seeded from. ``2.7`` and ``3.0`` are both refused: NumPy
 # rejects a float seed whatever its fractional part, so an integral float is not
@@ -632,7 +632,7 @@ class TestNoRolloutSurfaceCanShipWithoutTheGuard:
     def _seed_taking_methods(module_path: Path) -> dict[str, set[str]]:
         tree = parse_file(module_path)
         found: dict[str, set[str]] = {}
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
                 continue
             args = [a.arg for a in node.args.args + node.args.kwonlyargs]

@@ -47,7 +47,7 @@ import pytest
 import strands_robots.simulation as simulation_pkg
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import tcp_port_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 NAN = float("nan")
 INF = float("inf")
@@ -262,7 +262,7 @@ def _functions_taking_a_port(tree: ast.Module) -> list[ast.FunctionDef]:
     would demand a TCP domain on them.
     """
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.FunctionDef):
             continue
         args = node.args

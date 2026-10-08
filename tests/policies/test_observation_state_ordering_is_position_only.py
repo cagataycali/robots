@@ -45,7 +45,7 @@ from typing import Any
 import pytest
 
 import strands_robots.policies as policies_pkg
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _POLICIES_DIR = Path(policies_pkg.__file__).parent
 _PACKAGE_DIR = _POLICIES_DIR.parent
@@ -88,7 +88,7 @@ def _inferred_ordering_fallbacks() -> dict[str, str]:
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)):
                 continue
             if "robot_state_keys" not in ast.unparse(node.values[0]):
@@ -151,7 +151,7 @@ def _resolver_inferred_returns() -> dict[str, str]:
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             returns = [stmt for stmt in ast.walk(node) if isinstance(stmt, ast.Return) and stmt.value is not None]
@@ -210,7 +210,7 @@ def _rule_definitions() -> list[str]:
     sites: list[str] = []
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.endswith(_RULE_NAME):
                 sites.append(f"{source_file.relative_to(_PACKAGE_DIR)}:{node.lineno}")
     return sites

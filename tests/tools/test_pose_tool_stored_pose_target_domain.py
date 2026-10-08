@@ -55,7 +55,7 @@ from strands_robots.tools.pose_tool import (
     _stored_pose_target_error,
     pose_tool,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
 
@@ -342,7 +342,7 @@ class TestReachingHomeStaysOutOfScope:
         module = parse_file(Path(str(pose_tool_module.__file__)))
         assignments = [
             node
-            for node in ast.walk(module)
+            for node in walk_tree(module)
             if isinstance(node, ast.Assign)
             and any(isinstance(target, ast.Name) and target.id == "home_positions" for target in node.targets)
         ]

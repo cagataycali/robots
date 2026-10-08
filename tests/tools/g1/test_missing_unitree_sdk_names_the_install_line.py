@@ -54,7 +54,7 @@ from strands_robots.drivers.unitree._common import (
     sdk_missing,
 )
 from strands_robots.drivers.unitree._dds_engine import DDSSubscriberSet
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.drivers.test_go2_driver import _released_driver, _text, install_unitree_sdk_stub
 
 _PACKAGE = Path(_common.__file__).resolve().parents[2]
@@ -263,7 +263,7 @@ def _answering_handler(tree: ast.Module, lineno: int) -> ast.ExceptHandler | Non
     can add to it.
     """
     best: ast.Try | None = None
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Try):
             body_end = max(getattr(stmt, "end_lineno", stmt.lineno) for stmt in node.body)
             if node.lineno <= lineno <= body_end and (best is None or node.lineno > best.lineno):
@@ -323,7 +323,7 @@ def _propagating_loaders(trees: dict[Path, ast.Module]) -> set[str]:
     loaders: set[str] = set()
     for tree in trees.values():
         constants = _module_constants(tree)
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for node in ast.walk(func):
@@ -340,7 +340,7 @@ def _sites() -> list[tuple[Path, int, ast.ExceptHandler | None]]:
     found: list[tuple[Path, int, ast.ExceptHandler | None]] = []
     for path, tree in trees.items():
         constants = _module_constants(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             indirect = isinstance(node, ast.Call) and _called_name(node) in loaders
             if _imports_unitree(node, constants) or indirect:
                 found.append((path, _lineno(node), _answering_handler(tree, _lineno(node))))

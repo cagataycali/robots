@@ -31,7 +31,7 @@ import pytest
 import strands_robots.training as training_pkg
 from strands_robots.training import create_trainer, factory, list_trainers
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _TERMINAL_STATUSES = frozenset({"success", "error"})
 
@@ -75,7 +75,7 @@ def _train_statuses(cls: type) -> set[str]:
     source_file = inspect.getsourcefile(owner)
     assert source_file is not None, f"no source for {owner.__name__}"
     tree = parse_file(Path(source_file))
-    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    functions = {node.name: node for node in walk_tree(tree) if isinstance(node, ast.FunctionDef)}
 
     statuses: set[str] = set()
     seen: set[str] = set()

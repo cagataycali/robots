@@ -56,7 +56,7 @@ import pathlib
 
 import pytest
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 #: The test tree, located from this file - the rule this module states, applied
 #: to the module that states it.
@@ -112,7 +112,7 @@ def _cwd_relative_locators(source: str) -> list[str]:
     """
     tree = parse_source(source)
     bound: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         target = node.targets[0]
@@ -121,7 +121,7 @@ def _cwd_relative_locators(source: str) -> list[str]:
             bound[target.id] = literal
 
     found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr not in _FILESYSTEM_CALLS:

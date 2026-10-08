@@ -55,7 +55,7 @@ import pathlib
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: The two spellings of "this resolver tested finiteness". ``isfinite`` is the
 #: direct form; ``finite_number_error`` is the shared numeric domain, which
@@ -153,7 +153,7 @@ def _classify(paths: list[pathlib.Path], root: pathlib.Path) -> dict[str, bool]:
     for path in paths:
         tree = parse_file(path)
         name = path.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if _calls_any(node, {"float"}) and _reads_the_environment(node):

@@ -45,7 +45,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MESH = _REPO_ROOT / "strands_robots" / "mesh"
@@ -54,7 +54,7 @@ _MESH = _REPO_ROOT / "strands_robots" / "mesh"
 def _walk_except_handlers(src_path: Path) -> list[ast.ExceptHandler]:
     """Return every ``ExceptHandler`` AST node in *src_path*."""
     tree = parse_file(src_path)
-    return [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)]
+    return [n for n in walk_tree(tree) if isinstance(n, ast.ExceptHandler)]
 
 
 def test_acl_config_no_redundant_subclass_in_except() -> None:
@@ -159,7 +159,7 @@ def test_zenoh_config_resolve_tls_paths_one_symlink_check() -> None:
     src = _MESH / "_zenoh_config.py"
     tree = parse_file(src)
     target_fn = None
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_resolve_tls_paths":
             target_fn = node
             break
@@ -201,7 +201,7 @@ def test_session_default_acl_check_passes_namespace() -> None:
     src = _MESH / "session.py"
     tree = parse_file(src)
     target_fn = None
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "_build_config":
             target_fn = node
             break

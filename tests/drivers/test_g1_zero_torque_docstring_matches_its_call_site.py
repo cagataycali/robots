@@ -34,7 +34,7 @@ import re
 from pathlib import Path
 
 import strands_robots.drivers.g1 as g1_module
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Prose that claims the function the reader is looking at has no caller. Each
 # alternative is a claim about *wiring*, which the module's own call graph
@@ -62,7 +62,7 @@ def _bare_name_call_lines(tree: ast.Module, name: str) -> list[int]:
     """Lines in the module that call ``name`` by its bare name."""
     return sorted(
         node.lineno
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
     )
 

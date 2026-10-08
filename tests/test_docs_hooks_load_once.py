@@ -13,7 +13,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _TESTS = Path(__file__).resolve().parent
 _LOADER = _TESTS / "_docs_hooks.py"
@@ -25,7 +25,7 @@ def _hook_executions(source: str) -> list[int]:
         return []
     return [
         node.lineno
-        for node in ast.walk(parse_source(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Call)
         and ast.unparse(node.func).endswith("spec_from_file_location")
         and "hook" in ast.unparse(node).lower()
