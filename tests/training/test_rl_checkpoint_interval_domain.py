@@ -58,6 +58,7 @@ from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.fast_td3 import FastTd3Trainer
 from strands_robots.training.rl.ppo import PpoTrainer
+from tests._package_ast import parse_source, walk_tree
 
 # The smallest legal BaseRLAlgo, reused rather than copied: its stubbed hooks let
 # the *inherited* train loop run, which is the consumer this cadence reaches.
@@ -275,7 +276,7 @@ def _calls_the_gate(source: str) -> bool:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "_rl_checkpoint_interval_problems"
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
     )
 
 

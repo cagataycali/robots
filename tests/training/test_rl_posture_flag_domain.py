@@ -53,6 +53,7 @@ from strands_robots.training._validate import (
 from strands_robots.training.base import Trainer
 from strands_robots.training.factory import create_trainer
 from strands_robots.training.rl.base_algo import RLTrainSpec
+from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
 
 # The spellings a caller reaches for when opting out (every one truthy), two
@@ -265,7 +266,7 @@ class TestTheGateOrderAndTheListedReaders:
         source = pathlib.Path(inspect.getfile(create_trainer("fast_sac").__class__)).read_text()
         calls = [
             node.func.attr
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in ("_temperature_autotune_problems", "_temperature_learning_rate_problems")

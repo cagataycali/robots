@@ -76,6 +76,7 @@ from strands_robots.training._validate import rl_replay_problems, warmup_batch_r
 from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
 
 #: The batch size every case below pairs with, so the relation has a real operand.
@@ -262,7 +263,7 @@ class TestBothOperandsOfTheRelationShareOneDomain:
     def test_each_operand_is_asked_of_the_shared_domain(self) -> None:
         asked = {
             call.args[1].value
-            for call in ast.walk(ast.parse(self._owner_source()))
+            for call in walk_tree(parse_source(self._owner_source()))
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
             and call.func.id == "positive_count_error"
@@ -301,13 +302,13 @@ class TestOneOwnerForTheWarmupBatchRelation:
 
     @staticmethod
     def _defines_validate(source: str) -> bool:
-        return any(isinstance(n, ast.FunctionDef) and n.name == "validate" for n in ast.walk(ast.parse(source)))
+        return any(isinstance(n, ast.FunctionDef) and n.name == "validate" for n in walk_tree(parse_source(source)))
 
     @staticmethod
     def _calls_the_gate(source: str) -> bool:
         return any(
             isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_rl_warmup_batch_problems"
-            for n in ast.walk(ast.parse(source))
+            for n in walk_tree(parse_source(source))
         )
 
     def test_no_module_re_implements_the_relation(self) -> None:

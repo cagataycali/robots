@@ -345,7 +345,7 @@ class TestTheForwardingProviderIsInScopeForEveryGateItReads:
         source = pathlib.Path(inspect.getfile(Trainer)).parent.joinpath("sagemaker.py").read_text()
         calls = {
             node.func.attr
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         }
         assert gate in calls, f"sagemaker.py forwards {fields} without calling {gate}"
