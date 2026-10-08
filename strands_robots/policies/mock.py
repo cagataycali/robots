@@ -24,7 +24,9 @@ class MockPolicy(Policy):
     The constructor declares its keywords, so the factory's near-miss screen
     applies to the mock as to every other provider: ``policy_config={"amplitud":
     0.5}`` is refused with a did-you-mean instead of running on the default
-    (#4165); docs/learn/policies/index.md promises a misspelled keyword is
+    (#4165), and a bag passed whole as
+    ``create_policy("mock", policy_config={...})`` is refused naming the unpack;
+    docs/learn/policies/index.md promises a misspelled keyword is
     refused before anything runs. The ``**kwargs`` sink stays because the
     hardware drivers hand every provider the server address (``host``, and
     ``port`` when one is given) whether or not it dials one; a name that is

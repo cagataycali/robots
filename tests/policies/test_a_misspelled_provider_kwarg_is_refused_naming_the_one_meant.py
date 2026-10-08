@@ -113,6 +113,16 @@ class TestAConstructorWithAPassThrough:
         assert (policy.host, policy.port, policy.extra) == ("10.0.0.2", 6000, {})
 
 
+@pytest.mark.parametrize("provider", ["tolerant_test", "strict_test", "mock"])
+@pytest.mark.parametrize("bag", [{"hots": "10.0.0.2"}, {"host": "10.0.0.2"}])
+def test_a_policy_config_bag_is_refused_naming_the_unpack(provider: str, bag: dict) -> None:
+    # Pre-fix a sink constructor swallowed the whole bag, typo or not, and ran
+    # on its defaults under status="success".
+    with pytest.raises(TypeError) as info:
+        create_policy(provider, policy_config=bag)
+    assert f"create_policy({provider!r}, **policy_config)" in str(info.value)
+
+
 class TestAConstructorWithoutAPassThrough:
     def test_a_near_miss_gets_the_same_report_as_a_tolerant_one(self):
         with pytest.raises(TypeError) as info:
