@@ -55,9 +55,14 @@ from strands_robots.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.mujoco import rendering  # noqa: E402
 from tests._blocked_module import blocked  # noqa: E402
 
-# Short enough that a cell's failed join is not felt, long enough that the
-# capture loop reaches the wedge on a loaded box.
+# Long enough for a loop that is NOT wedged to exit on a loaded box: the cells
+# whose stop must join run on this budget.
 _TEST_JOIN_BUDGET_S = 0.5
+
+# The budget once a cell has wedged the loop. That join is waited out in full on
+# every run, and no budget can let it through - ``wedge`` returns only after the
+# thread is parked inside ``render`` - so it is kept small.
+_WEDGED_JOIN_BUDGET_S = 0.1
 
 
 def _render_result(width: int, height: int) -> dict[str, Any]:
@@ -100,6 +105,7 @@ class _WedgeableRecorder:
         self._armed = threading.Event()
         self._released = threading.Event()
         self.wedged = threading.Event()
+        self.on_wedged: Any = lambda: None
         self.sim.render = self._render  # type: ignore[assignment,method-assign]
 
     def _render(self, camera_name: str, width: int | None = None, height: int | None = None, **_kw: Any) -> dict:
@@ -130,6 +136,7 @@ class _WedgeableRecorder:
         thread = self.sim._cams_rec_state["thread"]
         self._armed.set()
         assert self.wedged.wait(timeout=30), "premise: the recorder thread reaches the blocking render"
+        self.on_wedged()
         return thread
 
     def release(self) -> None:
@@ -161,6 +168,7 @@ def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     rec = _WedgeableRecorder()
     started = rec.sim.start_cameras_recording(cameras=["cam_a"], output_dir=str(tmp_path), fps=30, name="wedge")
     assert started["status"] == "success", started
+    rec.on_wedged = lambda: monkeypatch.setattr(rendering, "_CAMS_REC_JOIN_TIMEOUT_S", _WEDGED_JOIN_BUDGET_S)
     try:
         yield rec
     finally:
@@ -202,7 +210,7 @@ class TestAStopWhoseJoinExpires:
         # pending rather than only that something went wrong.
         assert payload["buffered_frames"]["cam_a"] >= 3
         text = result["content"][0]["text"]
-        assert f"{_TEST_JOIN_BUDGET_S:.1f}s" in text, text
+        assert f"{_WEDGED_JOIN_BUDGET_S:.1f}s" in text, text
         assert "cam_a" in text
 
     def test_no_mp4_is_encoded_from_a_buffer_the_loop_is_still_appending_to(self, recorder, tmp_path) -> None:

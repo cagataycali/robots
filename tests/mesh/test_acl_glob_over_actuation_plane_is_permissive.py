@@ -208,7 +208,16 @@ class TestTheDetectorAgreesWithTheLiveMatcher:
                 "permission": "allow",
             }
         )
-        acl["policies"][0]["rules"].append("sub")
+        acl["rules"].append(
+            {
+                "id": "canary",
+                "key_exprs": ["lab/canary"],
+                "messages": ["put"],
+                "flows": ["ingress", "egress"],
+                "permission": "allow",
+            }
+        )
+        acl["policies"][0]["rules"] += ["sub", "canary"]
 
         def config(side: str) -> Any:
             cfg = zenoh.Config()
@@ -219,19 +228,33 @@ class TestTheDetectorAgreesWithTheLiveMatcher:
             cfg.insert_json5("access_control", json.dumps(acl))
             return cfg
 
+        # A put the ACL always admits brackets the one under test: its first arrival
+        # says the link and the subscription are up, and one sent after the topic
+        # arrives after it (one session, one priority), so a denied put is known to
+        # be dropped as soon as the next canary lands - no fixed sleep either way.
         got: list[str] = []
         receiver = zenoh.open(config("listen"))
         try:
             receiver.declare_subscriber("**", lambda sample: got.append(str(sample.key_expr)))
             sender = zenoh.open(config("connect"))
             try:
-                time.sleep(0.8)
+
+                def canary() -> None:
+                    seen = got.count("canary")
+                    deadline = time.monotonic() + 10.0
+                    while got.count("canary") == seen and time.monotonic() < deadline:
+                        sender.put("canary", b"{}")
+                        time.sleep(0.02)
+                    assert got.count("canary") > seen, "premise: the admitted canary put is delivered"
+
+                canary()
                 sender.put(topic, b"{}")
-                time.sleep(0.5)
+                canary()
             finally:
                 sender.close()
         finally:
             receiver.close()
 
-        assert bool(got) is delivered, got
+        topics = [key for key in got if key != "canary"]
+        assert bool(topics) is delivered, got
         assert _key_expr_reaches_actuation_plane(key_expr) is flagged
