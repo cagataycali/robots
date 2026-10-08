@@ -45,6 +45,7 @@ leaves without an edit here.
 from __future__ import annotations
 
 import ast
+import functools
 import tomllib
 from pathlib import Path
 from typing import NamedTuple
@@ -183,6 +184,7 @@ def _mixed_return_helpers(path: Path) -> list[tuple[_MixedReturnHelper, tuple[st
     return found
 
 
+@functools.cache
 def _population() -> list[tuple[_MixedReturnHelper, tuple[str, str] | None]]:
     """Every mixed-return helper ending in a call, across the trees pytest outcomes live in."""
     return [

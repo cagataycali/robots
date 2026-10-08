@@ -61,6 +61,7 @@ floor from them rather than restating a number.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import tomllib
 from pathlib import Path
@@ -234,6 +235,7 @@ def _imported_imageio_names(source: str) -> set[tuple[str, str]]:
     return found
 
 
+@functools.cache
 def _imageio_names_by_file() -> dict[tuple[str, str], list[str]]:
     """Map every imageio name the shipped sources reach for to its files.
 

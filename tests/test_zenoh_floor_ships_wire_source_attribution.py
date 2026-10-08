@@ -51,6 +51,7 @@ silently leave the floor behind.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import tomllib
 from pathlib import Path
@@ -115,6 +116,7 @@ def _required_floor() -> Version:
     return max(Version(v) for v in (*_ZENOH_ATTRIBUTE_FLOORS.values(), _SAMPLE_SOURCE_INFO_FLOOR))
 
 
+@functools.cache
 def _zenoh_attributes_reached() -> dict[str, list[str]]:
     """Map every ``zenoh.<attr>`` the shipped sources reach for to its files.
 

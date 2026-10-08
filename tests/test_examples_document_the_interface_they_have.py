@@ -82,6 +82,7 @@ differently, so a declared dependency is not read as an undeclared one.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import sys
 import tomllib
@@ -253,6 +254,7 @@ def _read_names(tree: ast.AST) -> frozenset[str]:
     )
 
 
+@functools.cache
 def _examples() -> list[tuple[Path, ast.Module]]:
     """Every example paired with its parsed module."""
     sources: list[tuple[Path, ast.Module]] = []

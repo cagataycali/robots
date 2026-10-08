@@ -44,6 +44,7 @@ simplification the instance-state grader makes for a mixin's state.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -120,6 +121,7 @@ def _readers(tree: ast.Module) -> set[str]:
     return names
 
 
+@functools.cache
 def _scan() -> tuple[dict[str, list[str]], int, int]:
     """Return (unread private name -> definition sites, definitions seen, files parsed)."""
     files = sorted(PACKAGE.rglob("*.py"))

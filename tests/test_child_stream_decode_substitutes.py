@@ -35,6 +35,7 @@ mangle a command instead of refusing to send it.
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
 import subprocess
 import sys
@@ -89,6 +90,7 @@ def _reads_a_child_stream(keywords: dict[str, str]) -> bool:
     return any(keywords.get(stream) == "subprocess.PIPE" for stream in ("stdout", "stderr"))
 
 
+@functools.cache
 def _scan() -> tuple[list[str], list[str]]:
     """(child-stream reads that decode strictly, all child-stream reads found)."""
     strict: list[str] = []

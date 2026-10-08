@@ -29,6 +29,7 @@ legitimately documents its own bus as unwired would be reported as drifting.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from pathlib import Path
 
@@ -43,6 +44,7 @@ _UNCALLED_CLAIM = re.compile(r"not yet wired|no other call site|no call sites?\b
 _G1_SOURCE = Path(g1_module.__file__).resolve()
 
 
+@functools.cache
 def _module_tree() -> ast.Module:
     return parse_file(_G1_SOURCE)
 

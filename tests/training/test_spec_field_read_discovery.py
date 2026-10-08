@@ -41,6 +41,7 @@ identifier wide as the one above, so both forms qualify, and
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import inspect
 import pathlib
@@ -214,6 +215,7 @@ def is_field_scoped_guard(source: str) -> bool:
     return _consults_the_shared_read_rule(tree) and _scans_the_backend_tree(tree) and _names_a_registered_gate(source)
 
 
+@functools.cache
 def _guard_modules() -> dict[str, Any]:
     """The field-scoped domain guards, discovered by structure not by name.
 

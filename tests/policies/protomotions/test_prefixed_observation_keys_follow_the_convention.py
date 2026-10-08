@@ -51,6 +51,7 @@ What this pins
 from __future__ import annotations
 
 import ast
+import functools
 import pathlib
 from typing import Any
 
@@ -140,6 +141,7 @@ def _ladders_in_source(source: str) -> list[tuple[int, list[str], str]]:
     return found
 
 
+@functools.cache
 def _ladders_in_package() -> list[tuple[str, int, list[str], str]]:
     """Every observation-key ladder in ``strands_robots``, as ``(path, line, keys, bare)``."""
     out: list[tuple[str, int, list[str], str]] = []
