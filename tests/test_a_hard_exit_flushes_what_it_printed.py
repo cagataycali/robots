@@ -37,7 +37,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCANNED_TREES = ("examples", "strands_robots")
@@ -47,7 +47,7 @@ def _hard_exit_sites(tree: ast.AST) -> list[ast.Call]:
     """Every ``os._exit(...)`` call in a parsed module."""
     return [
         node
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "_exit"
@@ -63,7 +63,7 @@ def _flush_lines(scope: ast.AST) -> list[int]:
     exit, and an exit is terminal: no loop carries control back above it.
     """
     lines = []
-    for node in ast.walk(scope):
+    for node in walk_tree(scope):
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr == "flush":
@@ -78,7 +78,7 @@ def _unflushed_exits(path: Path) -> list[int]:
     """Line numbers of every hard exit in ``path`` with no flush above it."""
     tree = parse_file(path)
     scopes: list[ast.AST] = [tree] + [
-        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        node for node in walk_tree(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     ]
     offenders = []
     for scope in scopes:

@@ -124,7 +124,7 @@ from strands_robots.policies.composite import CompositePolicy
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.policies.wbc.policy import WBCConfig, WBCPolicy
 from strands_robots.utils import name_list_error
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent
 
@@ -183,7 +183,7 @@ def _classify(source: str) -> dict[str, dict[str, bool]]:
     """
     out: dict[str, dict[str, bool]] = {}
     tree = parse_source(source)
-    for cls in ast.walk(tree):
+    for cls in walk_tree(tree):
         if not isinstance(cls, ast.ClassDef):
             continue
         for fn in cls.body:
@@ -297,7 +297,7 @@ def test_the_state_keys_handler_forwards_the_wire_value_verbatim() -> None:
     tree = parse_source(source)
     calls = [
         node
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "set_robot_state_keys"

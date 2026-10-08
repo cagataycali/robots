@@ -21,7 +21,7 @@ import re
 import pytest
 
 from strands_robots.mesh.iot import provision
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 def test_resolve_ca_pins_accepts_both_builtin_and_staged_pin_for_grace_period(
@@ -107,7 +107,7 @@ def _ca_pin_env_vars() -> set[str]:
     tree = parse_file(pathlib.Path(provision.__file__))
     names = {
         node.args[0].value
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call)
         and ast.unparse(node.func) in {"os.getenv", "os.environ.get"}
         and node.args

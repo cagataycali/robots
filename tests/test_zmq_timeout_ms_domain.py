@@ -45,7 +45,7 @@ import pytest
 import strands_robots
 from strands_robots.policies.moveit2.client import MoveIt2InferenceClient
 from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms, positive_whole_number_error
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 # ``pyzmq`` is imported optionally rather than through a module-level
 # ``importorskip``, so that the tests which need no socket keep running without
@@ -518,7 +518,7 @@ class TestNoRoundTripIsAssertedInsideAScheduleBoundBudget:
     def _tests_requiring_a_live_answer(cls, source: str) -> dict[str, set[str]]:
         """Map ``test name -> parametrised tables`` for every such test."""
         found: dict[str, set[str]] = {}
-        for fn in ast.walk(parse_source(source)):
+        for fn in walk_tree(parse_source(source)):
             if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("test_"):
                 continue
             if cls._asserts_a_live_answer(fn):
@@ -572,7 +572,7 @@ class TestNoRoundTripIsAssertedInsideAScheduleBoundBudget:
         """No coverage was traded away: it is still checked over the full table."""
         socket_option_test = next(
             fn
-            for fn in ast.walk(parse_source(self._source()))
+            for fn in walk_tree(parse_source(self._source()))
             if isinstance(fn, ast.FunctionDef)
             and fn.name == "test_a_usable_budget_is_stored_as_an_int_and_reaches_both_socket_options"
         )
@@ -705,7 +705,7 @@ class TestNoZmqTimeoutSurfaceDrifts:
     @classmethod
     def _sets_a_timeout(cls, node: ast.AST) -> bool:
         """Whether this subtree calls ``setsockopt(<zmq>.RCVTIMEO/SNDTIMEO, ...)``."""
-        for call in ast.walk(node):
+        for call in walk_tree(node):
             if not isinstance(call, ast.Call):
                 continue
             if not (isinstance(call.func, ast.Attribute) and call.func.attr == "setsockopt"):

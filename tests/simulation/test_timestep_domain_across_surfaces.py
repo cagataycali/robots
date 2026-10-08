@@ -102,7 +102,7 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _DEFAULT_DT = 0.002
 
@@ -296,7 +296,7 @@ def _surfaces_missing_the_shared_domain(root: pathlib.Path) -> dict[str, list[st
     for backend in ("mujoco", "newton", "isaac"):
         for module in sorted((root / backend).glob("*.py")):
             tree = parse_file(module)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.ClassDef):
                     continue
                 for member in ast.iter_child_nodes(node):

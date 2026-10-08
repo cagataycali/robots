@@ -41,7 +41,7 @@ pytest.importorskip("psutil")
 import strands_robots  # noqa: E402
 from strands_robots.tools.lerobot_train import _read_total_tasks, build_train_command  # noqa: E402
 from strands_robots.utils import validation_split_error  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Requested held-out episode count, and the dataset the request is made against.
 VAL_EPISODES = 2
@@ -147,7 +147,7 @@ class TestBothSurfacesSpendTheOneVerdict:
         callers = set()
         for module in package.rglob("*.py"):
             tree = parse_file(module)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("validation_split_error"):
                     callers.add(module.relative_to(package).as_posix())
         assert callers == {"tools/lerobot_train.py", "training/lerobot.py"}, callers

@@ -11,13 +11,16 @@ for both trees; this module keeps the tree from drifting back.
 
 from __future__ import annotations
 
+import ast
+import copy
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _TESTS = Path(__file__).resolve().parent
 
@@ -72,3 +75,26 @@ def test_a_graded_files_text_is_parsed_once_and_any_other_text_every_time() -> N
     for graded in _GRADED_FILES:
         assert parse_source(graded.read_text(encoding="utf-8")) is parse_file(graded), graded
     assert parse_source("x = 1\n") is not parse_source("x = 1\n")
+
+
+def test_a_shared_tree_is_walked_once_and_any_other_node_every_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``walk_tree`` replays a shared tree's nodes in ``ast.walk`` order, and walks anything else afresh."""
+    shared = parse_file(Path(__file__))
+    nodes = list(walk_tree(shared))
+    assert nodes == list(ast.walk(shared))
+    function = next(node for node in nodes if isinstance(node, ast.FunctionDef))
+    edited = copy.deepcopy(shared)
+    edited.body.append(ast.Pass())
+    expected = [len(list(ast.walk(function))), len(nodes) + 1]
+
+    walks: list[ast.AST] = []
+    real_walk = ast.walk
+
+    def counting_walk(node: ast.AST) -> Iterator[ast.AST]:
+        walks.append(node)
+        return real_walk(node)
+
+    monkeypatch.setattr(ast, "walk", counting_walk)
+    assert list(walk_tree(shared)) == nodes
+    assert [len(list(walk_tree(function))), len(list(walk_tree(edited)))] == expected
+    assert walks == [function, edited], "the shared tree was walked again"

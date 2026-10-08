@@ -42,7 +42,7 @@ import pytest
 from strands_robots.simulation.mujoco.simulation import Simulation
 from strands_robots.simulation.terrain import terrain_elevation, validate_difficulty
 from strands_robots.utils import positive_finite_number_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # The refusal text every backend must produce for an unusable scale. Matching on
 # it rather than on ``status == "error"`` is what distinguishes a domain refusal
@@ -318,7 +318,7 @@ class TestEveryCreateWorldRoutesThroughTheOneBinding:
     @staticmethod
     def _difficulty_create_worlds(module: ast.Module) -> list[ast.FunctionDef]:
         found = []
-        for node in ast.walk(module):
+        for node in walk_tree(module):
             if not isinstance(node, ast.FunctionDef) or node.name != "create_world":
                 continue
             args = [a.arg for a in node.args.args + node.args.kwonlyargs]

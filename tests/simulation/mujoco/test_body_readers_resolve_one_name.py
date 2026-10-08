@@ -47,7 +47,7 @@ pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.physics import PhysicsMixin  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 ARM_MJCF = """<mujoco model="arm"><compiler angle="radian"/>
  <worldbody><body name="base" pos="0 0 0.05"><geom type="box" size="0.05 0.05 0.05"/>
@@ -133,7 +133,7 @@ def _body_readers_in_source() -> dict[str, bool]:
     assert source_file is not None
     tree = parse_file(pathlib.Path(source_file))
     mixin = next(
-        node for node in ast.walk(tree) if isinstance(node, ast.ClassDef) and node.name == PhysicsMixin.__name__
+        node for node in walk_tree(tree) if isinstance(node, ast.ClassDef) and node.name == PhysicsMixin.__name__
     )
     found: dict[str, bool] = {}
     for method in [node for node in mixin.body if isinstance(node, ast.FunctionDef)]:

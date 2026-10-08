@@ -58,7 +58,7 @@ import pytest
 from strands_robots.simulation import policy_runner as policy_runner_module
 from strands_robots.simulation.observers import RunPolicyStep
 from strands_robots.simulation.policy_runner import CooperativeStop
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.simulation.test_run_policy_observer import (
     _json,
     _run,
@@ -85,7 +85,7 @@ def _module_tree() -> ast.Module:
 def _handlers_in(owner: str) -> list[ast.ExceptHandler]:
     """Every ``except`` clause owned by the named function."""
     tree = _module_tree()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == owner:
             return [h for h in ast.walk(node) if isinstance(h, ast.ExceptHandler)]
     raise AssertionError(f"no function named {owner!r} in {inspect.getfile(policy_runner_module)}")
@@ -94,7 +94,7 @@ def _handlers_in(owner: str) -> list[ast.ExceptHandler]:
 def _finally_blocks_calling(name: str) -> list[ast.Try]:
     """Every ``try`` whose ``finally`` calls the named function."""
     out = []
-    for node in ast.walk(_module_tree()):
+    for node in walk_tree(_module_tree()):
         if not (isinstance(node, ast.Try) and node.finalbody):
             continue
         for statement in node.finalbody:
@@ -159,7 +159,7 @@ class TestPremises:
         one would have fixed nothing and the report would have been about a real
         swallowed exception instead.
         """
-        blocks = [node for node in ast.walk(_module_tree()) if isinstance(node, ast.Try) and node.finalbody]
+        blocks = [node for node in walk_tree(_module_tree()) if isinstance(node, ast.Try) and node.finalbody]
         assert blocks, "no `finally` blocks found; the scan stopped reading the module"
         exits = [
             f"{type(node).__name__}@{node.lineno}"
@@ -277,7 +277,7 @@ class TestTheShapeThatKeepsBothAlertsClosed:
             "builder has to still be named rather than written inline as a closure"
         )
         offenders = []
-        for node in ast.walk(_module_tree()):
+        for node in walk_tree(_module_tree()):
             if not (isinstance(node, ast.Try) and node.finalbody):
                 continue
             offenders += [

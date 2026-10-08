@@ -8,7 +8,7 @@ each tree dozens to hundreds of times - most of the time those graders spent.
 :func:`parse_file` parses a file of the package, ``tests/`` or
 ``tests_integ/`` once per process and hands every later caller the same tree;
 :func:`parse_source` does the same for a grader that is handed the file's text
-instead of its path.
+instead of its path, and :func:`walk_tree` walks a shared tree once per process.
 
 The tree is shared, so it is read-only by contract: a grader that edits one
 (a planted negative, an ``ast.NodeTransformer``) works on
@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import functools
 import gc
+from collections.abc import Iterator
 from pathlib import Path
 
 import strands_robots
@@ -28,6 +29,11 @@ import strands_robots
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
 _TESTS_ROOT = Path(__file__).resolve().parent
 _SHARED_ROOTS = (_PACKAGE_ROOT, _TESTS_ROOT, _TESTS_ROOT.parent / "tests_integ")
+
+#: Every shared tree by ``id()``. The trees live for the rest of the process,
+#: so an id names one tree for as long as this dict can be asked.
+_SHARED_TREES: dict[int, ast.Module] = {}
+_WALKS: dict[int, tuple[ast.AST, ...]] = {}
 
 
 @functools.cache
@@ -46,6 +52,7 @@ def _trees_under(root: Path) -> dict[str, ast.Module]:
     at that point, to the permanent generation the collector never scans.
     """
     trees = {source: ast.parse(source) for source in _sources_under(root)}
+    _SHARED_TREES.update((id(tree), tree) for tree in trees.values())
     gc.collect()
     gc.freeze()
     return trees
@@ -94,3 +101,29 @@ def parse_source(source: str) -> ast.Module:
         if source in _sources_under(root):
             return _shared_tree(source, root)
     return ast.parse(source)
+
+
+def walk_tree(node: ast.AST) -> Iterator[ast.AST]:
+    """Yield what :func:`ast.walk` yields for ``node``, walking a shared tree once.
+
+    More than 200 graders walk the same shared module trees, and
+    :func:`ast.walk` is a Python generator that costs about as much as the
+    parse it walks: the test tree alone is ~3 million nodes. The nodes of a
+    tree :func:`parse_file` or :func:`parse_source` handed out are listed on
+    the first walk and replayed, in the same breadth-first order, on every
+    later one. Any other node - a
+    subtree, a ``copy.deepcopy``, a planted-negative string's tree - is walked
+    afresh, so a grader that edits its copy sees the edit.
+
+    Args:
+        node: The tree or node to walk.
+
+    Returns:
+        An iterator over ``node`` and every node below it.
+    """
+    if _SHARED_TREES.get(id(node)) is not node:
+        return ast.walk(node)
+    nodes = _WALKS.get(id(node))
+    if nodes is None:
+        nodes = _WALKS[id(node)] = tuple(ast.walk(node))
+    return iter(nodes)

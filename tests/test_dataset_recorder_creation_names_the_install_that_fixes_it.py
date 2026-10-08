@@ -30,7 +30,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from strands_robots import dataset_recorder as dr
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: A remedy naming the bare ``lerobot`` distribution, which supplies the package
 #: but not its dataset stack. The lookahead lets ``pip install 'lerobot[dataset]'``
@@ -197,7 +197,7 @@ def test_the_recorder_writes_one_lerobot_install_remedy() -> None:
     tree = parse_file(Path(dr.__file__))
     docstrings = {
         id(node.body[0].value)
-        for node in [tree, *ast.walk(tree)]
+        for node in [tree, *walk_tree(tree)]
         if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
         and node.body
         and isinstance(node.body[0], ast.Expr)
@@ -206,7 +206,7 @@ def test_the_recorder_writes_one_lerobot_install_remedy() -> None:
     }
     offenders: list[str] = []
     explained = 0
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             continue
         text = re.sub(r"\s+", " ", node.value)

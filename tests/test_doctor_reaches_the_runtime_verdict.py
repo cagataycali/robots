@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots import doctor
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 @pytest.fixture(autouse=True)
@@ -463,7 +463,7 @@ class TestTheRuntimeUsesTheSameText:
         readers: list[str] = []
         for path in sorted(package_root.rglob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.Call | ast.Subscript):
                     continue
                 target = node.args[0] if isinstance(node, ast.Call) and node.args else None
@@ -480,7 +480,7 @@ def _def_line(path: Path) -> int:
     import ast
 
     tree = parse_file(path)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "permissive_acl_acknowledged":
             return next(n.lineno for n in ast.walk(node) if isinstance(n, ast.Call))
     raise AssertionError("permissive_acl_acknowledged is not defined in _acl_config")

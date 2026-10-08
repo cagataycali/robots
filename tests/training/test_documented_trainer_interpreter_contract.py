@@ -31,7 +31,7 @@ import pytest
 
 from strands_robots.training.base import Trainer
 from strands_robots.training.factory import import_trainer_class, list_trainers
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCS = _REPO_ROOT / "docs"
@@ -108,7 +108,7 @@ def _selects_an_interpreter(cls: type) -> list[str]:
     """
     source = Path(inspect.getsourcefile(cls) or "").read_text(encoding="utf-8")
     found: set[str] = set()
-    for node in ast.walk(parse_source(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.Attribute) and ast.unparse(node) == "sys.executable":
             found.add("sys.executable")
         elif isinstance(node, ast.Call):

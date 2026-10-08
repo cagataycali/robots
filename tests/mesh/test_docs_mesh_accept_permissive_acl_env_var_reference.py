@@ -101,7 +101,7 @@ import pytest
 
 from strands_robots.mesh import _acl_config
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE = _ROOT / "strands_robots"
@@ -123,7 +123,7 @@ def _accept_env_reads() -> frozenset[str]:
     """
     tree = parse_file(_MODULE)
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         literal = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
             "os.getenv",
@@ -178,7 +178,7 @@ def _reader_sites() -> dict[str, str]:
             tree = parse_file(path)
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - defensive
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or node.name == _OWNER:
                 continue
             if any(_reads_the_token(inner) for inner in ast.walk(node)):

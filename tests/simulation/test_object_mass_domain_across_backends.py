@@ -68,7 +68,7 @@ from strands_robots.simulation import base as sim_base
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine, _is_zero_mass_sentinel
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.simulation.test_pose_vector_domain_across_backends import _isaac_stub, _newton_stub
 
 NAN = float("nan")
@@ -315,7 +315,7 @@ def _scan_mass_methods(root: pathlib.Path) -> tuple[set[tuple[str, str]], list[s
     for backend in ("mujoco", "newton", "isaac"):
         for path in sorted((root / backend).glob("*.py")):
             tree = parse_file(path)
-            for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+            for cls in [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]:
                 for fn in [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
                     if fn.name.startswith("_"):
                         continue

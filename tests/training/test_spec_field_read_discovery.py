@@ -54,7 +54,7 @@ pytest.importorskip("psutil")
 
 from strands_robots.training.base import Trainer  # noqa: E402
 from strands_robots.training.sagemaker import _FORWARDED_FIELDS  # noqa: E402
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field  # noqa: E402
 
 # The gates whose scope is a field rather than every backend, mapped to the
@@ -133,7 +133,7 @@ def _scans_the_backend_tree(tree: ast.AST) -> bool:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "getfile"
         and any(isinstance(arg, ast.Name) and arg.id == "Trainer" for arg in node.args)
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 
@@ -157,7 +157,7 @@ def _consults_the_shared_read_rule(tree: ast.Module) -> bool:
         return True
     return any(
         isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "reads_spec_field"
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 

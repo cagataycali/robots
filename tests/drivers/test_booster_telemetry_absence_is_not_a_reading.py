@@ -65,7 +65,7 @@ from strands_robots.drivers.booster import (
     UPPER_BODY_SLOTS,
     parse_low_state,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .test_booster_driver import _FakeSdk, _live_driver, install_booster_sdk
 
@@ -316,7 +316,7 @@ class TestTheModuleReadsThroughTheOneOwnerOfThisRule:
         tree = parse_file(Path(inspect.getfile(booster)))
         defaulted = [
             f"line {node.lineno}: {ast.unparse(node)}"
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "getattr"

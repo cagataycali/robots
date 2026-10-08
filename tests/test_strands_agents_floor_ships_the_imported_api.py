@@ -68,7 +68,7 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
@@ -158,7 +158,7 @@ def _imported_strands_symbols() -> dict[tuple[str, str], list[str]]:
     for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
         tree = parse_file(path)
         rel = str(path.relative_to(_PACKAGE_ROOT.parent))
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.ImportFrom) or node.level:
                 continue
             module = node.module or ""

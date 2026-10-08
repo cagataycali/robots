@@ -48,7 +48,7 @@ from strands_robots.simulation.observers import (
     RunPolicyStarted,
     RunPolicyStep,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 N_STEPS = 12
 CONTROL_HZ = 30.0
@@ -249,7 +249,7 @@ def _observer_surfaces() -> list[tuple[str, ast.AST]]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        for cls in [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]:
             if cls.name.startswith("_"):
                 continue
             for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:

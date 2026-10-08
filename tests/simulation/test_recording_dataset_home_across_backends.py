@@ -65,7 +65,7 @@ import strands_robots.dataset_source as dataset_source
 from strands_robots.dataset_source import resolve_dataset_dir
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _JOINTS = ["Rotation", "Pitch", "Elbow"]
 
@@ -300,7 +300,7 @@ def _method_node(module: str, method: str) -> ast.FunctionDef:
     """
     tree = parse_file(_REPO_ROOT / module)
     found = next(
-        (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == method),
+        (node for node in walk_tree(tree) if isinstance(node, ast.FunctionDef) and node.name == method),
         None,
     )
     if found is None:

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 if TYPE_CHECKING:
     import networkx as nx  # type: ignore[import-untyped]
@@ -46,7 +46,7 @@ PKG = Path(__file__).resolve().parents[2] / "strands_robots"
 
 def _is_in_type_checking(tree: ast.AST, target: ast.AST) -> bool:
     """True if target_node is inside an `if TYPE_CHECKING:` block."""
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.If):
             test = node.test
             if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
@@ -65,7 +65,7 @@ def _is_inside_function(tree: ast.Module, target: ast.AST) -> bool:
     when the function is called, not at module import time. These cannot
     cause import-time cycles and should not be flagged.
     """
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for child in ast.walk(node):
                 if child is target:
@@ -86,7 +86,7 @@ def _deferred_import_nodes(tree: ast.Module) -> set[int]:
     ``AsyncFunctionDef`` open a deferred region here.
     """
     deferred: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         is_type_checking_block = isinstance(node, ast.If) and (
             (isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING")
             or (isinstance(node.test, ast.Attribute) and node.test.attr == "TYPE_CHECKING")
@@ -110,7 +110,7 @@ def _build_import_graph(root: Path) -> nx.DiGraph:
         except SyntaxError:
             continue
         deferred = _deferred_import_nodes(tree)
-        for n in ast.walk(tree):
+        for n in walk_tree(tree):
             if id(n) in deferred:
                 continue
             if isinstance(n, ast.ImportFrom) and n.module and n.module.startswith("strands_robots"):
@@ -146,7 +146,7 @@ def test_the_single_pass_scan_defers_exactly_what_the_per_node_predicates_do():
         "robot.py",
     ):
         tree = parse_file(PKG / rel)
-        imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+        imports = [n for n in walk_tree(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
         assert imports, f"{rel} has no imports - it cannot exercise the comparison"
 
         fast = _deferred_import_nodes(tree)
@@ -240,7 +240,7 @@ def _type_checking_policy_runner_imports(src: str) -> list[list[str]]:
     # once per node - quadratic over base.py's 6.8k lines, 66 s on a laptop and
     # past the 120 s test timeout on a loaded runner.
     found: list[list[str]] = []
-    for block in ast.walk(parse_source(src)):
+    for block in walk_tree(parse_source(src)):
         if not isinstance(block, ast.If):
             continue
         test = block.test

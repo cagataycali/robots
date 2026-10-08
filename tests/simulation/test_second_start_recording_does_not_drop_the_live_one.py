@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
@@ -202,7 +202,9 @@ def test_every_backend_refuses_before_it_touches_the_recording_state(module_name
         if inspect.isclass(obj) and obj.__module__ == module_name and hasattr(obj, "start_recording")
     )
     tree = parse_file(Path(inspect.getfile(mixin)))
-    func = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "start_recording")
+    func = next(
+        node for node in walk_tree(tree) if isinstance(node, ast.FunctionDef) and node.name == "start_recording"
+    )
 
     guard_lines = [
         node.lineno

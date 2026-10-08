@@ -50,7 +50,7 @@ from typing import Any
 import pytest
 
 from strands_robots.rendering import backgrounds, download_gsplat_scene
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: A preset whose source URL ends in ``.ply``; its slug is "bonsai".
 PRESET = "bonsai (indoor tabletop)"
@@ -242,7 +242,7 @@ class TestNoFetchInThePackageIsUnboundable:
         for module in sorted(package.rglob("*.py")):
             scanned += 1
             tree = parse_file(module)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if isinstance(node, ast.Attribute) and node.attr == "urlretrieve":
                     offenders.append(f"{module.relative_to(package)}:{node.lineno}")
                 elif isinstance(node, ast.Name) and node.id == "urlretrieve":

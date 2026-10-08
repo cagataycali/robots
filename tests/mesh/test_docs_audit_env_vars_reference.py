@@ -40,7 +40,7 @@ import pytest
 
 import strands_robots
 from strands_robots import audit
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _AUDIT_MODULE = pathlib.Path(strands_robots.__file__).parent / "audit.py"
 _PAGE = pathlib.Path(strands_robots.__file__).parent.parent / "docs" / "learn" / "security.md"
@@ -66,7 +66,7 @@ def _audit_env_reads() -> set[str]:
     """
     found: set[str] = set()
     tree = parse_file(_AUDIT_MODULE)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         name: str | None = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
             "os.getenv",

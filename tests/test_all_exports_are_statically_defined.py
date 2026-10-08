@@ -111,7 +111,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 PACKAGE_ROOT = Path(strands_robots.__file__).parent
 
@@ -291,7 +291,7 @@ class TestTheScanCoversWhatItClaims:
         offenders = []
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
                     offenders.append(path.relative_to(PACKAGE_ROOT).as_posix())
                     break
