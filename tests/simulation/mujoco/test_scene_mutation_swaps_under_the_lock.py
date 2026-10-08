@@ -35,7 +35,6 @@ module's fix; they are what distinguishes the pin from "every mutation fails".
 
 import ast
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -43,10 +42,11 @@ import pytest
 import strands_robots.simulation.mujoco as mujoco_pkg
 from strands_robots.simulation import create_simulation
 from tests._package_ast import parse_file
+from tests.simulation.mujoco._contended_lock import ContendedLock
 
-# The reader holds the lock for this long. Every unlocked swap measured well
-# under 0.25 s, so a writer that waits is unambiguous at this hold.
-HOLD_S = 1.0
+# Upper bound on the reader's hold. It is reached only when the verb neither asks
+# for the lock nor returns; a verb that asks wakes the reader at once.
+HOLD_S = 10.0
 
 _ONE_BODY_SCENE = """<mujoco>
   <worldbody>
@@ -104,21 +104,26 @@ MUTATIONS = [
 def _observe_swap_under_lock(sim, call, scene):
     """Run ``call`` while a reader holds ``sim._lock``; report what it saw.
 
+    The reader holds the lock until the verb asks for it (from then on the verb
+    is blocked, so everything it did unlocked has already happened) or returns
+    without asking.
+
     Returns:
         A dict with ``status`` (the verb's envelope status), ``swapped`` (did the
         live scene change while the reader held the lock) and ``writer_waited``
-        (did the verb block until the reader let go).
+        (did the verb ask for the lock while the reader held it).
     """
-    entered, writer_done = threading.Event(), threading.Event()
+    entered, wake = threading.Event(), threading.Event()
+    lock = sim._lock = ContendedLock(sim._lock, wake)
     seen: dict[str, object] = {}
 
     def reader() -> None:
         # The shape of the recorder daemon: it renders under this same lock.
-        with sim._lock:
+        with lock:
             model, data = sim._world._model, sim._world._data
             before = (model.nq, data.qpos.size, model.nbody, model.ncam)
             entered.set()
-            writer_done.wait(timeout=HOLD_S)
+            wake.wait(timeout=HOLD_S)
             model, data = sim._world._model, sim._world._data
             after = (model.nq, data.qpos.size, model.nbody, model.ncam)
             seen["swapped"] = before != after
@@ -129,18 +134,17 @@ def _observe_swap_under_lock(sim, call, scene):
     thread.start()
     try:
         assert entered.wait(timeout=10), "reader never acquired the lock"
-        started = time.monotonic()
         result = call(sim, scene)
-        elapsed = time.monotonic() - started
     finally:
-        writer_done.set()
+        waited = lock.contentions > 0
+        wake.set()
         thread.join(timeout=10)
 
     return {
         "status": result.get("status"),
         "swapped": seen.get("swapped"),
         "pair_torn": seen.get("pair_torn"),
-        "writer_waited": elapsed > HOLD_S * 0.8,
+        "writer_waited": waited,
     }
 
 
