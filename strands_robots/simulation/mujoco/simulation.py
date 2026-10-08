@@ -1260,8 +1260,6 @@ class MuJoCoSimEngine(
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._recording_keeps_images():
-            skip_images = False
         with self._lock:
             obs = self._get_sim_observation(robot_name, skip_images=skip_images)
         # Additive sensor noise (set_obs_noise). Exact no-op / same dict when
@@ -7932,14 +7930,11 @@ class MuJoCoSimEngine(
                     camera_imgs: dict[str, Any] = {}
                     first = True
                     for rname in policies:
-                        if first:
-                            obs = self.get_observation(robot_name=rname, skip_images=skip_images)
-                        else:
-                            # Not get_observation: during a recording it turns the
-                            # skip back off so the recorder gets its frame, which
-                            # here would render every camera again per robot.
-                            with self._lock:
-                                obs = self._apply_obs_noise(self._get_sim_observation(rname, skip_images=True))
+                        # The first robot's frame is the one recorded, so a
+                        # recording that keeps cameras renders it whatever the
+                        # policies read; every other robot reads joints only.
+                        skip = not first or (skip_images and not self._recording_keeps_images())
+                        obs = self.get_observation(robot_name=rname, skip_images=skip)
                         # Split scalars (joints) from ndarrays (camera images).
                         scal = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
                         per_robot_obs[rname] = scal

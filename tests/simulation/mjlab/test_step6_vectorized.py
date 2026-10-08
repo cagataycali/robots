@@ -59,7 +59,7 @@ def eng() -> Iterator[MjlabEngine]:
     assert isinstance(sim, MjlabEngine)
     sim.create_world()
     sim.add_robot("so101")
-    sim.add_object("cube", shape="box", size=[0.02, 0.02, 0.02], position=[0.25, 0.0, 0.02], mass=0.05)
+    sim.add_object("cube", shape="box", size=[0.04, 0.04, 0.04], position=[0.25, 0.0, 0.02], mass=0.05)
     sim.reset()
     yield sim
     sim.cleanup()

@@ -151,6 +151,24 @@ class TestStopRecordingFinalize:
         assert "private" in result["content"][0]["text"]
         assert rec.calls == []
 
+    @pytest.mark.parametrize("recording", [True, False], ids=["open", "idle"])
+    @pytest.mark.parametrize("param", ["bucket", "run_id"])
+    @pytest.mark.parametrize("value", [123, True, 1.5, ["a", "b"], {"owner": "me"}])
+    def test_a_non_string_bucket_target_is_refused_before_anything_is_finalized(
+        self, recording_sim, tmp_path, recording, param, value
+    ):
+        rec = _FakeRecorder(sync_result={"status": "success", "bucket_uri": "hf://x"})
+        if recording:
+            _arm(recording_sim, rec)
+        else:
+            (tmp_path / "meta").mkdir()
+            recording_sim._world._backend_state["last_dataset_root"] = str(tmp_path)
+        kwargs = {"bucket": "org/buck", param: value}
+        result = recording_sim.stop_recording(**kwargs)
+        assert result["status"] == "error"
+        assert f"'{param}' must be a string" in result["content"][0]["text"]
+        assert rec.calls == []
+
     def test_push_to_hub_inherited_from_start_recording(self, recording_sim):
         rec = _FakeRecorder(push_result={"status": "success"})
         # push not requested per-call, but armed at start_recording.
