@@ -6,6 +6,7 @@ carries the same notice, so both surfaces are graded here.
 """
 
 import contextlib
+import re
 import warnings
 from pathlib import Path
 
@@ -24,7 +25,13 @@ def test_create_policy_warns_with_the_replacement(provider: str) -> None:
     with pytest.warns(DeprecationWarning, match="removed in 0.7") as record:
         with contextlib.suppress(Exception):  # construction may need a GPU or a sidecar; the notice may not
             create_policy(provider)
-    assert _REMOVED_IN_0_7[provider] in str(record[0].message)
+    message = str(record[0].message)
+    assert _REMOVED_IN_0_7[provider] in message
+    # Same shape as the registry's REMOVED_PROVIDERS refusals: the spelling the caller
+    # typed, then any provider to switch to as the literal ``policy_provider='X'``.
+    assert message.startswith(f"policy_provider {provider!r} ")
+    for named in re.findall(r"policy_provider='(\w+)'", message):
+        assert named in list_policy_providers() and named not in _REMOVED_IN_0_7, named
     assert "removed in 0.7" in (_PAGES / f"{provider}.md").read_text().lower()
 
 
