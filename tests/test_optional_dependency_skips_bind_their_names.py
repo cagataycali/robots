@@ -80,6 +80,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TEST_ROOTS = ("tests", "tests_integ")
 
@@ -188,7 +190,7 @@ def _conditionally_bound_names(source: str) -> list[tuple[int, str]]:
     """
     if not any(call in source for call in _SKIPPING_CALLS):
         return []  # no handler can leave through a call the text never spells
-    tree = ast.parse(source)
+    tree = parse_source(source)
     findings: set[tuple[int, str]] = set()
     for parent in ast.walk(tree):
         for field in ("body", "orelse", "finalbody"):
@@ -221,7 +223,7 @@ def _count_try_statements(source: str) -> int:
     """
     if "try" not in source:
         return 0
-    return sum(1 for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Try))
+    return sum(1 for node in ast.walk(parse_source(source)) if isinstance(node, ast.Try))
 
 
 def _gated_module_names(function: ast.AST) -> set[str]:
@@ -280,7 +282,7 @@ def _reasons_reading_an_ungated_attribute(source: str) -> list[tuple[int, str]]:
     offenders: set[tuple[int, str]] = set()
     if "importorskip" not in source:
         return []  # nothing is gated, so no read can be ungated
-    for function in ast.walk(ast.parse(source)):
+    for function in ast.walk(parse_source(source)):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         gated = _gated_module_names(function)
@@ -444,7 +446,7 @@ class TestASkipReasonCannotBeWhatFails:
             1
             for _, source in sources
             if "importorskip" in source
-            for function in ast.walk(ast.parse(source))
+            for function in ast.walk(parse_source(source))
             if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and _gated_module_names(function)
         )
         assert gated >= _MINIMUM_GATED_FUNCTIONS_SCANNED, (

@@ -53,6 +53,7 @@ pytest.importorskip("psutil")
 
 from strands_robots.training.base import Trainer  # noqa: E402
 from strands_robots.training.sagemaker import _FORWARDED_FIELDS  # noqa: E402
+from tests._package_ast import parse_source
 from tests.training._spec_field_reads import reads_spec_field  # noqa: E402
 
 # The gates whose scope is a field rather than every backend, mapped to the
@@ -209,7 +210,7 @@ def is_field_scoped_guard(source: str) -> bool:
     field reads - so they do not qualify, which is correct: there is no notion
     of "reads the field" for this meta-guard to grade in them.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     return _consults_the_shared_read_rule(tree) and _scans_the_backend_tree(tree) and _names_a_registered_gate(source)
 
 
