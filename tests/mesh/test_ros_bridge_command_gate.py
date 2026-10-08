@@ -26,7 +26,7 @@ import pytest
 
 import strands_robots.ros as ros_mod
 from strands_robots.drivers.ros import RosBridgedRobot
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _COMMAND_METHODS = frozenset({"drive", "stop", "navigate_to"})
 _COMMAND_ACTIONS = frozenset({"publish", "service_call", "action_send_goal"})
@@ -237,7 +237,7 @@ class TestCommandToolsDeclareTheOperatorContext:
     def _decorated_tools(tree: ast.Module) -> list[ast.FunctionDef]:
         return [
             node
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.FunctionDef)
             and any(
                 isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "tool" for dec in node.decorator_list
@@ -300,7 +300,7 @@ class TestCommandToolsDeclareTheOperatorContext:
         """
         found: list[str] = []
         for path, tree in bridge_asts:
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                     continue
                 action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)

@@ -79,7 +79,7 @@ import re
 
 from strands_robots.mesh import security as _security
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "security.py"
@@ -112,7 +112,7 @@ def _policy_type_allow_env_reads() -> frozenset[str]:
     """
     tree = parse_file(_MODULE)
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         literal = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
             "os.getenv",

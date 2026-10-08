@@ -38,7 +38,8 @@ def scene() -> Scene:
     ]
     y, bh, gap = 134, 70, 22
     for title, sub, accent in steps:
-        s.box(L, y, LW, bh, title, sub, accent=accent, size=14, subsize=12)
+        s.box(L, y, LW, bh, title, sub, accent=accent, size=14, subsize=12, id=f"step{title[0]}")
+        s.motion.append((f"step{title[0]}", "visit"))
         if not title.startswith("5"):
             s.down(L + 60, y + bh, y + bh + gap)
         y += bh + gap

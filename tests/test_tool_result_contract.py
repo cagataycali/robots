@@ -28,7 +28,7 @@ pytest.importorskip("psutil")
 
 import strands_robots  # noqa: E402
 from strands_robots.teleop_mixin import TeleopMixin  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.tool_result_contract import (  # noqa: E402
     VALID_TOP_LEVEL_KEYS,
     assert_strands_tool_result,
@@ -57,7 +57,7 @@ def _tool_result_violations() -> list[str]:
     violations: list[str] = []
     for path in _PKG_ROOT.rglob("*.py"):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Dict):
                 continue
             const_keys = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}

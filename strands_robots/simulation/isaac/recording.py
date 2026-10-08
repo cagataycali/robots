@@ -60,6 +60,7 @@ from strands_robots.simulation.recording import (
     RecordedFrame,
     RecordingSchema,
     floating_base_state_specs,
+    split_recorded_observation,
 )
 from strands_robots.utils import camera_schema_key
 
@@ -295,21 +296,10 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             if rec is None:
                 return
 
-            # Split the observation: camera ndarrays are renamed raw -> safe
-            # and scoped to the declared recording cameras; scalars feed
-            # observation.state. Resolved per step (not captured at hook build
-            # time) so a start_recording issued after run_policy launched
-            # still scopes correctly.
-            raw_to_safe = {src: safe for src, safe, _w, _h in state.get("recording_cameras", [])}
-            scalars: dict[str, Any] = {}
-            images: dict[str, Any] = {}
-            for k, v in observation.items():
-                if isinstance(v, np.ndarray) and v.ndim >= 2:
-                    safe = raw_to_safe.get(k)
-                    if safe is not None:
-                        images[safe] = v
-                else:
-                    scalars[k] = v
+            # Isaac's observation carries every camera's fresh frame, so none is
+            # rendered here. Resolved per step (not captured at hook build time)
+            # so a start_recording issued after run_policy launched still scopes.
+            scalars, images = split_recorded_observation(observation, state.get("recording_cameras", []))
 
             if _opens_on_an_unrendered_frame(rec, state, images):
                 return

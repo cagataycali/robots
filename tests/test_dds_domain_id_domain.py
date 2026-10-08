@@ -43,7 +43,7 @@ from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import MAX_DDS_DOMAIN_ID, dds_domain_id_error
 from tests._blocked_module import blocked
 from tests._hardware_robot import hardware_robot_on
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 #: Values that cannot name a DDS domain, one per way of missing the domain.
 UNUSABLE_DOMAINS: list[Any] = [
@@ -316,7 +316,7 @@ class TestEverySurfaceRoutesThroughTheSharedDomain:
     def _classify(cls, source: str) -> dict[str, tuple[bool, bool]]:
         """Map ``function name -> (calls the guard, forwards the parameter)``."""
         found: dict[str, tuple[bool, bool]] = {}
-        for node in ast.walk(parse_source(source)):
+        for node in walk_tree(parse_source(source)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             args = [a.arg for a in node.args.args + node.args.kwonlyargs]

@@ -72,7 +72,7 @@ from typing import Any
 import pytest
 
 from strands_robots import dataset_source
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 # Distinct lengths, so *which* episode was resolved is visible in the returned
 # range rather than inferred from a count.
@@ -270,7 +270,7 @@ def _readers_of_the_frame_range() -> dict[str, str]:
         text = path.read_text(encoding="utf-8")
         if not any(key in text for key in _LADDER_KEYS):
             continue
-        for node in ast.walk(parse_source(text)):
+        for node in walk_tree(parse_source(text)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             body = ast.unparse(node)

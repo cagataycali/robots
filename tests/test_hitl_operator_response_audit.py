@@ -54,7 +54,7 @@ from strands_robots._motion_grants import consume_grant  # noqa: E402
 from strands_robots.audit import audit_log_path, read_audit_log  # noqa: E402
 from strands_robots.ros import GATE_TOOL  # noqa: E402
 from tests._hardware_robot import hardware_robot_on
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
 pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
@@ -490,7 +490,7 @@ class TestTheGatedSetIsDerivedFromTheInterruptSites:
         sites: dict[str, str] = {}
         for path in sorted(_PACKAGE_ROOT.rglob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 if any(ast.unparse(call.func).endswith(".interrupt") for call in cls._own_calls(node)):

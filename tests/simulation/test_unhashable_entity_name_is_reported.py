@@ -31,7 +31,7 @@ from strands_robots.simulation.models import SimRobot, SimWorld, registered, reg
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
-from tests._package_ast import parse_source  # noqa: E402
+from tests._package_ast import parse_source, walk_tree  # noqa: E402
 from tests.simulation._isaac_engine import isaac_engine  # noqa: E402
 from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
@@ -635,7 +635,7 @@ def _raw_lookups(source: str) -> list[tuple[str, int]]:
     annotate(tree, "<module>", tree)
     owned_by_scope: dict[int, set[str]] = {}
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         # Narrowed to the two node types a lookup can be before reading
         # ``lineno``, which ``ast.AST`` does not declare.
         if not isinstance(node, ast.Compare | ast.Call):

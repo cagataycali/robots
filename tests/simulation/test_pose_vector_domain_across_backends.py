@@ -88,7 +88,7 @@ from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulat
 from strands_robots.simulation.models import SimObject, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import coerce_pose_vector
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 NAN = float("nan")
 INF = float("inf")
@@ -780,7 +780,7 @@ def _scan_placement_methods(root: pathlib.Path) -> tuple[set[tuple[str, str]], l
     for backend in ("mujoco", "newton", "isaac"):
         for path in sorted((root / backend).glob("*.py")):
             tree = parse_file(path)
-            for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+            for cls in [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]:
                 # Direct children only: a nested helper belongs to its own scope.
                 for fn in [n for n in cls.body if isinstance(n, ast.FunctionDef)]:
                     if fn.name.startswith("_"):

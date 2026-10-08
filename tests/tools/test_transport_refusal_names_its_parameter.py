@@ -32,7 +32,7 @@ import pytest
 
 import strands_robots.rosbridge as transport_mod
 from strands_robots.utils import tcp_port_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 ur = importlib.import_module("strands_robots.tools.use_rosbridge")
 
@@ -81,7 +81,7 @@ def _promising_helpers() -> list[tuple[str, str, bool]]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a syntax error is another test's problem
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             doc = ast.get_docstring(node) or ""

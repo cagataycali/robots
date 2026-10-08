@@ -45,7 +45,7 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 from tests.simulation._isaac_engine import isaac_engine
 
 _BASE_LOGGER = "strands_robots.simulation.base"
@@ -358,7 +358,7 @@ def _engines_missing_the_sentinel(source: str) -> list[str]:
     let a later fallible step leave it claiming more than happened.
     """
     offenders: list[str] = []
-    for node in ast.walk(parse_source(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.ClassDef):
             continue
         bases = {ast.unparse(base).split(".")[-1] for base in node.bases}
@@ -554,7 +554,7 @@ def _teardown_stdlib_imports(source: str, label: str = "<source>") -> list[str]:
     name is already bound.
     """
     offenders: list[str] = []
-    for class_node in (n for n in ast.walk(parse_source(source)) if isinstance(n, ast.ClassDef)):
+    for class_node in (n for n in walk_tree(parse_source(source)) if isinstance(n, ast.ClassDef)):
         for method in class_node.body:
             if not isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -594,7 +594,7 @@ class TestNoFinalizerReachableTeardownNeedsTheImportSystem:
         found = {
             f"{c.name}.{m.name}"
             for source in _package_sources().values()
-            for c in (n for n in ast.walk(parse_source(source)) if isinstance(n, ast.ClassDef))
+            for c in (n for n in walk_tree(parse_source(source)) if isinstance(n, ast.ClassDef))
             for m in c.body
             if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef) and m.name in _FINALIZER_METHODS
         }

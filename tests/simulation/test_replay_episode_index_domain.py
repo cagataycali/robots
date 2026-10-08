@@ -81,7 +81,7 @@ import pytest
 
 from strands_robots import episode_labels
 from strands_robots.utils import non_negative_whole_number_error
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 # ── the fake dataset ────────────────────────────────────────────────
 #
@@ -579,7 +579,7 @@ def _public_episode_surfaces(source: str) -> list[ast.FunctionDef | ast.AsyncFun
     """Every public function that resolves an episode index, in either spelling."""
     tree = parse_source(source)
     found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         if node.name.startswith("_"):

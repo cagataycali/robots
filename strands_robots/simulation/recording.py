@@ -31,7 +31,7 @@ import logging
 import math
 import numbers
 import shutil
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
@@ -44,6 +44,7 @@ from strands_robots.utils import (
     is_boolean,
     name_list_error,
     positive_whole_number_error,
+    published_string_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -912,6 +913,46 @@ class RecordedFrame:
         )
 
 
+def split_recorded_observation(
+    observation: Mapping[str, Any],
+    cameras: Iterable[tuple[str, str, int, int]],
+    render: Callable[[str, int, int], Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split one rollout observation into its state values and its recorded camera frames.
+
+    The one rule every ``(scene name, column, width, height)`` recording hook
+    applies: an image (an array of two or more dimensions) keyed by a declared
+    camera's scene name is kept under that camera's column, an image of any
+    other camera is outside the ``start_recording(cameras=...)`` scope and
+    dropped, and everything else is state.
+
+    Args:
+        observation: What the rollout observed this step.
+        cameras: ``state["recording_cameras"]``, the declared scope.
+        render: ``render(scene_name, width, height) -> image`` for a declared
+            camera the observation does not carry (the policy read no pixels),
+            or ``None`` to leave it absent. A camera the observation carries is
+            never rendered again.
+
+    Returns:
+        ``(state, images)``, ``images`` keyed by column.
+    """
+    declared = list(cameras)
+    columns = {source: column for source, column, _w, _h in declared}
+    state: dict[str, Any] = {}
+    images: dict[str, Any] = {}
+    for key, value in observation.items():
+        if getattr(value, "ndim", 0) < 2:
+            state[key] = value
+        elif key in columns:
+            images[columns[key]] = value
+    if render is not None:
+        for source, column, width, height in declared:
+            if column not in images and (image := render(source, width, height)) is not None:
+                images[column] = image
+    return state, images
+
+
 def _camera_height_width(shape: Sequence[Any], names: Sequence[str] | None) -> tuple[Any, Any]:
     """Read ``(height, width)`` from a camera feature declared in either layout.
 
@@ -1140,14 +1181,16 @@ class DatasetRecordingMixin:
         return world._backend_state
 
     def _recording_keeps_images(self) -> bool:
-        """Whether an active recording needs camera frames on every observation.
+        """Whether an active recording needs camera frames in the frames it records.
 
-        ``get_observation(skip_images=True)`` is a caller's hint that it reads
-        no pixels (``PolicyRunner`` passes it for a policy with
-        ``requires_images=False``). While a dataset recording is active, the
-        recorded frames must still carry the image columns the schema declared,
-        so every backend turns the hint off when this answers ``True``. A
-        recording scoped to no cameras (``start_recording(cameras=[])``)
+        Asked by the loops that record the observation they read
+        (``PolicyRunner``'s observe step, the first robot of
+        ``run_multi_policy``): they pass ``skip_images=True`` for a policy that
+        reads no pixels, and render anyway when this answers ``True``, because
+        the recorded frame must carry the image columns the schema declared.
+        ``get_observation(skip_images=True)`` itself renders nothing, so a
+        caller that discards pixels (a predicate, a twin's joint read) does not
+        pay for this recording's cameras. A recording scoped to no cameras (``start_recording(cameras=[])``)
         declares no image column, so rendering for it would only discard the
         pixels; ``None`` in ``recording_cameras`` means "every camera".
         """
@@ -1827,6 +1870,11 @@ class DatasetRecordingMixin:
         for flag, value in (("push_to_hub", push_to_hub), ("private", private)):
             if error := dataset_recording_posture_error("stop_recording", flag, value):
                 return error
+        # The bucket target reaches an allowlist regex that raises on a
+        # non-string, so it is refused here, before anything is finalized.
+        for param, target in (("bucket", bucket), ("run_id", run_id)):
+            if target is not None and (text := published_string_error(target, param, "stop_recording")):
+                return {"status": "error", "content": [{"text": text}]}
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)

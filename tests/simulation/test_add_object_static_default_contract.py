@@ -50,7 +50,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.base import SimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 @pytest.fixture
@@ -212,7 +212,7 @@ class TestNoDeclaredDefaultDrifts:
         assert source is not None
         tree = parse_file(Path(source))
         out: dict[str, str] = {}
-        for klass in ast.walk(tree):
+        for klass in walk_tree(tree):
             if not (isinstance(klass, ast.ClassDef) and klass.name == cls.__name__):
                 continue
             for node in ast.walk(klass):

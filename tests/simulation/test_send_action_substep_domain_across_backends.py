@@ -90,7 +90,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_whole_number_error,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 pytest.importorskip("mujoco")
 
@@ -506,7 +506,7 @@ def _send_action_defs() -> list[tuple[str, ast.FunctionDef]]:
     root = pathlib.Path(__file__).resolve().parents[2]
     for relative in _BACKEND_MODULES:
         tree = parse_file(root / relative)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "send_action":
                 found.append((relative, node))
     return found

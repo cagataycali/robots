@@ -65,7 +65,7 @@ from strands_robots.bus_access import read_observation
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.policies.base import Policy
 from tests._hardware_robot import hardware_robot_on
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .test_bus_access_serializes_motor_reads import RefusingBusRobot
 
@@ -362,7 +362,7 @@ def _device_holding_modules() -> list[pathlib.Path]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a module that does not parse
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if (
                 isinstance(node, ast.Attribute)
                 and isinstance(node.ctx, ast.Store)
@@ -429,9 +429,9 @@ def _direct_device_touches() -> list[tuple[str, int, str]]:
         except SyntaxError:  # pragma: no cover - a module that does not parse
             continue
         held_locals: set[str] = set()
-        for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+        for function in [n for n in walk_tree(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
             held_locals |= _device_names_in(function)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Attribute) or node.attr not in operations:
                 continue
             holder = ast.unparse(node.value)

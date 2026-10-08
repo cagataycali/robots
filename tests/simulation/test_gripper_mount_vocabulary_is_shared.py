@@ -38,7 +38,7 @@ from strands_robots.simulation import ik
 from strands_robots.simulation.factory import _BUILTIN_BACKENDS
 from strands_robots.simulation.ik import GRIPPER_BODY_HINTS, hint_matches_name
 from strands_robots.simulation.models import SimRobot, SimWorld
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 mujoco = pytest.importorskip("mujoco")
 
@@ -264,7 +264,7 @@ class TestTheVocabularyHasOneOwner:
         owners = []
         package = Path(inspect.getfile(ik)).parent
         for path in sorted(package.rglob("*.py")):
-            for node in ast.walk(parse_file(path)):
+            for node in walk_tree(parse_file(path)):
                 if not isinstance(node, ast.Assign):
                     continue
                 for target in node.targets:

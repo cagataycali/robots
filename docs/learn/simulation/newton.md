@@ -12,7 +12,7 @@ pip install 'strands-robots[sim-newton]'   # newton 1.5, warp-lang, mujoco 3.11,
 
 ## What it is
 
-`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the same MJCF assets the MuJoCo backend uses, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
+`NewtonSimEngine` (`strands_robots/simulation/newton/simulation.py`) implements `SimEngine` on newton-physics/newton, NVIDIA Warp plus MuJoCo-Warp. It ingests the MuJoCo backend's MJCF assets, builds a GPU model, and steps it with one of Newton's rigid-body solvers. Rendering is headless through Newton's ray-traced `SensorTiledCamera`. Policy orchestration (`run_policy`, `eval_policy`, `replay_episode`, recording in `newton/recording.py`) is inherited from the base class.
 
 ```python title="sketch"
 from strands_robots.simulation import create_simulation
@@ -23,8 +23,11 @@ sim.add_robot("so100")
 sim.send_action({"Rotation": 0.5}, robot_name="so100")
 out = sim.render(width=320, height=240)
 print(out["status"])
+print(sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)["status"])
 sim.destroy()
 ```
+
+{{sim:newton-1|slow motion: so100 on Newton's mujoco solver runs the mock policy for 200 steps}}
 
 ## Constructor keywords
 
@@ -38,14 +41,14 @@ sim.destroy()
 
 ## Solvers
 
-`strands_robots.simulation.newton.backend.solver_registry()` maps friendly names to Newton classes: `mujoco`, `featherstone`, `xpbd`, `semi_implicit`, `vbd`, `style3d`, `mpm`, `kamino`. `articulated_solvers()` returns the subset that can drive a robot: `mujoco`, `featherstone` and `kamino`. The rest are refused by name with the reason: `xpbd` and `semi_implicit` step without integrating rigid bodies and leave the world frozen, `vbd` needs per-body colouring the build does not apply, `style3d` is a cloth solver, `mpm` needs a config object this backend does not build.
+`strands_robots.simulation.newton.backend.solver_registry()` maps friendly names to Newton classes: `mujoco`, `featherstone`, `xpbd`, `semi_implicit`, `vbd`, `style3d`, `mpm`, `kamino`. `articulated_solvers()` returns the subset that can drive a robot: `mujoco`, `featherstone` and `kamino`. The rest are refused with the reason: `xpbd` and `semi_implicit` never integrate rigid bodies (the world freezes), `vbd` needs per-body colouring the build does not apply, `style3d` is a cloth solver, `mpm` needs a config object this backend does not build.
 
 ## Same API, same rules
 
-`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature so an identical call behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
+`add_camera(parent_body=...)` works here as on MuJoCo; a policy declaring `requires_action_controller` (the WBC torque shim) is refused rather than rolled out without it. On Newton a mesh `size` scales the mesh per axis (default `[1, 1, 1]`); MuJoCo and Isaac ignore it and still report success (#2300). `set_obs_noise` mirrors the MuJoCo signature and behaves the same. Terrain, task objects and the predicate DSL read the same observation surface. The `wbc` torque shim is MuJoCo-only, so a WBC rollout on Newton refuses unless `wbc_install_torque_control=False` against a torque-actuated scene.
 
 ## Limits
 
-- NVIDIA GPU and CUDA-capable Warp. There is no CPU device for the articulated solvers at useful speed.
-- Pinned to `mujoco>=3.11,<3.12` and `mujoco-warp` of the same series, while `[sim-mujoco]` allows any 3.5+. Install `[sim-newton]` in its own environment if you also want the newest MuJoCo release.
+- NVIDIA GPU and CUDA-capable Warp. No CPU device runs the articulated solvers at useful speed.
+- Pinned to `mujoco>=3.11,<3.12` and `mujoco-warp` of the same series, while `[sim-mujoco]` allows any 3.5+. Install `[sim-newton]` in its own environment if you want the newest MuJoCo.
 - Rendering is ray-traced and tiled: per-frame cost above MuJoCo's rasteriser, per-batch cost below.

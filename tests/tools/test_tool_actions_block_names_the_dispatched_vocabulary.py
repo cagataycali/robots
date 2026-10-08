@@ -64,7 +64,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools as tools_package
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -168,7 +168,7 @@ def dispatched_actions(tree: ast.Module) -> frozenset[str]:
     """
     rosters = _module_string_rosters(tree)
     found: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Compare):
             subject = ast.unparse(node.left)
             for operator, comparator in zip(node.ops, node.comparators, strict=True):
@@ -235,7 +235,7 @@ def _graded_surfaces() -> list[tuple[str, frozenset[str], frozenset[str]]]:
     for path in sorted(_TOOLS_ROOT.glob("*.py")):
         tree = parse_file(path)
         dispatched = dispatched_actions(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             named = named_actions(ast.get_docstring(node) or "")
@@ -408,7 +408,7 @@ class TestTheGuardReadsDocstringsFromSource:
         tree = parse_file(Path(__file__))
         aliases = {
             alias.asname or "strands_robots"
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Import)
             for alias in node.names
             if alias.name == "strands_robots.tools"
@@ -457,7 +457,7 @@ class TestTheGuardReadsDocstringsFromSource:
 
         unguarded = sorted(
             f"line {line}: {read}"
-            for function in ast.walk(tree)
+            for function in walk_tree(tree)
             if isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef) and not drops_the_cache(function)
             for line, read in reads_in(function)
         )

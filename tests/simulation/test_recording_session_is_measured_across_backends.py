@@ -31,7 +31,7 @@ from types import SimpleNamespace
 
 from strands_robots.simulation import recording as _recording
 from strands_robots.simulation.recording import DatasetRecordingMixin
-from tests._package_ast import parse_file, parse_source
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 # The two methods that own the recorder handle: one arms it (and stashes the
 # counts the session starts from), one releases it (and drops them).
@@ -48,7 +48,7 @@ def _functions_assigning_the_recorder() -> dict[str, int]:
     root = _package_root()
     for path in sorted(root.rglob("*.py")):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             for inner in ast.walk(node):
@@ -70,7 +70,7 @@ def _functions_resuming_a_dataset() -> dict[str, str]:
     root = _package_root()
     for path in sorted(root.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        for node in ast.walk(parse_source(source)):
+        for node in walk_tree(parse_source(source)):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 body = ast.get_source_segment(source, node) or ""
                 if "_DatasetRecorder.resume(" in body:

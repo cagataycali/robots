@@ -165,7 +165,7 @@ from packaging.version import Version  # noqa: E402
 
 from tests._blocked_module import blocked  # noqa: E402
 from tests._docs_hooks import docs_hook  # noqa: E402
-from tests._package_ast import parse_file, parse_source  # noqa: E402
+from tests._package_ast import parse_file, parse_source, walk_tree  # noqa: E402
 
 
 def _lerobot_extra_requirement() -> Requirement:
@@ -1064,7 +1064,7 @@ def test_require_optional_call_sites_name_declared_extras() -> None:
         if "__pycache__" in path.parts:
             continue
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
@@ -1096,7 +1096,7 @@ def _literal_extra_call_sites() -> list[tuple[str, str]]:
         if "__pycache__" in path.parts:
             continue
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
@@ -1638,7 +1638,7 @@ def _require_optional_call_sites() -> list[tuple[str, int, str, dict[str, ast.ex
         if "__pycache__" in path.parts:
             continue
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func

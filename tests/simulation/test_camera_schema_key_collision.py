@@ -37,7 +37,7 @@ import pytest
 
 from strands_robots.simulation.recording import camera_schema_key_collision_error
 from strands_robots.utils import camera_schema_key
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
@@ -388,7 +388,7 @@ class TestTheCollapseHasOneOwner:
         for path in sorted(package.rglob("*.py")):
             if path.resolve() == owner:
                 continue
-            for node in ast.walk(parse_file(path)):
+            for node in walk_tree(parse_file(path)):
                 if (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)

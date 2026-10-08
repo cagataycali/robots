@@ -70,7 +70,7 @@ import pytest
 import strands_robots.drivers.unitree as unitree_transport
 import strands_robots.tools.g1 as g1_package
 from strands_robots.drivers.unitree._common import snapshot_handle_refusal
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 class _AccessorIsData:
@@ -210,7 +210,7 @@ def _live_handle_verbs_from_source() -> set[str]:
     package_dir = Path(g1_package.__file__).parent
     for path in sorted(package_dir.glob("*.py")):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if not _is_tool_decorated(node):
@@ -476,6 +476,6 @@ class TestPremises:
             path.name
             for package_dir in package_dirs
             for path in sorted(package_dir.glob("*.py"))
-            if any(isinstance(node, ast.FunctionDef) and node.name == guard for node in ast.walk(parse_file(path)))
+            if any(isinstance(node, ast.FunctionDef) and node.name == guard for node in walk_tree(parse_file(path)))
         ]
         assert definitions == ["_common.py"], definitions

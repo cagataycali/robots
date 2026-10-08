@@ -26,7 +26,7 @@ from strands_robots.dashboard import mesh_bridge
 from strands_robots.mesh.iot import provision
 from strands_robots.mesh.iot.provision import _OPERATOR_OBSERVE_POLICY_DOC, _OPERATOR_POLICY_DOC, _ROBOT_POLICY_DOC
 from strands_robots.mesh.transport.iot_transport import _zenoh_to_mqtt_filter
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _BRIDGE_SOURCE = pathlib.Path(mesh_bridge.__file__)
 
@@ -106,7 +106,7 @@ def test_the_bridge_subscribes_from_the_roster_and_nowhere_else() -> None:
     """
     tree = parse_file(_BRIDGE_SOURCE)
     literal_keys: list[str] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func

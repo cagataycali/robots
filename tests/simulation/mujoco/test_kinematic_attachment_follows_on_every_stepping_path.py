@@ -56,7 +56,7 @@ import mujoco as mj  # noqa: E402
 from strands_robots.policies.mock import MockPolicy  # noqa: E402
 from strands_robots.simulation import Simulation  # noqa: E402
 from strands_robots.simulation import mujoco as mujoco_backend  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.tool_result_contract import tool_json  # noqa: E402
 
 from .test_run_multi_policy_no_recording import _ROBOT_XML  # noqa: E402
@@ -233,7 +233,7 @@ class TestEveryBackendSteppingPathReappliesTheFollow:
         found: dict[str, list[str]] = {}
         for module in sorted(self._BACKEND_DIR.glob("*.py")):
             tree = parse_file(module)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 calls = self._own_calls(node)

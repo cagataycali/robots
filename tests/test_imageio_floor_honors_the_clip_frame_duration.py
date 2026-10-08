@@ -61,6 +61,7 @@ floor from them rather than restating a number.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import tomllib
 from pathlib import Path
@@ -72,7 +73,7 @@ from packaging.version import Version
 
 import strands_robots
 from strands_robots.rendering.video import encode_clip
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
@@ -176,7 +177,7 @@ def _imported_imageio_names(source: str) -> set[tuple[str, str]]:
     # Local name -> real module path.
     bound: dict[str, str] = {}
 
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not _is_dep(alias.name):
@@ -217,8 +218,8 @@ def _imported_imageio_names(source: str) -> set[tuple[str, str]]:
                     bound[target.id] = requested_module
 
     # `a.b.c` is not maximal if it is the receiver of another attribute access.
-    receivers = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
-    for node in ast.walk(tree):
+    receivers = {id(n.value) for n in walk_tree(tree) if isinstance(n, ast.Attribute)}
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Attribute) or id(node) in receivers:
             continue
         parts: list[str] = []
@@ -234,6 +235,7 @@ def _imported_imageio_names(source: str) -> set[tuple[str, str]]:
     return found
 
 
+@functools.cache
 def _imageio_names_by_file() -> dict[tuple[str, str], list[str]]:
     """Map every imageio name the shipped sources reach for to its files.
 

@@ -38,7 +38,7 @@ from strands_robots.hardware_ros_bridge import HardwareRosBridge
 from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
 from strands_robots.utils import positive_finite_number_error
 from tests._blocked_module import blocked
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 #: Values that cannot pace a loop, one per way of failing to name a cadence.
 UNUSABLE_PERIODS: list[Any] = [
@@ -410,7 +410,7 @@ class TestEveryWaitBudgetSurfaceRoutesThroughTheSharedDomain:
     def _classify(cls, source: str) -> dict[str, tuple[bool, bool]]:
         """Map ``function name -> (calls the guard, forwards the parameter)``."""
         found: dict[str, tuple[bool, bool]] = {}
-        for node in ast.walk(parse_source(source)):
+        for node in walk_tree(parse_source(source)):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             args = [a.arg for a in node.args.args + node.args.kwonlyargs]

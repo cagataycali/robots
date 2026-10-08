@@ -45,7 +45,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.base import SimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
@@ -263,7 +263,7 @@ class TestTheEntryTextHasOneOwner:
         sites = 0
         for path in sorted(root.rglob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.Dict):
                     continue
                 for key, value in zip(node.keys, node.values, strict=True):

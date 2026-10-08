@@ -27,7 +27,7 @@ import pytest
 
 from strands_robots.policies.protomotions import bridge, motion_utils, state_utils
 from strands_robots.policies.protomotions.state_utils import quat_rotate_inverse
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .test_cache_body_rows_match_the_tracker_order import g1_like_mjcf
 
@@ -109,7 +109,7 @@ def _docstrings_in_the_package() -> list[tuple[str, str]]:
         mod_doc = ast.get_docstring(tree)
         if mod_doc:
             out.append((f"{path.name}:<module>", mod_doc))
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 doc = ast.get_docstring(node)
                 if doc:

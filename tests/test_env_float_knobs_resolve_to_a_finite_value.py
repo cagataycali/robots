@@ -48,13 +48,14 @@ text scan reads those comments as env-float sites.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import pathlib
 
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: The two spellings of "this resolver tested finiteness". ``isfinite`` is the
 #: direct form; ``finite_number_error`` is the shared numeric domain, which
@@ -152,7 +153,7 @@ def _classify(paths: list[pathlib.Path], root: pathlib.Path) -> dict[str, bool]:
     for path in paths:
         tree = parse_file(path)
         name = path.relative_to(root).as_posix()
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if _calls_any(node, {"float"}) and _reads_the_environment(node):
@@ -167,6 +168,7 @@ def _classify(paths: list[pathlib.Path], root: pathlib.Path) -> dict[str, bool]:
     return found
 
 
+@functools.cache
 def _resolvers() -> dict[str, bool]:
     """Every env-float resolver in the package, and whether each is bounded."""
     return _classify(sorted(PACKAGE_ROOT.rglob("*.py")), PACKAGE_ROOT)

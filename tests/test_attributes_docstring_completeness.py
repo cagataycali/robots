@@ -44,7 +44,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots as package
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -169,7 +169,7 @@ def documented_dataclasses(root: Path) -> list[tuple[str, list[str], frozenset[s
     classes: list[tuple[str, ast.ClassDef]] = []
     for path in sorted(root.rglob("*.py")):
         tree = parse_file(path)
-        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        for cls in (n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)):
             doc = ast.get_docstring(cls)
             documented, has_section = documented_attributes(doc) if doc else (frozenset(), False)
             if has_section:

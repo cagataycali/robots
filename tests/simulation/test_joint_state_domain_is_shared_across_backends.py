@@ -38,7 +38,7 @@ import pytest
 from strands_robots.simulation import base as sim_base
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _RobotState
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.simulation._isaac_engine import isaac_engine
 
 JOINTS = ["shoulder", "elbow", "wrist"]
@@ -321,7 +321,7 @@ def _joint_state_writers() -> dict[tuple[str, str], str]:
         if backend == package.name:
             continue
         tree = parse_file(path)
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+        for cls in [n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)]:
             for fn in ast.iter_child_nodes(cls):
                 if not isinstance(fn, ast.FunctionDef):
                     continue

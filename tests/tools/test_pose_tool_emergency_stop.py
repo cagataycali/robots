@@ -31,7 +31,7 @@ from pathlib import Path
 import serial
 
 from strands_robots.tools.pose_tool import MotorController, pose_tool
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .conftest import FakeSerial
 
@@ -190,7 +190,7 @@ def test_no_test_calls_emergency_stop_on_the_default_port():
     scanned = 0
     for path in sorted(_TEST_TREE.rglob("*.py")):
         scanned += 1
-        for node in ast.walk(parse_file(path)):
+        for node in walk_tree(parse_file(path)):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
