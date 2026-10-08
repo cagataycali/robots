@@ -32,12 +32,15 @@ import ast
 import functools
 import inspect
 import pathlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
 from strands_robots.training import _validate
 from strands_robots.training.base import Trainer
+from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
 
 
@@ -224,7 +227,7 @@ def calls_the_gate(source: str, gate: str) -> bool:
     """Does *source* route through ``self.<gate>(...)``?"""
     return any(
         isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == gate
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
     )
 
 
@@ -237,7 +240,7 @@ def comparisons_against_a_literal(source: str, fields: tuple[str, ...]) -> list[
     not, which is why the scan is not on text.
     """
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Compare):
             continue
         operands = [node.left, *node.comparators]
@@ -258,7 +261,7 @@ def conversions_of_the_field(source: str, fields: tuple[str, ...]) -> list[str]:
     builtins = ("int", "float", "len", "bool", "type", "isinstance")
     return [
         ast.unparse(node)
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id in builtins
@@ -363,6 +366,35 @@ class TestTheScannersDetectAPlantedDefect:
     def test_a_local_type_test_is_reported(self) -> None:
         source = "def validate(self, spec):\n    return [] if isinstance(spec.save_freq, int) else ['bad']\n"
         assert conversions_of_the_field(source, ("save_freq",)) == ["isinstance(spec.save_freq, int)"]
+
+
+@pytest.mark.parametrize(
+    "scan",
+    [
+        lambda source: reads_spec_field(source, ("seed",)),
+        lambda source: calls_the_gate(source, "_seed_problems"),
+        lambda source: comparisons_against_a_literal(source, ("seed",)),
+        lambda source: conversions_of_the_field(source, ("seed",)),
+    ],
+    ids=["reads", "calls", "comparisons", "conversions"],
+)
+def test_a_scan_reuses_the_trees_of_the_trainer_modules(
+    scan: Callable[[str], object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The table asks every scan of every module once per row: parsing per ask was most of its cost."""
+    for source in _trainer_sources().values():
+        scan(source)
+    parsed: list[str] = []
+    real_parse = ast.parse
+
+    def counting_parse(source: str, *args: Any, **kwargs: Any) -> ast.AST:
+        parsed.append(source)
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counting_parse)
+    for source in _trainer_sources().values():
+        scan(source)
+    assert not parsed, f"{len(parsed)} trainer module texts were parsed again"
 
 
 class TestEveryGateIsInTheTable:

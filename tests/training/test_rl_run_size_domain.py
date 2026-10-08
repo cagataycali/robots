@@ -50,6 +50,7 @@ from strands_robots.training._validate import rl_run_size_problems
 from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
 
 # The backends that size a training loop from these two fields.
@@ -366,7 +367,7 @@ def _calls_the_gate(source: str) -> bool:
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "_rl_run_size_problems"
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
     )
 
 
@@ -380,7 +381,9 @@ def _defines_validate(source: str) -> bool:
     ``validate`` is what keeps the rule a statement about preflights rather than
     about every mention of the field.
     """
-    return any(isinstance(node, ast.FunctionDef) and node.name == "validate" for node in ast.walk(ast.parse(source)))
+    return any(
+        isinstance(node, ast.FunctionDef) and node.name == "validate" for node in walk_tree(parse_source(source))
+    )
 
 
 class TestOneOwnerForTheRlRunSizeDomain:

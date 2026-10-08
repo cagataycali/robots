@@ -29,12 +29,14 @@ from __future__ import annotations
 import ast
 from collections.abc import Collection
 
+from tests._package_ast import parse_source, walk_tree
+
 
 def _reads_a_field_by_name(tree: ast.AST, fields: Collection[str]) -> bool:
     """Does *tree* contain ``spec.<field>`` for one of *fields*?"""
     return any(
         isinstance(node, ast.Attribute) and node.attr in fields and getattr(node.value, "id", None) == "spec"
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 
@@ -51,7 +53,7 @@ def _forwards_spec_fields_by_name(tree: ast.AST) -> bool:
         and node.args
         and isinstance(node.args[0], ast.Name)
         and node.args[0].id == "spec"
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 
@@ -59,7 +61,7 @@ def _names_a_field_as_a_string(tree: ast.AST, fields: Collection[str]) -> bool:
     """Does *tree* carry one of *fields* as a string constant (a table entry)?"""
     return any(
         isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in fields
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 
@@ -78,7 +80,7 @@ def reads_spec_field(source: str, fields: Collection[str]) -> bool:
         merely mentions the field name in a message - or one that uses
         ``getattr(spec, ...)`` for unrelated fields - is not a reader.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     if _reads_a_field_by_name(tree, fields):
         return True
     return _forwards_spec_fields_by_name(tree) and _names_a_field_as_a_string(tree, fields)
