@@ -74,7 +74,7 @@ import threading
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import refuse, undeclared_verb_error
+from strands_robots.drivers.base import refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.registry import resolve_name
 from strands_robots.utils import finite_number_error, positive_finite_number_error
 
@@ -606,6 +606,8 @@ class FrankaDriver:
             joints" is the answer a telemetry consumer handles and an exception
             is the one it does not.
         """
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         snapshot = self.read_state()
         if isinstance(snapshot, str):
             logger.debug("Franka observation unavailable: %s", snapshot)

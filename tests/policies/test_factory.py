@@ -34,6 +34,15 @@ class TestCreatePolicy:
         p2 = create_policy("ct")
         assert isinstance(p2, MockPolicy)
 
+    @pytest.mark.parametrize("pad", [" {} ", "{}\t", "\n{}"])
+    def test_a_padded_registration_is_reachable_by_its_plain_spelling(self, pad):
+        """Whitespace around a registered name or alias is not part of it, and cannot dodge the built-in guard."""
+        register_policy(pad.format("padded_prov"), loader=lambda: MockPolicy, aliases=[pad.format("pp")])
+        assert isinstance(create_policy("padded_prov"), MockPolicy)
+        assert isinstance(create_policy("pp"), MockPolicy)
+        with pytest.raises(ValueError, match="'mock' is the built-in provider"):
+            register_policy(pad.format("mock"), loader=lambda: MockPolicy)
+
     def test_list_providers_includes_json_and_runtime(self):
         """list_providers() should include both JSON-defined and runtime providers."""
         register_policy("runtime_only_provider", loader=lambda: MockPolicy)

@@ -1,11 +1,12 @@
-"""A package source file is parsed once per test process, not once per grader.
+"""A package or test source file is parsed once per test process, not once per grader.
 
 About 170 graders walk ``strands_robots`` and parse every file. Each parsed on
 its own, many at module scope, which pytest-xdist repeats on every worker at
 collection. Measured on the whole-tree roster at 14 workers, that was 134,919
 parses of package files costing 775 worker-seconds, against a floor of 31
-seconds for parsing each file once per worker. :func:`tests._package_ast.parse_file`
-is that floor; this module keeps the tree from drifting back.
+seconds for parsing each file once per worker. About 30 more graders walk
+``tests/`` the same way. :func:`tests._package_ast.parse_file` is that floor
+for both trees; this module keeps the tree from drifting back.
 """
 
 from __future__ import annotations
@@ -37,9 +38,13 @@ def test_no_test_module_parses_a_source_file_afresh() -> None:
     assert offenders == [], f"use tests._package_ast.parse_file(path) instead: {offenders}"
 
 
-def test_a_package_file_is_parsed_once_and_any_other_file_every_time(tmp_path: Path) -> None:
-    package_file = Path(strands_robots.__file__)
-    assert parse_file(package_file) is parse_file(package_file)
+#: One file of each tree whose parse is shared: the package and the test tree.
+_GRADED_FILES = (Path(strands_robots.__file__), Path(__file__))
+
+
+def test_a_graded_file_is_parsed_once_and_any_other_file_every_time(tmp_path: Path) -> None:
+    for graded in _GRADED_FILES:
+        assert parse_file(graded) is parse_file(graded), graded
 
     fixture = tmp_path / "fixture.py"
     fixture.write_text("x = 1\n", encoding="utf-8")
@@ -63,8 +68,7 @@ def test_the_fresh_parse_spelling_is_recognised_however_the_path_is_built(line: 
     assert bool(_FRESH_FILE_PARSE.search(line)) is fresh
 
 
-def test_a_package_files_text_is_parsed_once_and_any_other_text_every_time() -> None:
-    package_file = Path(strands_robots.__file__)
-    source = package_file.read_text(encoding="utf-8")
-    assert parse_source(source) is parse_file(package_file)
+def test_a_graded_files_text_is_parsed_once_and_any_other_text_every_time() -> None:
+    for graded in _GRADED_FILES:
+        assert parse_source(graded.read_text(encoding="utf-8")) is parse_file(graded), graded
     assert parse_source("x = 1\n") is not parse_source("x = 1\n")
