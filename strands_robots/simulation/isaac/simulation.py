@@ -7066,12 +7066,14 @@ class IsaacSimulation(
         )
 
         # Renders are expensive; skip camera readback when no policy needs
-        # images AND no recording is active (recorded frames must carry the
-        # camera images the schema declared).
+        # images. A recording that keeps cameras turns the skip back off inside
+        # get_observation (_recording_keeps_images), so recorded frames still
+        # carry the images the schema declared, and one scoped to no camera
+        # reads none.
         any_needs_images, unreachable = policy_reads_images(policies.values())
         if unreachable is not None:
             return unreachable
-        skip_images = not (any_needs_images or recording)
+        skip_images = not any_needs_images
         render_on = self._config.render_mode != "headless"
         physics_dt = float(getattr(self._config, "physics_dt", 0.0) or 0.0)
         # One synchronized step is one CONTROL period (MuJoCo parity, and what
