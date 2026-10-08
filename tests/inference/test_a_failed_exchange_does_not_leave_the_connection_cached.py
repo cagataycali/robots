@@ -97,6 +97,7 @@ class TaggedPolicy(MockPolicy):  # type: ignore[misc]
         self.park = threading.Event()
         self.parked = threading.Event()
         self.release = threading.Event()
+        self.unparked = threading.Event()
         self.seen: list[str] = []
 
     async def get_actions(  # type: ignore[override]
@@ -110,6 +111,7 @@ class TaggedPolicy(MockPolicy):  # type: ignore[misc]
             self.park.clear()
             self.parked.set()
             self.release.wait(timeout=PARK_HOLD)
+            self.unparked.set()
         return [{"tag": marker}]
 
 
@@ -158,8 +160,8 @@ def _strand(client: RemotePolicy, policy: TaggedPolicy) -> Any:
     finally:
         client.request_timeout = ROUND_TRIP_TIMEOUT
     policy.release.set()
-    # Give the server time to finish producing the reply nobody read.
-    time.sleep(0.5)
+    # The server has produced the reply nobody read once the parked call returns.
+    assert policy.unparked.wait(timeout=PARK_HOLD), "premise: the released call returns its reply"
     return stranded
 
 
