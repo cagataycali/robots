@@ -59,7 +59,7 @@ from strands_robots.mesh.security import ValidationError
 from strands_robots.mesh.session import PeerInfo
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 from strands_robots.utils import partial_construction_repr
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 #: The phrase the shared fallback reports. Pinned here so a rewording has to be
 #: a deliberate edit in two places rather than a silent drift in one.
@@ -105,7 +105,7 @@ def _classes_defining_repr() -> dict[str, type]:
         rel = path.relative_to(root).with_suffix("")
         dotted = "strands_robots." + str(rel).replace("/", ".")
         dotted = dotted.removesuffix(".__init__")
-        for node in ast.walk(parse_source(source)):
+        for node in walk_tree(parse_source(source)):
             if not isinstance(node, ast.ClassDef):
                 continue
             if not any(isinstance(f, ast.FunctionDef) and f.name == "__repr__" for f in node.body):
@@ -378,7 +378,7 @@ class TestTheFallbackWordingHasOneOwner:
             source = path.read_text(encoding="utf-8")
             if "def __repr__" not in source:
                 continue
-            for node in ast.walk(parse_source(source)):
+            for node in walk_tree(parse_source(source)):
                 if not isinstance(node, ast.ClassDef):
                     continue
                 for fn in node.body:
@@ -401,7 +401,7 @@ class TestTheFallbackWordingHasOneOwner:
             source = path.read_text(encoding="utf-8")
             if "def __repr__" not in source:
                 continue
-            for node in ast.walk(parse_source(source)):
+            for node in walk_tree(parse_source(source)):
                 if isinstance(node, ast.FunctionDef) and node.name == "__repr__":
                     if FALLBACK_PHRASE in ast.unparse(node):
                         offenders.append(f"{path.relative_to(root)}:{node.lineno}")

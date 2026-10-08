@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -52,14 +53,39 @@ def test_every_visual_token_resolves_to_committed_files() -> None:
     hook = docs_hook("visuals")
     missing = []
     for kind, ident in sorted(_references()):
-        out = hook.drawing_html(ident, "") if kind == "drawing" else hook.sim_html(ident, None, "")
+        if kind == "drawing":
+            out = hook.drawing_html(ident, "")
+        elif kind == "sim":
+            out = hook.sim_html(ident, None, "")
+        else:
+            out = hook.shot_html(ident, None, "")
         if out is None:
             missing.append(f"{{{{{kind}:{ident}}}}}")
     assert not missing, (
         f"visual tokens with no files: {missing}. A drawing needs docs/drawings/scenes/<id>.py and both "
         "docs/assets/drawings/<id>.{paper,dark}.svg (run docs/drawings/_tools/scene.py --all); a sim frame needs "
-        "docs/assets/sim/<id>.png."
+        "docs/assets/sim/<id>.png; a shot needs docs/assets/dashboard/<id>.paper.png and <id>.dark.png."
     )
+
+
+def test_every_committed_dashboard_shot_is_placed_and_has_both_schemes() -> None:
+    """A screenshot pair nobody places is dead weight; a lone scheme would vanish on the palette toggle."""
+    shots_dir = _DOCS / "assets" / "dashboard"
+    if not shots_dir.is_dir():
+        return
+    placed = {ident for kind, ident in _references() if kind == "shot"}
+    by_id: dict[str, set[str]] = {}
+    for png in shots_dir.glob("*.png"):
+        ident, _, scheme = png.stem.rpartition(".")
+        by_id.setdefault(ident, set()).add(scheme)
+    assert sorted(by_id) == sorted(placed), f"shots on disk {sorted(by_id)} vs placed {sorted(placed)}"
+    for ident, schemes in by_id.items():
+        assert schemes == {"paper", "dark"}, f"{ident}: schemes {sorted(schemes)}"
+        for scheme in schemes:
+            size = (shots_dir / f"{ident}.{scheme}.png").stat().st_size
+            assert size <= 300_000, f"{ident}.{scheme}.png is {size} bytes; keep a shot under 300 KB"
+    html = docs_hook("visuals").shot_html(next(iter(by_id)), "caption", "")
+    assert html is not None and html.count('loading="lazy"') == 2 and "#only-light" in html and "#only-dark" in html
 
 
 def test_every_committed_drawing_is_placed_on_a_page() -> None:
@@ -148,6 +174,15 @@ def test_every_sim_frame_has_a_manifest_entry_and_every_entry_a_frame() -> None:
     assert sorted(frames - set(promised)) == [], (
         "frames with no manifest entry; add them to docs/hooks/data/sim_frames.json"
     )
+    clips = {p.stem for p in (_DOCS / "assets" / "sim").glob("*.webm")}
+    video_entries = {ident for ident, entry in manifest.items() if "video" in entry and "script" not in entry}
+    assert sorted(video_entries - clips) == [], "video entries with no clip; run docs/hooks/sim_frames.py <id>"
+    assert sorted(clips - video_entries) == [], (
+        "clips with no video entry; a clip is recorded from a fence the manifest names, nothing else"
+    )
+    for ident in sorted(video_entries):
+        size = (_DOCS / "assets" / "sim" / f"{ident}.webm").stat().st_size
+        assert size <= 2_500_000, f"{ident}.webm is {size} bytes; clips stay under 2.5 MB (raise crf or shorten)"
     placed = {ident for kind, ident in _references() if kind == "sim"}
     for frame, page_path in promised.items():
         page = _DOCS / page_path
@@ -164,3 +199,30 @@ def test_a_sketch_fence_renders_untitled_and_other_titles_survive() -> None:
         '```python title="strands_robots/policies/base.py"\nx\n```': '```python title="strands_robots/policies/base.py"\nx\n```',
     }
     assert {src: hook.unmark_sketches(src) for src in cases} == cases
+
+
+def test_every_drawing_carries_the_mark_and_its_motion_honours_reduced_motion() -> None:
+    """Motion in a drawing lives in its own <style>: one keyframes block, a reduced-motion reset.
+
+    Every committed scene SVG shows the STRANDS wordmark in accent; a drawing that animates names
+    the preference that stops it, and every animated id is an element in that SVG.
+    """
+    drawings = _DOCS / "assets" / "drawings"
+    svgs = sorted(drawings.glob("*.svg"))
+    assert len(svgs) >= 20
+    animated = 0
+    for svg in svgs:
+        text = svg.read_text(encoding="utf-8")
+        assert 'class="mark" aria-label="STRANDS"' in text, f"{svg.name}: no STRANDS mark"
+        ids = set(re.findall(r'<(?:rect|path)\s+id="([^"]+)"', text))
+        moving = set(re.findall(r"#([A-Za-z0-9_-]+)\{(?:[^}]*;)?animation:", text))
+        if not moving:
+            continue
+        animated += 1
+        assert moving <= ids, f"{svg.name}: animated ids with no element: {sorted(moving - ids)}"
+        assert "@media (prefers-reduced-motion: reduce)" in text, f"{svg.name}: animates, no reduced-motion reset"
+        reset = re.search(r"@media \(prefers-reduced-motion: reduce\)\{([^{]*)\{animation:none", text)
+        assert reset and moving <= set(re.findall(r"#([A-Za-z0-9_-]+)", reset.group(1))), (
+            f"{svg.name}: the reduced-motion reset does not name every animated id"
+        )
+    assert animated >= 10, f"only {animated} animated drawings; every scene was given motion"

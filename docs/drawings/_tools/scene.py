@@ -22,6 +22,14 @@ that returns a Scene built from box / chip / chips / arrow / down / section / pa
 Coordinates are plain numbers on a 1200 wide canvas; the height is the Scene's `h` argument. Keep
 one accent element per drawing, orthogonal wires with the label beside the wire, a footnote, and
 the canvas filled (a WARN line reports more than a fifth empty).
+
+Motion is opt-in and lives in the SVG's own <style>: give an element an `id=` (box, arrow, chip)
+and list it in `Scene.motion` as (id, kind). Kinds: `visit` turns the borders of the listed
+elements accent one after another around one cycle (like the README hero loop), `flow` moves
+dashes along a wire in the arrow's direction, `pulse` lets the accent element breathe once per
+cycle. One keyframes block per SVG, and `@media (prefers-reduced-motion: reduce)` stops all of it.
+Every drawing carries the STRANDS wordmark as a small accent mark in a corner of the footer row
+(top-right when the footnote would run under it), so the brand is on the picture, never over content.
 """
 from __future__ import annotations
 
@@ -75,6 +83,21 @@ GROT = "'Space Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif"
 EM_GROT, EM_MONO = 0.52, 0.60
 WIDTH = 1200
 
+# The STRANDS pixel wordmark (overrides/partials/wordmark.svg, viewBox 1512x217) drawn MARK_W wide.
+_WORDMARK = HERE.parent.parent.parent / "overrides" / "partials" / "wordmark.svg"
+MARK_W = 90
+MARK_H = MARK_W * 217 / 1512
+
+
+def _wordmark_paths() -> str:
+    """The wordmark's path elements, transforms kept, fill left to the CSS."""
+    text = _WORDMARK.read_text(encoding="utf-8")
+    return "".join(re.findall(r"<path[^>]*/>", text))
+
+
+MOTION_KINDS = ("visit", "flow", "pulse")
+CYCLE_S = 8.0
+
 
 def _font_face(family: str, weight: int, file: str) -> str:
     p = FONT_DIR / file
@@ -124,9 +147,22 @@ class Scene:
         self.parts: list[str] = []
         self.labels: list[str] = [title, lead]
         self.maxy = 78.0  # lowest ink so far, for the fill check
+        self.motion: list[tuple[str, str]] = []  # (element id, kind in MOTION_KINDS)
+        self.ids: set[str] = set()
+        self.accent_ids: set[str] = set()  # ids drawn in accent already: a visit only widens their stroke
+        self.foot_right = 0.0  # rightmost x the footnote reaches, so the mark never sits under it
 
     def _ink(self, y: float) -> None:
         self.maxy = max(self.maxy, y)
+
+    def _id(self, id: str | None) -> str:
+        """The id attribute for an element that may be animated; ids are unique per drawing."""
+        if not id:
+            return ""
+        if id in self.ids:
+            raise ValueError(f"{self.id}: element id {id!r} used twice")
+        self.ids.add(id)
+        return f' id="{esc(id)}"'
 
     # text -------------------------------------------------------------
     def text(self, x, y, s, cls="grot text", size=12.5, anchor="start", weight=None, spacing=None):
@@ -152,13 +188,16 @@ class Scene:
         lines = wrap(s, width, size)
         for i, line in enumerate(lines):
             self.text(self.w / 2, y + i * size * 1.35, line, cls="grot muted", size=size, anchor="middle")
+            self.foot_right = max(self.foot_right, self.w / 2 + text_width(line, size, EM_GROT) / 2)
         return y + len(lines) * size * 1.35
 
     # boxes ------------------------------------------------------------
-    def box(self, x, y, w, h, title=None, sub=None, accent=False, dashed=False, size=15, subsize=12.5):
+    def box(self, x, y, w, h, title=None, sub=None, accent=False, dashed=False, size=15, subsize=12.5, id=None):
         """Card with a LEFT-aligned mono title and a Grotesk sub-line, wrapped inside the card."""
         cls = "card accent-card" if accent else ("card layer" if dashed else "card")
-        self.parts.append(f'<rect class="{cls}" x="{x}" y="{y}" width="{w}" height="{h}" rx="{RADIUS}"/>')
+        if accent and id:
+            self.accent_ids.add(id)
+        self.parts.append(f'<rect{self._id(id)} class="{cls}" x="{x}" y="{y}" width="{w}" height="{h}" rx="{RADIUS}"/>')
         self._ink(y + h)
         ty = y + 26
         if title:
@@ -168,10 +207,10 @@ class Scene:
             self.para(x + 14, ty - 2, sub, w - 28, size=subsize)
         return x, y, w, h
 
-    def chip(self, x, y, s, size=11.5, accent=False):
+    def chip(self, x, y, s, size=11.5, accent=False, id=None):
         w = text_width(s, size, EM_MONO) + 20
         cls = "chip accent-chip" if accent else "chip"
-        self.parts.append(f'<g class="{cls}"><rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="24" rx="12"/>'
+        self.parts.append(f'<g class="{cls}"><rect{self._id(id)} x="{x:.1f}" y="{y}" width="{w:.1f}" height="24" rx="12"/>'
                           f'<text x="{x + 10:.1f}" y="{y + 16.3}" font-size="{size}">{esc(s)}</text></g>')
         self.labels.append(s)
         self._ink(y + 24)
@@ -184,7 +223,7 @@ class Scene:
 
     # arrows -----------------------------------------------------------
     def arrow(self, pts, accent=False, dashed=False, head=True, label=None, label_dx=6, label_dy=-6,
-              label_anchor="start"):
+              label_anchor="start", id=None):
         """Orthogonal polyline through pts=[(x,y),...], 1.5px, small FILLED triangle at the end.
 
         head=True puts the triangle at the last point, head="both" at both ends, head=False none.
@@ -200,7 +239,7 @@ class Scene:
             marker += f' marker-end="url(#{hid})"'
         if head == "both":
             marker += f' marker-start="url(#{hid})"'
-        self.parts.append(f'<path class="{cls}" d="{d}"{marker}/>')
+        self.parts.append(f'<path{self._id(id)} class="{cls}" d="{d}"{marker}/>')
         self._ink(max(y for _, y in pts))
         if label:
             mx, my = (pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2
@@ -234,7 +273,8 @@ class Scene:
 .wire{{fill:none;stroke:var(--wire);stroke-width:1.5}} .wire.dashed{{stroke-dasharray:3 5}}
 .wire.accent-wire{{stroke:var(--accent)}}
 #head path{{fill:var(--wire)}} #head-accent path{{fill:var(--accent)}}
-"""
+.mark{{fill:var(--accent)}}
+{self.motion_css()}"""
         head = ('<marker id="{id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
                 'orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker>')
         body = "\n".join(self.parts)
@@ -244,7 +284,59 @@ class Scene:
                 f'<rect class="bg" width="{self.w}" height="{self.h}"/>\n'
                 f'<text class="mono fg" x="600" y="50" font-size="24" text-anchor="middle" letter-spacing="0.05em">{esc(self.title)}</text>\n'
                 f'<text class="grot text" x="600" y="78" font-size="14.5" text-anchor="middle">{esc(self.lead)}</text>\n'
-                f'{body}\n</svg>\n')
+                f'{body}\n{self.mark_svg()}\n</svg>\n')
+
+    def mark_svg(self) -> str:
+        """The STRANDS wordmark, MARK_W wide in accent, bottom-right of the footer row.
+
+        When the footnote's longest line would run under it, the mark moves to the top-right
+        corner instead; it never sits over content.
+        """
+        x = self.w - 60 - MARK_W
+        y = self.h - 22 - MARK_H
+        if self.foot_right > x - 16:
+            y = 30 - MARK_H / 2
+        scale = MARK_W / 1512
+        return (f'<g class="mark" aria-label="STRANDS" transform="translate({x:.1f} {y:.1f}) scale({scale:.5f})">'
+                f'{_wordmark_paths()}</g>')
+
+    def motion_css(self) -> str:
+        """Keyframes for the listed (id, kind) pairs, plus the reduced-motion reset; empty without motion."""
+        if not self.motion:
+            return ""
+        rules, visits = [], [i for i, k in self.motion if k == "visit"]
+        for ident, kind in self.motion:
+            if kind not in MOTION_KINDS:
+                raise ValueError(f"{self.id}: motion kind {kind!r} for {ident!r}; kinds are {MOTION_KINDS}")
+            if ident not in self.ids:
+                raise ValueError(f"{self.id}: motion names {ident!r} but no element carries that id")
+        for n, ident in enumerate(visits):
+            delay = CYCLE_S * n / len(visits)
+            name = "sr-visit-accent" if ident in self.accent_ids else "sr-visit"
+            rules.append(f"#{ident}{{animation:{name} {CYCLE_S}s linear infinite;animation-delay:{delay:.2f}s}}")
+        if visits:
+            # the lit window is one slot wide so exactly one element is lit at a time; every frame names
+            # the stroke, or the browser would interpolate the colour back over the rest of the cycle
+            end = max(2, round(100 / len(visits)) - 2)
+            rules.append(f"@keyframes sr-visit{{0%{{stroke:var(--border);stroke-width:1}}"
+                         f"1%,{end}%{{stroke:var(--accent);stroke-width:1.5}}"
+                         f"{end + 2}%,100%{{stroke:var(--border);stroke-width:1}}}}")
+            if any(i in self.accent_ids for i in visits):
+                rules.append(f"@keyframes sr-visit-accent{{0%{{stroke-width:1.5}}1%,{end}%{{stroke-width:3}}"
+                             f"{end + 2}%,100%{{stroke-width:1.5}}}}")
+        flows = [i for i, k in self.motion if k == "flow"]
+        for ident in flows:
+            rules.append(f"#{ident}{{stroke-dasharray:6 6;animation:sr-flow 1.6s linear infinite}}")
+        if flows:
+            rules.append("@keyframes sr-flow{to{stroke-dashoffset:-12}}")
+        pulses = [i for i, k in self.motion if k == "pulse"]
+        for ident in pulses:
+            rules.append(f"#{ident}{{animation:sr-pulse {CYCLE_S / 2}s ease-in-out infinite}}")
+        if pulses:
+            rules.append("@keyframes sr-pulse{0%,100%{fill-opacity:1;stroke-width:1.5}50%{fill-opacity:0.35;stroke-width:2.5}}")
+        ids = ",".join(f"#{i}" for i, _ in self.motion)
+        rules.append(f"@media (prefers-reduced-motion: reduce){{{ids}{{animation:none;stroke-dasharray:none}}}}")
+        return "\n".join(rules) + "\n"
 
 
 # ------------------------------------------------------------------ the registry

@@ -37,7 +37,7 @@ import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from tests._daemon_executor import DaemonThreadExecutor
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _TESTS_DIR = pathlib.Path(inspect.getfile(DaemonThreadExecutor)).resolve().parent
 _ROOT = _TESTS_DIR.parent
@@ -284,7 +284,7 @@ def _executor_constructors(tree: ast.AST) -> list[tuple[int, str]]:
     reported at the call's line, so a fixture built through it is scanned too.
     """
     found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "hardware_robot_on":
             helper = _executor_constructors(parse_file(_HELPER))
             found.extend((node.lineno, name) for _, name in helper)
@@ -305,7 +305,7 @@ def _abandons_a_work_item(tree: ast.AST) -> bool:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "result"
         and any(keyword.arg == "timeout" for keyword in node.keywords)
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 

@@ -29,7 +29,7 @@ import pytest
 
 import strands_robots
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO = Path(strands_robots.__file__).resolve().parents[1]
 _PKG = _REPO / "strands_robots"
@@ -101,7 +101,7 @@ def _statically_named_tools() -> set[tuple[str, str]]:
 def _function_node(item) -> ast.FunctionDef | ast.AsyncFunctionDef:  # noqa: ANN001 - the hook's Tool
     path = _REPO / (item.module.replace(".", "/") + ".py")
     tree = parse_file(path)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == item.name:
             return node
     for node in ast.walk(tree):

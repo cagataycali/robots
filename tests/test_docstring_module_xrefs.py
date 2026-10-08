@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 _PACKAGE_NAME = _PACKAGE_DIR.name
@@ -116,7 +116,7 @@ def _docstring_offenders() -> dict[str, list[str]]:
     offenders: dict[str, list[str]] = {}
     for source_file in _SOURCE_FILES:
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             doc = ast.get_docstring(node, clean=False)

@@ -1,10 +1,10 @@
 ---
-description: Which object Robot(...) returns in each mode, which module owns what, the seven layers, and the numbers behind them.
+description: Which object Robot(...) returns in each mode, which module owns what, and the seven-layer rule a change must obey.
 ---
 
 # Architecture
 
-`strands_robots` is one factory over two lanes and seven import layers. After this page you know which object `Robot(...)` hands you in each mode, which module owns what, the layer rule a change must obey, and the numbers behind it, generated from the tree at build time.
+`strands_robots` is one factory over two lanes and seven import layers: this page says which object `Robot(...)` hands you in each mode, which module owns what, and the layer rule a change must obey.
 
 ## Two lanes behind one factory
 
@@ -43,24 +43,24 @@ core -> registry -> drivers|mesh -> sim|policies -> app -> tools -> dashboard
 
 `scripts/check_import_layers.py` grades this from the source with `ast`: no runtime import cycle, and no upward edge unless it is written in the script's `KNOWN_DEFERRED_UPWARD_EDGES` roster. The roster is a ratchet: removing an inversion deletes its line, adding one fails the check until it is listed. It is empty at this commit.
 
-The table is generated from the grader's `LAYERS` declaration and the tree's line counts.
+The table is generated from the grader's `LAYERS` declaration.
 
 {{module_map}}
 
-Placements that are a judgement, not a reading: `assets` sits with `registry` because it resolves the paths the registry declares; the dataset modules (`dataset_recorder`, `dataset_metadata`, `dataset_source`, `streaming_dataset`, `dataset_transfer`) sit in `core` because a dataset is a contract two layers agree on, not a host.
+Placements that are a judgement: `assets` sits with `registry` because it resolves the paths the registry declares; the dataset modules (`dataset_recorder`, `dataset_metadata`, `dataset_source`, `streaming_dataset`, `dataset_transfer`) sit in `core` because a dataset is a contract two layers agree on, not a host.
 
 ## Rules every module obeys
 
 - **Cheap import.** `import strands_robots` leaves numpy, torch, mujoco and lerobot out of `sys.modules`; every heavy name in `__all__` is behind the package `__getattr__`, and the import-time shims (`_mujoco_gl`, `_dyld`) are stdlib-only leaves.
-- **Registry is the source of truth.** `registry/robots.json` holds {{n:robots}} robots in {{n:categories}} categories with {{n:aliases}} aliases; `policies.json` holds the providers. Code reads the row; it never hard-codes a robot.
+- **Registry is the source of truth.** `registry/robots.json` holds the robots ({{n:robots}} at this commit, in {{n:categories}} families) and `policies.json` the providers. Code reads the row; it never hard-codes a robot.
 - **Refuse, do not guess.** A value the code cannot honour (a non-finite pose, an unknown joint name, a hardware kwarg on a sim robot) is refused with a message naming the valid set; continuable refusals carry a [code](../reference/refusal-codes.md).
 - **A policy does not reach hardware without an answer.** Mutative verbs on `use_unitree`, `serial_tool`, `pose_tool`, the `Robot` tool's `execute` and `start`, and every ROS 2 transport raise the SDK interrupt; `STRANDS_*_COMMAND_ALLOW` pre-approves one command for an unattended run. Stop verbs are never gated; the native drivers' `move_to` is not gated yet.
 - **Providers are plugins.** Simulation backends register through `register_backend` or the `strands_robots.backends` entry-point group; policies through `register_policy` or `policies.json`; native drivers through `register_native_driver`.
 
 ## Extras
 
-The package installs with no heavy dependency; each lane pulls its own extra: `[sim-mujoco]` for the sim lane, `[lerobot]` for the lerobot hardware lane, `[mesh]` for Zenoh, `[dashboard]` for the operator UI, one extra per native driver or policy provider ({{n:policy_providers}} providers, {{n:native_drivers}} shipped drivers). `pyproject.toml` is the list; a door that needs an extra you lack refuses with the install line.
+The package installs with no heavy dependency; each lane pulls its own extra: `[sim-mujoco]` for the sim lane, `[lerobot]` for the lerobot hardware lane, `[mesh]` for Zenoh, `[dashboard]` for the operator UI, and one extra per native driver or policy provider ({{n:native_drivers}} [drivers](../learn/hardware/drivers.md), {{n:policy_providers}} [providers](../learn/policies/index.md)). `pyproject.toml` is the list; a door that needs an extra you lack refuses with the install line.
 
 ## What changes in 1.0
 
-1.0 keeps this layer DAG and changes the layers' size and the number of contracts ([roadmap](../reference/project/roadmap.md)).
+1.0 keeps this layer DAG and changes what each layer holds ([roadmap](../reference/project/roadmap.md)).

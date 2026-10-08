@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PKG_ROOT = Path(strands_robots.__file__).resolve().parent
 
@@ -70,6 +71,7 @@ def _has_end_of_line_anchor(pattern: str) -> bool:
     return False
 
 
+@functools.cache
 def _regex_literals() -> list[tuple[Path, int, str]]:
     """Every regex pattern the package spells as a literal.
 
@@ -83,7 +85,7 @@ def _regex_literals() -> list[tuple[Path, int, str]]:
         if "__pycache__" in path.parts:
             continue
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)

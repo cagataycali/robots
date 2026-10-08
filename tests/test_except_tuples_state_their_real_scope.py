@@ -59,7 +59,7 @@ from typing import Any
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Trees scanned for the rule. Reached through the imported package so a layout
 #: change cannot silently narrow the scan to nothing.
@@ -100,7 +100,7 @@ def _import_map(tree: ast.Module) -> dict[str, str]:
         this rule grades are reached absolutely.
     """
     out: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.module and not node.level:
             for alias in node.names:
                 out[alias.asname or alias.name] = f"{node.module}.{alias.name}"
@@ -145,7 +145,7 @@ def _resolve(expr: str, imports: dict[str, str]) -> type[BaseException] | None:
 
 def _tuple_handlers(tree: ast.Module) -> list[ast.ExceptHandler]:
     """Every ``except`` handler in ``tree`` whose type is a tuple."""
-    return [n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Tuple)]
+    return [n for n in walk_tree(tree) if isinstance(n, ast.ExceptHandler) and isinstance(n.type, ast.Tuple)]
 
 
 def _redundancies(tree: ast.Module, handlers: list[ast.ExceptHandler]) -> list[tuple[int, str]]:

@@ -45,7 +45,7 @@ import strands_robots.simulation.policy_runner as runner_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import optional_callable_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 
@@ -181,7 +181,7 @@ def _guarded_params(module: Any, cls_name: str, method_name: str) -> set[str]:
     tree = parse_file(pathlib.Path(inspect.getfile(module)))
     func = next(
         m
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.ClassDef) and node.name == cls_name
         for m in node.body
         if isinstance(m, ast.FunctionDef) and m.name == method_name
@@ -259,7 +259,7 @@ class TestEveryCallerSuppliedCallbackOwnsTheDomain:
         tree = parse_file(pathlib.Path(inspect.getfile(runner_mod)))
         func = next(
             m
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.ClassDef) and node.name == "PolicyRunner"
             for m in node.body
             if isinstance(m, ast.FunctionDef) and m.name == "evaluate"

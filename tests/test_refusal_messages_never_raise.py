@@ -117,7 +117,7 @@ from strands_robots.utils import (
     tcp_port_error,
     validation_split_error,
 )
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 NAN = float("nan")
 INF = float("inf")
@@ -708,7 +708,7 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
     """
     tree = parse_source(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+    for fn in [n for n in walk_tree(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
         args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
         carries_value = {arg.arg for arg in args if arg.annotation is not None and ast.unparse(arg.annotation) == "Any"}
         if not carries_value:
@@ -870,7 +870,7 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
     """
     tree = parse_source(source)
     found: dict[str, tuple[tuple[str, str], ...]] = {}
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+    for fn in [n for n in walk_tree(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
         if fn.name.startswith("_") or fn.name in GUARDED_READERS:
             continue
         args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
@@ -1027,7 +1027,7 @@ class TestNoGuardRendersACallerValueDirectly:
         """An empty scan would satisfy the assertion above just as well."""
         tree = parse_source(self._source())
         scanned = set()
-        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+        for fn in [n for n in walk_tree(tree) if isinstance(n, ast.FunctionDef)]:
             args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
             if any(a.annotation is not None and ast.unparse(a.annotation) == "Any" for a in args):
                 scanned.add(fn.name)
@@ -1052,7 +1052,7 @@ class TestNoGuardRendersACallerValueDirectly:
         over - a guard whose whole call graph renders nothing still fails.
         """
         tree = parse_source(self._source())
-        defined = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        defined = {n.name: n for n in walk_tree(tree) if isinstance(n, ast.FunctionDef)}
         owned = set(GUARD_IDS) | CONTAINER_GUARDS | {"validation_split_error"}
         renderers = {"refusal_repr", "refusal_str", "refusal_container_repr"}
         for name in sorted(owned & set(defined)):

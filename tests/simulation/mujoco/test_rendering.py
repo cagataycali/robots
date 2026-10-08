@@ -455,8 +455,21 @@ def test_render_passes_scene_option_to_renderer(tmp_path: Path) -> None:
 # its output passes the col-std threshold, capped at 30 attempts.)
 
 
+def _skip_the_ready_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Collapse the start-up wait for a recorder thread these cells never start.
+
+    They capture ``_loop`` instead of running it, so ``ready`` is never set and
+    ``start_cameras_recording`` would sit out its whole warmup budget (5 s plus
+    1 s per camera) before returning. That branch is graded in
+    ``test_cameras_recording_reports_its_warmup.py``; here it is only a delay.
+    """
+    from strands_robots.simulation.mujoco import rendering
+
+    monkeypatch.setattr(rendering, "_cams_rec_ready_timeout", lambda n: 0.0)
+
+
 @_requires_mujoco
-def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path: Path) -> None:
+def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The recorder thread renders each camera adaptively until it
     produces non-gradient output (col-std > threshold), then starts
     the timing loop.
@@ -480,6 +493,7 @@ def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path: Path) -> No
     """
     pytest.importorskip("mujoco")
     os.environ.setdefault("MUJOCO_GL", "glfw")
+    _skip_the_ready_wait(monkeypatch)
 
     import io
 
@@ -560,7 +574,9 @@ def test_recorder_thread_warms_up_until_each_camera_clears(tmp_path: Path) -> No
 
 
 @_requires_mujoco
-def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path: Path) -> None:
+def test_recorder_thread_warmup_continues_when_camera_stays_cold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If a camera consistently returns gradient frames, warmup retries
     up to MAX_WARMUP_RENDERS (30) times before giving up. Last
     iteration logs WARNING about cameras still cold.
@@ -570,6 +586,7 @@ def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path: Path)
     Common case is much faster (1-3 attempts per camera)."""
     pytest.importorskip("mujoco")
     os.environ.setdefault("MUJOCO_GL", "glfw")
+    _skip_the_ready_wait(monkeypatch)
 
     import io
 
@@ -643,7 +660,7 @@ def test_recorder_thread_warmup_continues_when_camera_stays_cold(tmp_path: Path)
 
 
 @_requires_mujoco
-def test_recorder_thread_warmup_failure_does_not_abort(tmp_path: Path) -> None:
+def test_recorder_thread_warmup_failure_does_not_abort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If the thread-side warmup render raises, the timing loop
     still starts (and accumulates ``state['errors'][cam]`` per the
     standard error-tracking path).
@@ -653,6 +670,7 @@ def test_recorder_thread_warmup_failure_does_not_abort(tmp_path: Path) -> None:
     :meth:`get_cameras_recording_status`."""
     pytest.importorskip("mujoco")
     os.environ.setdefault("MUJOCO_GL", "glfw")
+    _skip_the_ready_wait(monkeypatch)
 
     from strands_robots.simulation import Simulation
 

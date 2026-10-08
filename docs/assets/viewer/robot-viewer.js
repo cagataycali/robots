@@ -1075,11 +1075,25 @@ function wirePickers() {
 }
 if (window.document$?.subscribe) window.document$.subscribe(wirePickers); else wirePickers();
 
-// Catalog filter chips (robots/index.md): .sr-filter button[data-family] toggles .sr-robot[data-family].
+// Catalog filter chips (robots/index.md): .sr-filter-btn[data-family] and [data-lane] each pick one value;
+// a card stays when it matches both. data-real / data-sim are written by docs/hooks/robot_pages.py.
+function applyCatalogFilter() {
+  const fam = document.querySelector('.sr-filter-btn[data-family][aria-pressed="true"]')?.dataset.family ?? "all";
+  const lane = document.querySelector('.sr-filter-btn[data-lane][aria-pressed="true"]')?.dataset.lane ?? "all";
+  let shown = 0;
+  for (const card of document.querySelectorAll(".sr-robot[data-family]")) {
+    const real = card.dataset.real === "true", sim = card.dataset.sim === "true";
+    const laneOk = lane === "all" || (lane === "real" && real) || (lane === "sim" && sim) || (lane === "both" && real && sim);
+    card.hidden = !((fam === "all" || card.dataset.family === fam) && laneOk);
+    if (!card.hidden) shown += 1;
+  }
+  const count = document.querySelector(".sr-filter-count");
+  if (count) count.textContent = `${shown} robot${shown === 1 ? "" : "s"}`;
+}
 document.addEventListener("click", (e) => {
-  const b = e.target.closest(".sr-filter button[data-family], .sr-filter-btn[data-family]");
+  const b = e.target.closest(".sr-filter-btn[data-family], .sr-filter-btn[data-lane]");
   if (!b) return;
-  const fam = b.dataset.family;
   for (const x of b.parentElement.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
-  for (const card of document.querySelectorAll(".sr-robot[data-family]")) card.hidden = fam !== "all" && card.dataset.family !== fam;
+  applyCatalogFilter();
 });
+if (window.document$?.subscribe) window.document$.subscribe(() => { if (document.querySelector(".sr-filter-count")) applyCatalogFilter(); });

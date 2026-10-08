@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Presence of MuJoCo read as a spec rather than imported: only the live-sim
 #: class below needs it, and the rest of this module grades ``describe()``
@@ -1072,7 +1072,7 @@ def _describe_signature_strings(engine_cls: type) -> dict[str, str]:
     module = parse_file(Path(source_file))
 
     class_defs = [
-        node for node in ast.walk(module) if isinstance(node, ast.ClassDef) and node.name == engine_cls.__name__
+        node for node in walk_tree(module) if isinstance(node, ast.ClassDef) and node.name == engine_cls.__name__
     ]
     assert class_defs, f"{engine_cls.__name__} not found in {source_file}"
 
@@ -1316,7 +1316,7 @@ def _describe_merges_the_base_surface(engine_cls: type) -> bool:
     assert source_file is not None, f"no source file for {engine_cls.__name__}"
     module = parse_file(Path(source_file))
     for class_def in [
-        node for node in ast.walk(module) if isinstance(node, ast.ClassDef) and node.name == engine_cls.__name__
+        node for node in walk_tree(module) if isinstance(node, ast.ClassDef) and node.name == engine_cls.__name__
     ]:
         for describe in [
             node for node in ast.walk(class_def) if isinstance(node, ast.FunctionDef) and node.name == "describe"

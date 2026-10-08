@@ -50,7 +50,7 @@ from typing import Any
 import pytest
 
 from strands_robots.policies.curobo import CuroboPolicy
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # ---------------------------------------------------------------------------
 # Stub planner - local to this module, as in every sibling curobo test file.
@@ -267,7 +267,7 @@ class TestNoProviderChunkCountSkipsTheSharedDomain:
         for path in sorted(root.rglob("*.py")):
             tree = parse_file(path)
             params: set[str] = set()
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 if node.name != "__init__":

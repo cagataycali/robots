@@ -38,6 +38,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Test areas swept. Derived below rather than trusted, so an area that ships
@@ -89,12 +91,12 @@ def explicit_finalizer_calls(source: str) -> list[int]:
         syntax gates own that failure.
     """
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []
 
     chained: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "__del__":
             for inner in ast.walk(node):
                 if (
@@ -109,7 +111,7 @@ def explicit_finalizer_calls(source: str) -> list[int]:
 
     return sorted(
         node.lineno
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "__del__"

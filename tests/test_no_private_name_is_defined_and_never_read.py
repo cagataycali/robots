@@ -44,11 +44,12 @@ simplification the instance-state grader makes for a mixin's state.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = REPO_ROOT / "strands_robots"
@@ -106,7 +107,7 @@ def _definitions(tree: ast.Module) -> list[tuple[str, int]]:
 def _readers(tree: ast.Module) -> set[str]:
     """Every identifier the module refers to other than by defining it."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             names.add(node.id)
         elif isinstance(node, ast.Attribute):
@@ -120,6 +121,7 @@ def _readers(tree: ast.Module) -> set[str]:
     return names
 
 
+@functools.cache
 def _scan() -> tuple[dict[str, list[str]], int, int]:
     """Return (unread private name -> definition sites, definitions seen, files parsed)."""
     files = sorted(PACKAGE.rglob("*.py"))

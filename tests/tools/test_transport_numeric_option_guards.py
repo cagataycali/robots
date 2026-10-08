@@ -42,7 +42,7 @@ import strands_robots.ros as ros_transport_mod
 import strands_robots.rosbridge as rosbridge_transport_mod
 import strands_robots.rtps.participant as participant_mod
 from strands_robots.tools._numeric_options import numeric_option_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 rosbridge_mod = importlib.import_module("strands_robots.tools.use_rosbridge")
@@ -507,7 +507,7 @@ def _local_guard_definitions(tree: ast.Module) -> list[str]:
     """Names of module-level functions that re-implement the shared guard."""
     return [
         node.name
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.endswith("numeric_option_error")
     ]
 
@@ -515,7 +515,7 @@ def _local_guard_definitions(tree: ast.Module) -> list[str]:
 def _calls_the_shared_guard(tree: ast.Module) -> bool:
     return any(
         isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "numeric_option_error"
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
     )
 
 

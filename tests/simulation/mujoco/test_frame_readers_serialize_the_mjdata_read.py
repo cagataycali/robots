@@ -24,8 +24,8 @@ Two things are pinned here:
 
 * **Behaviour** - a reader must not be able to complete while another thread
   holds ``self._lock``. The writer here holds the real lock and never sleeps, so
-  the serialised verdict is an ``Event`` that times out rather than a wall-clock
-  measurement: a reader blocked on the lock *cannot* signal completion while the
+  the serialised verdict is an ``Event`` the reader's request for the lock sets,
+  not a wall-clock measurement: a reader blocked on the lock *cannot* signal completion while the
   writer is inside its critical section, whatever the machine's load.
 * **The root cause** - every public method that reads mjData into a renderer has
   that read inside a ``with self._lock`` block, derived from the module's own AST
@@ -53,11 +53,10 @@ np = pytest.importorskip("numpy")
 from strands_robots.simulation.mujoco import rendering as rendering_mod  # noqa: E402
 from strands_robots.simulation.mujoco import simulation as simulation_mod  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.simulation.mujoco._contended_lock import ContendedLock  # noqa: E402
 
-# Long enough that an unserialised reader (~1 ms against the stand-in renderer)
-# finishes inside it by a wide margin, and irrelevant to the serialised verdict:
-# a reader waiting on the lock can never signal completion while the writer
-# holds it, so that direction cannot time out early under load.
+# An upper bound only: the wait ends as soon as the reader asks for the lock
+# (it is blocked) or finishes without asking (~1 ms against the stand-in).
 _READER_BUDGET_S = 1.0
 
 _PUBLIC_FRAME_READERS = ("render", "render_depth", "get_frame")
@@ -123,10 +122,14 @@ def _completes_while_a_writer_holds_the_lock(sim: Simulation, name: str) -> tupl
         finally:
             done.set()
 
-    with sim._lock:
+    lock = ContendedLock(sim._lock, done)
+    sim._lock = lock  # type: ignore[assignment]  # duck-typed RLock
+    with lock:
         reader = threading.Thread(target=run, daemon=True, name=f"reader-{name}")
         reader.start()
-        completed_under_the_lock = done.wait(_READER_BUDGET_S)
+        # Wakes when the reader asks for the lock (it is blocked) or finishes.
+        done.wait(_READER_BUDGET_S)
+        completed_under_the_lock = "result" in box or "error" in box
 
     reader.join(_READER_BUDGET_S * 5)
     return completed_under_the_lock, box

@@ -41,7 +41,7 @@ from collections.abc import Sequence
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TEST_TREES = ("tests", "tests_integ")
@@ -72,7 +72,7 @@ def _test_case_names() -> tuple[tuple[pathlib.Path, int, str], ...]:
                 module = parse_file(path)
             except SyntaxError:  # pragma: no cover - a broken test file fails elsewhere
                 continue
-            for node in ast.walk(module):
+            for node in walk_tree(module):
                 if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
                     found.append((path, node.lineno, node.name))
                 elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test_"):

@@ -51,7 +51,8 @@ def scene() -> Scene:
             s.box(L, y, LW, rh, title, sub, accent=bool(acc), size=14, subsize=12)
         y += rh + gap
     bottom = y - gap
-    s.arrow([(BUS, 134), (BUS, bottom)], label="imports", label_dx=10, label_dy=4)
+    s.arrow([(BUS, 134), (BUS, bottom)], label="imports", label_dx=10, label_dy=4, id="imports")
+    s.motion = [("imports", "flow")]
 
     s.section(R, 122, "the rule")
     s.box(R, 134, RW, 118, "check_import_layers.py",

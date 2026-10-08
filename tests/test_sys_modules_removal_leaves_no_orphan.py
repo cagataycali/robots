@@ -159,7 +159,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TEST_TREES = ("tests", "tests_integ")
@@ -359,7 +359,7 @@ def _patched_module_level_imports(tree: ast.Module) -> set[str]:
     if not bindings:
         return set()
     patched: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)

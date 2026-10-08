@@ -15,6 +15,16 @@
 .wire{fill:none;stroke:var(--wire);stroke-width:1.5} .wire.dashed{stroke-dasharray:3 5}
 .wire.accent-wire{stroke:var(--accent)}
 #head path{fill:var(--wire)} #head-accent path{fill:var(--accent)}
+.mark{fill:var(--accent)}
+#record{animation:sr-visit 8.0s linear infinite;animation-delay:0.00s}
+#verify{animation:sr-visit 8.0s linear infinite;animation-delay:1.33s}
+#label{animation:sr-visit 8.0s linear infinite;animation-delay:2.67s}
+#train{animation:sr-visit 8.0s linear infinite;animation-delay:4.00s}
+#deploy{animation:sr-visit-accent 8.0s linear infinite;animation-delay:5.33s}
+#measure{animation:sr-visit 8.0s linear infinite;animation-delay:6.67s}
+@keyframes sr-visit{0%{stroke:var(--border);stroke-width:1}1%,15%{stroke:var(--accent);stroke-width:1.5}17%,100%{stroke:var(--border);stroke-width:1}}
+@keyframes sr-visit-accent{0%{stroke-width:1.5}1%,15%{stroke-width:3}17%,100%{stroke-width:1.5}}
+@media (prefers-reduced-motion: reduce){#record,#verify,#label,#train,#deploy,#measure{animation:none;stroke-dasharray:none}}
 </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker><marker id="head-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker></defs>
 <rect class="bg" width="1200" height="580"/>
@@ -22,32 +32,32 @@
 <text class="grot text" x="600" y="78" font-size="14.5" text-anchor="middle">Six steps in a loop; one Robot object and one run_policy call carry every one of them, and a number leaves with its source.</text>
 <text class="mono muted" x="60.0" y="122.0" font-size="10.5" text-anchor="start" letter-spacing="0.05em">DATA</text>
 <text class="mono muted" x="60.0" y="364.0" font-size="10.5" text-anchor="start" letter-spacing="0.05em">POLICY</text>
-<rect class="card" x="60" y="150" width="300" height="108" rx="8"/>
+<rect id="record" class="card" x="60" y="150" width="300" height="108" rx="8"/>
 <text class="mono fg" x="74.0" y="176.0" font-size="14" text-anchor="start" font-weight="500">record</text>
 <text class="grot text" x="74.0" y="195.0" font-size="12" text-anchor="start">DatasetRecorder, start_recording on the</text>
 <text class="grot text" x="74.0" y="211.2" font-size="12" text-anchor="start">robot; teleop or a policy drives</text>
 <g class="chip"><rect x="74.0" y="224" width="130.4" height="24" rx="12"/><text x="84.0" y="240.3" font-size="11.5">episodes on disk</text></g>
-<rect class="card" x="450" y="150" width="300" height="108" rx="8"/>
+<rect id="verify" class="card" x="450" y="150" width="300" height="108" rx="8"/>
 <text class="mono fg" x="464.0" y="176.0" font-size="14" text-anchor="start" font-weight="500">verify</text>
 <text class="grot text" x="464.0" y="195.0" font-size="12" text-anchor="start">verify_dataset reads the parquet and the</text>
 <text class="grot text" x="464.0" y="211.2" font-size="12" text-anchor="start">videos back</text>
 <g class="chip"><rect x="464.0" y="224" width="206.3" height="24" rx="12"/><text x="474.0" y="240.3" font-size="11.5">frames and videos check out</text></g>
-<rect class="card" x="840" y="150" width="300" height="108" rx="8"/>
+<rect id="label" class="card" x="840" y="150" width="300" height="108" rx="8"/>
 <text class="mono fg" x="854.0" y="176.0" font-size="14" text-anchor="start" font-weight="500">label</text>
 <text class="grot text" x="854.0" y="195.0" font-size="12" text-anchor="start">predicates over the frames, then a judge</text>
 <text class="grot text" x="854.0" y="211.2" font-size="12" text-anchor="start">agent</text>
 <g class="chip"><rect x="854.0" y="224" width="164.9" height="24" rx="12"/><text x="864.0" y="240.3" font-size="11.5">a verdict per episode</text></g>
-<rect class="card" x="840" y="392" width="300" height="108" rx="8"/>
+<rect id="train" class="card" x="840" y="392" width="300" height="108" rx="8"/>
 <text class="mono fg" x="854.0" y="418.0" font-size="14" text-anchor="start" font-weight="500">train</text>
 <text class="grot text" x="854.0" y="437.0" font-size="12" text-anchor="start">create_trainer(TrainSpec) on the labelled</text>
 <text class="grot text" x="854.0" y="453.2" font-size="12" text-anchor="start">episodes</text>
 <g class="chip"><rect x="854.0" y="466" width="102.8" height="24" rx="12"/><text x="864.0" y="482.3" font-size="11.5">a checkpoint</text></g>
-<rect class="card accent-card" x="450" y="392" width="300" height="108" rx="8"/>
+<rect id="deploy" class="card accent-card" x="450" y="392" width="300" height="108" rx="8"/>
 <text class="mono fg" x="464.0" y="418.0" font-size="14" text-anchor="start" font-weight="500">deploy</text>
 <text class="grot text" x="464.0" y="437.0" font-size="12" text-anchor="start">create_policy, then run_policy: the</text>
 <text class="grot text" x="464.0" y="453.2" font-size="12" text-anchor="start">simulator first, then the gate and the arm</text>
 <g class="chip"><rect x="464.0" y="466" width="185.6" height="24" rx="12"/><text x="474.0" y="482.3" font-size="11.5">sim first, then the gate</text></g>
-<rect class="card" x="60" y="392" width="300" height="108" rx="8"/>
+<rect id="measure" class="card" x="60" y="392" width="300" height="108" rx="8"/>
 <text class="mono fg" x="74.0" y="418.0" font-size="14" text-anchor="start" font-weight="500">measure</text>
 <text class="grot text" x="74.0" y="437.0" font-size="12" text-anchor="start">eval_policy in the simulator, labels on the</text>
 <text class="grot text" x="74.0" y="453.2" font-size="12" text-anchor="start">arm</text>
@@ -62,4 +72,5 @@
 <text class="mono muted" x="220.0" y="329.0" font-size="10.5" text-anchor="start">what to record next</text>
 <text class="mono muted" x="600.0" y="296.0" font-size="10.5" text-anchor="middle">one Robot object and one run_policy call carry every step</text>
 <text class="grot muted" x="600.0" y="552.0" font-size="12.5" text-anchor="middle">a number leaves this loop only with the dataset and the checkpoint that produced it.</text>
+<g class="mark" aria-label="STRANDS" transform="translate(1050.0 545.1) scale(0.05952)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
 </svg>

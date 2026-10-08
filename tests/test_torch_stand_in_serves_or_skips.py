@@ -31,6 +31,7 @@ import pathlib
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
 from tests.mocks import torch_mock as mock_mod
 
 # The stand-in's documented subset -- policy logic, observation mapping and
@@ -214,7 +215,7 @@ def _test_sources():
 def _inlines_the_discriminator(source):
     """Find ``hasattr(<anything>, "__version__")`` calls, the discriminator's body."""
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)

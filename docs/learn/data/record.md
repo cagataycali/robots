@@ -48,7 +48,9 @@ Layout after `stop_recording()`:
 
 ## The recorder itself
 
-`DatasetRecorder` is the class under both the simulation and any hardware script. One `add_frame` per step:
+{{drawing:d14_recording}}
+
+`DatasetRecorder` is the class under the simulation and any hardware script. One `add_frame` per step:
 
 ```python title="sketch"
 from strands_robots.dataset_recorder import DatasetRecorder

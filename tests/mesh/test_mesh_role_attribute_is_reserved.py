@@ -25,7 +25,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Spelled out rather than imported so this module collects against a tree that
 # has no reserved-key constant, which keeps every failure below behavioural.
@@ -312,12 +312,12 @@ class TestTheDoubleIsInstalledWhereTheSourceLooks:
         tree = parse_file(Path(__file__))
         bound = {
             alias.asname or alias.name.split(".")[0]
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Import)
             for alias in node.names
         } | {
             alias.asname or alias.name
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.ImportFrom) and node.module == "boto3"
             for alias in node.names
         }

@@ -67,7 +67,7 @@ from strands_robots.drivers.reachy_envelope import (
     envelope_error,
 )
 from tests._device_connect_real import use_the_real_edge
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.test_reachy_motion_domain import USABLE_MOTION_VALUES
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -258,7 +258,7 @@ class TestTheEnvelopeIsNotReImplemented:
         tree = parse_file(pathlib.Path(str(rmd.__file__)))
         literals = {
             float(node.value)
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Constant)
             and isinstance(node.value, int | float)
             and not isinstance(node.value, bool)

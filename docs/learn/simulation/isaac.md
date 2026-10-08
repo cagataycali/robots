@@ -37,9 +37,11 @@ print(result["status"])
 sim.destroy()
 ```
 
+{{sim:isaac-1|slow motion: so101 on Isaac Sim (RTX) runs the mock policy for 100 steps}}
+
 ## Configuration
 
-`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `kit_args=()`, `task_threads=None`, `boot_timeout_s=None`, `extra={}`. Unknown keywords are rejected. Legacy `tool_name` and `default_timestep` shortcuts still work.
+`IsaacConfig` fields, with defaults: `num_envs=1`, `device="cuda:0"`, `headless=True`, `physics_dt=1/120`, `rendering_dt=1/30`, `render_mode="headless"`, `gravity=(0, 0, -9.81)`, `ground_plane=True`, `stage_path="/World"`, `nucleus_url=None`, `camera_width=640`, `camera_height=480`, `verbose=False`, `kit_args=()`, `task_threads=None`, `boot_timeout_s=None`, `extra={}`. Unknown keywords are rejected; legacy `tool_name` and `default_timestep` still work.
 
 ## Differences from MuJoCo
 
@@ -47,7 +49,7 @@ sim.destroy()
 |---|---|
 | assets | URDF, MJCF (converted, `isaac/mjcf_assets.py`) and USD; meshes through `isaac/mesh_assets.py` |
 | fixed base | robots import with the root welded (`fixed_base=True` by default) |
-| cameras | world-frame prims, or a link's children with `parent_body`; frames come back at the requested size |
+| cameras | world-frame prims, or a link's children with `parent_body`; frames at the requested size |
 | physics rate | `physics_dt` and `rendering_dt` are separate clocks |
 | WBC | no MuJoCo torque shim; a policy declaring `requires_action_controller` (`wbc`) is refused |
 | motion primitives | its own implementation in `isaac/motion_primitives.py` |
@@ -68,8 +70,8 @@ Unpumped worker calls are refused; manually: `run_pump_forever(stop_event=...)` 
 
 ## Limits
 
-- Python 3.12 only, an RTX-class GPU, and a multi-gigabyte install. No CPU fallback; `is_available()` says why.
-- Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`. Rendering uses the GPU.
+- Python 3.12 only, an RTX-class GPU, a multi-gigabyte install; no CPU fallback. `is_available()` says why.
+- Physics runs on **CPU PhysX**: `device` is reported as `device_requested` but not forwarded, because the GPU pipeline breaks incremental `add_robot`; rendering uses the GPU.
 - `render_mode="headless"` (the default) renders nothing; pass `render_mode="rtx_realtime"` (also with `headless=True`).
-- Rendering is slower per frame than MuJoCo's and faster per batch: use it for fidelity, not unit-test loops.
-- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: every call reading it (`add_robot` too) refuses until `reset()`: build first, then reset.
+- Rendering is slower per frame than MuJoCo's and faster per batch: fidelity, not unit-test loops.
+- `remove_robot`, like a dynamic `remove_object`, invalidates the tensor view: every call reading it (`add_robot` too) refuses until `reset()`.

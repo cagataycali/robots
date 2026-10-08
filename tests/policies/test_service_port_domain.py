@@ -29,7 +29,7 @@ import pytest
 
 from strands_robots.policies.factory import create_policy
 from strands_robots.utils import tcp_port_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Ports no TCP transport can address. ``0`` asks the kernel for an ephemeral
 # port instead of naming one; ``65536``/``99999`` are outside the 16-bit space;
@@ -227,7 +227,7 @@ def _policy_module_paths() -> list[Path]:
 def _classes_taking_a_port(tree: ast.Module) -> list[ast.ClassDef]:
     """Class definitions whose ``__init__`` declares a ``port`` parameter."""
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.ClassDef):
             continue
         for item in node.body:

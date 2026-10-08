@@ -4,7 +4,7 @@ description: "What trains where: the Trainer contract, the nine trainers create_
 
 # Training
 
-By the end of this page you can name every trainer, what it drives on what hardware, and run the `validate` to `export` lifecycle with the mock trainer.
+By the end of this page you can name every trainer, what it drives where, and run the `validate` to `export` lifecycle with the mock trainer.
 
 ```python
 import json
@@ -58,6 +58,8 @@ One name owns both halves: `create_policy("lerobot_local")` runs what `create_tr
 One dataclass for every supervised backend: `dataset_root`, `dataset_repo_id`, `streaming`, `base_model`, `output_dir`, `embodiment`, `steps=10_000`, `global_batch_size=32`, `learning_rate`, `save_freq=1_000`, `num_gpus=1`, `num_nodes=1`, `resume`, `seed`, `method="full"` (`lora`, `expert_only`), `lora_r`, `lora_alpha`, `lora_target_modules`, `tune` (component toggles), `val_episodes`, `augmentation`, `fps`, `extra` (backend-native passthrough). `RLTrainSpec` adds the reward-driven fields ([rl](rl.md)).
 
 ## Lifecycle
+
+{{drawing:d13_trainer_lifecycle}}
 
 ```python title="sketch"
 problems = trainer.validate(spec)            # pure preflight, launches nothing, empty list = launchable

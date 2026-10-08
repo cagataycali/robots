@@ -37,7 +37,7 @@ import pytest
 
 from strands_robots.policies.base import Policy
 from strands_robots.simulation.policy_runner import OnFrame, PolicyRunner, set_eval_seed
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 from .test_policy_runner import FakeSim
 
@@ -250,7 +250,7 @@ def test_no_policy_double_measures_a_seed_off_a_process_global_rng():
     offenders: list[str] = []
     for root in ("tests", "tests_integ"):
         for path in sorted((_REPO_ROOT / root).rglob("*.py")):
-            for node in ast.walk(parse_file(path)):
+            for node in walk_tree(parse_file(path)):
                 if not isinstance(node, ast.ClassDef):
                     continue
                 if not any("Policy" in ast.unparse(base) for base in node.bases):

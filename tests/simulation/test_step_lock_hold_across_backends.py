@@ -87,7 +87,7 @@ from strands_robots.simulation.mjlab.simulation import MjlabEngine
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Batch size used by the timing tests. Deliberately not
 #: ``SimEngine._STEPS_PER_BATCH``: at the real 1000 a tick slow enough to be
@@ -539,7 +539,7 @@ def _scan_step_surfaces(root: pathlib.Path) -> tuple[dict[str, tuple[str, ...]],
     adrift: list[str] = []
     for path in sorted(root.glob("*/simulation.py")):
         tree = parse_file(path)
-        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+        for cls in (n for n in walk_tree(tree) if isinstance(n, ast.ClassDef)):
             for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "step"):
                 names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
                 names |= {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}

@@ -61,7 +61,7 @@ import pytest
 
 import strands_robots
 import strands_robots.tools as tools_pkg
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_ROOT.parent
@@ -110,7 +110,7 @@ def _ambiguous_reads(tree: ast.AST, shadowable: frozenset[str]) -> list[tuple[in
     """
     prefix = f"{_PACKAGE_MODULE}."
     reads = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == _PACKAGE_MODULE:
             reads += [(node.lineno, alias.name) for alias in node.names if alias.name in shadowable]
         elif isinstance(node, ast.Import):

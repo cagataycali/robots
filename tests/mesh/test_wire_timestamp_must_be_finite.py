@@ -49,7 +49,7 @@ import pytest
 from strands_robots.mesh import core as core_mod
 from strands_robots.mesh import session as session_mod
 from strands_robots.mesh.security import as_wire_timestamp
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.mesh._resume import lock, resume_sample, sign_for, trust_new_key
 from tests.mesh.test_input_stream_lifecycle import _make_receiver
 
@@ -313,7 +313,7 @@ def _wire_timestamp_gates() -> dict[tuple[str, str], bool]:
     gates: dict[tuple[str, str], bool] = {}
     for path in sorted(package.rglob("*.py")):
         tree = parse_file(path)
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if any(_reads_a_wire_timestamp(node) for node in ast.walk(func)):

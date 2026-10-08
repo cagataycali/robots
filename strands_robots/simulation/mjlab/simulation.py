@@ -46,6 +46,7 @@ from strands_robots.simulation.base import (
 from strands_robots.simulation.mjlab.randomization import MjlabRandomizationMixin
 from strands_robots.simulation.mjlab.recording import MjlabRecordingMixin
 from strands_robots.simulation.models import SHAPE_ALIASES, canonical_shape, registered, registry_entry
+from strands_robots.simulation.mujoco.spec_builder import _normalize_size, _validate_size
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -792,7 +793,12 @@ class MjlabEngine(MjlabRandomizationMixin, MjlabRecordingMixin, SimEngine):
         quat, msg = coerce_orientation_quaternion("add_object", "orientation", orientation)
         if msg:
             return {"status": "error", "content": [{"text": msg}]}
-        size_t = tuple(float(s) for s in (size or (0.02, 0.02, 0.02)))
+        size_list = [float(s) for s in (size if size is not None else (0.05, 0.05, 0.05))]
+        if (size_err := _validate_size(shape, size_list)) is not None:
+            return {"status": "error", "content": [{"text": size_err}]}
+        # ``size`` is the full extent the MuJoCo backend reads; the compiled geom
+        # takes MuJoCo's half-extents / radius / half-height.
+        size_t = tuple(_normalize_size(shape, size_list))
         color, _cerr = coerce_rgba("add_object", "color", color)
         if _cerr is not None:
             return {"status": "error", "content": [{"text": _cerr}]}

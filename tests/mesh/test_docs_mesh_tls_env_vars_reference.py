@@ -61,7 +61,7 @@ import pytest
 
 from strands_robots.mesh import _zenoh_config
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE = _ROOT / "strands_robots" / "mesh" / "_zenoh_config.py"
@@ -83,7 +83,7 @@ def _tls_env_reads() -> frozenset[str]:
     """
     tree = parse_file(_MODULE)
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         literal = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
             "os.getenv",
@@ -294,7 +294,7 @@ class TestTheRefusalBelongsToTheProductionPosture:
     def test_the_tls_block_is_built_only_under_mtls(self) -> None:
         tree = parse_file(_SESSION)
         guarded = False
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.If):
                 continue
             if "mtls" not in ast.unparse(node.test):

@@ -58,7 +58,7 @@ from strands_robots.mesh.security import (
     input_value_abs_by_key,
     validate_input_frame,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: One full revolution, in the degrees an SO leader publishes.
 FULL_TURN_DEG = 360.0
@@ -396,9 +396,9 @@ class TestEachJointIsBoundedInItsOwnDeclaredUnit:
 
         tree = parse_file(Path(security.__file__))
         imported = {
-            node.module.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
+            node.module.split(".")[0] for node in walk_tree(tree) if isinstance(node, ast.ImportFrom) and node.module
         } | {
-            alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
+            alias.name.split(".")[0] for node in walk_tree(tree) if isinstance(node, ast.Import) for alias in node.names
         }
         assert "lerobot" not in imported
 

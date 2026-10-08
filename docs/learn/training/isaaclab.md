@@ -9,7 +9,7 @@ The `isaaclab` trainer runs `python -m isaaclab train` in a separate Isaac Lab v
 ```bash
 uv venv --python 3.12 ~/il && uv pip install --python ~/il/bin/python --prerelease=allow \
   --index https://pypi.nvidia.com --index-strategy unsafe-best-match "isaaclab[rsl-rl,isaacsim]==3.0.0rc1"
-export ISAACLAB_PYTHON=~/il/bin/python OMNI_KIT_ACCEPT_EULA=YES   # the EULA is yours to accept
+export ISAACLAB_PYTHON=~/il/bin/python OMNI_KIT_ACCEPT_EULA=YES
 ```
 
 ```python title="sketch"
@@ -23,5 +23,9 @@ It returns a `job_id`; `action="status"` reports rewards, `success_rate`, a fail
 `extra['overrides']` (`env.*`/`agent.*`, checked against the task config), `agent`, `device`, `video`, `deterministic`, `base_model`, `resume` reach Isaac Lab; `learning_rate` pins `schedule=fixed`.
 
 One L40S, 4096 envs: Cartpole 291k steps/s, G1 110k.
+
+## Trained this way
+
+{{hub_videos:isaaclab-zoo}}
 
 Caveats: Isaac Lab 3.0 is an RC; first RTX use compiles shaders (~4 min); PhysX and Newton differ, even in joint order, so export records a `deploy_contract` `create_policy("rl")` applies by name.

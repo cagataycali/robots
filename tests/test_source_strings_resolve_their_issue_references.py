@@ -40,7 +40,7 @@ import re
 from pathlib import Path
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # A tracker reference qualified by a repository name: the slug, ``#``, a number.
 # A bare ``#2765`` does not match (no leading slug) and needs no owner - it is
@@ -58,7 +58,7 @@ def _python_sources() -> list[Path]:
 def _docstring_constant_ids(tree: ast.Module) -> set[int]:
     """Identify the docstring node of every module, class and function."""
     ids: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         body = getattr(node, "body", None)
@@ -80,7 +80,7 @@ def _caller_reachable_literals(path: Path) -> list[tuple[int, str]]:
     docstrings = _docstring_constant_ids(tree)
     return [
         (node.lineno, node.value)
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings
     ]
 
@@ -158,7 +158,7 @@ def test_developer_facing_docstrings_are_deliberately_out_of_scope() -> None:
     for path in _python_sources():
         tree = parse_file(path)
         docstrings = _docstring_constant_ids(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) in docstrings:
                 in_docstrings += len(_unresolvable_references(node.value))
     assert in_docstrings > 0, (

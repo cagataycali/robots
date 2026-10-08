@@ -33,7 +33,7 @@ import pytest
 import strands_robots._command_gate as gate_mod
 import strands_robots.ros as ros_mod
 from strands_robots.drivers.ros import AckermannRosRobot
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _ROS_DIR = Path(ros_mod.__file__).parent / "drivers" / "ros"
 _BRIDGE_SOURCE = _ROS_DIR / "ackermann_robot.py"
@@ -239,7 +239,7 @@ class TestCommandToolsDeclareTheOperatorContext:
     def _decorated_tools(tree: ast.Module) -> list[ast.FunctionDef]:
         return [
             node
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.FunctionDef)
             and any(
                 isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "tool" for dec in node.decorator_list
@@ -285,7 +285,7 @@ class TestCommandToolsDeclareTheOperatorContext:
     def test_every_bridge_command_call_builds_its_gate_from_the_context(self, bridge_ast: ast.Module) -> None:
         """A bridge method that carries a command must not drop the context."""
         checked = 0
-        for node in ast.walk(bridge_ast):
+        for node in walk_tree(bridge_ast):
             if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                 continue
             action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)
@@ -344,7 +344,7 @@ class TestEveryCommandingMeshBridgeHasAGateSuite:
         found: set[str] = set()
         for path in sorted(_ROS_DIR.glob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "ros_action"):
                     continue
                 action = next((kw.value for kw in node.keywords if kw.arg == "action"), None)

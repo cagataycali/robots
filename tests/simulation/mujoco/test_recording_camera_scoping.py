@@ -256,59 +256,63 @@ def test_cameras_raw_and_schema_safe_names_are_equivalent(sim_with_namespaced_ca
     assert sim._world._backend_state["recording_cameras"] == {"arm0/wrist_cam"}
 
 
-class TestARecordingThatKeepsNoImagesRendersNoCameras:
-    """A ``cameras=[]`` recording must not force the render it then discards.
+class TestSkipImagesDuringARecording:
+    """``get_observation(skip_images=True)`` renders nothing, recording or not.
 
-    ``get_observation`` overrides a policy's ``requires_images=False`` hint
-    whenever a recorder is attached, because a dataset recording normally needs
-    every frame's image obs. Scoped to the empty set that premise inverts: the
-    dataset declares no image features, and ``_drop_unrecorded_cameras``
-    discards every image array before ``add_frame`` ever sees it. Rendering
-    each scene camera once per control step to throw the pixels away is then
-    pure cost - and it is paid per step, so it dominates an action-only
-    rollout on any robot carrying several cameras.
-
-    Pinning the render count rather than a duration keeps the assertion
-    deterministic: the pre-fix behaviour renders on every call, so a wall-clock
-    threshold would be the only alternative and would be flaky on a loaded
-    runner.
+    A recording's frames carry the image columns its schema declared, so the
+    loop that records the observation it reads (``PolicyRunner._observe``)
+    renders the kept cameras for a policy that reads no pixels. Every other
+    ``skip_images=True`` caller - a ``stop_when`` predicate, a twin's joint
+    read, the undriven-robot state - discards the pixels, so a render for it
+    is pure cost paid on every control step. A recording scoped to no camera
+    (``cameras=[]``) declares no image column, so nothing renders for it.
+    Render counts, not durations, keep the pins deterministic.
     """
 
-    def test_no_camera_is_rendered_while_recording_no_cameras(self, sim_with_cameras, tmp_path):
+    @pytest.mark.parametrize(
+        "cameras, rollout_renders",
+        [
+            pytest.param([], False, id="no-camera"),
+            pytest.param(["cam_a"], True, id="one-camera"),
+            pytest.param(None, True, id="every-camera"),
+        ],
+    )
+    def test_only_the_recording_rollout_renders(self, sim_with_cameras, tmp_path, cameras, rollout_renders):
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
         sim = sim_with_cameras
-        res = sim.start_recording(
-            repo_id="local/scope_none",
-            root=str(tmp_path / "none"),
-            cameras=[],
-            overwrite=True,
-        )
+        res = sim.start_recording(repo_id="local/scope", root=str(tmp_path / "rec"), cameras=cameras, overwrite=True)
         assert res["status"] == "success"
-        # Premise: nothing image-shaped is declared, so nothing can be recorded.
-        assert _recorder_image_features(sim) == set()
-        assert sim._world._backend_state["recording_cameras"] == set()
+
+        def images(obs):
+            return {k for k, v in obs.items() if isinstance(v, np.ndarray) and v.ndim >= 2}
 
         obs = sim.get_observation("arm", skip_images=True)
-        # The skip hint survives the recording override: no image array is
-        # produced, while the scalar joint state is unaffected.
-        assert not [k for k, v in obs.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
+        assert images(obs) == set()
         assert "shoulder_pan" in obs
+        recorded = PolicyRunner(sim)._observe("arm", skip_images=True)
+        assert ("cam_a" in images(recorded)) is rollout_renders
 
-    def test_a_scoped_recording_still_renders_the_cameras_it_keeps(self, sim_with_cameras, tmp_path):
-        """The override still applies when the recorder does keep an image.
-
-        Guards the fix from over-reaching: a recording scoped to a real camera
-        must keep forcing the render, or the recorded frame loses the very view
-        the caller asked for.
-        """
+    def test_a_joint_stop_when_renders_nothing_during_a_recorded_rollout(self, sim_with_cameras, tmp_path):
         sim = sim_with_cameras
-        res = sim.start_recording(
-            repo_id="local/scope_one_cam",
-            root=str(tmp_path / "one"),
-            cameras=["cam_a"],
-            overwrite=True,
-        )
+        res = sim.start_recording(repo_id="local/gate", root=str(tmp_path / "gate"), cameras=["cam_a"], overwrite=True)
         assert res["status"] == "success"
-        obs = sim.get_observation("arm", skip_images=True)
-        # skip_images is overridden, so cam_a is rendered despite the hint.
-        assert isinstance(obs.get("cam_a"), np.ndarray)
-        assert obs["cam_a"].ndim == 3
+        renders = 0
+        observe = sim._get_sim_observation
+
+        def counting(robot_name, *, skip_images=False):
+            nonlocal renders
+            renders += not skip_images
+            return observe(robot_name, skip_images=skip_images)
+
+        sim._get_sim_observation = counting
+        out = sim.run_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            n_steps=6,
+            fast_mode=True,
+            stop_when={"predicate": "joint_above", "joint": "shoulder_pan", "value": 5.0},
+        )
+        assert out["status"] == "success", out
+        # One render per recorded step; the predicate's joint read adds none.
+        assert renders == 6
