@@ -43,7 +43,7 @@ def test_the_test_script_distributes_one_worker_per_file(pyproject: dict) -> Non
     """The unit suite's own script carries the flags, so ``hatch run test`` is distributed."""
     script = pyproject["tool"]["hatch"]["envs"]["default"]["scripts"]["test"]
     tokens = shlex.split(script)
-    assert tokens[:1] == ["pytest"], script
+    assert tokens[:2] == ["python", "scripts/select_tests.py"], script
     assert "-n" in tokens and tokens[tokens.index("-n") + 1] == "logical", (
         f"the test script does not distribute over the logical CPUs ({script!r}). Without "
         "-n the required check runs 58,000 tests in one process, which is the 51-minute step "

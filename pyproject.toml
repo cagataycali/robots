@@ -1126,7 +1126,12 @@ UV_TORCH_BACKEND = "{env:UV_TORCH_BACKEND:auto}"
 # reporting `created: 4/4 workers`, where every completed run of the same suite
 # had two. Two is the measured count, and the cap says so without taking
 # `logical`'s floor away from a one-core/two-thread runner.
-test = "pytest -n logical --maxprocesses=2 --dist loadfile {args:tests}"
+#
+# `scripts/select_tests.py` hands every argument to pytest unchanged, except on a
+# pull_request event with no test path named: there it adds the test files the
+# change reaches and `--no-cov`; a push to main runs the whole suite (#3818,
+# "CI on a PR <= 12 min"). The script's docstring says what "reaches" means.
+test = "python scripts/select_tests.py -n logical --maxprocesses=2 --dist loadfile {args:tests}"
 test-integ = "pytest tests_integ/ -v --timeout=300 {args}"
 lint = ["ruff check strands_robots tests tests_integ", "ruff format --check strands_robots tests tests_integ", "mypy strands_robots tests tests_integ"]
 format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]
