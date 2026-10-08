@@ -67,7 +67,7 @@ from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.simulation.isaac.site_drives import SiteDrive, mjcf_site_drive, site_wrenches
 from strands_robots.simulation.models import SHAPE_ALIASES, canonical_shape, registered, registry_entry
 from strands_robots.simulation.predicates import _quat_rotate_inverse_wxyz
-from strands_robots.simulation.recording import RecordedFrame
+from strands_robots.simulation.recording import RecordedFrame, split_recorded_observation
 from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
@@ -7056,14 +7056,8 @@ class IsaacSimulation(
         if recording:
             frame.required_action_keys()
         # Camera frames ride the observation keyed by RAW camera name; the
-        # schema declared the safe names (``/`` -> ``__``), scoped to
-        # start_recording(cameras=...). Same rename+scope the single-robot
-        # on_frame hook applies.
-        raw_to_safe: dict[str, str] = (
-            {src: safe for src, safe, _w, _h in rec_state.get("recording_cameras", [])}
-            if recording and rec_state is not None
-            else {}
-        )
+        # single-robot hook's rename + scope applies them to the schema.
+        recorded_cameras = rec_state.get("recording_cameras", []) if recording and rec_state is not None else []
 
         # Renders are expensive; skip camera readback when no policy needs
         # images AND no recording is active (recorded frames must carry the
@@ -7241,7 +7235,7 @@ class IsaacSimulation(
                         # LeRobot stores ONE task per frame: the first robot's
                         # instruction (the shared normalizer already warned when
                         # per-robot instructions are distinct).
-                        images = {raw_to_safe[k]: v for k, v in camera_imgs.items() if k in raw_to_safe}
+                        _, images = split_recorded_observation(camera_imgs, recorded_cameras)
                         recorded = {r: self._recorded_action(r, a) for r, a in per_robot_action.items()}
                         frame.write(recorder, per_robot_obs, recorded, images, instr_map[next(iter(policies))])
 
