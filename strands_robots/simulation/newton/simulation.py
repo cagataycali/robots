@@ -1232,8 +1232,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._recording_keeps_images():
-            skip_images = False
         with self._lock:
             joint_q = self._state_0.joint_q.numpy()
             joint_qd = self._state_0.joint_qd.numpy()

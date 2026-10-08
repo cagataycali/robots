@@ -5790,11 +5790,6 @@ class IsaacSimulation(
             # headless render mode (no RTX frames). Best-effort per camera: a
             # camera whose RTX product hasn't warmed up is omitted rather than
             # failing the whole observation.
-            #
-            # A recording that keeps cameras overrides the skip hint, as on
-            # every backend (DatasetRecordingMixin._recording_keeps_images).
-            if skip_images and self._recording_keeps_images():
-                skip_images = False
             if not skip_images and self._config.render_mode != "headless":
                 # Multi-camera refresh: a single ``world.step(render=True)`` in
                 # the substep loop reliably refreshes only the PRIMARY render
@@ -7120,7 +7115,11 @@ class IsaacSimulation(
             cams: dict[str, Any] = {}
             first = True
             for rname in policies:
-                obs = self.get_observation(robot_name=rname, skip_images=(skip_images or not first))
+                # The first robot's frame is the one recorded, so a recording
+                # that keeps cameras renders it whatever the policies read;
+                # every other robot reads joints only.
+                skip = not first or (skip_images and not self._recording_keeps_images())
+                obs = self.get_observation(robot_name=rname, skip_images=skip)
                 # Split scalars (joints) from ndarrays (camera images);
                 # cameras are scene-global, so one readback serves all robots.
                 per_obs[rname] = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}

@@ -1141,14 +1141,16 @@ class DatasetRecordingMixin:
         return world._backend_state
 
     def _recording_keeps_images(self) -> bool:
-        """Whether an active recording needs camera frames on every observation.
+        """Whether an active recording needs camera frames in the frames it records.
 
-        ``get_observation(skip_images=True)`` is a caller's hint that it reads
-        no pixels (``PolicyRunner`` passes it for a policy with
-        ``requires_images=False``). While a dataset recording is active, the
-        recorded frames must still carry the image columns the schema declared,
-        so every backend turns the hint off when this answers ``True``. A
-        recording scoped to no cameras (``start_recording(cameras=[])``)
+        Asked by the loops that record the observation they read
+        (``PolicyRunner``'s observe step, the first robot of
+        ``run_multi_policy``): they pass ``skip_images=True`` for a policy that
+        reads no pixels, and render anyway when this answers ``True``, because
+        the recorded frame must carry the image columns the schema declared.
+        ``get_observation(skip_images=True)`` itself renders nothing, so a
+        caller that discards pixels (a predicate, a twin's joint read) does not
+        pay for this recording's cameras. A recording scoped to no cameras (``start_recording(cameras=[])``)
         declares no image column, so rendering for it would only discard the
         pixels; ``None`` in ``recording_cameras`` means "every camera".
         """

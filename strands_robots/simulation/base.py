@@ -2154,11 +2154,10 @@ class SimEngine(ABC):
                 publishes ``joint_states`` without ``image_raw``. Camera keys
                 are then absent from the result rather than present and empty,
                 so a caller must not read a missing frame as a render failure.
-                A backend overrides a ``True`` here while a dataset recording is
-                active - the recorded frames must carry the camera images the
-                schema declared - so this is a hint, not a guarantee that
-                nothing renders. Defaults to False (render every attached
-                camera).
+                ``True`` renders nothing, recording or not: a rollout loop
+                that records the observation it reads asks for the cameras
+                itself while a dataset recording keeps them. Defaults to False
+                (render every attached camera).
 
         Returns:
             Observation dict per schema above. Returns ``{}`` - and logs a
