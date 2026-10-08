@@ -48,7 +48,7 @@ def sim():
 
 
 def _open_fake_recording(
-    sim, *, fps: int = 10, task: str = "three poses", cameras: set[str] | None = frozenset()
+    sim, *, fps: int = 10, task: str = "three poses", cameras: frozenset[str] | set[str] | None = frozenset()
 ) -> MagicMock:
     """Open a recording session around a fake recorder - the shape start_recording leaves.
 
