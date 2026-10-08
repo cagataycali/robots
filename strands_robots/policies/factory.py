@@ -232,14 +232,35 @@ def construction_failure_keeps_its_raise(exc: BaseException) -> bool:
 # Providers whose HuggingFace model loading path calls ``trust_remote_code=True``.
 # Any provider that downloads and executes code from a model repository
 # **must** be listed here so users are forced to explicitly opt in.
-#: Providers announced for removal in 0.7, each with what replaces it. The
-#: announcement is a warning from :func:`create_policy`, one minor ahead of
-#: the cut, so a caller learns the replacement before the provider is gone.
+#: Providers announced for removal in 0.7. Each value is a complete,
+#: self-contained sentence that names the ``policy_provider='X'`` token the
+#: caller should type as a drop-in replacement, matching the sibling
+#: convention in :data:`strands_robots.registry.policies.REMOVED_PROVIDERS`
+#: (every entry there carries the ``policy_provider=`` token so a caller can
+#: grep-and-replace from the warning text alone).
+#:
+#: The announcement is a warning from :func:`create_policy`, one minor ahead
+#: of the cut, so a caller learns the replacement before the provider is
+#: gone.
 _REMOVED_IN_0_7: dict[str, str] = {
-    "curobo": "simulation.motion_primitives with mink IK for a sim reach, or Isaac cuMotion for GPU planning",
-    "moveit2": "a MoveIt goal sent as a ROS 2 action through the use_ros or use_rosbridge tool",
-    "kimodo": "a motion generated offline and replayed as joint targets (nothing in-tree)",
-    "protomotions": "the wbc provider for Unitree G1 whole-body control",
+    "curobo": (
+        "policy_provider 'curobo' will be removed in 0.7: use the "
+        "simulation.motion_primitives tool with mink IK for a sim reach, or "
+        "Isaac cuMotion for GPU planning."
+    ),
+    "moveit2": (
+        "policy_provider 'moveit2' will be removed in 0.7: send the MoveIt "
+        "goal as a ROS 2 action through the use_ros or use_rosbridge tool."
+    ),
+    "kimodo": (
+        "policy_provider 'kimodo' will be removed in 0.7: generate the "
+        "motion offline and replay it with policy_provider='mock' or a "
+        "custom Policy; no in-tree provider replaces it."
+    ),
+    "protomotions": (
+        "policy_provider 'protomotions' will be removed in 0.7: use "
+        "policy_provider='wbc' for Unitree G1 whole-body control."
+    ),
 }
 
 
@@ -896,11 +917,11 @@ def create_policy(provider: str, /, **kwargs) -> Policy:
     """
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     if (replacement := _REMOVED_IN_0_7.get(canonical)) is not None:
-        warnings.warn(
-            f"policy provider {canonical!r} is removed in 0.7; instead use {replacement}",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        # The payload is already a complete, self-contained sentence that
+        # names the replacement token - mirror the sibling
+        # ``REMOVED_PROVIDERS`` convention so a caller can grep-and-replace
+        # from the warning alone.
+        warnings.warn(replacement, DeprecationWarning, stacklevel=2)
     # The kwargs check is pure, so it runs first: a typo must not send the caller
     # to opt in to remote code only to learn about the typo on the second call.
     if (kwargs_error := policy_kwargs_error(canonical, PolicyClass, resolved_kwargs)) is not None:
