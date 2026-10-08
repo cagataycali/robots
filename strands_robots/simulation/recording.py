@@ -44,6 +44,7 @@ from strands_robots.utils import (
     is_boolean,
     name_list_error,
     positive_whole_number_error,
+    published_string_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -1827,6 +1828,11 @@ class DatasetRecordingMixin:
         for flag, value in (("push_to_hub", push_to_hub), ("private", private)):
             if error := dataset_recording_posture_error("stop_recording", flag, value):
                 return error
+        # The bucket target reaches an allowlist regex that raises on a
+        # non-string, so it is refused here, before anything is finalized.
+        for param, target in (("bucket", bucket), ("run_id", run_id)):
+            if target is not None and (text := published_string_error(target, param, "stop_recording")):
+                return {"status": "error", "content": [{"text": text}]}
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
