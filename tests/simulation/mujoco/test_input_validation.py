@@ -954,17 +954,25 @@ class TestSendActionVectorValidation:
 
     send_action accepts either a ``{name: value}`` mapping or an ordered numeric
     vector aligned with ``robot_action_keys``. A vector with a non-numeric entry
-    (e.g. a stray string) must fail with a structured error naming the offending
-    conversion, not raise past the tool boundary or coerce garbage downstream.
+    (e.g. a stray string) must fail with a structured error naming the entry's
+    index, its action key and its type - the same voice as the mapping branch -
+    not the raw ``float()`` exception text.
     """
 
-    def test_non_numeric_entry_returns_structured_error(self, sim_with_robot):
+    @pytest.mark.parametrize(
+        ("idx", "bad", "type_name"),
+        [(1, "not_a_number", "str"), (0, [0.1], "list"), (2, b"x", "bytes"), (1, None, "NoneType")],
+    )
+    def test_non_numeric_entry_names_index_key_and_type(self, sim_with_robot, idx, bad, type_name):
         keys = sim_with_robot.robot_action_keys("panda")
-        assert len(keys) >= 2, keys
-        bad_vector = [0.0, "not_a_number", *([0.0] * (len(keys) - 2))]
-        res = sim_with_robot.send_action(bad_vector)
+        vector: list[object] = [0.0] * len(keys)
+        vector[idx] = bad
+        res = sim_with_robot.send_action(vector)
         assert res["status"] == "error", res
-        assert "non-numeric entry" in res["content"][0]["text"]
+        assert res["content"][0]["text"] == (
+            f"send_action: action vector entry {idx} ('{keys[idx]}') must be a scalar number "
+            f"(one value per actuator/joint), got {type_name}."
+        )
 
     def test_numeric_vector_still_applies(self, sim_with_robot):
         keys = sim_with_robot.robot_action_keys("panda")
