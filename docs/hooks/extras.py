@@ -63,6 +63,7 @@ _PURPOSE: dict[str, str] = {
     "xarm": "UFactory xArm driver",
     "rby1": "Rainbow Robotics RB-Y1 driver",
     "spot": "Boston Dynamics Spot driver",
+    "stretch": "Hello Robot Stretch driver",
     "earthrover": "Earth Rover HTTP driver",
     "serial": "Feetech and Dynamixel serial drivers, serial_tool, pose_tool",
     "ollama": "Ollama model provider for the agent",

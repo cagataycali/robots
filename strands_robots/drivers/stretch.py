@@ -87,7 +87,7 @@ def _resolve_sdk() -> Any:
     except ImportError as exc:
         return (
             f"the Stretch SDK is not importable ({exc}). It ships on the robot; elsewhere install it "
-            "with: pip install hello-robot-stretch-body"
+            "with: pip install 'strands-robots[stretch]'"
         )
     except (KeyError, SystemExit) as exc:
         return (

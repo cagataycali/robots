@@ -57,7 +57,7 @@ _FAMILY: dict[str, tuple[str, str, str]] = {
     "strands_robots.drivers.kuka": ("ethernet (FRI over UDP 30200)", "`pyfri`, built from source", "drivers.md"),
     "strands_robots.drivers.stretch": (
         "USB on the robot (stretch_body)",
-        "`hello-robot-stretch-body`, on the robot",
+        "`[stretch]`, on the robot",
         "drivers.md",
     ),
     "strands_robots.drivers.spot": ("gRPC (bosdyn-client)", "`[spot]`", "drivers.md"),

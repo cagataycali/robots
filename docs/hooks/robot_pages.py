@@ -228,7 +228,7 @@ DRIVERS: dict[str, dict[str, object]] = {
         "link": "USB through `stretch_body`, on the robot's own computer",
         "port": "none: the SDK opens the robot's `/dev/hello-*` devices; a `port` is refused",
         "example": "",
-        "sdk": "`pip install hello-robot-stretch-body` (preinstalled on the robot, imported on connect)",
+        "sdk": "`pip install 'strands-robots[stretch]'` (preinstalled on the robot)",
         "kwargs": "`control_frequency=15.0`",
         "units": "`lift`, `arm` in m; wrist and head in rad; the base through `set_twist(vx, wz)`; no gripper",
         "checks": (
