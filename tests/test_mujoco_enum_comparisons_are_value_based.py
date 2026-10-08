@@ -43,7 +43,7 @@ import re
 
 import pytest
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _TREES = ("strands_robots", "tests", "tests_integ", "examples")
@@ -62,7 +62,7 @@ def _is_enum_member(node: ast.expr) -> bool:
 def _enum_collection_names(tree: ast.Module) -> set[str]:
     """Names bound to a tuple/set/list whose every element is a bare enum member."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Tuple | ast.Set | ast.List):
             continue
         elements = node.value.elts
@@ -77,7 +77,7 @@ def _order_dependent_comparisons(source: str) -> list[tuple[int, str, str]]:
     tree = parse_source(source)
     collections = _enum_collection_names(tree)
     found: list[tuple[int, str, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Compare):
             continue
         for op, comparator in zip(node.ops, node.comparators, strict=True):

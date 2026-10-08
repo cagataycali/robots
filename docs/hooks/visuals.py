@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Expand ``{{drawing:<id>}}`` and ``{{sim:<id>}}`` tokens into the site's pictures, and unmark sketches.
+"""Expand ``{{drawing:<id>}}``, ``{{sim:<id>}}`` and ``{{shot:<id>}}`` tokens into the site's pictures, and unmark sketches.
 
 A drawing is a scene module under ``docs/drawings/scenes/<id>.py`` rendered by
 ``docs/drawings/_tools/scene.py`` to ``docs/assets/drawings/<id>.paper.svg`` and
 ``<id>.dark.svg``. A sim artifact is a frame or clip a page's own code produced,
 committed under ``docs/assets/sim/<id>.png`` (and optionally ``<id>.webm``) by
-``docs/hooks/sim_frames.py``. Either way the page writes one token, so a picture
-costs one word against the site ceiling, and this hook writes the ``<figure>``:
+``docs/hooks/sim_frames.py``. A shot is a screenshot of the real dashboard, taken in
+both of its colour schemes and committed under ``docs/assets/dashboard/<id>.paper.png``
+and ``<id>.dark.png``. Either way the page writes one token, so a picture costs one word
+against the site ceiling, and this hook writes the ``<figure>``:
 
     {{drawing:d01_what_is}}
     {{sim:first-robot-1|what the code above built}}
+    {{shot:fleet|the Fleet tab with one simulated so101}}
 
 The drawing's alt text is the ``<title>`` the scene wrote into its SVG; the sim
 frame's caption is the text after ``|`` (default "what the code above built"). Both
@@ -38,7 +41,8 @@ _SCENES = _DOCS / "drawings" / "scenes"
 _DRAWING_SVGS = _DOCS / "assets" / "drawings"
 _SVG_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.DOTALL)
 _SIM = _DOCS / "assets" / "sim"
-_TOKEN = re.compile(r"\{\{(drawing|sim):([A-Za-z0-9_-]+)(?:\|([^}]*))?\}\}")
+_SHOTS = _DOCS / "assets" / "dashboard"
+_TOKEN = re.compile(r"\{\{(drawing|sim|shot):([A-Za-z0-9_-]+)(?:\|([^}]*))?\}\}")
 _SKETCH = re.compile(r'^(```+\s*python\b[^\n]*?)\s+title="sketch(?::[^"]*)?"', re.MULTILINE)
 
 
@@ -90,6 +94,21 @@ def sim_html(sim_id: str, caption: str | None, prefix: str) -> str | None:
     return f'<figure class="sr-sim">{media}<figcaption>{text}</figcaption></figure>'
 
 
+def shot_html(shot_id: str, caption: str | None, prefix: str) -> str | None:
+    """The figure for one dashboard screenshot: both schemes, swapped like a drawing; or None."""
+    paper = _SHOTS / f"{shot_id}.paper.png"
+    dark = _SHOTS / f"{shot_id}.dark.png"
+    if not paper.is_file() or not dark.is_file():
+        return None
+    text = html.escape((caption or "the dashboard").strip())
+    return (
+        f'<figure class="sr-drawing sr-sim">'
+        f'<img src="{prefix}assets/dashboard/{shot_id}.paper.png#only-light" alt="{text}" loading="lazy">'
+        f'<img src="{prefix}assets/dashboard/{shot_id}.dark.png#only-dark" alt="{text}" loading="lazy">'
+        f"<figcaption>{text}</figcaption></figure>"
+    )
+
+
 def substitute(markdown: str, page_path: str = "<string>") -> str:
     """Replace every visual token in ``markdown``; warn on one that has no files."""
     # Directory URLs: ``concepts/architecture.md`` is served at ``/concepts/architecture/``,
@@ -100,9 +119,13 @@ def substitute(markdown: str, page_path: str = "<string>") -> str:
 
     def _one(match: re.Match[str]) -> str:
         kind, ident, caption = match.group(1), match.group(2), match.group(3)
-        out = drawing_html(ident, prefix) if kind == "drawing" else sim_html(ident, caption, prefix)
+        if kind == "drawing":
+            out, where = drawing_html(ident, prefix), "docs/assets/drawings + docs/drawings/scenes"
+        elif kind == "sim":
+            out, where = sim_html(ident, caption, prefix), "docs/assets/sim"
+        else:
+            out, where = shot_html(ident, caption, prefix), "docs/assets/dashboard (<id>.paper.png + <id>.dark.png)"
         if out is None:
-            where = "docs/assets/drawings + docs/drawings/scenes" if kind == "drawing" else "docs/assets/sim"
             log.warning("%s: {{%s:%s}} has no files under %s", page_path, kind, ident, where)
             return match.group(0)
         return out

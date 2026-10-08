@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
@@ -215,7 +215,7 @@ def test_rpc_is_a_gated_actuation_action_the_dispatcher_audits() -> None:
     tree = parse_file(_MESH_TOOL_SOURCE)
     branches = [
         node
-        for node in ast.walk(tree)
+        for node in walk_tree(tree)
         if isinstance(node, ast.If) and "action == 'rpc'" in ast.unparse(node.test).replace('"', "'")
     ]
     assert branches, 'premise: no `action == "rpc"` dispatch branch to audit'

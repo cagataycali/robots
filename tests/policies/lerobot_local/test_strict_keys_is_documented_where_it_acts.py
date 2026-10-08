@@ -45,7 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots as package
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_ROOT = Path(package.__file__).resolve().parent
 _FLAG = "strict_keys"
@@ -59,7 +59,7 @@ def _classes_carrying_the_flag() -> list[tuple[Path, ast.ClassDef]]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - a parse failure is its own bug
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
             if any(

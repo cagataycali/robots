@@ -47,7 +47,7 @@ from strands_robots.drivers.feetech.protocol import (
     sync_write_packet,
     write_packet,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +567,7 @@ class TestTheWireFormatIsDecidedInOnePlace:
         tree = parse_file(_REPO_ROOT / module_path)
         literals = sorted(
             node.lineno
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Constant) and node.value.__class__ is int and node.value == MAX_GOAL_POSITION
         )
 

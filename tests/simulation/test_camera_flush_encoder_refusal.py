@@ -27,7 +27,7 @@ import ast
 from pathlib import Path
 
 import strands_robots.simulation as simulation_pkg
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_DIR = Path(simulation_pkg.__file__).parent
 
@@ -38,7 +38,7 @@ _FLUSH_MODULES = ["mujoco/rendering.py", "isaac/simulation.py"]
 def _functions_calling_encode_clip(tree: ast.AST) -> list[ast.FunctionDef]:
     """Every function definition whose body calls ``encode_clip``."""
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.FunctionDef):
             continue
         for call in ast.walk(node):

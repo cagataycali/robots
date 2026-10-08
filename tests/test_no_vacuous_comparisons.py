@@ -32,6 +32,7 @@ import ast
 from pathlib import Path
 
 import strands_robots
+from tests._package_ast import parse_source, walk_tree
 
 # The repository root, reached through this module's own location rather than a
 # path literal.
@@ -68,7 +69,7 @@ def constant_comparisons(source: str) -> list[tuple[int, str]]:
         decided before it runs.
     """
     found: list[tuple[int, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.Compare):
             operands = [node.left, *node.comparators]
             if all(isinstance(operand, ast.Constant) for operand in operands):

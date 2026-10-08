@@ -47,7 +47,7 @@ from strands_robots.drivers.base import (
     telemetry_int,
     telemetry_int_list,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: ``(value, float, int, float_list, int_list)`` - the whole rule as one table.
 #: The bytes-like rows and the ``bool`` rows are the drift this replaced; the
@@ -147,7 +147,7 @@ class TestBothDriversReadThroughTheOneOwner:
             tree = parse_file(module_path)
             found += [
                 f"{module_path.name}:{node.name}"
-                for node in ast.walk(tree)
+                for node in walk_tree(tree)
                 if isinstance(node, ast.FunctionDef) and node.name in retired
             ]
         assert found == [], f"private telemetry coercers still defined: {found}"

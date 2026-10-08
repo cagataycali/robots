@@ -28,6 +28,7 @@ asserts on symbols belonging to modules that successfully import.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import importlib.util
 from pathlib import Path
@@ -35,7 +36,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 pytest.importorskip("lerobot", reason="lerobot not installed - pip install 'strands-robots[lerobot]'")
 
@@ -82,6 +83,7 @@ def _python_sources() -> list[Path]:
     return sorted(p for p in _PACKAGE_DIR.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+@functools.cache
 def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
     """Return ``(module, symbol, file, lineno)`` for every lerobot import.
 
@@ -95,7 +97,7 @@ def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
             tree = parse_file(f)
         except (SyntaxError, UnicodeDecodeError):
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.ImportFrom):
                 if not node.module or not node.module.startswith("lerobot"):
                     continue
@@ -112,7 +114,7 @@ def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
 
 def _parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
     """Child -> parent for every node in ``tree`` (``ast`` keeps no back-links)."""
-    return {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    return {child: node for node in walk_tree(tree) for child in ast.iter_child_nodes(node)}
 
 
 def _guarded_by_an_import_fallback(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
@@ -150,7 +152,7 @@ def _forward_compat_import_sites() -> dict[tuple[str, str], list[tuple[Path, int
         except (SyntaxError, UnicodeDecodeError):
             continue
         parents = _parent_map(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.ImportFrom) or not node.module:
                 continue
             for alias in node.names:

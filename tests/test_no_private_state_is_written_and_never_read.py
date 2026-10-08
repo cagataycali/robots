@@ -26,11 +26,12 @@ reason per entry rather than a place to park a new offender.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = REPO_ROOT / "strands_robots"
@@ -55,6 +56,7 @@ def _package_files() -> list[Path]:
     return sorted(PACKAGE.rglob("*.py"))
 
 
+@functools.cache
 def _scan() -> tuple[dict[str, list[str]], set[str], int]:
     """Return (write-only attribute -> locations, all attributes seen, file count)."""
     files = _package_files()
@@ -68,7 +70,7 @@ def _scan() -> tuple[dict[str, list[str]], set[str], int]:
     read: set[str] = set()
     seen: set[str] = set()
     for path, source in sources.items():
-        for node in ast.walk(parse_source(source)):
+        for node in walk_tree(parse_source(source)):
             if not isinstance(node, ast.Attribute):
                 continue
             name = node.attr

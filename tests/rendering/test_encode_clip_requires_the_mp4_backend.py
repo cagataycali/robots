@@ -66,7 +66,7 @@ imageio = pytest.importorskip("imageio", reason="imageio not installed - pip ins
 
 from strands_robots.rendering import encode_clip  # noqa: E402
 from tests._blocked_module import blocked  # noqa: E402
-from tests._package_ast import parse_file  # noqa: E402
+from tests._package_ast import parse_file, walk_tree  # noqa: E402
 
 #: The ``imageio`` plugin that writes MP4, spelled out here rather than imported
 #: from the encoder: what a caller experiences is this module being absent, and
@@ -170,7 +170,7 @@ class TestEveryCameraFlushQuotesTheEncoder:
         """Every ``except ImportError`` inside a function that calls ``encode_clip``."""
         tree = parse_file(module_path)
         handlers: list[ast.ExceptHandler] = []
-        for func in ast.walk(tree):
+        for func in walk_tree(tree):
             if not isinstance(func, ast.FunctionDef):
                 continue
             calls_encoder = any(
@@ -349,7 +349,7 @@ class TestOneOwnerDecidesWhichEncoderModulesAContainerNeeds:
         offenders = []
         for module_path in sorted(package_dir.rglob("*.py")):
             tree = parse_file(module_path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                     continue
                 if node.func.id != "require_optional" or not node.args:

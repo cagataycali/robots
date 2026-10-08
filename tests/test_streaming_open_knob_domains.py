@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 
 import strands_robots.streaming_dataset as sd
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Values no consumer of these knobs can honor, grouped by why.
 UNUSABLE_TOLERANCES = [-1.0, -1e-9, float("nan"), float("inf"), float("-inf"), True, "1e-4", None, [1e-4]]
@@ -125,7 +125,7 @@ def _open_node() -> Any:
     # The parse is shared across the process; the planted negatives below append
     # to this node, so each caller gets its own copy.
     tree = parse_file(pathlib.Path(inspect.getfile(sd)))
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.FunctionDef) and node.name == "open":
             return copy.deepcopy(node)
     raise AssertionError("StreamingDatasetReader.open not found")
@@ -540,7 +540,7 @@ def test_the_module_needs_no_simulation_import(monkeypatch: pytest.MonkeyPatch) 
     import pathlib
 
     tree = parse_file(pathlib.Path(inspect.getfile(sd)))
-    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module is not None}
+    imported = {node.module for node in walk_tree(tree) if isinstance(node, ast.ImportFrom) and node.module is not None}
     assert not any(m.startswith("strands_robots.simulation") for m in imported), imported
     assert "strands_robots.utils" in imported
 

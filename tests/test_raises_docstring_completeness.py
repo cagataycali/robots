@@ -55,7 +55,7 @@ import re
 from pathlib import Path
 
 import strands_robots as package
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -249,12 +249,12 @@ def _surfaces(
         tree = parse_file(path)
         factories = _exception_factories(tree)
         owners: dict[int, str] = {}
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.ClassDef):
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                         owners[id(child)] = f"{node.name}."
-        for fn in ast.walk(tree):
+        for fn in walk_tree(tree):
             if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             doc = ast.get_docstring(fn)

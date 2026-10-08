@@ -57,7 +57,7 @@ from types import MappingProxyType
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Envelope-returning render entry points. ``get_frame`` is excluded: it returns
 #: raw arrays rather than a status envelope, so it cannot carry this assertion.
@@ -102,7 +102,7 @@ def _tests_root() -> pathlib.Path:
 
 def requires_mujoco(tree: ast.AST) -> bool:
     """True when *tree* calls ``pytest.importorskip("mujoco")`` anywhere."""
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr != "importorskip":
@@ -116,7 +116,7 @@ def requires_mujoco(tree: ast.AST) -> bool:
 def render_success_assertions(tree: ast.AST) -> list[int]:
     """Line numbers of every ``<x>.render*(...)["status"] == "success"`` compare."""
     lines = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Compare) and len(node.comparators) == 1):
             continue
         right = node.comparators[0]
@@ -137,7 +137,7 @@ def render_success_assertions(tree: ast.AST) -> list[int]:
 def camera_names(tree: ast.AST) -> set[str]:
     """Camera names *tree* can read an image for: those it registers, plus the free view."""
     found = set(IMPLICIT_CAMERA_NAMES)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr != "add_camera":
@@ -172,7 +172,7 @@ def camera_image_reads(tree: ast.AST) -> list[int]:
     """
     cameras = camera_names(tree)
     lines = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Subscript):
             continue
         call = node.value
@@ -194,7 +194,7 @@ def gl_dependent_reads(tree: ast.AST) -> list[int]:
 def probe_names(tree: ast.AST) -> set[str]:
     """Local names bound by importing from the shared GL probe module."""
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("_gl_probe"):
             names.update(alias.asname or alias.name for alias in node.names)
     return names
@@ -219,7 +219,7 @@ def _enclosing(tree: ast.AST, lineno: int) -> tuple[ast.FunctionDef | ast.AsyncF
     """The innermost function containing *lineno*, and its enclosing class."""
     function: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     enclosing_class: ast.ClassDef | None = None
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, Decorated):
             continue
         if not node.lineno <= lineno <= (node.end_lineno or node.lineno):

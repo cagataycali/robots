@@ -27,7 +27,7 @@ from strands_robots.utils import (
     coerce_orientation_quaternion,
     orientation_quaternion_error,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: The two shared helpers that hold a value to the orientation domain.
 QUATERNION_DOMAIN = frozenset({"coerce_orientation_quaternion", "orientation_quaternion_error"})
@@ -53,7 +53,7 @@ def _domain_calls():
         except SyntaxError:  # pragma: no cover - the package parses
             continue
         scanned += 1
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                 continue
             name = node.func.id
@@ -162,7 +162,7 @@ class TestEveryOrientationParameterReachesThatDomain:
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
             tree = parse_file(path)
             scanned += 1
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
                     continue
                 if node.func.id not in POSE_DOMAIN or not node.args:

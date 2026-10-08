@@ -32,7 +32,7 @@ from strands_robots import _pacing as pacing
 from strands_robots._pacing import Ticker, sleep_penalty_s
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_finite_number_error
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 
 class TestARefusedPeriodCannotBusySpinAHardwareLoop:
@@ -330,7 +330,7 @@ def _ticker_names(tree: ast.AST) -> tuple[set[str], set[str]]:
     """
     names = {"Ticker"}
     modules = {"_pacing", "pacing"}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
                 if alias.name == "Ticker":
@@ -358,7 +358,7 @@ def _structurally_released(tree: ast.AST) -> set[int]:
     """
     released: set[int] = set()
     stacks: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.With | ast.AsyncWith):
             continue
         for item in node.items:
@@ -369,7 +369,7 @@ def _structurally_released(tree: ast.AST) -> set[int]:
                 and ast.unparse(item.context_expr.func).rpartition(".")[2] in {"ExitStack", "AsyncExitStack"}
             ):
                 stacks.add(item.optional_vars.id)
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -388,7 +388,7 @@ def _ticker_constructions(source: str) -> list[tuple[int, bool]]:
     names, modules = _ticker_names(tree)
     released = _structurally_released(tree)
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         target = ast.unparse(node.func)
@@ -556,7 +556,7 @@ class TestTheDoorbellIsSomethingEverySelectorAccepts:
         source = pathlib.Path(inspect.getfile(pacing)).read_text()
         piped = [
             node.lineno
-            for node in ast.walk(parse_source(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.Call) and ast.unparse(node.func) in {"os.pipe", "pipe"}
         ]
         assert not piped, (

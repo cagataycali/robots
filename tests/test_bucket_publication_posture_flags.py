@@ -33,7 +33,7 @@ import pytest
 from strands_robots import dataset_recorder as recorder_mod
 from strands_robots import dataset_transfer as transfer_mod
 from strands_robots.utils import boolean_flag_error
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Flags on this module's publication surface. Each selects a posture on a
 #: remote store: whether a bucket is created, whether it is private, and
@@ -417,7 +417,7 @@ def _surfaces(source: str | None = None) -> dict[str, tuple[list[str], set[str],
     """Public surfaces declaring a publication flag, with their verdicts."""
     found: dict[str, tuple[list[str], set[str], set[str]]] = {}
     for tree in _module_trees(source):
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             if node.name.startswith("_"):

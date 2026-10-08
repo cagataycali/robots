@@ -4,7 +4,7 @@ description: Three ROS 2 transports, when to use each, one operator gate, what a
 
 # ROS 2
 
-This page shows the three ways an agent or a `Robot` reaches a ROS 2 graph, which one fits your machine, how a real arm joins the graph in both directions, and where the operator gate sits on each.
+This page shows the three ways an agent or a `Robot` reaches a ROS 2 graph, which fits your machine, how a real arm joins the graph in both directions, and where the operator gate sits on each.
 
 ```python title="sketch"
 from strands import Agent
@@ -15,6 +15,8 @@ agent("List the topics on the graph, then echo /odom once.")
 ```
 
 ## Three transports
+
+{{drawing:d16_ros2_transports}}
 
 | tool | wire | needs on this machine | reaches | verbs |
 |---|---|---|---|---|

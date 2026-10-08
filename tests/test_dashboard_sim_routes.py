@@ -634,9 +634,15 @@ class TestEstop:
         rendering, hold = threading.Event(), threading.Event()
 
         class ParksInTheRender(FakeEngine):
+            renders = 0
+
             def get_frame(self, *a, **kw):
-                rendering.set()
-                hold.wait(5)
+                # The first render is the one ready waits on; parking there
+                # only delays the create route by the whole hold budget.
+                self.renders += 1
+                if self.renders > 1:
+                    rendering.set()
+                    hold.wait(5)
                 return super().get_frame(*a, **kw)
 
         monkeypatch.setattr(sim_session, "_default_factory", ParksInTheRender)
@@ -857,11 +863,22 @@ class TestReadyMeansItRenders:
 
         monkeypatch.setattr(routes_sim, "READY_TIMEOUT", 0.2)
         monkeypatch.setattr(sim_session, "_default_factory", ParksInTheFirstRender)
+        # The route drops the session by stopping it, and the stop joins the
+        # worker parked in that render. Release the render there, so the join
+        # returns at once instead of after its whole budget.
+        stop = sim_session.SimSession.stop
+
+        def stop_releasing_the_render(session, timeout: float = 5.0) -> None:
+            hold.set()
+            stop(session, timeout)
+
+        monkeypatch.setattr(sim_session.SimSession, "stop", stop_releasing_the_render)
         try:
             r = client.post("/api/sim", json={"robot": "so101"})
             assert r.status_code == 504, r.text
             assert "did not render a first frame" in r.json()["error"]
             assert client.get("/api/sim").json()["sessions"] == [], "the session that cannot stream is kept"
+            assert hold.is_set(), "the dropped session was never stopped"
         finally:
             hold.set()
         # The slot it held is free again: a working engine still starts afterwards.

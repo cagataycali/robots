@@ -45,7 +45,7 @@ import pytest
 
 from strands_robots.mesh.security import ValidationError, validate_command, validate_input_frame
 from strands_robots.policies.factory import UntrustedRemoteCodeError, _check_trust_remote_code
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "strands_robots"
 
@@ -226,7 +226,7 @@ def _raise_sites() -> list[tuple[str, int, ast.expr]]:
     for path in sorted(_PACKAGE.rglob("*.py")):
         tree = parse_file(path)
         rel = str(path.relative_to(_PACKAGE.parent))
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Raise) and node.exc is not None:
                 sites.append((rel, node.lineno, node.exc))
     return sites
@@ -243,7 +243,7 @@ def _imported_code_names(source: str) -> dict[str, str]:
     bound: dict[str, str] = {}
     if "refusal_codes" not in source:
         return bound  # no import can name the module the text never spells
-    for node in ast.walk(_tree(source)):
+    for node in walk_tree(_tree(source)):
         if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("refusal_codes"):
             for alias in node.names:
                 bound[alias.asname or alias.name] = alias.name
@@ -287,7 +287,7 @@ def _code_keyword_sites_in(rel: str, source: str) -> tuple[tuple[str, int, str |
     """:func:`_code_keyword_sites` for one module, kept for every rule that asks again."""
     found: list[tuple[str, int, str | None, str]] = []
     imported = _imported_code_names(source)
-    for node in ast.walk(_tree(source)):
+    for node in walk_tree(_tree(source)):
         if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
             continue
         for keyword in node.exc.keywords:
@@ -361,7 +361,7 @@ def _code_carrying_exception_types() -> frozenset[str]:
     defines: set[str] = set()
     bases: dict[str, set[str]] = {}
     for _rel, source in _package_sources():
-        for node in ast.walk(_tree(source)):
+        for node in walk_tree(_tree(source)):
             if not isinstance(node, ast.ClassDef):
                 continue
             named_bases = {b.id for b in node.bases if isinstance(b, ast.Name)}
@@ -393,7 +393,7 @@ def _refusals_naming_an_env_var(sources: list[tuple[str, str]]) -> list[tuple[st
     carriers = _code_carrying_exception_types()
     found: list[tuple[str, int, list[str], bool]] = []
     for rel, source in sources:
-        for node in ast.walk(_tree(source)):
+        for node in walk_tree(_tree(source)):
             if not isinstance(node, ast.Raise) or node.exc is None:
                 continue
             exc = node.exc

@@ -74,9 +74,12 @@ when it declares one - so no driver imports the simulation package upward.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..utils import refusal_repr
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Mapping
@@ -350,6 +353,26 @@ def refuse(reason: str) -> dict[str, Any]:
         ``{"status": "error", "content": [{"text": reason}]}``.
     """
     return {"status": "error", "content": [{"text": reason}]}
+
+
+def unconnected_observation(driver: str, connect_error: str | None) -> dict[str, Any]:
+    """The empty observation a driver that is not connected returns, logged with why.
+
+    ``get_observation`` does not raise: it is a data read the mesh and a rollout
+    take on their own schedule. But ``{}`` alone also reads as a robot with no
+    joints, so the cause is logged as a WARNING first, the way the simulation
+    engines log theirs - the connect failure when one was recorded, otherwise
+    the call that connects (which names the install line when the SDK is missing).
+
+    Args:
+        driver: The driver's class name, for the log line.
+        connect_error: The last ``connect_eagerly()`` refusal, or ``None``.
+
+    Returns:
+        ``{}``.
+    """
+    logger.warning("%s.get_observation: not connected - %s", driver, connect_error or "call connect_eagerly() first")
+    return {}
 
 
 def halt_failure_detail(envelope: dict[str, Any]) -> str | None:

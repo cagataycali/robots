@@ -47,7 +47,7 @@ from pathlib import Path
 import pytest
 
 from strands_robots.mesh import _acl_config
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 #: Count words a caller census can be written with, mapped to the number.
 _NUMBER_WORDS: dict[str, int] = {
@@ -76,7 +76,7 @@ def _module_tree() -> ast.Module:
 
 def _docstring_of(name: str) -> str:
     """The whitespace-normalized docstring of ``name`` in that module."""
-    for node in ast.walk(_module_tree()):
+    for node in walk_tree(_module_tree()):
         if isinstance(node, ast.FunctionDef) and node.name == name:
             return " ".join((ast.get_docstring(node) or "").split())
     raise AssertionError(f"{name} is not a function in {_acl_config.__name__}")
@@ -85,7 +85,7 @@ def _docstring_of(name: str) -> str:
 def _callers_of(name: str) -> set[str]:
     """Names of the functions in that module that call ``name``."""
     tree = _module_tree()
-    defs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    defs = [n for n in walk_tree(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
     def owner(lineno: int) -> str | None:
         """Innermost function containing ``lineno``."""
@@ -97,7 +97,7 @@ def _callers_of(name: str) -> set[str]:
         return best.name if best else None
 
     found: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == name:
             enclosing = owner(node.lineno)
             if enclosing is not None and enclosing != name:
@@ -126,7 +126,7 @@ def _external_call_sites(name: str) -> set[str]:
             tree = parse_file(path)
         except SyntaxError:  # pragma: no cover - the package parses
             continue
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Call) and ast.unparse(node.func).split(".")[-1] == name:
                 hits.add(path.name)
     return hits
@@ -264,7 +264,7 @@ class TestTheGradersWouldNoticeADriftedDocstring:
 
     def test_the_scan_is_looking_at_the_shipped_module(self) -> None:
         subject_names = {
-            node.name for node in ast.walk(_module_tree()) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            node.name for node in walk_tree(_module_tree()) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
         assert _SUBJECT in subject_names
         assert "snapshot_acl" in subject_names

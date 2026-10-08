@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TRAINING_DIR = _REPO_ROOT / "strands_robots" / "training"
@@ -55,7 +55,7 @@ def _docstring_ids(tree: ast.AST) -> set[int]:
     strings establish that a caller can be sent to a key by name.
     """
     ids: set[int] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         body = getattr(node, "body", None)
@@ -73,7 +73,7 @@ def _refused_extra_keys() -> dict[str, list[str]]:
     for path in sorted(_TRAINING_DIR.rglob("*.py")):
         tree = parse_file(path)
         skip = _docstring_ids(tree)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
                 continue
             if id(node) in skip:

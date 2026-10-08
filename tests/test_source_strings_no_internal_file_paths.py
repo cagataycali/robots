@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # An internal source-file path: the package name, a ``/``-separated module path,
 # and a ``.py`` suffix. Dotted module references (``strands_robots.policies.cosmos3``)
@@ -45,7 +45,7 @@ def _python_sources() -> list[Path]:
 def _string_literals(path: Path) -> list[str]:
     """Every string constant in a module (docstrings and runtime strings alike)."""
     tree = parse_file(path)
-    return [node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    return [node.value for node in walk_tree(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)]
 
 
 def test_package_sources_discovered() -> None:

@@ -33,7 +33,7 @@ import numpy as np
 import pytest
 
 from strands_robots.tools.pose_tool import PoseManager, pose_tool
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REAL_OPEN = io.open
 
@@ -216,7 +216,7 @@ class TestTheCommitItself:
         tree = parse_file(source)
         streamed = [
             f"line {node.lineno}"
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "dump"

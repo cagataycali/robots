@@ -544,6 +544,26 @@ class TestRPCRobustness:
 # ===========================================================================
 
 
+def _until_published(calls: list, *topics: str, timeout: float = 10.0) -> bool:
+    """Wait until every one of *topics* has been published at least once.
+
+    Each sensor loop publishes on its first tick and then once per period, so a
+    loop that works answers in milliseconds. A fixed sleep had to cover the
+    slowest period instead (5.5 s for the 0.2 Hz map loop) and still guessed.
+
+    Each topic is matched as a key suffix: the heartbeat publishes
+    ``strands/<peer_id>/presence`` meanwhile, and a peer id such as ``odom-1``
+    puts ``/odom`` inside that key.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        keys = [key for key, _ in list(calls)]
+        if all(any(key.endswith(topic) for key in keys) for topic in topics):
+            return True
+        time.sleep(0.01)
+    return False
+
+
 class TestSensorLoops:
     """Sensor publishing loops robustness."""
 
@@ -551,7 +571,7 @@ class TestSensorLoops:
         """Health loop publishes CPU, mem, disk even without robot battery."""
         m = Mesh(FakeRobot(), peer_id="health-1")
         m.start()
-        time.sleep(2.5)  # HEALTH_HZ=0.5, need at least 2s
+        assert _until_published(mock_put, "/health")
         m.stop()
 
         health_puts = [(k, d) for k, d in mock_put if k.endswith("/health")]
@@ -567,7 +587,7 @@ class TestSensorLoops:
         robot = FakeRobot(pose={"x": 1.0, "y": 2.0, "z": 0.0, "theta": 0.5})
         m = Mesh(robot, peer_id="pose-1")
         m.start()
-        time.sleep(0.2)  # POSE_HZ=10
+        assert _until_published(mock_put, "/pose")
         m.stop()
 
         pose_puts = [(k, d) for k, d in mock_put if k.endswith("/pose")]
@@ -581,10 +601,10 @@ class TestSensorLoops:
         robot = FakeRobot(imu={"rpy": [0.1, 0.2, 0.3], "gyro": [0, 0, 0.1]})
         m = Mesh(robot, peer_id="imu-1")
         m.start()
-        time.sleep(0.2)
+        assert _until_published(mock_put, "/imu")
         m.stop()
 
-        imu_puts = [(k, d) for k, d in mock_put if "/imu" in k]
+        imu_puts = [(k, d) for k, d in mock_put if k.endswith("/imu")]
         assert len(imu_puts) > 0
 
     def test_odom_loop(self, mock_session, mock_put):
@@ -592,7 +612,7 @@ class TestSensorLoops:
         robot = FakeRobot(odom={"x": 0.5, "y": 0.3, "theta": 1.2, "v": 0.1})
         m = Mesh(robot, peer_id="odom-1")
         m.start()
-        time.sleep(0.2)
+        assert _until_published(mock_put, "/odom")
         m.stop()
 
         odom_puts = [(k, d) for k, d in mock_put if k.endswith("/odom")]
@@ -609,7 +629,7 @@ class TestSensorLoops:
         )
         m = Mesh(robot, peer_id="hand-1")
         m.start()
-        time.sleep(0.05)  # HAND_HZ=50
+        assert _until_published(mock_put, "/hand/left/state", "/hand/right/state")
         m.stop()
 
         hand_puts = [(k, d) for k, d in mock_put if "/hand/" in k]
@@ -627,7 +647,7 @@ class TestSensorLoops:
         )
         m = Mesh(robot, peer_id="lidar-1")
         m.start()
-        time.sleep(1.1)  # LIDAR_STATE_HZ=1.0
+        assert _until_published(mock_put, "/lidar/summary", "/lidar/state")
         m.stop()
 
         summary_puts = [(k, d) for k, d in mock_put if "/lidar/summary" in k]
@@ -640,7 +660,7 @@ class TestSensorLoops:
         robot = FakeRobot(map_info={"name": "office", "resolution": 0.05, "size": [100, 100]})
         m = Mesh(robot, peer_id="map-1")
         m.start()
-        time.sleep(5.5)  # MAP_INFO_HZ=0.2, need >5s
+        assert _until_published(mock_put, "/map/info")
         m.stop()
 
         map_puts = [(k, d) for k, d in mock_put if "/map/info" in k]

@@ -63,7 +63,8 @@ def scene() -> Scene:
     ]
     y, bh, gap = 278, 70, 16
     for title, sub, outcome, accent in steps:
-        s.box(M + 14, y, MW - 28, bh, title, sub, accent=accent, size=13.5, subsize=11.5)
+        s.box(M + 14, y, MW - 28, bh, title, sub, accent=accent, size=13.5, subsize=11.5, id=f"q{title[0]}")
+        s.motion.append((f"q{title[0]}", "visit"))
         s.arrow([(M + MW - 14, y + bh / 2), (R, y + bh / 2)])
         s.text(R + 8, y + bh / 2 + 4, outcome, cls="mono muted", size=10.5)
         if title[0] != "4":

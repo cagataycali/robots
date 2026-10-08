@@ -2,9 +2,11 @@
 
 At the end of this page you can name every control between a language model and a moving robot, the environment variable that widens or narrows each one, and where the evidence is written.
 
-The posture in one sentence: an agent may read anything; a command that can move a robot stops for an operator, travels only on an authenticated wire, is validated against allowlists on both ends, and leaves a signed row behind.
+The posture in one sentence: an agent may read anything; a command that can move a robot stops for an operator, travels only on an authenticated wire, is validated against allowlists on both ends, and leaves a signed row.
 
 ## The layers
+
+{{drawing:d17_security_layers}}
 
 | layer | what it decides | where |
 |---|---|---|
