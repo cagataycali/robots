@@ -638,8 +638,8 @@ def _primitive_size_error(shape: str, size: list[float] | None) -> str | None:
         dims = [(axis, float(values[i]) if len(values) > i else 0.05) for i, axis in enumerate("xyz")]
         layout = "[x, y, z] full edge lengths"
     elif shape == "sphere":
-        dims = [("radius", float(values[0]) if values else 0.05)]
-        layout = "[radius]"
+        dims = [("diameter", float(values[0]) if values else 0.05)]
+        layout = "[diameter]"
     elif shape in ("cylinder", "capsule"):
         radius, height = _round_shape_dims(values)
         dims = [("radius", radius), ("height", height)]
@@ -3999,7 +3999,8 @@ class IsaacSimulation(
             ``size`` wins if both are passed. Conventions per shape:
 
             * ``box``:      ``[width, height, depth]`` (default ``[0.05, 0.05, 0.05]``).
-            * ``sphere``:   ``[radius]`` (default ``[0.05]``).
+            * ``sphere``:   ``[diameter]`` (default ``[0.05]``, a 5 cm ball, as
+              on the MuJoCo and Newton backends).
             * ``cylinder``: ``[radius, height]`` (default ``[0.05, 0.10]``), or
               three components ``[diameter, unused, height]`` - the MuJoCo
               backend's layout, which the published tool schema documents - so
@@ -4717,8 +4718,9 @@ class IsaacSimulation(
             return cls(**common), scale
         if shape == "sphere":
             cls = FixedSphere if is_static else DynamicSphere
-            radius = float(size[0]) if size and len(size) >= 1 else 0.05
-            return cls(radius=radius, **common), [radius]
+            # ``size[0]`` is the diameter, as on the MuJoCo and Newton backends.
+            diameter = float(size[0]) if size and len(size) >= 1 else 0.05
+            return cls(radius=diameter / 2.0, **common), [diameter]
         if shape in ("cylinder", "capsule"):
             if shape == "cylinder":
                 cls = FixedCylinder if is_static else DynamicCylinder
@@ -5790,11 +5792,6 @@ class IsaacSimulation(
             # headless render mode (no RTX frames). Best-effort per camera: a
             # camera whose RTX product hasn't warmed up is omitted rather than
             # failing the whole observation.
-            #
-            # A recording that keeps cameras overrides the skip hint, as on
-            # every backend (DatasetRecordingMixin._recording_keeps_images).
-            if skip_images and self._recording_keeps_images():
-                skip_images = False
             if not skip_images and self._config.render_mode != "headless":
                 # Multi-camera refresh: a single ``world.step(render=True)`` in
                 # the substep loop reliably refreshes only the PRIMARY render
@@ -6845,6 +6842,7 @@ class IsaacSimulation(
         n_steps: int | None = None,
         max_steps: int | None = None,
         *,
+        fast_mode: bool = False,
         reset_between: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots with their own policies in ONE synchronized control loop.
@@ -6901,6 +6899,10 @@ class IsaacSimulation(
                 physics-tensor views (#1895), so a mid-run reset would leave
                 every robot unobservable; requesting one returns a structured
                 error rather than silently skipping the reset.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. Must be a
+                boolean; any other type is refused rather than read by
+                truthiness.
 
         Returns:
             The standard status dict; on success ``content`` carries a text
@@ -6931,6 +6933,8 @@ class IsaacSimulation(
         if stale := _physics_view_stale_error(self, "run_multi_policy"):
             return stale
         if err := self._validate_multi_policies(policies, "run_multi_policy"):
+            return err
+        if err := self._validate_posture_flags("run_multi_policy", fast_mode=fast_mode):
             return err
 
         # Validate every robot exists.
@@ -7113,7 +7117,11 @@ class IsaacSimulation(
             cams: dict[str, Any] = {}
             first = True
             for rname in policies:
-                obs = self.get_observation(robot_name=rname, skip_images=(skip_images or not first))
+                # The first robot's frame is the one recorded, so a recording
+                # that keeps cameras renders it whatever the policies read;
+                # every other robot reads joints only.
+                skip = not first or (skip_images and not self._recording_keeps_images())
+                obs = self.get_observation(robot_name=rname, skip_images=skip)
                 # Split scalars (joints) from ndarrays (camera images);
                 # cameras are scene-global, so one readback serves all robots.
                 per_obs[rname] = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
@@ -7172,8 +7180,8 @@ class IsaacSimulation(
         # documented in wall-clock seconds. Missed deadlines are dropped rather
         # than chased, so a slow step does not fire a burst of back-to-back
         # actions at the robots. ``_validate_positive_frequency`` above has
-        # already refused a non-positive rate, so the period is always usable and
-        # the pace is unconditional. Acquired with ``with``: the ticker owns a
+        # already refused a non-positive rate, so the period is always usable;
+        # ``fast_mode`` skips the pace. Acquired on a stack: the ticker owns a
         # selector and a socketpair, so releasing it is the language's job rather
         # than this loop's to remember. Every paced loop in the package is held
         # to that, so constructing a bare ``Ticker(...)`` here is a suite failure
@@ -7181,7 +7189,8 @@ class IsaacSimulation(
         try:
             from strands_robots._pacing import Ticker
 
-            with Ticker(1.0 / control_frequency) as ticker:
+            with contextlib.ExitStack() as pacing:
+                ticker = None if fast_mode else pacing.enter_context(Ticker(1.0 / control_frequency))
                 while step_count < total_steps:
                     # --- 1. Observe every robot (one main-thread hop). No lock is
                     # held across the marshal (#1896); get_observation takes it.
@@ -7240,7 +7249,8 @@ class IsaacSimulation(
                     for rname in policies:
                         self._robots[rname].policy_steps = step_count
 
-                    ticker.wait()
+                    if ticker is not None:
+                        ticker.wait()
 
             completed_cleanly = True
         except CooperativeStop:

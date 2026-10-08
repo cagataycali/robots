@@ -38,6 +38,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Test areas swept. Derived below rather than trusted, so an area that ships
@@ -89,7 +91,7 @@ def explicit_finalizer_calls(source: str) -> list[int]:
         syntax gates own that failure.
     """
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []
 

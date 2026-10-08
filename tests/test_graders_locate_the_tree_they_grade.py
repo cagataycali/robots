@@ -56,6 +56,8 @@ import pathlib
 
 import pytest
 
+from tests._package_ast import parse_source
+
 #: The test tree, located from this file - the rule this module states, applied
 #: to the module that states it.
 _TEST_TREE = pathlib.Path(__file__).resolve().parent
@@ -108,7 +110,7 @@ def _cwd_relative_locators(source: str) -> list[str]:
     Returns:
         ``"<line>: <literal>.<call>"`` per locator, in source order.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     bound: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:

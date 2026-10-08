@@ -193,23 +193,24 @@ def test_destroy_resets_recording_state() -> None:
         pytest.param({"recording_cameras": []}, False, id="no-cameras"),
     ],
 )
-def test_get_observation_forces_images_while_recording(scope: dict, forced: bool) -> None:
-    """skip_images=True still yields camera frames while a recording keeps cameras.
+def test_only_the_recording_rollout_renders(scope: dict, forced: bool) -> None:
+    """``get_observation(skip_images=True)`` renders nothing, recording or not.
 
-    A non-image policy (requires_images=False, e.g. MockPolicy) makes
-    PolicyRunner pass skip_images=True, but the recorded frames must carry the
-    camera images the schema declared. A recording scoped to no cameras
-    declares none, so the skip hint stands and no frame is rendered for it.
+    The loop that records the observation it reads (``PolicyRunner._observe``)
+    renders the kept cameras for a policy that reads no pixels, because the
+    recorded frames must carry the image columns the schema declared. Every
+    other ``skip_images=True`` caller discards the pixels. A recording scoped
+    to no cameras declares none, so nothing renders for it.
     """
+    from strands_robots.simulation.policy_runner import PolicyRunner
+
     engine = _make_engine(
         robots={"so100": _robot()},
         cameras={"front": _camera("front", fill=7)},
     )
-    obs = engine.get_observation("so100", skip_images=True)
-    assert "front" not in obs  # not recording: skip honoured
-
     engine._recording_state_dict.update(recording=True, **scope)
-    obs = engine.get_observation("so100", skip_images=True)
+    assert "front" not in engine.get_observation("so100", skip_images=True)
+    obs = PolicyRunner(engine)._observe("so100", skip_images=True)
     assert ("front" in obs) is forced
     if forced:
         assert obs["front"].shape == (48, 64, 3)

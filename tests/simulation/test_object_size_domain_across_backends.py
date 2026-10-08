@@ -459,17 +459,11 @@ class TestNoObjectSizeSurfaceDrifts:
 # The boundary: what this change deliberately does not decide                  #
 # --------------------------------------------------------------------------- #
 class TestShapeDependentAxesStayOutOfScope:
-    """Counts, the short-vector fallback and positivity remain per-backend.
+    """Isaac keeps its short-vector fallback; MuJoCo, Newton and mjlab refuse.
 
     Asserted rather than omitted so the divergence cannot be mistaken for
     settled, and so #1858 landing has to replace these rather than delete them.
     """
-
-    def test_a_short_size_is_still_accepted_by_newton(self) -> None:
-        """MuJoCo refuses ``[0.1]`` on a box; Newton stores it for a later read."""
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", shape="box", size=[0.1])["status"] == "success"
-        assert stub._world.objects["crate"].size == [0.1]
 
     def test_a_short_size_is_still_accepted_by_isaac(self) -> None:
         """Its ``size`` docstring promises a trailing-component fallback."""
@@ -491,11 +485,6 @@ class TestShapeDependentAxesStayOutOfScope:
         finally:
             sim.cleanup()
 
-    def test_a_zero_extent_is_still_accepted_by_newton(self) -> None:
-        """Positivity is bounded per consumed component, so it needs the counts."""
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", size=[0.0, 0.0, 0.0])["status"] == "success"
-
     def test_a_zero_consumed_extent_is_refused_by_isaac_as_by_mujoco(self) -> None:
         """Isaac now checks the components each shape consumes: a zero there
         built a collider PhysX cannot hold (a zero-height cylinder fell to
@@ -510,3 +499,130 @@ class TestShapeDependentAxesStayOutOfScope:
     def test_the_shared_helper_takes_no_shape(self) -> None:
         """The scope boundary in one signature: no shape means no count check."""
         assert list(inspect.signature(coerce_size_vector).parameters) == ["method", "param_name", "size"]
+
+
+# --------------------------------------------------------------------------- #
+# One size, one object                                                        #
+# --------------------------------------------------------------------------- #
+#: ``(shape, size, engine-native half-sizes)``: ``size`` is the full extent, and
+#: every MuJoCo-family engine is handed the same half-extents / radius /
+#: half-height. The first row is the README's red cube.
+ONE_OBJECT: tuple[tuple[str, list[float], list[float]], ...] = (
+    ("box", [0.05, 0.05, 0.05], [0.025, 0.025, 0.025]),
+    ("box", [0.2, 0.4, 0.6], [0.1, 0.2, 0.3]),
+    ("sphere", [0.07], [0.035]),
+    ("cylinder", [0.04, 0.0, 0.2], [0.02, 0.1]),
+    ("capsule", [0.06, 0.06, 0.24], [0.03, 0.12]),
+)
+
+
+def _newton_native(shape: str, size: list[float]) -> list[float]:
+    """The half-sizes Newton's builder receives for a stored object."""
+    from types import SimpleNamespace
+
+    from strands_robots.simulation.models import SimObject
+
+    calls: dict[str, Any] = {}
+
+    def record(_body: int, **kwargs: Any) -> None:
+        calls.update(kwargs)
+
+    wp = SimpleNamespace(transform=lambda *a: a, vec3=lambda *a: a, quat=lambda *a: a, quat_identity=lambda: ())
+    builder = SimpleNamespace(
+        add_body=lambda **_: 0,
+        **{f"add_shape_{kind}": record for kind in ("box", "sphere", "cylinder", "capsule")},
+    )
+    stub: Any = SimpleNamespace(_wp=wp, _wxyz_to_wp_quat=lambda q: q)
+    NewtonSimEngine._add_object_to_builder(stub, builder, SimObject(name="o", shape=shape, size=size, mass=1.0))
+    if shape == "box":
+        return [calls["hx"], calls["hy"], calls["hz"]]
+    return [calls["radius"]] + ([calls["half_height"]] if "half_height" in calls else [])
+
+
+def _mjlab_stub() -> Any:
+    """Just the state ``MjlabEngine.add_object`` reads; mjlab need not be installed."""
+    import threading
+    from types import SimpleNamespace
+
+    return SimpleNamespace(_lock=threading.Lock(), _robots={}, _objects={}, _dirty=False)
+
+
+def _mjlab_native(shape: str, size: list[float]) -> list[float]:
+    """The geom size the mjlab backend compiles an object with."""
+    from strands_robots.simulation.mjlab.simulation import MjlabEngine
+
+    stub = _mjlab_stub()
+    assert MjlabEngine.add_object(stub, "o", shape=shape, size=size)["status"] == "success"
+    return list(stub._objects["o"].size)
+
+
+class TestOneSizeBuildsOneObject:
+    """The same ``add_object`` call builds the same object on every backend."""
+
+    @pytest.mark.parametrize(("shape", "size", "native"), ONE_OBJECT)
+    def test_every_engine_gets_the_half_sizes_mujoco_compiles(
+        self, shape: str, size: list[float], native: list[float]
+    ) -> None:
+        pytest.importorskip("mujoco")
+        from strands_robots.simulation.mujoco.simulation import Simulation
+
+        sim = Simulation(tool_name="test_one_size_one_object_sim", mesh=False)
+        try:
+            assert sim.create_world()["status"] == "success"
+            assert sim.add_object("o", shape=shape, size=size)["status"] == "success"
+            assert sim._world is not None
+            model = sim._world._model
+            compiled = list(model.geom_size[model.ngeom - 1])
+        finally:
+            sim.cleanup()
+        assert compiled[: len(native)] == pytest.approx(native)
+        assert _newton_native(shape, size) == pytest.approx(native)
+        assert _mjlab_native(shape, size)[: len(native)] == pytest.approx(native)
+
+    def test_isaac_reads_a_sphere_size_as_its_diameter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys
+        import types
+
+        seen: dict[str, Any] = {}
+
+        class _Prim:
+            def __init__(self, **kwargs: Any) -> None:
+                seen.update(kwargs)
+
+        objects = types.ModuleType("isaacsim.core.api.objects")
+        for cls in ("DynamicCuboid", "DynamicSphere", "DynamicCylinder", "DynamicCapsule"):
+            setattr(objects, cls, _Prim)
+        for cls in ("FixedCuboid", "FixedSphere", "FixedCylinder", "FixedCapsule"):
+            setattr(objects, cls, _Prim)
+        for name in ("isaacsim", "isaacsim.core", "isaacsim.core.api"):
+            monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+        monkeypatch.setitem(sys.modules, "isaacsim.core.api.objects", objects)
+        engine = IsaacSimulation.__new__(IsaacSimulation)
+        _, resolved = engine._construct_shape_prim(
+            shape="sphere",
+            prim_path="/World/Objects/ball",
+            name="ball",
+            position=[0.0, 0.0, 0.1],
+            orientation=[1.0, 0.0, 0.0, 0.0],
+            size=[0.07],
+            color=None,
+            mass=0.1,
+            is_static=False,
+        )
+        assert seen["radius"] == pytest.approx(0.035) and resolved == pytest.approx([0.07])
+
+    @pytest.mark.parametrize("size", [[0.1], [0.0, 0.0, 0.0], [0.1, -0.1, 0.1]])
+    @pytest.mark.parametrize("backend", ["newton", "mjlab"])
+    def test_a_size_mujoco_refuses_is_refused(self, backend: str, size: list[float]) -> None:
+        """A short vector or a non-positive extent is refused, not padded."""
+        if backend == "newton":
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_object(stub, "crate", shape="box", size=size)
+            assert stub._world.objects == {}
+        else:
+            from strands_robots.simulation.mjlab.simulation import MjlabEngine
+
+            stub = _mjlab_stub()
+            result = MjlabEngine.add_object(stub, "crate", shape="box", size=size)
+            assert stub._objects == {}
+        assert result["status"] == "error" and "full extent" in _text(result)

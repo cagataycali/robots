@@ -2005,12 +2005,13 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
 
-        The ``size`` convention is backend-specific -- the default MuJoCo
-        backend treats ``size`` as the **full extent in meters** per axis
-        (halved internally to MuJoCo's half-extents), whereas Newton consumes
-        half-extents / radii directly. See the concrete backend's
-        ``add_object`` docstring for the exact per-shape semantics and an
-        example. Returns an agent-tool status dict.
+        ``size`` is the **full extent in meters** on every backend: a box's
+        ``[x, y, z]`` edge lengths, a sphere's diameter, a cylinder's or
+        capsule's ``[diameter, unused, length]``. ``size=[0.05, 0.05, 0.05]``
+        is a 5 cm cube on MuJoCo, Newton, mjlab and Isaac alike; each backend
+        halves it into its engine's own half-extents. See the concrete
+        backend's ``add_object`` docstring for the exact per-shape semantics.
+        Returns an agent-tool status dict.
 
         A backend MUST NOT discard ``size`` components the caller did supply.
         When the vector is shorter than the shape consumes it either rejects it
@@ -2154,11 +2155,10 @@ class SimEngine(ABC):
                 publishes ``joint_states`` without ``image_raw``. Camera keys
                 are then absent from the result rather than present and empty,
                 so a caller must not read a missing frame as a render failure.
-                A backend overrides a ``True`` here while a dataset recording is
-                active - the recorded frames must carry the camera images the
-                schema declared - so this is a hint, not a guarantee that
-                nothing renders. Defaults to False (render every attached
-                camera).
+                ``True`` renders nothing, recording or not: a rollout loop
+                that records the observation it reads asks for the cameras
+                itself while a dataset recording keeps them. Defaults to False
+                (render every attached camera).
 
         Returns:
             Observation dict per schema above. Returns ``{}`` - and logs a
@@ -4205,6 +4205,8 @@ class SimEngine(ABC):
         action_horizon: int | dict[str, int] = 8,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        *,
+        fast_mode: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots, each with its own policy, in ONE synchronized loop.
 
@@ -4267,6 +4269,11 @@ class SimEngine(ABC):
                 contract above).
             n_steps: Exact step horizon (overrides ``duration`` when set).
             max_steps: Legacy alias for ``n_steps``.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. When False
+                (default) the loop is paced on a deadline at
+                ``control_frequency``. Must be a boolean: a value of any other
+                type is refused rather than read by truthiness.
 
         Returns:
             A structured ``{"status": "error", ...}`` dict naming this

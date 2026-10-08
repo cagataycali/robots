@@ -44,7 +44,7 @@ import threading
 from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from strands_robots.drivers.base import policy_step, refuse, undeclared_verb_error
+from strands_robots.drivers.base import policy_step, refuse, unconnected_observation, undeclared_verb_error
 from strands_robots.drivers.rollout import PolicyRollout, policy_from_provider
 from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
@@ -383,6 +383,8 @@ class StretchDriver:
 
     def get_observation(self) -> dict[str, float]:
         """The measured joint positions (name -> m or rad), for the mesh and the rollout."""
+        if not self.is_connected:
+            return unconnected_observation(type(self).__name__, self._connect_error)
         robot = self._robot
         if robot is not None:
             self._read(robot)

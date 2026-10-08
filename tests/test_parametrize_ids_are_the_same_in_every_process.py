@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 TESTS_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_ROOT.parent
 
@@ -167,7 +169,7 @@ def offences(source: str, label: str) -> list[str]:
     Returns:
         One line per offence, naming the file, the line and the expression.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     tables = _tables(tree)
     found: list[str] = []
     for decorator in _parametrize_decorators(tree):

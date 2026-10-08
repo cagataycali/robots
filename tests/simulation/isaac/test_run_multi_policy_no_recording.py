@@ -140,6 +140,7 @@ def test_run_multi_policy_runs_and_reports_per_robot_steps(sim_two_robots):
         n_steps=10,
         control_frequency=500.0,
         action_horizon=4,
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     payload = tool_json(r)
@@ -158,9 +159,7 @@ def test_run_multi_policy_steps_physics_exactly_once_per_timestep(sim_two_robots
     """Lockstep: N timesteps with 2 robots = N physics steps, not 2N."""
     sim = sim_two_robots
     r = sim.run_multi_policy(
-        policies={"alpha": MockPolicy(), "beta": MockPolicy()},
-        n_steps=6,
-        control_frequency=500.0,
+        policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=6, control_frequency=500.0, fast_mode=True
     )
     assert r["status"] == "success", r
     assert sim._world.step_calls == 6
@@ -173,10 +172,7 @@ def test_run_multi_policy_action_horizon_amortizes_inference(sim_two_robots):
     """A policy is re-queried only when its buffered chunk drains."""
     pa, pb = _ChunkCounter(chunk=10), _ChunkCounter(chunk=10)
     r = sim_two_robots.run_multi_policy(
-        policies={"alpha": pa, "beta": pb},
-        n_steps=20,
-        control_frequency=500.0,
-        action_horizon=10,
+        policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=500.0, action_horizon=10, fast_mode=True
     )
     assert r["status"] == "success", r
     assert pa.calls == 2
@@ -191,6 +187,7 @@ def test_run_multi_policy_per_robot_horizon_mapping(sim_two_robots):
         n_steps=20,
         control_frequency=500.0,
         action_horizon={"alpha": 1, "beta": 10},
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     # alpha re-queried every step (horizon clamped to >=1); beta batched.
@@ -217,10 +214,7 @@ def test_run_multi_policy_honors_policy_chunk_length_over_smaller_horizon(sim_tw
 
     pa, pb = _Chunked(actions_per_step=10), _Chunked(actions_per_step=10)
     r = sim_two_robots.run_multi_policy(
-        policies={"alpha": pa, "beta": pb},
-        n_steps=20,
-        control_frequency=500.0,
-        action_horizon=2,
+        policies={"alpha": pa, "beta": pb}, n_steps=20, control_frequency=500.0, action_horizon=2, fast_mode=True
     )
     assert r["status"] == "success", r
     assert pa.calls == 2
@@ -230,9 +224,7 @@ def test_run_multi_policy_honors_policy_chunk_length_over_smaller_horizon(sim_tw
 def test_run_multi_policy_max_steps_aliases_n_steps(sim_two_robots):
     """``max_steps`` is honoured as the legacy alias for ``n_steps``."""
     r = sim_two_robots.run_multi_policy(
-        policies={"alpha": MockPolicy(), "beta": MockPolicy()},
-        max_steps=8,
-        control_frequency=500.0,
+        policies={"alpha": MockPolicy(), "beta": MockPolicy()}, max_steps=8, control_frequency=500.0, fast_mode=True
     )
     assert r["status"] == "success", r
     assert tool_json(r)["steps"] == 8
@@ -273,6 +265,7 @@ def test_run_multi_policy_cooperative_stop_ends_early(sim_two_robots):
         n_steps=50,
         control_frequency=500.0,
         action_horizon=1,
+        fast_mode=True,
     )
     assert r["status"] == "success", r
     assert "stopped early" in r["content"][0]["text"]
@@ -300,9 +293,7 @@ def test_run_multi_policy_raises_on_empty_action_chunk(sim_two_robots):
 
     with pytest.raises(RuntimeError, match="empty action chunk"):
         sim_two_robots.run_multi_policy(
-            policies={"alpha": _Empty(), "beta": _Empty()},
-            n_steps=5,
-            control_frequency=500.0,
+            policies={"alpha": _Empty(), "beta": _Empty()}, n_steps=5, control_frequency=500.0, fast_mode=True
         )
     # The failure path still released the running flags.
     for name in ("alpha", "beta"):
@@ -319,6 +310,7 @@ def test_run_multi_policy_warns_on_distinct_instructions(sim_two_robots, caplog)
             instructions={"alpha": "pour", "beta": "catch"},
             n_steps=4,
             control_frequency=500.0,
+            fast_mode=True,
         )
     assert r["status"] == "success", r
     assert any("distinct per-robot instructions" in rec.message for rec in caplog.records)
@@ -328,20 +320,18 @@ def test_run_multi_policy_warns_on_distinct_instructions(sim_two_robots, caplog)
 # Caller-error envelope                                                       #
 # --------------------------------------------------------------------------- #
 def test_run_multi_policy_rejects_empty_policies(sim_two_robots):
-    assert sim_two_robots.run_multi_policy(policies={})["status"] == "error"
+    assert sim_two_robots.run_multi_policy(policies={}, fast_mode=True)["status"] == "error"
 
 
 def test_run_multi_policy_rejects_unknown_robot(sim_two_robots):
-    r = sim_two_robots.run_multi_policy(policies={"ghost": MockPolicy()}, n_steps=2)
+    r = sim_two_robots.run_multi_policy(policies={"ghost": MockPolicy()}, n_steps=2, fast_mode=True)
     assert r["status"] == "error"
     assert "ghost" in r["content"][0]["text"]
 
 
 def test_run_multi_policy_rejects_nonpositive_n_steps(sim_two_robots):
     r = sim_two_robots.run_multi_policy(
-        policies={"alpha": MockPolicy()},
-        n_steps=0,
-        control_frequency=500.0,
+        policies={"alpha": MockPolicy()}, n_steps=0, control_frequency=500.0, fast_mode=True
     )
     assert r["status"] == "error"
     assert "n_steps must be a positive integer" in r["content"][0]["text"]
@@ -388,7 +378,7 @@ def test_run_multi_policy_rejects_a_frequency_it_cannot_divide_by(sim_two_robots
     that could drift from the sibling backends.
     """
     sim = sim_two_robots
-    result = sim.run_multi_policy(policies=_both(), n_steps=4, control_frequency=bad)
+    result = sim.run_multi_policy(policies=_both(), n_steps=4, control_frequency=bad, fast_mode=True)
 
     assert result == IsaacSimulation._validate_positive_frequency(bad, "run_multi_policy")
     assert result["status"] == "error"
@@ -399,7 +389,7 @@ def test_run_multi_policy_rejects_a_frequency_it_cannot_divide_by(sim_two_robots
 def test_run_multi_policy_rejects_a_duration_it_cannot_honor(sim_two_robots, bad: Any) -> None:
     """``duration`` - the horizon when no step count is given - is refused too."""
     sim = sim_two_robots
-    result = sim.run_multi_policy(policies=_both(), duration=bad, control_frequency=500.0)
+    result = sim.run_multi_policy(policies=_both(), duration=bad, control_frequency=500.0, fast_mode=True)
 
     assert result == IsaacSimulation._validate_duration(bad, "run_multi_policy", 500.0)
     assert result["status"] == "error"
@@ -419,7 +409,7 @@ def test_run_multi_policy_checks_duration_only_when_it_is_the_effective_horizon(
     instead of the resolved horizon.
     """
     sim = sim_two_robots
-    result = sim.run_multi_policy(policies=_both(), n_steps=4, duration=0.0, control_frequency=500.0)
+    result = sim.run_multi_policy(policies=_both(), n_steps=4, duration=0.0, control_frequency=500.0, fast_mode=True)
 
     assert result["status"] == "success", result
     assert sim._world.step_calls == 4
@@ -437,7 +427,7 @@ def test_run_multi_policy_rejects_instructions_the_shared_helper_refuses(sim_two
     _, expected = IsaacSimulation._normalize_multi_policy_instructions(policies, bad, "run_multi_policy")
     assert expected is not None, "probe value must be outside the shared domain"
 
-    result = sim.run_multi_policy(policies=policies, instructions=bad, n_steps=4)
+    result = sim.run_multi_policy(policies=policies, instructions=bad, n_steps=4, fast_mode=True)
 
     assert result == expected
     _cost_nothing(sim)
@@ -455,7 +445,7 @@ def test_run_multi_policy_rejects_an_action_horizon_the_shared_helper_refuses(si
     _, expected = IsaacSimulation._normalize_multi_policy_horizons(policies, bad, "run_multi_policy", default_horizon=8)
     assert expected is not None, "probe value must be outside the shared domain"
 
-    result = sim.run_multi_policy(policies=policies, action_horizon=bad, n_steps=4)
+    result = sim.run_multi_policy(policies=policies, action_horizon=bad, n_steps=4, fast_mode=True)
 
     assert result == expected
     _cost_nothing(sim)
@@ -466,7 +456,7 @@ def test_run_multi_policy_requires_world():
     engine = _make_engine({})
     engine._world_created = False
     engine._world = None
-    r = engine.run_multi_policy(policies={"alpha": MockPolicy()}, n_steps=2)
+    r = engine.run_multi_policy(policies={"alpha": MockPolicy()}, n_steps=2, fast_mode=True)
     assert r["status"] == "error"
     assert "world" in r["content"][0]["text"].lower()
 
@@ -483,7 +473,7 @@ def test_run_multi_policy_rejects_robot_with_running_policy(sim_two_robots):
     """
     sim = sim_two_robots
     sim._robots["alpha"].policy_running = True
-    r = sim.run_multi_policy(policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=2)
+    r = sim.run_multi_policy(policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=2, fast_mode=True)
     assert r["status"] == "error", r
     msg = r["content"][0]["text"]
     assert "already running" in msg
@@ -508,6 +498,7 @@ def test_run_multi_policy_reset_between_returns_the_1895_error(sim_two_robots):
         n_steps=4,
         control_frequency=500.0,
         reset_between=True,
+        fast_mode=True,
     )
     assert r["status"] == "error", r
     msg = r["content"][0]["text"]
@@ -536,9 +527,7 @@ def test_run_multi_policy_refuses_rate_the_recording_cannot_describe(sim_two_rob
 
     sim._recording_state_dict = {"recording": True, "dataset_recorder": _RecorderAt30()}
     r = sim.run_multi_policy(
-        policies={"alpha": MockPolicy(), "beta": MockPolicy()},
-        n_steps=2,
-        control_frequency=50.0,
+        policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=2, control_frequency=50.0, fast_mode=True
     )
     assert r["status"] == "error", r
     msg = r["content"][0]["text"]
@@ -561,9 +550,7 @@ def test_run_multi_policy_marshals_hops_through_run_on_main(sim_two_robots):
 
     sim.run_on_main = _spy
     r = sim.run_multi_policy(
-        policies={"alpha": MockPolicy(), "beta": MockPolicy()},
-        n_steps=3,
-        control_frequency=500.0,
+        policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=3, control_frequency=500.0, fast_mode=True
     )
     assert r["status"] == "success", r
     # One observe-all hop + one apply-all-and-step hop per timestep.
@@ -586,6 +573,7 @@ def test_run_multi_policy_from_worker_thread_runs_kit_work_on_the_pump_thread(si
             n_steps=4,
             control_frequency=500.0,
             action_horizon=4,
+            fast_mode=True,
         )
 
     t = threading.Thread(target=_worker)
@@ -618,9 +606,7 @@ def test_run_multi_policy_from_worker_thread_without_a_pump_is_refused(sim_two_r
 
     def _worker() -> None:
         box["result"] = sim.run_multi_policy(
-            policies={"alpha": MockPolicy(), "beta": MockPolicy()},
-            n_steps=2,
-            control_frequency=500.0,
+            policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=2, control_frequency=500.0, fast_mode=True
         )
 
     t = threading.Thread(target=_worker)
@@ -630,3 +616,25 @@ def test_run_multi_policy_from_worker_thread_without_a_pump_is_refused(sim_two_r
     assert box["result"]["status"] == "error", box["result"]
     assert "run_pump_forever" in box["result"]["content"][0]["text"]
     assert sim._world.step_calls == 0
+
+
+@pytest.mark.parametrize(("fast_mode", "expected"), [(False, [0.002]), (True, [])])
+def test_fast_mode_selects_the_pace_and_not_the_step_count(sim_two_robots, monkeypatch, fast_mode, expected):
+    """``fast_mode`` decides only whether the loop waits on the wall clock (MuJoCo parity)."""
+    from strands_robots import _pacing
+
+    periods: list[float] = []
+
+    class _Ticker(_pacing.Ticker):
+        def __init__(self, period: float, *args: Any, **kwargs: Any) -> None:
+            periods.append(period)
+            super().__init__(period, *args, **kwargs)
+
+    monkeypatch.setattr(_pacing, "Ticker", _Ticker)
+    policies = {"alpha": MockPolicy(), "beta": MockPolicy()}
+    r = sim_two_robots.run_multi_policy(policies=policies, n_steps=3, control_frequency=500.0, fast_mode=fast_mode)
+    assert r["status"] == "success", r
+    assert (periods, sim_two_robots._world.step_calls) == (expected, 3)
+    refused = sim_two_robots.run_multi_policy(policies=policies, n_steps=3, fast_mode="false")  # type: ignore[arg-type]
+    assert refused["content"][0]["text"].startswith("run_multi_policy: fast_mode")
+    assert sim_two_robots._world.step_calls == 3

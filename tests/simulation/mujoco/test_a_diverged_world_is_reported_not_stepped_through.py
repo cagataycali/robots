@@ -151,7 +151,7 @@ class TestRunMultiPolicy:
         _shove(sim)
 
         result = sim.run_multi_policy(
-            policies={"arm": MockPolicy()}, instructions="hold", n_steps=50, control_frequency=500.0
+            policies={"arm": MockPolicy()}, instructions="hold", n_steps=50, control_frequency=500.0, fast_mode=True
         )
 
         _assert_reports_divergence(result, "run_multi_policy")

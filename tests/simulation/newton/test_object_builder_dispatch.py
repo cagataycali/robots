@@ -11,7 +11,7 @@ stub for each is enough to assert the exact calls. This pins two contracts that
 are easy to regress silently:
 
 * the shape -> ``add_shape_*`` dispatch (including the static-vs-dynamic body
-  branch and the capsule/cylinder ``half_height`` fallback), and
+  branch), and
 * the wxyz (SimRobot/MuJoCo) -> xyzw (Warp ``quatf``) component reorder, a
   classic footgun that produces a plausible-looking but wrong orientation.
 """
@@ -137,39 +137,10 @@ class TestStaticVsDynamicBody:
 
 
 class TestShapeDispatch:
-    """Each ``SimObject.shape`` maps to the matching ``add_shape_*`` call with the
-    correct size arguments.
+    """Each ``SimObject.shape`` maps to the matching ``add_shape_*`` call; the size
+    arguments it receives are pinned across backends in
+    ``tests/simulation/test_object_size_domain_across_backends.py``.
     """
-
-    def test_box_passes_half_extents_unhalved(self):
-        # Newton consumes hx/hy/hz directly from size (no MuJoCo-style halving).
-        builder = _add(SimObject(name="b", shape="box", size=[0.2, 0.4, 0.6], mass=1.0))
-        box = next(c for c in builder.calls if c[0] == "box")
-        assert (box[2]["hx"], box[2]["hy"], box[2]["hz"]) == (0.2, 0.4, 0.6)
-
-    def test_sphere_uses_first_size_as_radius(self):
-        builder = _add(SimObject(name="s", shape="sphere", size=[0.07], mass=1.0))
-        sphere = next(c for c in builder.calls if c[0] == "sphere")
-        assert sphere[2]["radius"] == 0.07
-
-    def test_capsule_radius_and_half_height(self):
-        builder = _add(SimObject(name="c", shape="capsule", size=[0.03, 0.12], mass=1.0))
-        cap = next(c for c in builder.calls if c[0] == "capsule")
-        assert cap[2]["radius"] == 0.03
-        assert cap[2]["half_height"] == 0.12
-
-    def test_capsule_half_height_falls_back_to_radius(self):
-        # Single-element size: half_height defaults to size[0] (radius).
-        builder = _add(SimObject(name="c", shape="capsule", size=[0.05], mass=1.0))
-        cap = next(c for c in builder.calls if c[0] == "capsule")
-        assert cap[2]["radius"] == 0.05
-        assert cap[2]["half_height"] == 0.05
-
-    def test_cylinder_radius_and_half_height(self):
-        builder = _add(SimObject(name="cyl", shape="cylinder", size=[0.04, 0.2], mass=1.0))
-        cyl = next(c for c in builder.calls if c[0] == "cylinder")
-        assert cyl[2]["radius"] == 0.04
-        assert cyl[2]["half_height"] == 0.2
 
     def test_color_truncated_to_rgb(self):
         # SimObject.color is RGBA by default; Newton shapes take an RGB tuple.
@@ -190,8 +161,7 @@ class TestShapeDispatch:
     [("box", "box"), ("sphere", "sphere"), ("capsule", "capsule"), ("cylinder", "cylinder")],
 )
 def test_each_primitive_routes_to_its_builder_method(shape, expected):
-    size = [0.1, 0.1, 0.1] if shape == "box" else [0.05, 0.1]
-    builder = _add(SimObject(name="p", shape=shape, size=size, mass=1.0))
+    builder = _add(SimObject(name="p", shape=shape, size=[0.1, 0.1, 0.1], mass=1.0))
     assert any(c[0] == expected for c in builder.calls)
 
 

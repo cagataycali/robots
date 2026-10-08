@@ -1260,8 +1260,6 @@ class MuJoCoSimEngine(
                 sorted(self._world.robots),
             )
             return {}
-        if skip_images and self._recording_keeps_images():
-            skip_images = False
         with self._lock:
             obs = self._get_sim_observation(robot_name, skip_images=skip_images)
         # Additive sensor noise (set_obs_noise). Exact no-op / same dict when
@@ -1313,7 +1311,12 @@ class MuJoCoSimEngine(
             carries a ``json`` block with ``unresolved_keys`` (and an empty
             ``applied``) so callers can self-correct and resend. ``status`` is
             ``"error"`` when ``n_substeps`` is outside that domain, and nothing
-            is written when it is.
+            is written when it is. A value outside the range its actuator is
+            held to (a ``ctrlrange``, or the range of the joint an unlimited
+            position servo drives) is still written and stepped, but the
+            ``"success"`` text names it and a ``json`` block maps each such key
+            to its ``commanded`` value and the ``bounds`` it is held to, on
+            every call.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1362,9 +1365,11 @@ class MuJoCoSimEngine(
                 if refused:
                     return self._unresolved_action_refusal(robot_name, refused, applied=[])
             self._unresolved_action_keys: list[str] = []
+            self._clamped_action_values: dict[str, dict[str, Any]] = {}
             unstable_before = instability_counts(self._mj, self._world._data)
             self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
             unresolved = self._unresolved_action_keys
+            clamped = self._clamped_action_values
             diverged = divergence_error(self._mj, self._world._model, self._world._data, unstable_before, "send_action")
         if diverged is not None:
             return {"status": "error", "content": [{"text": diverged}, {"json": {"diverged": True}}]}
@@ -1373,7 +1378,19 @@ class MuJoCoSimEngine(
             # Reached only when an installed action controller raised and the
             # name-lookup fallback ran after it: the resolved keys were written.
             return self._unresolved_action_refusal(robot_name, unresolved, applied=applied)
-        return {"status": "success", "content": [{"text": send_action_summary(robot_name, len(applied), n_substeps)}]}
+        text = send_action_summary(robot_name, len(applied), n_substeps)
+        if not clamped:
+            return {"status": "success", "content": [{"text": text}]}
+        # The batch was written and the world advanced, so this is not an
+        # error - a policy holding a joint at its limit must keep running - but
+        # the caller learns, on every call, which commands the robot cannot
+        # reproduce and the bounds it will sit at instead.
+        named = ", ".join(
+            f"{key}={entry['commanded']:.4g} (held to [{entry['bounds'][0]:.4g}, {entry['bounds'][1]:.4g}])"
+            for key, entry in clamped.items()
+        )
+        text += f" Not reproduced, outside the range the actuator is held to: {named}."
+        return {"status": "success", "content": [{"text": text}, {"json": {"clamped": clamped, "applied": applied}}]}
 
     def _unresolved_action_refusal(self, robot_name: str, unresolved: list[str], applied: list[str]) -> dict[str, Any]:
         """The ``send_action`` error naming ``unresolved`` keys and the robot's valid ones.
@@ -4381,7 +4398,7 @@ class MuJoCoSimEngine(
         base["methods"]["run_multi_policy"] = (
             "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
             "control_frequency=None (the open recording's fps, else 50.0), action_horizon=8 | dict, n_steps=None, "
-            "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
+            "max_steps=None, fast_mode=False) -> dict  # drive MULTIPLE robots, each with its own "
             "Policy, in one synchronized loop that records ALL robots into ONE "
             "merged frame per timestep (prefixed state/action, e.g. "
             "'alice__shoulder_pan'); the concurrent multi-robot sibling of "
@@ -7667,6 +7684,8 @@ class MuJoCoSimEngine(
         action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        *,
+        fast_mode: bool = False,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots with their own policies in a SINGLE
         synchronized control loop, recording ALL robots into ONE merged frame
@@ -7734,6 +7753,11 @@ class MuJoCoSimEngine(
                 duration, which truncates at any rate the count does not
                 divide evenly (``29`` at 50 Hz, ``1`` at 49 Hz).
             max_steps: Legacy alias for ``n_steps``.
+            fast_mode: Skip the real-time pacing and run as fast as inference
+                and physics allow, as :meth:`run_policy` does. When False
+                (default) the loop is paced on a deadline at
+                ``control_frequency``. Must be a boolean: a value of any other
+                type is refused rather than read by truthiness.
 
         Returns:
             Standard status dict with per-robot step counts.
@@ -7746,6 +7770,8 @@ class MuJoCoSimEngine(
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._validate_multi_policies(policies, "run_multi_policy"):
+            return err
+        if err := self._validate_posture_flags("run_multi_policy", fast_mode=fast_mode):
             return err
 
         # Validate every robot exists.
@@ -7884,8 +7910,8 @@ class MuJoCoSimEngine(
         # seconds. Missed deadlines are dropped rather than chased, so a slow
         # step does not fire a burst of back-to-back actions at the robots.
         # ``_validate_positive_frequency`` above has already refused a
-        # non-positive rate, so the period is always usable and the pace is
-        # unconditional. Acquired with ``with``: the ticker owns a selector and a
+        # non-positive rate, so the period is always usable; ``fast_mode`` skips
+        # the pace, as it does for ``run_policy``. Acquired on a stack: the ticker owns a selector and a
         # socketpair, so releasing it is the language's job rather than this
         # loop's to remember. Every paced loop in the package is held to that, so
         # constructing a bare ``Ticker(...)`` here is a suite failure rather than
@@ -7893,7 +7919,8 @@ class MuJoCoSimEngine(
         try:
             from strands_robots._pacing import Ticker
 
-            with Ticker(1.0 / control_frequency) as ticker:
+            with contextlib.ExitStack() as pacing:
+                ticker = None if fast_mode else pacing.enter_context(Ticker(1.0 / control_frequency))
                 while step_count < total_steps:
                     # --- 1. Observe every robot + render cameras ONCE (under lock).
                     # get_observation renders ALL cameras, so we only need to fetch
@@ -7903,14 +7930,11 @@ class MuJoCoSimEngine(
                     camera_imgs: dict[str, Any] = {}
                     first = True
                     for rname in policies:
-                        if first:
-                            obs = self.get_observation(robot_name=rname, skip_images=skip_images)
-                        else:
-                            # Not get_observation: during a recording it turns the
-                            # skip back off so the recorder gets its frame, which
-                            # here would render every camera again per robot.
-                            with self._lock:
-                                obs = self._apply_obs_noise(self._get_sim_observation(rname, skip_images=True))
+                        # The first robot's frame is the one recorded, so a
+                        # recording that keeps cameras renders it whatever the
+                        # policies read; every other robot reads joints only.
+                        skip = not first or (skip_images and not self._recording_keeps_images())
+                        obs = self.get_observation(robot_name=rname, skip_images=skip)
                         # Split scalars (joints) from ndarrays (camera images).
                         scal = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
                         per_robot_obs[rname] = scal
@@ -8008,7 +8032,8 @@ class MuJoCoSimEngine(
                     for rname in policies:
                         self._world.robots[rname].policy_steps = step_count
 
-                    ticker.wait()
+                    if ticker is not None:
+                        ticker.wait()
 
             completed_cleanly = diverged is None
         except CooperativeStop:

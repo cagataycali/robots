@@ -50,7 +50,7 @@ import ast
 import functools
 import pathlib
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _PACKAGE = _REPO_ROOT / "strands_robots"
@@ -176,7 +176,7 @@ def _offending_cells(surfaces: frozenset[str] | set[str], tests_root: pathlib.Pa
         # An aliased ``ImportError`` is invisible to the predicate either way.
         if _EXPECTED_NAME not in source:
             continue
-        tree = ast.parse(source)
+        tree = parse_source(source)
         for func in ast.walk(tree):
             if not isinstance(func, ast.FunctionDef) or not func.name.startswith("test_"):
                 continue
