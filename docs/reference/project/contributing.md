@@ -27,7 +27,7 @@ hatch run whole-tree-check  # the graders whose input is the rest of the repo
 hatch run test-integ        # integration tests: GPU, model weights, hardware
 ```
 
-Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped_defs`. A narrow test run (`pytest tests/drivers -k g1`) is fine for iteration; pair it with `whole-tree-check`, since many graders read the whole repository and no path filter collects them.
+Ruff runs at line length 120 targeting `py312`; mypy runs with `disallow_untyped_defs`. A narrow run (`pytest tests/drivers -k g1`) misses the graders that read the whole repository: pair it with `whole-tree-check`.
 
 ## Conventions the graders enforce
 
@@ -55,6 +55,6 @@ Every pull request that changes behaviour adds one file under `changelog.d/`, `<
 1. Branch on your fork: a ruleset refuses branch creation in `strands-labs/robots` for every account, with a rule violation that does not name the rule.
 2. Check that no open PR claims the issue or edits the file: `python3 .github/scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>` and `python3 scripts/check_merge_base_overlap.py --github-repo strands-labs/robots --paths <files>`.
 3. `Closes #N` goes in the PR body, not the title.
-4. The required check evaluates the merge commit: ruff, mypy, the unit suite, the whole-tree graders, the guards, lockfile parity and CodeQL (`ci.yml`).
+4. The required check evaluates the merge commit: ruff, mypy, the unit tests the diff reaches (`python scripts/select_tests.py --list`), the whole-tree graders, the guards, lockfile parity and CodeQL (`ci.yml`); `main` runs every test.
 
 Security findings do not go through issues: [security policy](security-policy.md).
