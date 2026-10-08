@@ -32,7 +32,9 @@ With the arm attached one row reads `True`: `/dev/ttyACM0` on Linux, `/dev/cu.us
 
 ## Rehearse on the twin
 
-The native driver has two transports: `serial`, the wire, and `twin`, the same driver with the arm's MuJoCo model on the bus. Same verbs, units and refusals. Run it before you touch the arm:
+{{drawing:d05_driver_stack}}
+
+The native driver has two transports: `serial`, the wire, and `twin`, the same driver with the arm's MuJoCo model on the bus. Same verbs, units and refusals. Run it before touching the arm:
 
 ```python
 import asyncio

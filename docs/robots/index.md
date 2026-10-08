@@ -1,11 +1,11 @@
 ---
 title: Robots
-description: Every robot strands-robots knows by name, filterable by family, each with a live 3D viewer and the one line that builds it.
+description: Every robot strands-robots knows by name, filtered by family or by real driver, each with a live 3D viewer and the line that builds it.
 ---
 
 # Robots
 
-All {{n:robots}} robots across {{n:categories}} families: filter by family, open a card for the robot's page with its 3D viewer, one-line constructor, aliases and the hardware facts read from its driver. {{n:sim_assets}} load in MuJoCo from a pinned public model; the rest are hardware definitions only. Generated from `strands_robots/registry/robots.json` at build time, so a robot added to the registry appears at the next build and a stale row cannot exist. The joints chip counts what `get_robot_state` reports: every joint of the loaded model except a floating base.
+All {{n:robots}} robots across {{n:categories}} families: filter by family and by what builds it (a real driver, a simulation asset, both); a card opens the robot's page with its 3D viewer, constructor line, aliases and hardware facts. {{n:sim_assets}} load in MuJoCo from a pinned public model; the rest are hardware definitions only. Generated from `strands_robots/registry/robots.json` at build time, so a stale row cannot exist. The joints chip counts what `get_robot_state` reports: every joint of the loaded model except a floating base.
 
 ```python
 from strands_robots import Robot
@@ -23,6 +23,13 @@ robot = Robot("so101")  # simulation, the default
   <button class="sr-filter-btn" data-family="mobile_manip" aria-pressed="false">Mobile manipulators</button>
   <button class="sr-filter-btn" data-family="aerial" aria-pressed="false">Aerial</button>
   <button class="sr-filter-btn" data-family="expressive" aria-pressed="false">Expressive</button>
+</div>
+<div class="sr-filter sr-filter--lane" role="group" aria-label="Filter by what builds the robot" markdown="0">
+  <button class="sr-filter-btn" data-lane="all" aria-pressed="true">Any</button>
+  <button class="sr-filter-btn" data-lane="real" aria-pressed="false">Real driver</button>
+  <button class="sr-filter-btn" data-lane="sim" aria-pressed="false">Simulated</button>
+  <button class="sr-filter-btn" data-lane="both" aria-pressed="false">Both</button>
+  <span class="sr-filter-count" aria-live="polite"></span>
 </div>
 
 {{robot_cards}}

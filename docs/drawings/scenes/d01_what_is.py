@@ -38,15 +38,15 @@ def scene() -> Scene:
     s.box(L, 134, LW, 76, "Agent(tools=[robot])",
           "a Strands Agent reasons over its tools; the Robot object is one of them, so a sentence becomes "
           "a tool call and the model never writes a servo command")
-    s.down(300, 210, 240, label="tool call", label_dx=-10, label_dy=4, label_anchor="end")
+    s.down(300, 210, 240, label="tool call", label_dx=-10, label_dy=4, label_anchor="end", id="call")
 
     # ---------------------------------------------------------------- the operator gate (the one green element)
     s.box(L, 240, 340, 84, "operator gate",
-          "run_policy and send_action through the tool wait for a yes", accent=True, size=14)
+          "run_policy and send_action through the tool wait for a yes", accent=True, size=14, id="gate")
     s.text(420, 262, "WHAT THE GATE DOES", cls="mono muted", size=10.5, spacing="0.05em")
     s.chips(420, 272, ["interrupt", "fail closed"])
     s.chips(420, 302, ["audit row"])
-    s.down(300, 324, 352 + DY, label="after a yes", label_dx=-10, label_dy=4, label_anchor="end")
+    s.down(300, 324, 352 + DY, label="after a yes", label_dx=-10, label_dy=4, label_anchor="end", id="yes")
     s.arrow([(620, 352 + DY), (620, 210)], dashed=True, label="result", label_dx=10, label_dy=4)
 
     # ---------------------------------------------------------------- the robot
@@ -103,5 +103,6 @@ def scene() -> Scene:
     s.text((L + LW + R) / 2, 662 + DY, "action chunk", cls="mono muted", size=10.5, anchor="middle")
 
     # ---------------------------------------------------------------- footnote
+    s.motion = [("gate", "pulse"), ("call", "flow"), ("yes", "flow")]
     s.footnote(752 + DY, "one interface: get_observation, send_action, run_policy. the backend changes; the call does not.")
     return s
