@@ -28,6 +28,7 @@ asserts on symbols belonging to modules that successfully import.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import importlib.util
 from pathlib import Path
@@ -82,6 +83,7 @@ def _python_sources() -> list[Path]:
     return sorted(p for p in _PACKAGE_DIR.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+@functools.cache
 def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
     """Return ``(module, symbol, file, lineno)`` for every lerobot import.
 

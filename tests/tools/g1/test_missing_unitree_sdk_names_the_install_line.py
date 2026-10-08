@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import functools
 import importlib
 import sys
 from pathlib import Path
@@ -331,6 +332,7 @@ def _propagating_loaders(trees: dict[Path, ast.Module]) -> set[str]:
     return loaders
 
 
+@functools.cache
 def _sites() -> list[tuple[Path, int, ast.ExceptHandler | None]]:
     """Every place a missing-SDK ``ImportError`` can arise, direct or indirect."""
     trees = _trees()

@@ -49,6 +49,7 @@ and fails when a new one coerces without consulting the shared predicate.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib.util
 import inspect
 import pathlib
@@ -608,6 +609,7 @@ _GUARDED_VALIDATORS = {
 }
 
 
+@functools.cache
 def _discovered_validators() -> dict[str, str]:
     """Every input-validation coercion under ``strands_robots/simulation/``.
 

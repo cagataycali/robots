@@ -48,6 +48,7 @@ text scan reads those comments as env-float sites.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import pathlib
 
@@ -167,6 +168,7 @@ def _classify(paths: list[pathlib.Path], root: pathlib.Path) -> dict[str, bool]:
     return found
 
 
+@functools.cache
 def _resolvers() -> dict[str, bool]:
     """Every env-float resolver in the package, and whether each is bounded."""
     return _classify(sorted(PACKAGE_ROOT.rglob("*.py")), PACKAGE_ROOT)

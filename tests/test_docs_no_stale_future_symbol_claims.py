@@ -33,6 +33,7 @@ type a future lerobot or a plugin adds", naming lerobot's own
 from __future__ import annotations
 
 import ast
+import functools
 import re
 import unicodedata
 from pathlib import Path
@@ -70,6 +71,7 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _SECTION_LINK = re.compile(r"\[[^\]]*\]\((?:([\w./-]+\.md)(?:#([a-z0-9-]+))?|#([a-z0-9-]+))\)")
 
 
+@functools.cache
 def _defined_symbols() -> dict[str, str]:
     """Map every public module-level class/function name to the file defining it.
 

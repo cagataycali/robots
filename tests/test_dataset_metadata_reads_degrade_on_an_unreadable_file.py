@@ -36,6 +36,7 @@ once per surface.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 from pathlib import Path
 from typing import Any
@@ -309,6 +310,7 @@ class TestAReadableFileStillReads:
         assert _dataset_quantile_stats_present(str(root)) is False
 
 
+@functools.cache
 def _metadata_json_reads() -> list[tuple[str, int, str]]:
     """Every ``try`` in the package that reads a dataset metadata JSON path.
 

@@ -26,6 +26,7 @@ reason per entry rather than a place to park a new offender.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -55,6 +56,7 @@ def _package_files() -> list[Path]:
     return sorted(PACKAGE.rglob("*.py"))
 
 
+@functools.cache
 def _scan() -> tuple[dict[str, list[str]], set[str], int]:
     """Return (write-only attribute -> locations, all attributes seen, file count)."""
     files = _package_files()

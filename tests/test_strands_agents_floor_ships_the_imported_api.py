@@ -59,6 +59,7 @@ so a future import of a newer strands API cannot silently leave the floor behind
 from __future__ import annotations
 
 import ast
+import functools
 import tomllib
 from pathlib import Path
 
@@ -146,6 +147,7 @@ def _required_floor() -> Version:
     return max(Version(v) for v in _STRANDS_SYMBOL_FLOORS.values())
 
 
+@functools.cache
 def _imported_strands_symbols() -> dict[tuple[str, str], list[str]]:
     """Map every ``(module, symbol)`` the package imports from strands to its files.
 

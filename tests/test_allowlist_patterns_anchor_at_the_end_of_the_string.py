@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import functools
 from collections.abc import Callable
 from pathlib import Path
 
@@ -70,6 +71,7 @@ def _has_end_of_line_anchor(pattern: str) -> bool:
     return False
 
 
+@functools.cache
 def _regex_literals() -> list[tuple[Path, int, str]]:
     """Every regex pattern the package spells as a literal.
 

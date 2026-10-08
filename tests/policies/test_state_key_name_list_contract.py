@@ -110,6 +110,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import functools
 import pathlib
 import tempfile
 from collections.abc import Callable
@@ -209,6 +210,7 @@ def _classify(source: str) -> dict[str, dict[str, bool]]:
     return out
 
 
+@functools.cache
 def _discover() -> dict[str, dict[str, bool]]:
     """Classify every ``set_robot_state_keys`` implementation in the package."""
     found: dict[str, dict[str, bool]] = {}

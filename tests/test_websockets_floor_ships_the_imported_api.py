@@ -70,6 +70,7 @@ the table above records the releases that were probed, not a supported range.
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import tomllib
 from pathlib import Path
@@ -233,6 +234,7 @@ def _imported_websockets_names(source: str) -> set[tuple[str, str]]:
     return found
 
 
+@functools.cache
 def _websockets_names_by_file() -> dict[tuple[str, str], list[str]]:
     """Map every websockets name the shipped sources reach for to its files.
 
