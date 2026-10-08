@@ -45,11 +45,12 @@ leaves without an edit here.
 from __future__ import annotations
 
 import ast
+import functools
 import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -166,7 +167,7 @@ def _mixed_return_helpers(path: Path) -> list[tuple[_MixedReturnHelper, tuple[st
     tree = parse_file(path)
     aliases = _imported_callees(tree)
     found: list[tuple[_MixedReturnHelper, tuple[str, str] | None]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         tails = _call_tails(node.body)
@@ -183,6 +184,7 @@ def _mixed_return_helpers(path: Path) -> list[tuple[_MixedReturnHelper, tuple[st
     return found
 
 
+@functools.cache
 def _population() -> list[tuple[_MixedReturnHelper, tuple[str, str] | None]]:
     """Every mixed-return helper ending in a call, across the trees pytest outcomes live in."""
     return [

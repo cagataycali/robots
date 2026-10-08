@@ -47,7 +47,7 @@ import psutil  # noqa: E402
 
 from strands_robots.tools import _process_stop  # noqa: E402
 from strands_robots.tools._process_stop import session_is_running  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 tele_mod = importlib.import_module("strands_robots.tools.lerobot_teleoperate")
 train_mod = importlib.import_module("strands_robots.tools.lerobot_train")
@@ -306,7 +306,7 @@ def test_no_session_tool_converts_a_recorded_pid() -> None:
     tools_dir = Path(str(train_mod.__file__)).parent
     converts: list[str] = []
     for module in sorted(tools_dir.rglob("*.py")):
-        for node in ast.walk(parse_file(module)):
+        for node in walk_tree(parse_file(module)):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "int"):
                 continue
             if node.args and "pid" in ast.unparse(node.args[0]).lower():

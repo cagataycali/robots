@@ -25,8 +25,6 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from strands_robots.simulation.base import _NO_WORLD_MSG
 from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
@@ -34,6 +32,7 @@ from strands_robots.simulation.recording import (
     RecordedFrame,
     RecordingSchema,
     floating_base_state_specs,
+    split_recorded_observation,
 )
 from strands_robots.utils import camera_schema_key
 
@@ -147,21 +146,13 @@ class MjlabRecordingMixin(DatasetRecordingMixin):
             rec = state.get("dataset_recorder")
             if rec is None:
                 return
-            raw_to_safe = {src: safe for src, safe, _w, _h in state.get("recording_cameras", [])}
-            scalars: dict[str, Any] = {}
-            images: dict[str, Any] = {}
-            for k, v in observation.items():
-                if isinstance(v, np.ndarray) and v.ndim >= 2:
-                    safe = raw_to_safe.get(k)
-                    if safe is not None:
-                        images[safe] = v
-                else:
-                    scalars[k] = v
             # The runner may hand over a proprio-only observation (fast_mode /
-            # skip_images); render the declared cameras here, as the Newton hook does.
-            for src, safe, w, h in state.get("recording_cameras", []):
-                if safe not in images:
-                    images[safe] = self._render_rgb(src, width=w, height=h)
+            # skip_images); the declared cameras it lacks are rendered here.
+            scalars, images = split_recorded_observation(
+                observation,
+                state.get("recording_cameras", []),
+                lambda source, width, height: self._render_rgb(source, width=width, height=height),
+            )
             dt = getattr(self, "_timestep", None) or 0.0
             state["trajectory"].append(
                 TrajectoryStep(

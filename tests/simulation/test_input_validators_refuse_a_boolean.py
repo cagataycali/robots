@@ -49,6 +49,7 @@ and fails when a new one coerces without consulting the shared predicate.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib.util
 import inspect
 import pathlib
@@ -66,7 +67,7 @@ from strands_robots.simulation.base import (
     randomization_range_error,
 )
 from strands_robots.utils import is_boolean
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # Every spelling of a boolean that can reach a validator: a python bool, a numpy
 # boolean scalar (what ``gripper > 0.5`` produces), and a 0-d boolean array (what
@@ -608,6 +609,7 @@ _GUARDED_VALIDATORS = {
 }
 
 
+@functools.cache
 def _discovered_validators() -> dict[str, str]:
     """Every input-validation coercion under ``strands_robots/simulation/``.
 
@@ -628,7 +630,7 @@ def _discovered_validators() -> dict[str, str]:
     found: dict[str, str] = {}
     for path in sorted(package.rglob("*.py")):
         tree = parse_file(path)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             returns = ast.unparse(node.returns) if node.returns else ""

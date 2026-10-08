@@ -4,9 +4,11 @@ description: "What Robot() returns, why it is a factory, what the two modes give
 
 # Robots
 
-A robot in Strands Robots is an object that owns a body and a control loop, and that a Strands Agent can call as a tool. The body may be simulated or physical; the object's surface is the same shape either way.
+A robot in Strands Robots is an object that owns a body and a control loop, and that a Strands Agent can call as a tool. The body may be simulated or physical; the object's surface is the same either way.
 
 ## The factory
+
+{{drawing:d01_what_is}}
 
 `Robot(name, mode="sim" | "real", ...)` looks the name up in the [registry](../robots/index.md) ({{n:robots}} robots, {{n:aliases}} aliases) and returns one of two things:
 

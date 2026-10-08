@@ -96,7 +96,7 @@ import ast
 import functools
 from pathlib import Path
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _TESTS_ROOT = Path(__file__).resolve().parent
 
@@ -185,7 +185,7 @@ def _recording_calls(path: Path) -> list[tuple[ast.Call, bool, set[str]]]:
     tree = parse_file(path)
     forwarders = _kwarg_forwarders(tree)
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         direct = _is_entry_call(node)

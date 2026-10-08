@@ -44,7 +44,7 @@ import ast
 from pathlib import Path
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 
@@ -84,7 +84,7 @@ def _is_logger_call(call: ast.Call) -> bool:
 def _diagnostic_strings(tree: ast.AST) -> list[tuple[int, str]]:
     """(lineno, string) for every logger/raise/warn diagnostic literal."""
     found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Call) and _is_logger_call(node):
             for arg in node.args:
                 found.extend((node.lineno, s) for s in _string_constants(arg))
@@ -170,7 +170,7 @@ def _tool_result_strings(tree: ast.AST) -> list[tuple[int, str]]:
     """(lineno, string) for every literal a tool result renders as prose."""
     found: list[tuple[int, str]] = []
     seen: set[int] = set()
-    for fn in ast.walk(tree):
+    for fn in walk_tree(tree):
         if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         for result in _returned_result_dicts(fn):

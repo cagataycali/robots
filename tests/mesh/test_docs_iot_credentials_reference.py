@@ -39,7 +39,7 @@ import re
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PACKAGE = pathlib.Path(strands_robots.__file__).parent
 _PAGE = _PACKAGE.parent / "docs" / "learn" / "mesh" / "bridges.md"
@@ -71,7 +71,7 @@ def _literal_env_reads(path: pathlib.Path) -> set[str]:
         ``os.environ[...]`` with a literal key.
     """
     found: set[str] = set()
-    for node in ast.walk(parse_file(path)):
+    for node in walk_tree(parse_file(path)):
         name = None
         if isinstance(node, ast.Call) and ast.unparse(node.func) in (
             "os.getenv",

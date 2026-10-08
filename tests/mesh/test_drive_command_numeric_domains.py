@@ -38,7 +38,7 @@ from strands_robots.utils import (
     positive_finite_number_error,
     positive_whole_number_error,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.mesh._transport_stand_in import stands_in_for
 
 #: The wire fields a bridge publishes for the usable probe command below
@@ -296,7 +296,7 @@ def _bridge_classes_defining_drive(tree: ast.Module) -> list[ast.ClassDef]:
 
 
 def _called_plain_names(node: ast.AST) -> set[str]:
-    return {c.func.id for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    return {c.func.id for c in walk_tree(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
 
 
 def _inline_finiteness_calls(node: ast.AST) -> list[str]:

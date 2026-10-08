@@ -79,7 +79,7 @@ from strands_robots.utils import (
     pose_vector_error,
     sequence_length,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 # A 0-d array: declares ``__len__``, raises from it, holds exactly one scalar.
 UNSIZED = np.array(0.5)
@@ -554,7 +554,7 @@ class TestWBCObservationVectors:
 def _hasattr_len_probes(tree: ast.AST) -> list[int]:
     """Line numbers of every ``hasattr(<x>, "__len__")`` call in ``tree``."""
     lines: list[int] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call) or getattr(node.func, "id", "") != "hasattr":
             continue
         if len(node.args) != 2 or not isinstance(node.args[1], ast.Constant):
@@ -640,7 +640,7 @@ def _own_length_probes(tree: ast.AST) -> list[tuple[str, int]]:
     lives, so a second ``len()`` on a caller value here is a second answer to it.
     """
     hits: list[tuple[str, int]] = []
-    for function in ast.walk(tree):
+    for function in walk_tree(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         arguments = function.args

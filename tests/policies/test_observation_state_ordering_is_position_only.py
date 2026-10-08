@@ -37,6 +37,7 @@ This module grades three things:
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from pathlib import Path
 from typing import Any
@@ -44,7 +45,7 @@ from typing import Any
 import pytest
 
 import strands_robots.policies as policies_pkg
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _POLICIES_DIR = Path(policies_pkg.__file__).parent
 _PACKAGE_DIR = _POLICIES_DIR.parent
@@ -74,6 +75,7 @@ def _sim_observation() -> dict[str, float]:
     return obs
 
 
+@functools.cache
 def _inferred_ordering_fallbacks() -> dict[str, str]:
     """Map ``relpath:lineno`` -> the alternative expression, for every fallback.
 
@@ -86,7 +88,7 @@ def _inferred_ordering_fallbacks() -> dict[str, str]:
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)):
                 continue
             if "robot_state_keys" not in ast.unparse(node.values[0]):
@@ -130,6 +132,7 @@ def _is_observation_key_comprehension(node: ast.AST) -> bool:
     return isinstance(node.elt, ast.Name) and node.elt.id == key_name
 
 
+@functools.cache
 def _resolver_inferred_returns() -> dict[str, str]:
     """Map ``relpath:lineno`` -> returned expression, for a resolver's inferred branches.
 
@@ -148,7 +151,7 @@ def _resolver_inferred_returns() -> dict[str, str]:
     found: dict[str, str] = {}
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             returns = [stmt for stmt in ast.walk(node) if isinstance(stmt, ast.Return) and stmt.value is not None]
@@ -186,6 +189,7 @@ def _resolver_inferred_returns() -> dict[str, str]:
     return found
 
 
+@functools.cache
 def _inferred_state_orderings() -> dict[str, str]:
     """Every inferred ordering in the tree, in either spelling."""
     return {**_inferred_ordering_fallbacks(), **_resolver_inferred_returns()}
@@ -206,7 +210,7 @@ def _rule_definitions() -> list[str]:
     sites: list[str] = []
     for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.endswith(_RULE_NAME):
                 sites.append(f"{source_file.relative_to(_PACKAGE_DIR)}:{node.lineno}")
     return sites

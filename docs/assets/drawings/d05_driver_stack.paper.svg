@@ -15,17 +15,24 @@
 .wire{fill:none;stroke:var(--wire);stroke-width:1.5} .wire.dashed{stroke-dasharray:3 5}
 .wire.accent-wire{stroke:var(--accent)}
 #head path{fill:var(--wire)} #head-accent path{fill:var(--accent)}
+.mark{fill:var(--accent)}
+#to_sim{stroke-dasharray:6 6;animation:sr-flow 1.6s linear infinite}
+#to_real{stroke-dasharray:6 6;animation:sr-flow 1.6s linear infinite}
+@keyframes sr-flow{to{stroke-dashoffset:-12}}
+#interface{animation:sr-pulse 4.0s ease-in-out infinite}
+@keyframes sr-pulse{0%,100%{fill-opacity:1;stroke-width:1.5}50%{fill-opacity:0.35;stroke-width:2.5}}
+@media (prefers-reduced-motion: reduce){#interface,#to_sim,#to_real{animation:none;stroke-dasharray:none}}
 </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker><marker id="head-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker></defs>
 <rect class="bg" width="1200" height="672"/>
 <text class="mono fg" x="600" y="50" font-size="24" text-anchor="middle" letter-spacing="0.05em">One interface, several backends under it</text>
 <text class="grot text" x="600" y="78" font-size="14.5" text-anchor="middle">get_observation, send_action, run_policy and the agent tool sit on a simulator or a driver; the driver reaches the motors over a transport.</text>
-<rect class="card accent-card" x="300" y="122" width="600" height="78" rx="8"/>
+<rect id="interface" class="card accent-card" x="300" y="122" width="600" height="78" rx="8"/>
 <text class="mono fg" x="314.0" y="148.0" font-size="14" text-anchor="start" font-weight="500">one interface</text>
 <text class="grot text" x="314.0" y="167.0" font-size="12" text-anchor="start">get_observation, send_action, run_policy and the agent tool: the same verbs on every</text>
 <text class="grot text" x="314.0" y="183.2" font-size="12" text-anchor="start">backend</text>
-<path class="wire" d="M600.0 200.0 L600.0 226.0 L310.0 226.0 L310.0 250.0" marker-end="url(#head)"/>
-<path class="wire" d="M600.0 226.0 L890.0 226.0 L890.0 250.0" marker-end="url(#head)"/>
+<path id="to_sim" class="wire" d="M600.0 200.0 L600.0 226.0 L310.0 226.0 L310.0 250.0" marker-end="url(#head)"/>
+<path id="to_real" class="wire" d="M600.0 226.0 L890.0 226.0 L890.0 250.0" marker-end="url(#head)"/>
 <text class="mono muted" x="455.0" y="220.0" font-size="10.5" text-anchor="middle">mode="sim"</text>
 <text class="mono muted" x="745.0" y="220.0" font-size="10.5" text-anchor="middle">mode="real"</text>
 <rect class="card layer" x="60" y="250" width="500" height="350" rx="8"/>
@@ -88,4 +95,5 @@
 <text class="grot text" x="654.0" y="563.0" font-size="12" text-anchor="start">the only thing the gate protects: a real send_action ends here, a twin's</text>
 <text class="grot text" x="654.0" y="579.2" font-size="12" text-anchor="start">ends in the model</text>
 <text class="grot muted" x="600.0" y="644.0" font-size="12.5" text-anchor="middle">the call does not change; what refuses it does: a missing extra, a busy bus, an operator who said no.</text>
+<g class="mark" aria-label="STRANDS" transform="translate(1050.0 637.1) scale(0.05952)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
 </svg>

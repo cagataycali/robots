@@ -52,7 +52,7 @@ from strands_robots.drivers.feetech.bus import FeetechBus
 from strands_robots.drivers.feetech.driver import FeetechDriver
 from strands_robots.tools.pose_tool import MotorController
 from strands_robots.tools.serial_tool import serial_tool
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PORT = "/dev/ttyTEST-never-opened"
 
@@ -243,7 +243,7 @@ class TestEverySurfaceThatOpensAPortIsRostered:
         found: set[str] = set()
         for path in sorted(root.rglob("*.py")):
             tree = parse_file(path)
-            for node in ast.walk(tree):
+            for node in walk_tree(tree):
                 if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("serial.Serial"):
                     found.add(f"strands_robots/{path.relative_to(root).as_posix()}")
         return found

@@ -46,7 +46,7 @@ import pytest
 
 import strands_robots
 from tests._docs_hooks import docs_hook
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _TOOLS_DIR = _REPO_ROOT / "strands_robots" / "tools"
@@ -141,7 +141,7 @@ def _dispatched_actions(source: Path) -> set[str]:
     tree = parse_file(source)
     rosters = _module_string_rosters(tree)
     found: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Compare):
             operands = [node.left, *node.comparators]
             if any(isinstance(o, ast.Name) and o.id == "action" for o in operands):

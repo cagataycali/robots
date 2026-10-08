@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 REPO = Path(__file__).resolve().parents[1]
 SIM = REPO / "strands_robots" / "simulation"
@@ -22,7 +22,7 @@ def _backends_with_the_verb() -> set[str]:
     found = set()
     for path in SIM.glob("*/*.py"):
         tree = parse_file(path)
-        if any(isinstance(n, ast.FunctionDef) and n.name == "start_cameras_recording" for n in ast.walk(tree)):
+        if any(isinstance(n, ast.FunctionDef) and n.name == "start_cameras_recording" for n in walk_tree(tree)):
             found.add(path.parent.name)
     return found
 

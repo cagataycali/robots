@@ -1669,7 +1669,11 @@ class PolicyRunner:
 
         Args:
             robot_name: Robot to observe, forwarded verbatim to the backend.
-            skip_images: Backend's camera-render hint (from ``requires_images``).
+            skip_images: ``True`` when the policy reads no pixels (from
+                ``requires_images``). Turned off while the engine's dataset
+                recording keeps cameras, because the ``on_frame`` hook records
+                this very observation and its frames must carry the declared
+                image columns (``DatasetRecordingMixin._recording_keeps_images``).
             bodies: Pre-resolved names from :meth:`_resolve_required_bodies`.
                 Empty (the default) returns the backend's dict untouched, so a
                 policy that declares nothing pays no extra backend call.
@@ -1678,6 +1682,9 @@ class PolicyRunner:
             The observation dict, plus ``body.<name>.{pos,quat,lin_vel,ang_vel}``
             for each requested body.
         """
+        keeps_images = getattr(self.sim, "_recording_keeps_images", None)
+        if skip_images and callable(keeps_images) and keeps_images():
+            skip_images = False
         obs = self.sim.get_observation(robot_name=robot_name, skip_images=skip_images)
         if not bodies:
             return obs

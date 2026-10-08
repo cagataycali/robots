@@ -5,13 +5,13 @@ rendering when the policy does not consume pixels. The default ``mock`` policy
 (and any non-VLA, proprioceptive-only policy) reports ``requires_images=False``,
 so the runner asks the backend for a pixel-free observation.
 
-While a dataset recording is active, that hint must be overridden: the recorder
-writes the observation's camera ndarrays into the dataset's declared video
-features, so a pixel-free observation produces frames with correct episode
-counts but no pixels - a silently corrupt behavioural-cloning dataset. The
-MuJoCo backend guards this in ``get_observation``; the Newton backend wired the
-recorder later and honored ``skip_images`` literally, dropping every recorded
-frame's images. These tests pin the parity contract on the real Newton engine.
+While a dataset recording is active, the runner must render anyway: the
+recorder writes the observation's camera ndarrays into the dataset's declared
+video features, so a pixel-free observation produces frames with correct
+episode counts but no pixels - a silently corrupt behavioural-cloning dataset.
+``PolicyRunner._observe`` asks for the cameras on every backend, and
+``get_observation(skip_images=True)`` itself renders nothing. These tests pin
+that contract on the real Newton engine.
 """
 
 from __future__ import annotations
@@ -51,17 +51,20 @@ def test_full_observation_includes_camera(engine_with_camera):
     assert obs["front"].ndim == 3 and obs["front"].shape[2] == 3
 
 
-def test_recording_overrides_skip_images(engine_with_camera):
-    """skip_images=True must still render cameras while a recording is active.
+def test_only_the_recording_rollout_renders(engine_with_camera):
+    """skip_images=True renders nothing; the rollout that records asks for the cameras.
 
-    Pre-fix the Newton backend honored ``skip_images`` literally and returned a
-    camera-free observation here, so the recorder wrote frames with no pixels.
+    Pre-fix the Newton backend honored ``skip_images`` literally and the
+    rollout never asked again, so the recorder wrote frames with no pixels.
     """
+    from strands_robots.simulation.policy_runner import PolicyRunner
+
     sim = engine_with_camera
     assert sim._world is not None
     sim._world._backend_state["recording"] = True
-    obs = sim.get_observation(skip_images=True)
+    assert "front" not in sim.get_observation(skip_images=True)
+    obs = PolicyRunner(sim)._observe(None, skip_images=True)
     assert isinstance(obs.get("front"), np.ndarray), (
-        "active recording must override the skip-images hint so declared camera features receive real pixels"
+        "an active recording must make the rollout render so declared camera features receive real pixels"
     )
     assert obs["front"].ndim == 3 and obs["front"].shape[2] == 3

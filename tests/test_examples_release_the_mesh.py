@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -54,7 +54,7 @@ def _factory_mesh_attributes() -> set[str]:
     """
     tree = parse_file(_ROBOT_PY)
     bound: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             func = node.value.func
             called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
@@ -62,7 +62,7 @@ def _factory_mesh_attributes() -> set[str]:
                 bound |= {t.id for t in node.targets if isinstance(t, ast.Name)}
 
     attrs: set[str] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id in bound:
             attrs |= {t.attr for t in node.targets if isinstance(t, ast.Attribute)}
     return attrs

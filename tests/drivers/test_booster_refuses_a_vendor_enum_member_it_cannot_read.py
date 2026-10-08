@@ -55,7 +55,7 @@ from strands_robots.drivers.booster import (
     declared_members,
     resolve_vendor_member,
 )
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _WIDTH = len(BOOSTER_JOINT_INDEX)
 
@@ -330,13 +330,13 @@ class TestNoVendorLookupIsLeftUnguarded:
         """Two-argument ``getattr`` calls whose base is an imported SDK alias."""
         aliases = {
             alias.asname or alias.name.split(".")[0]
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
             if isinstance(node, ast.Import)
             for alias in node.names
             if "sdk" in alias.name.lower() or "sdk" in (alias.asname or "").lower()
         }
         found = []
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Call) or len(node.args) != 2:
                 continue
             if not (isinstance(node.func, ast.Name) and node.func.id == "getattr"):

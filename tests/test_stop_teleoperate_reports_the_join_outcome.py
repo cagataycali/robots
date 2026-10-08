@@ -131,8 +131,13 @@ def wedged(monkeypatch: pytest.MonkeyPatch):
     try:
         yield host, device, thread
     finally:
+        # Release the read, then stop the loop: a cell that never called
+        # stop_teleoperate would otherwise leave it polling the leader for the
+        # rest of the session, after a join that waited out its whole timeout.
         device.release.set()
+        host.stop_teleoperate()
         thread.join(timeout=5.0)
+        assert not thread.is_alive(), "the teleop loop outlived its fixture"
 
 
 class TestThePremise:

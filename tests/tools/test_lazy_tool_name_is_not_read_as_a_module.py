@@ -45,7 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools as tools_package
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _TOOLS_ROOT = Path(tools_package.__file__).resolve().parent
 _REPO_ROOT = _TOOLS_ROOT.parent.parent
@@ -112,7 +112,7 @@ def _module_reads(source: str) -> list[tuple[int, str]]:
     tree = parse_source(source)
 
     bound: dict[str, str] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.ImportFrom) and node.module == tools_package.__name__ and node.level == 0:
             for alias in node.names:
                 if alias.name in shadowable:
@@ -122,7 +122,7 @@ def _module_reads(source: str) -> list[tuple[int, str]]:
         return hasattr(_tool_object(name), attribute)
 
     found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in bound:
             if not _serves(bound[node.value.id], node.attr):
                 found.append((node.lineno, ast.unparse(node)))

@@ -15,29 +15,38 @@
 .wire{fill:none;stroke:var(--wire);stroke-width:1.5} .wire.dashed{stroke-dasharray:3 5}
 .wire.accent-wire{stroke:var(--accent)}
 #head path{fill:var(--wire)} #head-accent path{fill:var(--accent)}
+.mark{fill:var(--accent)}
+#step1{animation:sr-visit 8.0s linear infinite;animation-delay:0.00s}
+#step2{animation:sr-visit 8.0s linear infinite;animation-delay:1.60s}
+#step3{animation:sr-visit 8.0s linear infinite;animation-delay:3.20s}
+#step4{animation:sr-visit-accent 8.0s linear infinite;animation-delay:4.80s}
+#step5{animation:sr-visit 8.0s linear infinite;animation-delay:6.40s}
+@keyframes sr-visit{0%{stroke:var(--border);stroke-width:1}1%,18%{stroke:var(--accent);stroke-width:1.5}20%,100%{stroke:var(--border);stroke-width:1}}
+@keyframes sr-visit-accent{0%{stroke-width:1.5}1%,18%{stroke-width:3}20%,100%{stroke-width:1.5}}
+@media (prefers-reduced-motion: reduce){#step1,#step2,#step3,#step4,#step5{animation:none;stroke-dasharray:none}}
 </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker><marker id="head-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker></defs>
 <rect class="bg" width="1200" height="690"/>
 <text class="mono fg" x="600" y="50" font-size="24" text-anchor="middle" letter-spacing="0.05em">An e-stop, in five steps, and the lockout it leaves</text>
 <text class="grot text" x="600" y="78" font-size="14.5" text-anchor="middle">emergency_stop runs the same five steps on every peer; afterwards a peer answers status, stop and resume, and nothing else.</text>
 <text class="mono muted" x="60.0" y="122.0" font-size="10.5" text-anchor="start" letter-spacing="0.05em">WHAT EMERGENCY_STOP DOES, IN ORDER</text>
-<rect class="card" x="60" y="134" width="560" height="70" rx="8"/>
+<rect id="step1" class="card" x="60" y="134" width="560" height="70" rx="8"/>
 <text class="mono fg" x="74.0" y="160.0" font-size="14" text-anchor="start" font-weight="500">1  engage the local lockout</text>
 <text class="grot text" x="74.0" y="179.0" font-size="12" text-anchor="start">records the time; from here on only status, stop and resume are admitted</text>
 <path class="wire" d="M120.0 204.0 L120.0 226.0" marker-end="url(#head)"/>
-<rect class="card" x="60" y="226" width="560" height="70" rx="8"/>
+<rect id="step2" class="card" x="60" y="226" width="560" height="70" rx="8"/>
 <text class="mono fg" x="74.0" y="252.0" font-size="14" text-anchor="start" font-weight="500">2  stop this robot</text>
 <text class="grot text" x="74.0" y="271.0" font-size="12" text-anchor="start">the same _dispatch({"action": "stop"}) a peer would run against it</text>
 <path class="wire" d="M120.0 296.0 L120.0 318.0" marker-end="url(#head)"/>
-<rect class="card" x="60" y="318" width="560" height="70" rx="8"/>
+<rect id="step3" class="card" x="60" y="318" width="560" height="70" rx="8"/>
 <text class="mono fg" x="74.0" y="344.0" font-size="14" text-anchor="start" font-weight="500">3  broadcast stop</text>
 <text class="grot text" x="74.0" y="363.0" font-size="12" text-anchor="start">collect replies for 3 s; a peer that cannot stop is listed, not counted</text>
 <path class="wire" d="M120.0 388.0 L120.0 410.0" marker-end="url(#head)"/>
-<rect class="card accent-card" x="60" y="410" width="560" height="70" rx="8"/>
+<rect id="step4" class="card accent-card" x="60" y="410" width="560" height="70" rx="8"/>
 <text class="mono fg" x="74.0" y="436.0" font-size="14" text-anchor="start" font-weight="500">4  publish strands/safety/estop</text>
 <text class="grot text" x="74.0" y="455.0" font-size="12" text-anchor="start">every peer that hears it engages its own lockout, on every site</text>
 <path class="wire" d="M120.0 480.0 L120.0 502.0" marker-end="url(#head)"/>
-<rect class="card" x="60" y="502" width="560" height="70" rx="8"/>
+<rect id="step5" class="card" x="60" y="502" width="560" height="70" rx="8"/>
 <text class="mono fg" x="74.0" y="528.0" font-size="14" text-anchor="start" font-weight="500">5  write the audit row</text>
 <text class="grot text" x="74.0" y="547.0" font-size="12" text-anchor="start">emergency_stop, the issuer, every reply</text>
 <text class="mono muted" x="700.0" y="122.0" font-size="10.5" text-anchor="start" letter-spacing="0.05em">UNDER LOCKOUT, A PEER STILL ANSWERS</text>
@@ -64,4 +73,5 @@
 <text class="grot muted" x="700.0" y="556.0" font-size="12" text-anchor="start">a peer with no key stays locked until it is restarted, and says so</text>
 <text class="grot muted" x="700.0" y="572.2" font-size="12" text-anchor="start">when it starts.</text>
 <text class="grot muted" x="600.0" y="662.0" font-size="12.5" text-anchor="middle">a reply counts as stopped only if it says so; peers_not_stopped is the list an operator reads first.</text>
+<g class="mark" aria-label="STRANDS" transform="translate(1050.0 655.1) scale(0.05952)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
 </svg>

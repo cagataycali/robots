@@ -42,7 +42,7 @@ from strands_robots.assets.download import (
 )
 from strands_robots.registry import get_robot, list_robots
 from strands_robots.registry.user_registry import _invalidate_cache, register_robot
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 
 def _mjcf(*, meshdir: str | None = None, declares: tuple[str, ...] = ()) -> str:
@@ -287,7 +287,7 @@ class TestOnlyOneReaderAnswersTheQuestion:
         """A module-level set of mesh suffixes is the shape of a second reader."""
         literals = [
             ast.unparse(n)
-            for n in ast.walk(self._tree())
+            for n in walk_tree(self._tree())
             if isinstance(n, ast.Constant)
             and isinstance(n.value, str)
             and n.value.lower() in {".stl", ".obj", ".msh", ".ply"}
@@ -298,7 +298,7 @@ class TestOnlyOneReaderAnswersTheQuestion:
         """Non-vacuity: the helper exists and the resolver is the only caller."""
         names = [
             n.func.id
-            for n in ast.walk(self._tree())
+            for n in walk_tree(self._tree())
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_model_meshes_resolve"
         ]
         assert len(names) == 2, f"expected the two ranking passes to ask, got {len(names)}"

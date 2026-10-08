@@ -36,7 +36,8 @@ def scene() -> Scene:
         (XS[0], BOT, "measure", "eval_policy in the simulator, labels on the arm", "a rate with its source", False),
     ]
     for x, y, title, sub, out, accent in steps:
-        s.box(x, y, BW, BH, title, sub, accent=accent, size=14, subsize=12)
+        s.box(x, y, BW, BH, title, sub, accent=accent, size=14, subsize=12, id=title)
+        s.motion.append((title, "visit"))
         s.chips(x + 14, y + BH - 34, [out])
     # top row, left to right
     s.arrow([(XS[0] + BW, TOP + 54), (XS[1], TOP + 54)])

@@ -93,7 +93,7 @@ import pytest
 
 import strands_robots
 from strands_robots.utils import require_optional
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 
 _PKG_ROOT = Path(strands_robots.__file__).resolve().parent
 _REPO_ROOT = _PKG_ROOT.parent
@@ -265,7 +265,7 @@ def _unresolved_xref_roles() -> tuple[dict[str, list[str]], int]:
     graded = 0
     for source_file in _graded_source_files():
         tree = parse_file(source_file)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             doc = ast.get_docstring(node, clean=False)
@@ -650,7 +650,7 @@ def _graded_short_form_roles() -> tuple[dict[str, list[str]], int]:
         if source_file is None:
             continue
         tree = parse_file(Path(source_file))
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             doc = ast.get_docstring(node, clean=False)

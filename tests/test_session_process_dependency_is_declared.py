@@ -66,7 +66,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.uv_lock_closure import lock_closure
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -300,7 +300,7 @@ def test_the_declared_floor_ships_the_api_the_session_verbs_call() -> None:
     used: set[str] = set()
     for module in _PSUTIL_IMPORTERS:
         tree = parse_file(_PACKAGE_ROOT / module)
-        for node in ast.walk(tree):
+        for node in walk_tree(tree):
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "psutil":
                 used.add(node.attr)
     assert len(used) >= 5, f"the attribute scan found only {sorted(used)}, so it is not reading the modules"

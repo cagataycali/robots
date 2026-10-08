@@ -51,7 +51,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -130,7 +130,7 @@ def _is_type_checking_test(test: ast.expr) -> bool:
 def _type_checking_import_lines(tree: ast.Module) -> dict[str, int]:
     """Map a name imported under ``TYPE_CHECKING`` to the line that imports it."""
     lines: dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not (isinstance(node, ast.If) and _is_type_checking_test(node.test)):
             continue
         for sub in ast.walk(node):
@@ -148,7 +148,7 @@ def _names_in_cast_strings(tree: ast.Module) -> set[tuple[str, int]]:
     dotted one contributes its root, which is the name an import binds.
     """
     found: set[tuple[str, int]] = set()
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.Call):
             continue
         called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)

@@ -46,7 +46,7 @@ import pytest
 
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
 
 # Strategies that ask for something other than a full fine-tune.
@@ -198,7 +198,7 @@ def _backends_that_declare_their_methods() -> dict[str, ast.Module]:
         )
         builds = any(
             isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("build_")
-            for node in ast.walk(tree)
+            for node in walk_tree(tree)
         )
         if declares and builds:
             found[path.name] = tree

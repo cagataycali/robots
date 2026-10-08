@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 TESTS_ROOT = Path(__file__).resolve().parent
 REPO_ROOT = TESTS_ROOT.parent
 
@@ -135,7 +137,7 @@ def _ids_render_the_values(keywords: list[ast.keyword]) -> bool:
 def _parametrize_decorators(tree: ast.Module) -> list[ast.Call]:
     """Every ``@pytest.mark.parametrize(...)`` decorator in a module."""
     found = []
-    for node in ast.walk(tree):
+    for node in walk_tree(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
             continue
         for decorator in node.decorator_list:
@@ -167,7 +169,7 @@ def offences(source: str, label: str) -> list[str]:
     Returns:
         One line per offence, naming the file, the line and the expression.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     tables = _tables(tree)
     found: list[str] = []
     for decorator in _parametrize_decorators(tree):

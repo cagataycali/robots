@@ -37,6 +37,7 @@ from strands_robots.simulation.recording import (
     RecordedFrame,
     RecordingSchema,
     floating_base_state_specs,
+    split_recorded_observation,
 )
 from strands_robots.utils import camera_schema_key
 
@@ -162,8 +163,6 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         ``evaluate_benchmark``) install this hook alone when a recording is
         open and the caller passed no ``on_frame``.
         """
-        import numpy as np
-
         from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
         world = self._world
@@ -179,15 +178,13 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             if rec is None:
                 return
 
-            obs: dict[str, Any] = dict(observation)
-            for source_name, safe_name, width, height in world._backend_state.get("recording_cameras", []):
-                render_result = self.render(camera_name=source_name, width=width, height=height)
-                img = _extract_frame_ndarray(render_result)
-                if img is not None:
-                    obs[safe_name] = img
-
-            state = {k: v for k, v in obs.items() if not isinstance(v, np.ndarray)}
-            images = {k: v for k, v in obs.items() if isinstance(v, np.ndarray)}
+            state, images = split_recorded_observation(
+                observation,
+                world._backend_state.get("recording_cameras", []),
+                lambda source, width, height: _extract_frame_ndarray(
+                    self.render(camera_name=source, width=width, height=height)
+                ),
+            )
             frame.write(rec, {robot_name: state}, {robot_name: action}, images, instruction)
 
         return _record
