@@ -238,8 +238,8 @@ def construction_failure_keeps_its_raise(exc: BaseException) -> bool:
 _REMOVED_IN_0_7: dict[str, str] = {
     "curobo": "simulation.motion_primitives with mink IK for a sim reach, or Isaac cuMotion for GPU planning",
     "moveit2": "a MoveIt goal sent as a ROS 2 action through the use_ros or use_rosbridge tool",
-    "kimodo": "a motion generated offline and replayed as joint targets (nothing in-tree)",
-    "protomotions": "the wbc provider for Unitree G1 whole-body control",
+    "kimodo": "a strands_robots.policies.Policy subclass replaying an offline motion (no in-tree provider)",
+    "protomotions": "policy_provider='wbc' for Unitree G1 whole-body control",
 }
 
 
@@ -897,7 +897,7 @@ def create_policy(provider: str, /, **kwargs) -> Policy:
     canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
     if (replacement := _REMOVED_IN_0_7.get(canonical)) is not None:
         warnings.warn(
-            f"policy provider {canonical!r} is removed in 0.7; instead use {replacement}",
+            f"policy_provider {canonical!r} is removed in 0.7: use {replacement}.",
             DeprecationWarning,
             stacklevel=2,
         )
