@@ -38,6 +38,7 @@ import pytest
 # Neither import below touches strands_robots, so both are safe above the
 # environment defaults that the strands_robots imports further down depend on.
 from tests._device_connect_real import EDGE_REBINDERS, integration_put_back
+from tests.assertion_rewrite_warmup import register_rewrite_warmup
 from tests.description_clone_lock import serialize_description_clones
 from tests.session_truncation import register_truncation_reporter
 
@@ -76,8 +77,11 @@ def pytest_configure(config: pytest.Config) -> None:
     ``robot_descriptions`` clone needs a lock once the session is distributed:
     every worker collects the whole tree, so the description modules imported at
     collection time reach one shared cache directory together.
+    :mod:`tests.assertion_rewrite_warmup` says why the controller rewrites the
+    test modules' asserts before the workers start.
     """
     register_truncation_reporter(config)
+    register_rewrite_warmup(config)
     serialize_description_clones()
 
 
