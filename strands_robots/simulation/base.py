@@ -2005,12 +2005,13 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
 
-        The ``size`` convention is backend-specific -- the default MuJoCo
-        backend treats ``size`` as the **full extent in meters** per axis
-        (halved internally to MuJoCo's half-extents), whereas Newton consumes
-        half-extents / radii directly. See the concrete backend's
-        ``add_object`` docstring for the exact per-shape semantics and an
-        example. Returns an agent-tool status dict.
+        ``size`` is the **full extent in meters** on every backend: a box's
+        ``[x, y, z]`` edge lengths, a sphere's diameter, a cylinder's or
+        capsule's ``[diameter, unused, length]``. ``size=[0.05, 0.05, 0.05]``
+        is a 5 cm cube on MuJoCo, Newton, mjlab and Isaac alike; each backend
+        halves it into its engine's own half-extents. See the concrete
+        backend's ``add_object`` docstring for the exact per-shape semantics.
+        Returns an agent-tool status dict.
 
         A backend MUST NOT discard ``size`` components the caller did supply.
         When the vector is shorter than the shape consumes it either rejects it

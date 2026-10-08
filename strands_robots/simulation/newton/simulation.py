@@ -69,6 +69,7 @@ from strands_robots.simulation.models import (
     registered,
     registry_entry,
 )
+from strands_robots.simulation.mujoco.spec_builder import _normalize_size, _validate_size
 from strands_robots.simulation.newton.actuator_gains import (
     apply_joint_servos,
     mjcf_joint_servos,
@@ -834,9 +835,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         backend's ``add_object`` composes with its own per-shape table, so an
         extent one backend refuses is refused by both. An empty vector is a
         component count rather than an omission and is rejected instead of
-        silently applying the default extent. How many components each shape
-        needs, and whether a consumed extent must be positive, are shape-
-        dependent and not yet unified across backends (#1858).
+        silently applying the default extent. For a primitive, the component
+        count and the positivity of each consumed extent are checked by the
+        MuJoCo backend's own per-shape table, and ``size`` is read as the same
+        full extent, so one call builds the same object on both engines.
 
         ``mass`` must be a finite number > 0 for a dynamic object, the domain
         :meth:`~strands_robots.simulation.base.SimEngine._validate_mass`
@@ -855,7 +857,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``mesh_path``.
             position: World position ``[x, y, z]`` (default origin).
             orientation: wxyz quaternion (default identity). Any non-unit value is fine -- the magnitude is ignored -- but one whose norm rounds to zero describes no rotation and is refused rather than silently applied as identity (:func:`~strands_robots.utils.coerce_orientation_quaternion`).
-            size: Half-extents (box) or ``[radius, ...]`` (others). For
+            size: Full extent in meters, the layout the MuJoCo backend reads:
+                ``[x, y, z]`` edge lengths (box), ``[diameter]`` (sphere),
+                ``[diameter, unused, length]`` (cylinder height / capsule
+                segment), so ``[0.05, 0.05, 0.05]`` is a 5 cm cube here too. A
+                vector that backend refuses (too few components, a
+                non-positive extent) is refused here. For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
                 Must be a non-empty vector of finite numbers; a ``nan``/``inf``,
@@ -970,8 +977,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # list, and the bare string ``"abc"`` was stored AS the size - raising
         # ``TypeError: can only concatenate str (not "list") to str`` from the box
         # branch, and silently building a sphere of ``radius='a'`` from the sphere
-        # one. The per-shape component count, the short-vector question and the
-        # positivity of a consumed extent are shape-dependent and stay with #1858.
+        # one. The per-shape component count and positivity are checked below,
+        # once the shape is known.
         size, _serr = coerce_size_vector("add_object", "size", size)
         if _serr is not None:
             return {"status": "error", "content": [{"text": _serr}]}
@@ -1036,6 +1043,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "content": [{"text": f"add_object: mesh_path {mesh_path!r} does not exist or is not a file."}],
                 }
             mesh_path = str(resolved)
+        elif size is not None and (size_err := _validate_size(shape, list(size))) is not None:
+            # A primitive's ``size`` is the full extent the MuJoCo backend reads,
+            # under the same per-shape component rules, so one call builds one
+            # object on either engine.
+            return {"status": "error", "content": [{"text": size_err}]}
         default_size = [1.0, 1.0, 1.0] if shape == "mesh" else [0.05, 0.05, 0.05]
         with self._lock:
             obj = SimObject(
@@ -3283,20 +3295,19 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             body = builder.add_body(xform=xform, mass=obj.mass)
         shape_xform = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat_identity()) if body >= 0 else xform
         color = tuple(obj.color[:3])
-        size = obj.size
+        size = list(obj.size)
+        if obj.shape in ("box", "sphere", "capsule", "cylinder"):
+            # Full extents -> the half-extents / radius / half-height Newton's
+            # builder takes, by the one table the MuJoCo backend compiles with.
+            half = _normalize_size(obj.shape, size)
         if obj.shape == "box":
-            hx, hy, hz = (size + [0.05, 0.05, 0.05])[:3]
-            builder.add_shape_box(body, xform=shape_xform, hx=hx, hy=hy, hz=hz, color=color)
+            builder.add_shape_box(body, xform=shape_xform, hx=half[0], hy=half[1], hz=half[2], color=color)
         elif obj.shape == "sphere":
-            builder.add_shape_sphere(body, xform=shape_xform, radius=size[0], color=color)
+            builder.add_shape_sphere(body, xform=shape_xform, radius=half[0], color=color)
         elif obj.shape == "capsule":
-            radius = size[0]
-            half_height = size[1] if len(size) > 1 else size[0]
-            builder.add_shape_capsule(body, xform=shape_xform, radius=radius, half_height=half_height, color=color)
+            builder.add_shape_capsule(body, xform=shape_xform, radius=half[0], half_height=half[1], color=color)
         elif obj.shape == "cylinder":
-            radius = size[0]
-            half_height = size[1] if len(size) > 1 else size[0]
-            builder.add_shape_cylinder(body, xform=shape_xform, radius=radius, half_height=half_height, color=color)
+            builder.add_shape_cylinder(body, xform=shape_xform, radius=half[0], half_height=half[1], color=color)
         elif obj.shape == "mesh":
             vertices, indices = self._load_mesh_geometry(obj.mesh_path)
             mesh = self._nt.Mesh(vertices, indices)
