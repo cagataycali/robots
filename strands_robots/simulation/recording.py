@@ -31,7 +31,7 @@ import logging
 import math
 import numbers
 import shutil
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
@@ -911,6 +911,46 @@ class RecordedFrame:
             task=task,
             required_action_keys=self.required_action_keys(),
         )
+
+
+def split_recorded_observation(
+    observation: Mapping[str, Any],
+    cameras: Iterable[tuple[str, str, int, int]],
+    render: Callable[[str, int, int], Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split one rollout observation into its state values and its recorded camera frames.
+
+    The one rule every ``(scene name, column, width, height)`` recording hook
+    applies: an image (an array of two or more dimensions) keyed by a declared
+    camera's scene name is kept under that camera's column, an image of any
+    other camera is outside the ``start_recording(cameras=...)`` scope and
+    dropped, and everything else is state.
+
+    Args:
+        observation: What the rollout observed this step.
+        cameras: ``state["recording_cameras"]``, the declared scope.
+        render: ``render(scene_name, width, height) -> image`` for a declared
+            camera the observation does not carry (the policy read no pixels),
+            or ``None`` to leave it absent. A camera the observation carries is
+            never rendered again.
+
+    Returns:
+        ``(state, images)``, ``images`` keyed by column.
+    """
+    declared = list(cameras)
+    columns = {source: column for source, column, _w, _h in declared}
+    state: dict[str, Any] = {}
+    images: dict[str, Any] = {}
+    for key, value in observation.items():
+        if getattr(value, "ndim", 0) < 2:
+            state[key] = value
+        elif key in columns:
+            images[columns[key]] = value
+    if render is not None:
+        for source, column, width, height in declared:
+            if column not in images and (image := render(source, width, height)) is not None:
+                images[column] = image
+    return state, images
 
 
 def _camera_height_width(shape: Sequence[Any], names: Sequence[str] | None) -> tuple[Any, Any]:
