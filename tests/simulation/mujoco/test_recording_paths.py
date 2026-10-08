@@ -330,12 +330,18 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     assert both == len(ds) and len(ds) > 0, f"B4: only {both}/{len(ds)} frames had both robots co-observed"
 
 
-def test_run_multi_policy_renders_each_camera_once_per_recorded_step(sim_with_two_robots, tmp_path, monkeypatch):
-    """A recorded multi-robot step renders the scene's cameras once, not once per robot.
+@pytest.mark.parametrize("scope", [None, []], ids=["every-camera", "no-camera"])
+def test_run_multi_policy_renders_each_kept_camera_once_per_recorded_step(
+    sim_with_two_robots, tmp_path, monkeypatch, scope
+):
+    """A recorded multi-robot step renders the cameras the recording keeps, once.
 
     The frame takes its images from the first robot's observation; rendering them
     again for every other robot only to drop them doubles the cost of a two-arm
-    recording on a software renderer.
+    recording on a software renderer. A recording scoped to no camera
+    (``start_recording(cameras=[])``) declares no image column, so a rollout whose
+    policies read no pixels renders nothing at all, as ``run_policy`` and ``step``
+    already do.
     """
     from strands_robots.dataset_recorder import has_lerobot_dataset
 
@@ -357,13 +363,16 @@ def test_run_multi_policy_renders_each_camera_once_per_recorded_step(sim_with_tw
     one_observation = len(calls)
     assert one_observation > 0, "the scene has no camera to render"
 
-    r = sim.start_recording(repo_id="local/render_once", fps=20, root=str(tmp_path / "once"), overwrite=True)
+    r = sim.start_recording(
+        repo_id="local/render_once", fps=20, root=str(tmp_path / "once"), overwrite=True, cameras=scope
+    )
     assert r["status"] == "success", r
     calls.clear()
     pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
+    assert not any(p.requires_images for p in pols.values()), "precondition: no policy reads pixels"
     r = sim.run_multi_policy(policies=pols, n_steps=3, control_frequency=20.0, fast_mode=True)
     assert r["status"] == "success", r
-    assert len(calls) == 3 * one_observation
+    assert len(calls) == (0 if scope == [] else 3 * one_observation)
     sim.stop_recording()
 
 

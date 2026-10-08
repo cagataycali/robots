@@ -26,8 +26,8 @@ did not.
 Two things are pinned here:
 
 * **Behaviour** - ``get_robot_state`` cannot complete while another thread holds
-  ``self._lock`` (an ``Event`` that times out, not a wall-clock measurement: a
-  reader blocked on the lock cannot signal completion while the writer is inside
+  ``self._lock`` (an ``Event`` the reader's request for the lock sets, not a
+  wall-clock measurement: a reader blocked on the lock cannot signal completion while the writer is inside
   its critical section, whatever the machine's load), and no sample it returns
   mixes two configurations.
 * **The root cause** - no public method of the MuJoCo backend touches mjData
@@ -57,10 +57,10 @@ pytest.importorskip("mujoco")
 from strands_robots.simulation.mujoco import simulation as simulation_mod  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from tests._package_ast import parse_file
+from tests.simulation.mujoco._contended_lock import ContendedLock  # noqa: E402
 
-# Long enough that an unserialised reader (sub-millisecond here) finishes inside
-# it by a wide margin, and irrelevant to the serialised verdict: a reader waiting
-# on the lock can never signal completion while the writer holds it.
+# An upper bound only: the wait ends as soon as the reader asks for the lock
+# (it is blocked) or finishes without asking (sub-millisecond here).
 _READER_BUDGET_S = 1.0
 
 # The mjData arrays the backend's readers touch. Every one of them is rewritten
@@ -113,10 +113,13 @@ class TestGetRobotStateAnswersWithAStateTheRobotWasIn:
             finally:
                 done.set()
 
-        with sim._lock:
+        lock = sim._lock = ContendedLock(sim._lock, done)
+        with lock:
             reader = threading.Thread(target=run, daemon=True, name="state-reader")
             reader.start()
-            completed_under_the_lock = done.wait(_READER_BUDGET_S)
+            # Wakes when the reader asks for the lock (it is blocked) or finishes.
+            done.wait(_READER_BUDGET_S)
+            completed_under_the_lock = "state" in box
         reader.join(_READER_BUDGET_S * 5)
 
         assert "state" in box, "premise: the reader ran to completion once the lock was free"

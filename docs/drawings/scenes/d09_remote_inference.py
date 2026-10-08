@@ -36,7 +36,8 @@ def scene() -> Scene:
     s.down(L + 120, 254, 282)
     s.down(L + 320, 254, 282)
     s.box(L + 20, 282, 190, 92, "operator gate",
-          "stays on this host: a real arm waits for a yes before the loop starts", accent=True, size=14, subsize=11.5)
+          "stays on this host: a real arm waits for a yes before the loop starts", accent=True, size=14, subsize=11.5,
+          id="gate")
     s.box(L + 230, 282, 190, 92, "control loop",
           "send_action at the control frequency, consuming the chunk", size=14, subsize=11.5)
     s.down(L + 320, 374, 400)
@@ -70,9 +71,13 @@ def scene() -> Scene:
     ]
     for y, label, from_server, dashed in wires:
         pts = [(R, y), (L + LW, y)] if from_server else [(L + LW, y), (R, y)]
-        s.arrow(pts, dashed=dashed)
+        step = label[0]
+        s.arrow(pts, dashed=dashed, id=f"wire{step}")
+        if step in "34":  # the two messages of every control step travel
+            s.motion.append((f"wire{step}", "flow"))
         s.text(MID, y - 7, label, cls="mono muted", size=10.5, anchor="middle")
     s.text(MID, 544, "every control step: 3 and 4", cls="grot muted", size=11.5, anchor="middle")
 
+    s.motion.insert(0, ("gate", "pulse"))
     s.footnote(676, "what crosses the wire is an observation and a chunk of actions; the robot, the gate and the audit never do.")
     return s

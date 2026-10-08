@@ -79,7 +79,9 @@ extra:
 
 hooks:
   - docs/hooks/facts.py
+  - docs/hooks/meta_escape.py
   - docs/hooks/visuals.py
+  - docs/hooks/hub_videos.py
   - docs/hooks/extras.py
   - docs/hooks/manifest.py
   - docs/hooks/coverage.py

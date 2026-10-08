@@ -15,6 +15,12 @@
 .wire{fill:none;stroke:var(--wire);stroke-width:1.5} .wire.dashed{stroke-dasharray:3 5}
 .wire.accent-wire{stroke:var(--accent)}
 #head path{fill:var(--wire)} #head-accent path{fill:var(--accent)}
+.mark{fill:var(--accent)}
+#to_safety{stroke-dasharray:6 6;animation:sr-flow 1.6s linear infinite}
+@keyframes sr-flow{to{stroke-dashoffset:-12}}
+#safety{animation:sr-pulse 4.0s ease-in-out infinite}
+@keyframes sr-pulse{0%,100%{fill-opacity:1;stroke-width:1.5}50%{fill-opacity:0.35;stroke-width:2.5}}
+@media (prefers-reduced-motion: reduce){#safety,#to_safety{animation:none;stroke-dasharray:none}}
 </style>
 <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker><marker id="head-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0.5 L10 5 L0 9.5 Z"/></marker></defs>
 <rect class="bg" width="1200" height="700"/>
@@ -50,8 +56,8 @@
 <g class="chip"><rect x="454.0" y="410" width="233.9" height="24" rx="12"/><text x="464.0" y="426.3" font-size="11.5">ZENOH_CONNECT=tcp/10.0.0.1:7447</text></g>
 <path class="wire" d="M380.0 317.0 L440.0 317.0" marker-end="url(#head)" marker-start="url(#head)"/>
 <text class="mono muted" x="410.0" y="306.0" font-size="10.5" text-anchor="middle">one mesh</text>
-<path class="wire" d="M410.0 478.0 L410.0 508.0" marker-end="url(#head)"/>
-<rect class="card accent-card" x="60" y="508" width="700" height="78" rx="8"/>
+<path id="to_safety" class="wire" d="M410.0 478.0 L410.0 508.0" marker-end="url(#head)"/>
+<rect id="safety" class="card accent-card" x="60" y="508" width="700" height="78" rx="8"/>
 <text class="mono fg" x="74.0" y="534.0" font-size="14" text-anchor="start" font-weight="500">the safety topics</text>
 <text class="grot text" x="74.0" y="553.0" font-size="12" text-anchor="start">an e-stop on any peer publishes estop and every peer that hears it engages its own lockout; resume carries</text>
 <text class="grot text" x="74.0" y="569.2" font-size="12" text-anchor="start">a proof</text>
@@ -80,4 +86,5 @@
 <g class="chip"><rect x="834.0" y="560" width="144.2" height="24" rx="12"/><text x="844.0" y="576.3" font-size="11.5">strands/&lt;peer&gt;/cmd</text></g>
 <g class="chip"><rect x="986.2" y="560" width="137.3" height="24" rx="12"/><text x="996.2" y="576.3" font-size="11.5">strands/broadcast</text></g>
 <text class="grot muted" x="600.0" y="658.0" font-size="12.5" text-anchor="middle">the mesh is enrichment: a session that fails to open leaves the robot working without it.</text>
+<g class="mark" aria-label="STRANDS" transform="translate(1050.0 665.1) scale(0.05952)"><path d="M30.2558 216.833V186.914H0V148.926H36.9794V179.182H121.023V127.075H30.2558V97.1548H0V29.9197H30.2558V0H127.747V29.9197H158.339V67.5714H121.023V37.9879H36.9794V89.759H127.747V119.006H158.339V186.914H127.747V216.833H30.2558Z"/><path d="M252.894 216.833V37.9879H229.361V67.5714H192.382V29.9197H222.638V0H320.129V29.9197H350.721V67.5714H313.405V37.9879H289.873V216.833H252.894Z"/><path d="M377.87 216.833V29.9197H408.125V0H505.617V29.9197H536.208V127.075H505.617V156.994H490.825V179.182H520.744V216.833H484.101V186.914H453.509V156.994H414.849V216.833H377.87ZM414.849 119.006H498.893V37.9879H414.849V119.006Z"/><path d="M576.818 216.833V59.5031H607.073V29.9197H637.329V0H674.309V29.9197H704.564V59.5031H735.156V216.833H697.841V156.994H613.797V216.833H576.818ZM613.797 119.006H697.841V67.5714H667.921V37.9879H643.717V67.5714H613.797V119.006Z"/><path d="M775.765 216.833V0H812.745V29.9197H842.664V59.5031H873.256V148.926H896.789V0H934.104V216.833H896.789V186.914H866.869V156.994H836.277V67.5714H812.745V216.833H775.765Z"/><path d="M974.713 216.833V0H1072.2V29.9197H1102.46V59.5031H1133.05V156.994H1102.46V186.914H1072.2V216.833H974.713ZM1011.69 179.182H1065.82V148.926H1095.74V67.5714H1065.82V37.9879H1011.69V179.182Z"/><path d="M1203.92 216.833V186.914H1173.66V148.926H1210.64V179.182H1294.68V127.075H1203.92V97.1548H1173.66V29.9197H1203.92V0H1301.41V29.9197H1332V67.5714H1294.68V37.9879H1210.64V89.759H1301.41V119.006H1332V186.914H1301.41V216.833H1203.92Z"/></g>
 </svg>

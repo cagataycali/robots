@@ -23,9 +23,10 @@ def scene() -> Scene:
     )
     s.box(300, 122, 600, 78, "one interface",
           "get_observation, send_action, run_policy and the agent tool: the same verbs on every backend",
-          accent=True, size=14, subsize=12)
-    s.arrow([(600, 200), (600, 226), (310, 226), (310, 250)])
-    s.arrow([(600, 226), (890, 226), (890, 250)])
+          accent=True, size=14, subsize=12, id="interface")
+    s.arrow([(600, 200), (600, 226), (310, 226), (310, 250)], id="to_sim")
+    s.arrow([(600, 226), (890, 226), (890, 250)], id="to_real")
+    s.motion = [("interface", "pulse"), ("to_sim", "flow"), ("to_real", "flow")]
     s.text(455, 220, 'mode="sim"', cls="mono muted", size=10.5, anchor="middle")
     s.text(745, 220, 'mode="real"', cls="mono muted", size=10.5, anchor="middle")
 

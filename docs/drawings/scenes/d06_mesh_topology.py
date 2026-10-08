@@ -41,11 +41,12 @@ def scene() -> Scene:
     s.text(410, 306, "one mesh", cls="mono muted", size=10.5, anchor="middle")
 
     # ---------------------------------------------------------------- the safety topic (the one green element)
-    s.arrow([(410, 478), (410, 508)])
+    s.arrow([(410, 478), (410, 508)], id="to_safety")
     s.box(60, 508, 700, 78, "the safety topics",
           "an e-stop on any peer publishes estop and every peer that hears it engages its own lockout; resume carries a proof",
-          accent=True, size=14, subsize=12)
+          accent=True, size=14, subsize=12, id="safety")
     s.chips(74, 556, ["strands/safety/estop", "strands/safety/resume"])
+    s.motion = [("safety", "pulse"), ("to_safety", "flow")]
 
     # ---------------------------------------------------------------- across sites
     s.section(820, 122, "across sites")

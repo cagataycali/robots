@@ -8,6 +8,8 @@ copy_prompt: true
 
 Six rungs. Each page ends with a checkpoint: what you now have, and every `python` fence ran against this commit on a laptop with no GPU. Fences needing an arm on USB are noted in the text, not run.
 
+{{drawing:d01_what_is}}
+
 | rung | page | time | you need | you leave with |
 |---|---|---|---|---|
 | 0 | [See it](see-it.md) | 30 s | nothing | a recorded conversation: an agent builds a scene in the simulator, runs a policy on it, and must ask a person before it may drive the real arm |
@@ -19,4 +21,4 @@ Six rungs. Each page ends with a checkpoint: what you now have, and every `pytho
 | 5 | [Fleet](fleet.md) | a week | two machines | several robots on the mesh, one dashboard, one e-stop |
 | | [Doctor](doctor.md) | 2 min | | `strands-robots doctor`: what each probe checks and what its verdict means |
 
-Rungs 4 and 5 are itineraries through the guides that hold them; every guide page they point at carries fences that ran against this commit.
+Rungs 4 and 5 are itineraries through the guides that hold them; every guide page they point at carries fences run against this commit.
