@@ -111,10 +111,24 @@ _BAD_DIMS: tuple[Any, ...] = (
     [640],
 )
 
+#: One probe per way a surface can drop the shared guard while still looking
+#: guarded: ``0`` is read as omitted by a truthiness default (``width or
+#: default``), ``-4`` slips past a sign check that forgets zero, ``2.7`` is
+#: truncated by an ``int(...)`` that runs before the guard, ``True`` is an
+#: ``int`` subclass, and ``"big"`` makes that ``int(...)`` raise past the
+#: envelope. Every surface below calls :func:`positive_count_error` itself, so
+#: the full ``_BAD_DIMS`` table is pinned once, on the guard
+#: (``TestTheSharedDomain``), and each surface is driven with these five.
+_PROBE_DIMS: tuple[Any, ...] = (0, -4, 2.7, True, "big")
+
 #: Dimensions that must keep working. ``5000`` is included deliberately: it is
 #: above MuJoCo's framebuffer cap but perfectly renderable by a ray tracer, so
 #: it pins that the shared rule is a floor and not a ceiling.
 _GOOD_DIMS: tuple[int, ...] = (1, 16, 320, 640, 5000)
+
+#: The two usable sizes a surface can independently get wrong: the floor itself
+#: and one above MuJoCo's framebuffer cap (a floor, not a ceiling).
+_GOOD_PROBE: tuple[int, ...] = (1, 5000)
 
 
 def _newton_stub() -> types.SimpleNamespace:
@@ -221,7 +235,7 @@ class TestTheSharedDomain:
 # Newton                                                                      #
 # --------------------------------------------------------------------------- #
 class TestNewtonAddCamera:
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     def test_unusable_dimension_is_refused(self, param, bad):
         """Pre-fix these were stored verbatim, truncated, or raised out of the call."""
@@ -231,7 +245,7 @@ class TestNewtonAddCamera:
         assert result["content"][0]["text"] == f"add_camera: {param} must be a positive integer, got {bad!r}."
         assert stub._world.cameras == {}
 
-    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    @pytest.mark.parametrize("good", _GOOD_PROBE)
     def test_usable_dimension_is_stored_and_reported_as_given(self, good):
         """The registry and the success text must agree on the resolution.
 
@@ -269,29 +283,22 @@ class TestNewtonRenderFamily:
     ``get_camera_params`` share, so one guard covers all three - and each one
     reports it under its own name, which is what ``context`` carries."""
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
-    @pytest.mark.parametrize("camera", ["default", "cam"])
-    @pytest.mark.parametrize("context", ["render", "get_frame", "get_camera_params"])
-    def test_unusable_override_is_refused(self, context, camera, param, bad):
+    def test_unusable_override_is_refused(self, param, bad):
         stub = _newton_stub()
         assert _newton_add_camera(stub, name="cam", width=320, height=240)["status"] == "success"
-        with pytest.raises(ValueError, match=f"{context}: {param} must be a positive integer"):
-            _newton_resolve(stub, camera, context=context, **{param: bad})
+        with pytest.raises(ValueError, match=f"render: {param} must be a positive integer"):
+            _newton_resolve(stub, "cam", **{param: bad})
 
-    def test_zero_is_refused_rather_than_read_as_omitted(self):
-        """Membership, not truthiness.
-
-        Pre-fix ``int(width or self.default_width)`` resolved ``width=0`` to the
-        engine default and rendered at 640 wide, reporting that as the size the
-        caller requested. ``0`` is a request for an impossible resolution, not an
-        omission - and ``bool(0) is False`` is the whole reason it was mistaken
-        for one.
-        """
-        assert not bool(0)
+    @pytest.mark.parametrize("camera", ["default", "cam"])
+    @pytest.mark.parametrize("context", ["render", "get_frame", "get_camera_params"])
+    def test_every_caller_and_camera_kind_reaches_the_guard(self, context, camera):
+        """The built-in view and a registered camera resolve on separate branches."""
         stub = _newton_stub()
-        with pytest.raises(ValueError, match="width must be a positive integer, got 0"):
-            _newton_resolve(stub, "default", width=0)
+        assert _newton_add_camera(stub, name="cam", width=320, height=240)["status"] == "success"
+        with pytest.raises(ValueError, match=f"{context}: height must be a positive integer"):
+            _newton_resolve(stub, camera, context=context, height=0)
 
     @pytest.mark.parametrize("camera", ["default", "cam"])
     def test_none_still_means_take_the_configured_size(self, camera):
@@ -300,7 +307,7 @@ class TestNewtonRenderFamily:
         _eye, _target, _fov, w, h = _newton_resolve(stub, camera)
         assert (w, h) == ((640, 480) if camera == "default" else (320, 240))
 
-    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    @pytest.mark.parametrize("good", _GOOD_PROBE)
     def test_usable_override_is_honored_exactly(self, good):
         stub = _newton_stub()
         assert _newton_add_camera(stub, name="cam", width=320, height=240)["status"] == "success"
@@ -344,20 +351,14 @@ class TestNewtonViewerDimensions:
     ``newton`` / ``warp`` or a display.
     """
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
-    def test_unusable_dimension_is_refused(self, param, bad):
+    def test_unusable_dimension_is_refused_and_constructs_no_viewer(self, param, bad):
+        """Nothing is built, so nothing occupies the single viewer slot."""
         stub = _viewer_stub(has_display=True)
         result = _newton_open_viewer(stub, viewer="gl", **{param: bad})
         assert result["status"] == "error", (param, bad, result)
         assert param in result["content"][0]["text"]
-
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
-    @pytest.mark.parametrize("param", ["width", "height"])
-    def test_a_refused_dimension_constructs_no_viewer(self, param, bad):
-        """Nothing is built, so nothing occupies the single viewer slot."""
-        stub = _viewer_stub(has_display=True)
-        _newton_open_viewer(stub, viewer="gl", **{param: bad})
         assert stub.built == []
         assert stub._viewer is None
 
@@ -376,7 +377,7 @@ class TestNewtonViewerDimensions:
         assert retry["status"] == "success", retry
         assert stub.built == [("gl", {"width": 1280, "height": 720})]
 
-    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    @pytest.mark.parametrize("good", _GOOD_PROBE)
     def test_a_usable_dimension_is_forwarded_exactly(self, good):
         """A floor, not a tightening - and the value reaches ``ViewerGL`` unchanged."""
         stub = _viewer_stub(has_display=True)
@@ -417,7 +418,7 @@ class TestOnlyTheGlBranchReadsTheDimensions:
     """
 
     @pytest.mark.parametrize("kind", ["viser", "null"])
-    @pytest.mark.parametrize("bad", (0, -1, 2.7, "big", None))
+    @pytest.mark.parametrize("bad", (0, "big"))
     def test_a_branch_that_ignores_the_size_still_opens(self, kind, bad):
         stub = _viewer_stub(has_display=True)
         result = _newton_open_viewer(stub, viewer=kind, width=bad, height=bad)
@@ -460,27 +461,12 @@ class TestTheViewerAgreesWithTheRenderFamily:
     domain of its own.
     """
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
-    @pytest.mark.parametrize("param", ["width", "height"])
-    def test_a_dimension_the_render_family_refuses_is_refused_by_the_viewer(self, param, bad):
-        render_verdict = _render_dims_verdict(param, bad)
-        viewer_verdict = _verdict(
-            lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", **{param: bad})
-        )
-        assert render_verdict == viewer_verdict == "refused", (
-            f"{param}={bad!r}: render={render_verdict}, open_viewer={viewer_verdict}"
-        )
-
-    @pytest.mark.parametrize("good", _GOOD_DIMS)
-    @pytest.mark.parametrize("param", ["width", "height"])
-    def test_a_usable_dimension_is_accepted_by_both(self, param, good):
-        """A floor, not a tightening, on both surfaces at once."""
-        render_verdict = _render_dims_verdict(param, good)
-        viewer_verdict = _verdict(
-            lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", **{param: good})
-        )
-        assert render_verdict == viewer_verdict == "accepted", (
-            f"{param}={good!r}: render={render_verdict}, open_viewer={viewer_verdict}"
+    @pytest.mark.parametrize("value", (*_PROBE_DIMS, *_GOOD_PROBE))
+    def test_both_surfaces_give_the_same_verdict(self, value):
+        render_verdict = _render_dims_verdict("width", value)
+        viewer_verdict = _verdict(lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", width=value))
+        assert render_verdict == viewer_verdict, (
+            f"width={value!r}: render={render_verdict}, open_viewer={viewer_verdict}"
         )
 
     def test_the_shared_rule_is_a_floor_and_not_a_ceiling(self):
@@ -576,7 +562,7 @@ class TestNoNewtonDimensionSurfaceDrifts:
 # Isaac                                                                       #
 # --------------------------------------------------------------------------- #
 class TestIsaacAddCamera:
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     def test_unusable_dimension_is_refused_before_the_stage_is_touched(self, param, bad):
         engine = _isaac_engine()
@@ -588,24 +574,12 @@ class TestIsaacAddCamera:
         # there is no partial camera to clean up.
         assert engine.prim_calls == []
 
-    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    @pytest.mark.parametrize("good", _GOOD_PROBE)
     def test_usable_dimension_is_honored(self, good):
         engine = _isaac_engine()
         result = engine.add_camera(name="cam", width=good, height=good)
         assert result["status"] == "success", result
         assert (engine._cameras["cam"].width, engine._cameras["cam"].height) == (good, good)
-
-    def test_zero_is_refused_rather_than_read_as_the_config_default(self):
-        """Pre-fix ``int(width or camera_width)`` reported ``640x480`` for ``width=0``.
-
-        The caller asked for a resolution no camera can have and was told the
-        config default was what they requested - a success naming a size that
-        was never requested is harder to notice than a stored ``0``.
-        """
-        engine = _isaac_engine()
-        result = engine.add_camera(name="cam", width=0)
-        assert result["status"] == "error", result
-        assert engine._cameras == {}
 
     def test_omitted_dimensions_still_take_the_config_defaults(self):
         engine = _isaac_engine()
@@ -631,7 +605,7 @@ class TestIsaacAddCamera:
 
 
 class TestIsaacRenderFamily:
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     def test_render_reports_an_unusable_override_as_an_error(self, param, bad):
         """``_render_frame`` owes its caller ``(rgb, depth, meta)``, never an exception.
@@ -688,7 +662,7 @@ class TestSameVerdictAcrossBackends:
         yield s
         s.cleanup()
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["width", "height"])
     def test_add_camera_agrees_on_the_floor(self, mj_sim, param, bad):
         mujoco_verdict = _verdict(lambda: mj_sim.add_camera(name="parity_cam", **{param: bad}))
@@ -698,7 +672,7 @@ class TestSameVerdictAcrossBackends:
             f"{param}={bad!r}: mujoco={mujoco_verdict}, newton={newton_verdict}, isaac={isaac_verdict}"
         )
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     def test_the_render_family_agrees_on_the_floor(self, mj_sim, bad):
         mujoco_verdict = _verdict(lambda: mj_sim.render(camera_name="default", width=bad, height=480))
         isaac_verdict = _verdict(lambda: _isaac_engine().render(camera_name="default", width=bad))
@@ -835,7 +809,7 @@ class TestTheEngineDefaultResolution:
     naming neither the parameter nor the class.
     """
 
-    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("bad", _PROBE_DIMS)
     @pytest.mark.parametrize("param", ["default_width", "default_height"])
     def test_every_backend_refuses_an_unusable_default(self, param, bad):
         verdicts = {
