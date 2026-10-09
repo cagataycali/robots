@@ -88,7 +88,14 @@
         "mode",
         "model",
         "pretrained_name_or_path",
-        "actions_per_step"
+        "actions_per_step",
+        "ik",
+        "num_inference_steps",
+        "guidance_scale",
+        "resolution_tier",
+        "view_point",
+        "device",
+        "dtype"
       ],
       "defaults": {
         "host": "localhost",

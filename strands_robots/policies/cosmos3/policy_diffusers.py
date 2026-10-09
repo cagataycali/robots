@@ -24,6 +24,16 @@ Action modes (``CosmosActionCondition.mode``):
   ``Cosmos3Policy.last_rollout``).
 * ``inverse_dynamics`` - an observed video -> the actions between frames.
 
+Checkpoints: ``nvidia/Cosmos3-Nano`` (the default) and ``nvidia/Cosmos3-Edge`` both
+load through this backend. Edge is built against diffusers ``0.40.0.dev0`` and
+loads with zero unfilled tensors on diffusers 0.41.0 (measured on a Jetson AGX
+Thor: 17.9 s load, 7.6 GiB resident, a ``[32, 10]`` DROID chunk per call);
+on 0.39.0 the load leaves 112 transformer tensors on ``meta`` and this backend
+refuses it with the upgrade command. Edge has ``sound_gen=False``: keep
+``enable_sound=False`` (the pipeline raises otherwise). Its transformer pads
+every domain to ``action_dim=64`` internally but the pipeline slices the output
+to the domain's raw width, so the chunk is still ``[T, raw_action_dim]``.
+
 Action width: :class:`Cosmos3OmniPipeline` emits the model's **raw unified
 action** of width ``embodiment.raw_action_dim`` (e.g. ``droid_lerobot`` = 10 =
 9D end-effector pose + 1D gripper), NOT the service server's post-processed
@@ -115,7 +125,8 @@ def _checkpoint_mismatch_hint(model: str, unloaded: list[str]) -> str:
         f"({installed}): {len(unloaded)} tensor(s) were left uninitialized on the meta "
         f"device (e.g. {unloaded[:3]}), so the pipeline would run on randomly initialized "
         f"weights. Install a diffusers that supports this checkpoint:\n"
-        "  uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'\n"
+        "  uv pip install 'diffusers>=0.41'   # nvidia/Cosmos3-Edge loads with zero unfilled tensors on 0.41.0\n"
+        "  uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'   # or newer than any release\n"
         "Then retry. Or pick a checkpoint the installed diffusers supports, or run the "
         "model out-of-process: Cosmos3Policy(backend='service', host=..., port=...)."
     )
@@ -136,8 +147,8 @@ def _install_hint() -> str:
         "Cosmos3OmniPipeline first ships in diffusers 0.39.0, which the "
         "'cosmos3-diffusers' extra floors:\n"
         "  uv pip install strands-robots[cosmos3-diffusers]\n"
-        "A newer checkpoint can need a newer diffusers than that floor; when one "
-        "does, the load reports which tensors it could not fill.\n"
+        "A newer checkpoint can need a newer diffusers than that floor (nvidia/Cosmos3-Edge "
+        "needs diffusers>=0.41); when one does, the load reports which tensors it could not fill.\n"
         "Then retry. Or use the service backend (no in-process GPU load): "
         "Cosmos3Policy(backend='service', host=..., port=...)."
     )

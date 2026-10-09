@@ -185,6 +185,55 @@ class Cosmos3Policy(Policy):
             re-querying (a positive whole number). Default: the embodiment's
             ``action_chunk_size``, replaced by the served chunk length once the
             server has answered; a value you pass is kept as given.
+        ik: ``diffusers`` backend only. Opt-in inverse-kinematics decode that
+            turns the model's raw unified action (a quantile-normalized
+            end-effector pose delta per step) into **joint targets**, so the
+            policy emits the embodiment's ``joint_pos`` layout (DROID:
+            ``joint_0..joint_6, gripper``) and ``robot="franka"`` /
+            ``action_mapping`` rename it onto real actuators - the one route by
+            which ``sim.run_policy(policy_provider="cosmos3",
+            policy_config={"backend": "diffusers", ...})`` can drive a MuJoCo arm.
+            ``True`` builds a :class:`~strands_robots.policies.cosmos3.sim_ik.MinkIKBridge`
+            over the Franka/Panda MJCF that ``robot_descriptions`` ships (the
+            DROID arm; ``ee_frame_name="hand"``); a ``dict`` names another model
+            (``{"mjcf": <path>, "ee_frame_name": "hand", "ee_frame_type":
+            "body", "arm_dofs": 7, "gripper_range": [0.04, 0.0]}``); any object
+            exposing ``ee_pose`` / ``solve`` / ``tracking_error`` / ``model.nq``
+            is used as the bridge directly (dependency injection for tests).
+            The decode is :func:`~strands_robots.policies.cosmos3.sim_ik.decode_cosmos_chunk_to_targets`
+            with the bundled per-domain quantile stats, seeded with the 7 joint
+            values the observation carries, re-anchored on the achieved pose
+            each step; its ``tracking_error`` is surfaced on
+            ``last_rollout["ik"]`` and ``last_rollout["action"]`` keeps the raw
+            chunk. ``gripper_range`` maps the de-normalized DROID grasp
+            (``0`` open .. ``1`` closed) linearly onto the actuator's own open
+            and closed values (Panda ``finger_joint1``: ``0.04`` m open, ``0.0``
+            closed), the one unit conversion the layout needs. Only embodiments
+            that declare a ``joint_pos`` layout accept ``ik`` (``droid`` today);
+            ``ik`` under ``backend="service"`` is refused (the server already
+            serves joints).
+        num_inference_steps: Diffusion sampling steps for the in-process
+            pipeline (``diffusers`` backend). ``None`` keeps the backend
+            default (35, a video default; the RoboLab server runs 4). Measured
+            on Edge: 35 steps = 84 s per 32-step chunk on a Jetson Thor.
+        guidance_scale: Classifier-free guidance for the in-process pipeline
+            (``None`` -> backend default 6.0; the RoboLab server uses 3).
+        resolution_tier: Cosmos conditioning resolution tier (256/480/704/720)
+            for the in-process pipeline (``None`` -> 480).
+        view_point: Cosmos ``view_point`` tag of the conditioning camera
+            (``"ego_view"`` default, ``"third_person_view"``, ``"wrist_view"``,
+            ``"concat_view"``). The in-process backend conditions on the FIRST
+            declared camera key (DROID: ``observation/wrist_image_left``).
+        device: ``"cuda"`` / ``"cpu"`` for the in-process pipeline (``None`` ->
+            cuda when available).
+        dtype: Torch dtype string for the in-process pipeline (``None`` ->
+            ``"bfloat16"``).
+
+        The six sampler/load knobs are forwarded to
+        :class:`~strands_robots.policies.cosmos3.policy_diffusers.Cosmos3DiffusersBackend`
+        only when this constructor builds that backend; with an injected
+        ``diffusers_backend`` they are refused rather than silently ignored,
+        and under ``backend="service"`` they are refused too.
 
     Notes:
         * This policy needs camera frames **and** robot state in the
@@ -224,6 +273,13 @@ class Cosmos3Policy(Policy):
         diffusers_backend: Cosmos3DiffusersBackend | None = None,
         model: str | None = None,
         actions_per_step: int | None = None,
+        ik: Any | None = None,
+        num_inference_steps: int | None = None,
+        guidance_scale: float | None = None,
+        resolution_tier: int | None = None,
+        view_point: str | None = None,
+        device: str | None = None,
+        dtype: str | None = None,
     ) -> None:
         self.embodiment: Cosmos3Embodiment = get_embodiment(embodiment)
         # The chunk this policy tells the consumer to execute before re-querying
@@ -322,6 +378,36 @@ class Cosmos3Policy(Policy):
             raise ValueError(f"Unknown Cosmos 3 backend {backend!r}. Available: ['service', 'diffusers'].")
         self.backend = backend
         self.mode = mode
+        # Opt-in IK decode (diffusers only): resolved before the layout checks
+        # below because it changes the layout this policy emits (joint_pos
+        # instead of the raw unified action). The bridge itself is built lazily
+        # on the first chunk when ``ik`` is a spec (True / dict) so that
+        # constructing the policy does not import mink + mujoco.
+        self._ik_spec: Any | None = None
+        self._ik_bridge: Any | None = None
+        self._ik_arm_dofs = 7
+        self._ik_gripper_range: tuple[float, float] | None = None
+        if ik is not None and ik is not False:
+            if mode != "policy":
+                raise ValueError(
+                    f"ik= needs an action chunk to decode, which mode={mode!r} does not produce "
+                    "(forward_dynamics predicts video only). Use mode='policy'."
+                )
+            if "joint_pos" not in self.embodiment.action_layouts:
+                raise ValueError(
+                    f"ik= emits the embodiment's joint_pos layout, and embodiment "
+                    f"{self.embodiment.name!r} declares none (layouts: "
+                    f"{sorted(self.embodiment.action_layouts)}). Only embodiments whose arm "
+                    "the registry knows (droid -> Franka/Panda) can be decoded to joints; a "
+                    "post-trained arm needs its own joint_pos layout first."
+                )
+            if self.action_space != "joint_pos":
+                raise ValueError(
+                    f"ik= emits joint targets, so action_space must be 'joint_pos' (got "
+                    f"{self.action_space!r}); the joint state the decode is seeded with is "
+                    "attached on that action space."
+                )
+            self._configure_ik(ik)
         # Validate action_mapping keys name real columns of the ACTIVE layout so
         # a typo'd rename can't silently emit a key the robot never consumes.
         # The two backends emit different action layouts: ``service`` returns the
@@ -373,6 +459,34 @@ class Cosmos3Policy(Policy):
                 "forward_dynamics / inverse_dynamics."
             )
 
+        backend_knobs = {
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "resolution_tier": resolution_tier,
+            "view_point": view_point,
+            "device": device,
+            "dtype": dtype,
+        }
+        set_knobs = sorted(k for k, v in backend_knobs.items() if v is not None)
+        if set_knobs and backend != "diffusers":
+            raise ValueError(
+                f"{set_knobs} configure the in-process diffusers pipeline and are only available "
+                "with backend='diffusers'. The service backend's sampler is set on the RoboLab "
+                "server's command line."
+            )
+        if set_knobs and diffusers_backend is not None:
+            raise ValueError(
+                f"{set_knobs} were passed together with an injected diffusers_backend, which already "
+                "carries its own sampler and load settings; set them on that backend instead "
+                "(they would otherwise be silently ignored)."
+            )
+        if ik is not None and backend != "diffusers":
+            raise ValueError(
+                "ik= decodes the in-process diffusers backend's raw unified action into joint "
+                "targets and is only available with backend='diffusers'. The service backend's "
+                "RoboLab server already serves joint_pos."
+            )
+
         if backend == "diffusers":
             # In-process Cosmos 3 via native diffusers (the heavy diffusers +
             # torch import lives lazily inside Cosmos3DiffusersBackend, which
@@ -386,6 +500,7 @@ class Cosmos3Policy(Policy):
                     embodiment=self.embodiment,
                     model=model or pretrained_name_or_path,
                     mode=mode,
+                    **{k: v for k, v in backend_knobs.items() if v is not None},
                 )
             logger.info(
                 "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d backend=diffusers mode=%s]",
@@ -471,7 +586,10 @@ class Cosmos3Policy(Policy):
         except (TypeError, ValueError, AttributeError):
             return  # the constructor's refusal, in its own words
         if policy_config.get("backend", "service") == "diffusers":
-            layout = list(embodiment.raw_action_layout)
+            if policy_config.get("ik") not in (None, False):
+                layout = list(embodiment.action_layouts.get("joint_pos", []))
+            else:
+                layout = list(embodiment.raw_action_layout)
         else:
             action_space = policy_config.get("action_space") or embodiment.default_action_space
             layout = list(embodiment.action_layouts.get(action_space, []))
@@ -586,6 +704,9 @@ class Cosmos3Policy(Policy):
                 # mode="forward_dynamics" predicts world video only - there is no
                 # action chunk to return. Surfaced via last_rollout["video"].
                 return []
+            if self._ik_spec is not None:
+                joint_chunk = self._decode_to_joint_targets(np.asarray(action_arr, dtype=np.float32), obs)
+                return self._unpack_actions(joint_chunk)
             return self._unpack_actions(np.asarray(action_arr))
         assert self._client is not None  # set in __init__ for backend=service
         result = self._client.infer(obs)
@@ -599,6 +720,171 @@ class Cosmos3Policy(Policy):
             "sound": result.get("sound"),
         }
         return self._unpack_actions(action)
+
+    # Default IK target for the DROID arm: the Franka/Panda MJCF that
+    # ``robot_descriptions`` ships (the same asset the example and the live
+    # integ test solve on). Panda ``finger_joint1`` is 0.04 m open / 0.0 closed;
+    # the DROID grasp column de-normalizes to 0 (open) .. 1 (closed).
+    _IK_DEFAULTS: dict[str, dict[str, Any]] = {
+        "droid": {
+            "ee_frame_name": "hand",
+            "ee_frame_type": "body",
+            "arm_dofs": 7,
+            "gripper_range": (0.04, 0.0),
+        },
+    }
+    _IK_SPEC_KEYS = frozenset({"mjcf", "ee_frame_name", "ee_frame_type", "arm_dofs", "gripper_range"})
+
+    def _configure_ik(self, ik: Any) -> None:
+        """Record the ``ik=`` request; build nothing heavy yet.
+
+        ``True`` selects the embodiment's default arm; a ``dict`` overrides any
+        of ``mjcf`` / ``ee_frame_name`` / ``ee_frame_type`` / ``arm_dofs`` /
+        ``gripper_range``; anything else is taken as a ready bridge.
+        """
+        defaults = dict(self._IK_DEFAULTS.get(self.embodiment.name, {}))
+        if ik is True:
+            spec = defaults
+        elif isinstance(ik, dict):
+            unknown = sorted(set(ik) - self._IK_SPEC_KEYS)
+            if unknown:
+                raise ValueError(f"ik= dict has unknown keys {unknown}; known: {sorted(self._IK_SPEC_KEYS)}")
+            spec = {**defaults, **ik}
+        else:
+            required = ("ee_pose", "solve", "tracking_error")
+            missing = [name for name in required if not callable(getattr(ik, name, None))]
+            if missing or not hasattr(getattr(ik, "model", None), "nq"):
+                raise ValueError(
+                    "ik= must be True, a spec dict, or an IK bridge exposing ee_pose/solve/"
+                    f"tracking_error and model.nq; got {type(ik).__name__} missing {missing or ['model.nq']}."
+                )
+            spec = defaults
+            self._ik_bridge = ik
+        arm_dofs = spec.get("arm_dofs", 7)
+        if not isinstance(arm_dofs, int) or isinstance(arm_dofs, bool) or arm_dofs < 1:
+            raise ValueError(f"ik= arm_dofs must be a positive int; got {arm_dofs!r}")
+        joint_layout = self.embodiment.action_layouts["joint_pos"]
+        has_gripper = joint_layout[-1] == "gripper"
+        if len(joint_layout) != arm_dofs + (1 if has_gripper else 0):
+            raise ValueError(
+                f"ik= arm_dofs={arm_dofs} does not match the {self.embodiment.name!r} joint_pos layout "
+                f"{joint_layout} ({len(joint_layout)} columns)."
+            )
+        gripper_range = spec.get("gripper_range")
+        if has_gripper:
+            if gripper_range is None:
+                raise ValueError(
+                    "ik= needs gripper_range=[open_value, closed_value] for this arm's gripper actuator "
+                    "(no default is known for it); the DROID grasp column is 0 open .. 1 closed."
+                )
+            vals = [float(v) for v in gripper_range]
+            if len(vals) != 2 or not all(np.isfinite(vals)):
+                raise ValueError(f"ik= gripper_range must be two finite numbers [open, closed]; got {gripper_range!r}")
+            self._ik_gripper_range = (vals[0], vals[1])
+        self._ik_arm_dofs = arm_dofs
+        self._ik_spec = spec
+
+    def _ensure_ik_bridge(self) -> Any:
+        """Build the MinkIKBridge on first use (imports mink + mujoco lazily)."""
+        if self._ik_bridge is not None:
+            return self._ik_bridge
+        assert self._ik_spec is not None
+        from .sim_ik import MinkIKBridge
+
+        mjcf = self._ik_spec.get("mjcf")
+        if mjcf is None:
+            if self.embodiment.name != "droid":
+                raise ValueError(
+                    f"ik= has no default arm for embodiment {self.embodiment.name!r}; pass ik={{'mjcf': <path>, ...}}."
+                )
+            try:
+                from robot_descriptions import panda_mj_description
+            except ImportError as e:  # pragma: no cover - sim-mujoco extra absent
+                raise ImportError(
+                    "ik=True for the droid embodiment needs the Franka/Panda MJCF from robot_descriptions "
+                    "(the sim-mujoco extra): uv pip install 'strands-robots[sim-mujoco]'. Or pass ik={'mjcf': <path>}."
+                ) from e
+            mjcf = panda_mj_description.MJCF_PATH
+        try:
+            import mujoco
+        except ImportError as e:  # pragma: no cover - cosmos3-sim extra absent
+            raise ImportError(
+                "ik= needs mujoco + mink (the cosmos3-sim extra): uv pip install 'strands-robots[cosmos3-sim]'"
+            ) from e
+        model = mujoco.MjModel.from_xml_path(str(mjcf))
+        if model.nq < self._ik_arm_dofs:
+            raise ValueError(f"ik= model {mjcf!r} has nq={model.nq} < arm_dofs={self._ik_arm_dofs}")
+        self._ik_bridge = MinkIKBridge(
+            model,
+            ee_frame_name=self._ik_spec.get("ee_frame_name", "hand"),
+            ee_frame_type=self._ik_spec.get("ee_frame_type", "body"),
+            commanded_dofs=list(range(self._ik_arm_dofs)),
+        )
+        logger.info(
+            "Cosmos3Policy ik: MinkIKBridge over %s (nq=%d, ee=%s/%s, arm_dofs=%d)",
+            sanitize_log_value(str(mjcf)),
+            model.nq,
+            self._ik_spec.get("ee_frame_type", "body"),
+            self._ik_spec.get("ee_frame_name", "hand"),
+            self._ik_arm_dofs,
+        )
+        return self._ik_bridge
+
+    def _decode_to_joint_targets(self, raw_chunk: np.ndarray, server_obs: dict[str, Any]) -> np.ndarray:
+        """Raw ``[T, raw_action_dim]`` chunk -> ``[T, len(joint_pos layout)]`` joint targets.
+
+        Seeds the IK from the observation's 7 joint values (the
+        ``observation/joint_position`` row :meth:`_attach_joint_state` built),
+        runs :func:`~strands_robots.policies.cosmos3.sim_ik.decode_cosmos_chunk_to_targets`
+        (de-normalize with the bundled domain stats -> re-anchored EE deltas ->
+        IK), maps the grasp column onto ``gripper_range`` and records the IK
+        report on ``last_rollout["ik"]``.
+        """
+        from .sim_ik import decode_cosmos_chunk_to_targets
+
+        bridge = self._ensure_ik_bridge()
+        joints = server_obs.get("observation/joint_position")
+        if joints is None:
+            raise ValueError(
+                "ik= needs the arm's current joint state to anchor the end-effector trajectory, but the "
+                "observation carried no 'observation/joint_position'. Set robot_state_keys (7 joints + "
+                "gripper) or map the joint keys in observation_mapping."
+            )
+        q_now = np.asarray(joints, dtype=np.float64).reshape(-1)
+        if q_now.shape[0] != self._ik_arm_dofs:
+            raise ValueError(
+                f"ik= expected {self._ik_arm_dofs} joint values to seed the IK; the observation carried {q_now.shape[0]}."
+            )
+        nq = int(bridge.model.nq)
+        q_init = np.zeros(nq, dtype=np.float64)
+        q_init[: self._ik_arm_dofs] = q_now
+        out = decode_cosmos_chunk_to_targets(raw_chunk, self.embodiment, bridge, q_init)
+        qpos = np.asarray(out["qpos"], dtype=np.float64)
+        if qpos.ndim != 2 or qpos.shape[1] < self._ik_arm_dofs or not np.isfinite(qpos).all():
+            raise ValueError(
+                f"ik= decode returned joint targets of shape {qpos.shape} with non-finite values={not np.isfinite(qpos).all()}; "
+                "refusing to command them."
+            )
+        columns = [qpos[:, : self._ik_arm_dofs]]
+        gripper = out.get("gripper")
+        if self._ik_gripper_range is not None:
+            if gripper is None:
+                raise ValueError(
+                    "ik= expected a grasp column for this gripper embodiment but the decode produced none."
+                )
+            grasp = np.clip(np.asarray(gripper, dtype=np.float64).reshape(-1), 0.0, 1.0)
+            open_v, closed_v = self._ik_gripper_range
+            columns.append((open_v + grasp * (closed_v - open_v))[:, None])
+        joint_chunk = np.concatenate(columns, axis=1).astype(np.float32)
+        if self.last_rollout is not None:
+            self.last_rollout["ik"] = {
+                "qpos": qpos,
+                "gripper": gripper,
+                "poses": out.get("poses"),
+                "tracking_error": out.get("tracking_error"),
+                "joint_targets": joint_chunk,
+            }
+        return joint_chunk
 
     def _default_obs_mapping(self) -> dict[str, str]:
         """Identity-ish default: assume robot obs already uses server keys.
@@ -794,6 +1080,8 @@ class Cosmos3Policy(Policy):
         correct for both backends without duplicating either.
         """
         if self.backend == "diffusers":
+            if self._ik_spec is not None:
+                return list(self.embodiment.action_layouts["joint_pos"])
             return list(self.embodiment.raw_action_layout)
         return list(self.embodiment.action_layouts.get(self.action_space, []))
 
