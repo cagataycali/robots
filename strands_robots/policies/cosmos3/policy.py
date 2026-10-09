@@ -473,7 +473,7 @@ class Cosmos3Policy(Policy):
                 "forward_dynamics / inverse_dynamics."
             )
 
-        backend_knobs = {
+        backend_knobs: dict[str, Any] = {
             "num_inference_steps": num_inference_steps,
             "guidance_scale": guidance_scale,
             "resolution_tier": resolution_tier,
