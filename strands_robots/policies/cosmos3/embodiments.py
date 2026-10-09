@@ -215,15 +215,35 @@ _EMBODIMENT_ALIASES = {
 # finger_joint1. Pass ``action_mapping=ROBOT_ACTION_MAPPINGS["panda"]`` (or just
 # ``robot="panda"`` sugar in create_policy) so per-step dicts use real actuator
 # names and don't silently miss in ``send_action``.
+#
+# Two targets exist for the same arm because the simulator names its ACTUATORS
+# differently from its joints: the registry ``franka`` asset exposes
+# ``actuator1..actuator7`` (position servos on ``joint1..joint7``, ctrl in rad)
+# and ``actuator8`` (the ``split`` finger tendon, ctrlrange 0..255 = 0..0.04 m of
+# finger travel; 255 open, 0 closed), while ``finger_joint1`` is the finger
+# joint itself (0..0.04 m). ``send_action`` resolves either name, but the
+# dataset recorder (``start_recording`` + ``run_policy``) declares its action
+# columns from ``robot_action_keys`` - the actuator names - and refuses a frame
+# whose action lacks any of them. So ``franka``/``panda`` (joint names) drive
+# the arm, and ``franka-sim``/``panda-sim`` (actuator names) drive AND record it.
+_PANDA_JOINT_NAMES = {**{f"joint_{i}": f"joint{i + 1}" for i in range(7)}, "gripper": "finger_joint1"}
+_PANDA_ACTUATOR_NAMES = {**{f"joint_{i}": f"actuator{i + 1}" for i in range(7)}, "gripper": "actuator8"}
 ROBOT_ACTION_MAPPINGS: dict[str, dict[str, str]] = {
-    "panda": {
-        **{f"joint_{i}": f"joint{i + 1}" for i in range(7)},  # joint_0->joint1 ... joint_6->joint7
-        "gripper": "finger_joint1",
-    },
-    "franka": {
-        **{f"joint_{i}": f"joint{i + 1}" for i in range(7)},
-        "gripper": "finger_joint1",
-    },
+    "panda": dict(_PANDA_JOINT_NAMES),  # joint_0->joint1 ... joint_6->joint7, gripper->finger_joint1
+    "franka": dict(_PANDA_JOINT_NAMES),
+    "panda-sim": dict(_PANDA_ACTUATOR_NAMES),  # joint_0->actuator1 ... gripper->actuator8 (recordable)
+    "franka-sim": dict(_PANDA_ACTUATOR_NAMES),
+}
+
+# Open/closed command values of the gripper targets the built-in mappings name,
+# measured on the registry ``franka`` MuJoCo asset (``jnt_range`` of
+# ``finger_joint1`` = [0, 0.04] m; ``actuator8`` ctrlrange [0, 255] with gain
+# 4/255 onto the split tendon). ``Cosmos3Policy(ik=...)`` maps the DROID grasp
+# column (0 open .. 1 closed) onto these when the caller gives no
+# ``gripper_range``; a target not listed here needs an explicit one.
+GRIPPER_COMMAND_RANGES: dict[str, tuple[float, float]] = {
+    "finger_joint1": (0.04, 0.0),
+    "actuator8": (255.0, 0.0),
 }
 
 

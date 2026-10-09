@@ -13,16 +13,27 @@ extras enable:
 and reports the Cartesian tracking error. With ``--render`` it writes a
 side-by-side video (MuJoCo arm | Cosmos predicted world).
 
-This needs a CUDA GPU, the Cosmos 3 weights, native diffusers-from-source
-(ships ``Cosmos3OmniPipeline``), and the sim extras. ``sim-mujoco`` is in the
-line because this script reaches for two distributions the cosmos3 extras do not
-declare: ``robot_descriptions`` for the Panda MJCF, and ``imageio`` +
-``imageio-ffmpeg`` to encode ``--render``. It is the runnable form of the
-headless rollout attached to PR #458.
+This needs a CUDA GPU, the Cosmos 3 weights, a diffusers that ships
+``Cosmos3OmniPipeline`` (0.39 for ``nvidia/Cosmos3-Nano``; ``nvidia/Cosmos3-Edge``
+needs ``diffusers>=0.41``, measured: 0.41.0 loads it with zero unfilled tensors),
+and the sim extras. ``sim-mujoco`` is in the line because this script reaches
+for two distributions the cosmos3 extras do not declare: ``robot_descriptions``
+for the Panda MJCF, and ``imageio`` + ``imageio-ffmpeg`` to encode ``--render``.
+It is the runnable form of the headless rollout attached to PR #458.
 
-    uv pip install "strands-robots[cosmos3-diffusers,cosmos3-sim,sim-mujoco]" \
-        "diffusers @ git+https://github.com/huggingface/diffusers"
+    uv pip install "strands-robots[cosmos3-diffusers,cosmos3-sim,sim-mujoco]" "diffusers>=0.41"
     python examples/vla/cosmos3_diffusers_mujoco_rollout.py --instruction "pick up the red cube" --render out.mp4
+    # Cosmos3-Edge at the RoboLab server's sampler settings (4 steps, guidance 3):
+    MUJOCO_GL=egl python examples/vla/cosmos3_diffusers_mujoco_rollout.py --model nvidia/Cosmos3-Edge --steps 4 --guidance 3
+
+Measured on a Jetson AGX Thor with Edge: 35 steps = ~84 s per 32-step chunk,
+4 steps = ~20 s (the 33-frame world video is decoded on every chunk), peak 11.1 GiB.
+
+For the closed loop inside the simulator, pass the same policy through
+``sim.run_policy(policy_provider="cosmos3", policy_config={"backend": "diffusers",
+"model": "nvidia/Cosmos3-Edge", "ik": True, "robot": "franka", ...})``: ``ik=True``
+runs this script's decode + IK inside the policy so every step is keyed by the
+Panda actuators (see docs/learn/policies/cosmos3.md).
 """
 
 from __future__ import annotations
@@ -39,7 +50,10 @@ def main() -> int:
     ap.add_argument("--model", default="nvidia/Cosmos3-Nano", help="HF repo id / local path")
     ap.add_argument("--instruction", default="pick up the red cube", help="task prompt")
     ap.add_argument("--embodiment", default="droid", help="Cosmos 3 embodiment key")
-    ap.add_argument("--steps", type=int, default=35, help="diffusion sampling steps")
+    ap.add_argument("--steps", type=int, default=35, help="diffusion sampling steps (the RoboLab server uses 4)")
+    ap.add_argument(
+        "--guidance", type=float, default=6.0, help="classifier-free guidance scale (the RoboLab server uses 3)"
+    )
     ap.add_argument("--render", default=None, metavar="MP4", help="write a side-by-side rollout video here")
     args = ap.parse_args()
 
@@ -71,8 +85,9 @@ def main() -> int:
     from strands_robots.policies.cosmos3.policy_diffusers import Cosmos3DiffusersBackend
 
     # 1) Cosmos 3 in-process forward pass -> raw [-1, 1] action chunk + world video.
-    # The sampler count is a backend knob, so --steps is only real through one:
-    # Cosmos3Policy forwards embodiment/model/mode and nothing else.
+    # The backend is built explicitly so the raw chunk stays raw (no ik=) and the
+    # decode below is visible step by step; Cosmos3Policy(num_inference_steps=,
+    # guidance_scale=) would forward the same two knobs.
     policy = Cosmos3Policy(
         embodiment=args.embodiment,
         backend="diffusers",
@@ -81,6 +96,7 @@ def main() -> int:
             model=args.model,
             mode="policy",
             num_inference_steps=args.steps,
+            guidance_scale=args.guidance,
         ),
     )
     policy.set_robot_state_keys([f"joint_{i}" for i in range(7)] + ["gripper"])

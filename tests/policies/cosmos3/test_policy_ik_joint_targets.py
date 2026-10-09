@@ -114,6 +114,8 @@ def _raw_chunk(T: int = 4, grasp: float = 1.0) -> np.ndarray:
 def _policy(ik, chunk=None, **kw) -> tuple[Cosmos3Policy, _FakePipeline]:
     pipe = _FakePipeline(chunk if chunk is not None else _raw_chunk())
     backend = Cosmos3DiffusersBackend(embodiment=_DROID, pipeline=pipe, condition_cls=_fake_condition)
+    if "robot" not in kw and "action_mapping" not in kw:
+        kw["robot"] = "franka"  # gripper -> finger_joint1, whose units the policy knows
     policy = Cosmos3Policy(
         embodiment="droid",
         backend="diffusers",
@@ -146,9 +148,9 @@ def test_ik_seeds_the_solve_from_the_observed_joints_and_moves_them():
     # Re-anchored: each subsequent solve warm-starts from the previous solution.
     np.testing.assert_allclose(bridge.seeds[1][:7], _ARM_Q + 0.01)
     # Joint deltas against the observed pose are non-zero and finite.
-    first = np.array([steps[0][f"joint_{i}"] for i in range(7)])
+    first = np.array([steps[0][f"joint{i}"] for i in range(1, 8)])
     np.testing.assert_allclose(first, _ARM_Q + 0.01, atol=1e-6)
-    last = np.array([steps[-1][f"joint_{i}"] for i in range(7)])
+    last = np.array([steps[-1][f"joint{i}"] for i in range(1, 8)])
     np.testing.assert_allclose(last, _ARM_Q + 0.04, atol=1e-6)
 
 
@@ -156,7 +158,7 @@ def test_ik_maps_the_grasp_onto_the_gripper_range():
     """DROID grasp 1 (closed) -> Panda finger 0.0; grasp 0 (open) -> 0.04; the raw chunk stays on last_rollout."""
     closed, _ = _policy(_FakeBridge(), chunk=_raw_chunk(grasp=1.0))
     steps = closed.get_actions_sync(_obs(), "go")
-    assert steps[0]["gripper"] == pytest.approx(0.0)
+    assert steps[0]["finger_joint1"] == pytest.approx(0.0)
     assert closed.last_rollout is not None
     assert closed.last_rollout["action"].shape == (4, 10)  # raw chunk, untouched
     ik = closed.last_rollout["ik"]
@@ -166,12 +168,34 @@ def test_ik_maps_the_grasp_onto_the_gripper_range():
 
     opened, _ = _policy(_FakeBridge(), chunk=_raw_chunk(grasp=-1.0))
     steps = opened.get_actions_sync(_obs(), "go")
-    assert steps[0]["gripper"] == pytest.approx(0.04)
+    assert steps[0]["finger_joint1"] == pytest.approx(0.04)
 
-    custom, _ = _policy({"gripper_range": [255.0, 0.0]}, chunk=_raw_chunk(grasp=1.0))
+    # An explicit gripper_range wins over the target's known units.
+    custom, _ = _policy({"gripper_range": [1.0, 0.0]}, chunk=_raw_chunk(grasp=-1.0))
     custom._ik_bridge = _FakeBridge()
     steps = custom.get_actions_sync(_obs(), "go")
-    assert steps[0]["gripper"] == pytest.approx(0.0)
+    assert steps[0]["finger_joint1"] == pytest.approx(1.0)
+
+    # No mapping at all: the bare 'gripper' column has no actuator and therefore no units.
+    with pytest.raises(ValueError, match="known targets"):
+        _policy(_FakeBridge(), action_mapping={})
+
+
+def test_ik_gripper_units_follow_the_mapped_actuator():
+    """robot="franka-sim" sends gripper to actuator8 (0..255 tendon command): grasp 0 (open) -> 255, 1 (closed) -> 0."""
+    policy, _ = _policy(_FakeBridge(), chunk=_raw_chunk(grasp=-1.0), robot="franka-sim")
+    steps = policy.get_actions_sync(_obs(), "go")
+    assert set(steps[0]) == {f"actuator{i}" for i in range(1, 9)}
+    assert steps[0]["actuator8"] == pytest.approx(255.0)
+    policy, _ = _policy(_FakeBridge(), chunk=_raw_chunk(grasp=1.0), robot="franka-sim")
+    assert policy.get_actions_sync(_obs(), "go")[0]["actuator8"] == pytest.approx(0.0)
+    # An explicit mapping onto a gripper target with unknown units must spell the range out.
+    mapping = {**{f"joint_{i}": f"j{i}" for i in range(7)}, "gripper": "my_gripper"}
+    with pytest.raises(ValueError, match="known targets"):
+        _policy(_FakeBridge(), action_mapping=mapping)
+    policy, _ = _policy({"gripper_range": [1.0, 0.0]}, action_mapping=mapping)
+    policy._ik_bridge = _FakeBridge()
+    assert policy.get_actions_sync(_obs(), "go")[0]["my_gripper"] == pytest.approx(0.0)
 
 
 def test_ik_requires_the_joint_state_to_anchor():

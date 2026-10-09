@@ -71,6 +71,7 @@ from strands_robots.utils import dial_host_error, name_list_error, tcp_port_erro
 
 from .client import Cosmos3WebsocketClient
 from .embodiments import (
+    GRIPPER_COMMAND_RANGES,
     Cosmos3Embodiment,
     get_embodiment,
     get_robot_action_mapping,
@@ -206,9 +207,16 @@ class Cosmos3Policy(Policy):
             each step; its ``tracking_error`` is surfaced on
             ``last_rollout["ik"]`` and ``last_rollout["action"]`` keeps the raw
             chunk. ``gripper_range`` maps the de-normalized DROID grasp
-            (``0`` open .. ``1`` closed) linearly onto the actuator's own open
-            and closed values (Panda ``finger_joint1``: ``0.04`` m open, ``0.0``
-            closed), the one unit conversion the layout needs. Only embodiments
+            (``0`` open .. ``1`` closed) linearly onto the gripper target's own
+            open and closed command values - the one unit conversion the layout
+            needs. Its default is read off the target the ``action_mapping`` /
+            ``robot`` sugar sends ``gripper`` to
+            (:data:`~strands_robots.policies.cosmos3.embodiments.GRIPPER_COMMAND_RANGES`:
+            ``finger_joint1`` 0.04 m open / 0.0 closed, ``actuator8`` 255 open /
+            0 closed); any other target needs it spelled out. In the simulator
+            use ``robot="franka-sim"`` (actuator names): the dataset recorder
+            declares its action columns from the robot's actuator keys and
+            refuses a frame keyed by joint names. Only embodiments
             that declare a ``joint_pos`` layout accept ``ik`` (``droid`` today);
             ``ik`` under ``backend="service"`` is refused (the server already
             serves joints).
@@ -388,6 +396,12 @@ class Cosmos3Policy(Policy):
         self._ik_arm_dofs = 7
         self._ik_gripper_range: tuple[float, float] | None = None
         if ik is not None and ik is not False:
+            if backend != "diffusers":
+                raise ValueError(
+                    "ik= decodes the in-process diffusers backend's raw unified action into joint "
+                    "targets and is only available with backend='diffusers'. The service backend's "
+                    "RoboLab server already serves joint_pos."
+                )
             if mode != "policy":
                 raise ValueError(
                     f"ik= needs an action chunk to decode, which mode={mode!r} does not produce "
@@ -730,7 +744,6 @@ class Cosmos3Policy(Policy):
             "ee_frame_name": "hand",
             "ee_frame_type": "body",
             "arm_dofs": 7,
-            "gripper_range": (0.04, 0.0),
         },
     }
     _IK_SPEC_KEYS = frozenset({"mjcf", "ee_frame_name", "ee_frame_type", "arm_dofs", "gripper_range"})
@@ -773,9 +786,17 @@ class Cosmos3Policy(Policy):
         gripper_range = spec.get("gripper_range")
         if has_gripper:
             if gripper_range is None:
+                # The gripper's units are those of the actuator the mapping sends
+                # it to (finger_joint1 is metres, actuator8 is a 0..255 tendon
+                # command), so the default is looked up by that exact target name.
+                target = self._action_mapping.get("gripper", "gripper")
+                gripper_range = GRIPPER_COMMAND_RANGES.get(target)
+            if gripper_range is None:
                 raise ValueError(
-                    "ik= needs gripper_range=[open_value, closed_value] for this arm's gripper actuator "
-                    "(no default is known for it); the DROID grasp column is 0 open .. 1 closed."
+                    "ik= needs gripper_range=[open_value, closed_value] for the gripper target "
+                    f"{self._action_mapping.get('gripper', 'gripper')!r}; known targets: "
+                    f"{sorted(GRIPPER_COMMAND_RANGES)} (robot='franka' -> finger_joint1, "
+                    "robot='franka-sim' -> actuator8). The DROID grasp column is 0 open .. 1 closed."
                 )
             vals = [float(v) for v in gripper_range]
             if len(vals) != 2 or not all(np.isfinite(vals)):
