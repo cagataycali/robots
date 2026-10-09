@@ -243,11 +243,16 @@ def _strands_environment_is_left_as_found() -> Iterator[None]:
     The fixture runs around every test, so the common case - nothing changed -
     is one C-level copy and compare of ``os.environ``'s encoded mapping (about
     5 us), not a decode of every variable twice (about 250 us). Only a test that
-    changed the environment pays for the decode.
+    changed the environment pays for the decode. pytest itself rewrites
+    ``PYTEST_CURRENT_TEST`` for every phase, so that one variable is compared at
+    its teardown value: left in, it made every test pay the decode.
     """
     encoded = os.environ._data  # type: ignore[attr-defined]  # the encoded mapping os.environ wraps
     snapshot = encoded.copy()
     yield
+    phase = os.environ.encodekey("PYTEST_CURRENT_TEST")
+    if phase in encoded:
+        snapshot[phase] = encoded[phase]
     if encoded == snapshot:
         return
     decode = os.environ.decodekey

@@ -4,14 +4,19 @@
 started a bridge left ``STRANDS_MESH_CAMERA_HZ`` behind for the rest of its
 xdist worker and the mesh roster test read a camera loop it never asked for
 (#4200). The session fixture in ``tests/conftest.py`` undoes such writes; this
-proves it with a nested session where the order is fixed.
+proves it with a nested session where the order is fixed, and that a test which
+wrote nothing is not charged for the undo.
 """
 
 from __future__ import annotations
 
+import inspect
 import os
+from typing import Any
 
 import pytest
+
+from tests.conftest import _strands_environment_is_left_as_found
 
 pytest_plugins = ("pytester",)
 
@@ -58,3 +63,25 @@ def test_the_write_from_the_previous_test_is_not_visible_when_order_holds() -> N
     # first, which is also a pass), the probe is gone. The nested session above
     # is the order-independent proof.
     assert "STRANDS_TEST_LEAK_PROBE" not in os.environ
+
+
+def test_a_test_that_wrote_nothing_pays_only_the_compare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pytest rewriting ``PYTEST_CURRENT_TEST`` between phases is not a write to undo.
+
+    The fixture runs around every test in the suite, so its no-change path is the
+    one that costs: a decode of every variable, twice, is 0.1-0.2 ms a test.
+    """
+    decoded: list[bytes] = []
+    decode = os.environ.decodekey
+
+    def recording_decode(key: Any) -> str:
+        decoded.append(key)
+        return decode(key)
+
+    around_a_test = inspect.unwrap(_strands_environment_is_left_as_found)()
+    next(around_a_test)
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_x.py::test_x (teardown)")
+    monkeypatch.setattr(os.environ, "decodekey", recording_decode)
+    next(around_a_test, None)
+
+    assert decoded == []
