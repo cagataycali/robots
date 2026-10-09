@@ -133,4 +133,10 @@ def test_edge_drives_the_franka_closed_loop_through_run_policy(policy):
     qs = np.array([s["q"] for s in seen])
     assert not np.isnan(qs).any()
     assert not any(s["unresolved"] for s in seen), "an action key no actuator consumed"
-    assert np.abs(qs - q_start).max() > 1e-3, "the arm did not move"
+    # The step events carry the observation the CHUNK was computed from (one
+    # inference serves all 24 steps, ``observation_is_chunk_reused``), so the
+    # arm's motion is read back from the simulator, not from the events.
+    # Measured on Thor: 0.38-0.67 rad of joint excursion per 24-step episode.
+    q_end = np.array([sim.get_observation("arm")[f"joint{i}"] for i in range(1, 8)])
+    assert np.isfinite(q_end).all()
+    assert np.abs(q_end - q_start).max() > 1e-2, ("the arm did not move", q_start, q_end)
