@@ -109,7 +109,7 @@ _DEFAULT_DT = 0.002
 # Values no integrator can honor. ``False`` is here because it is a boolean, not
 # because it is zero: the coincidence that ``float(False) == 0.0`` is what made
 # the missing bool arm invisible.
-UNUSABLE = [
+UNUSABLE: list[Any] = [
     True,
     False,
     np.True_,
@@ -127,9 +127,9 @@ UNUSABLE = [
 # Values the domain accepts, so a refusal here would be a regression rather than
 # a fix. ``"0.002"`` and the NumPy scalar are accepted because the shared domain
 # coerces anything ``float()`` accepts - see its docstring.
-USABLE = [0.002, 0.5, np.float64(0.002), "0.002"]
+USABLE: list[Any] = [0.002, 0.5, np.float64(0.002), "0.002"]
 
-BOOLEANS = [True, np.True_, np.bool_(True)]
+BOOLEANS: list[Any] = [True, np.True_, np.bool_(True)]
 
 # ``None`` is the documented "use the engine default" sentinel for the
 # ``create_world(timestep=...)`` ARGUMENT, so it is not unusable there - the
@@ -137,7 +137,7 @@ BOOLEANS = [True, np.True_, np.bool_(True)]
 # stays unusable as the engine DEFAULT (there is nothing further to fall back
 # to), and as a setter argument (the setter has no sentinel); both asymmetries
 # are pinned in TestTheEngineDefaultSentinelIsArgumentOnly.
-UNUSABLE_ARGUMENTS = [value for value in UNUSABLE if value is not None]
+UNUSABLE_ARGUMENTS: list[Any] = [value for value in UNUSABLE if value is not None]
 
 
 def _newton_engine() -> NewtonSimEngine:
@@ -183,27 +183,26 @@ def _set(engine: NewtonSimEngine, value: Any) -> dict[str, Any]:
 
 
 class TestTheNewtonSetterRefusesWhatNoIntegratorCanHonor:
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_an_unusable_timestep_is_refused(self, value: Any) -> None:
-        engine = _newton_engine()
-        result = _set(engine, value)
-        assert result["status"] == "error", f"{value!r} was accepted"
-        assert "set_timestep" in _text(result)
+    def test_an_unusable_timestep_is_refused(self) -> None:
+        for value in UNUSABLE:
+            engine = _newton_engine()
+            result = _set(engine, value)
+            assert result["status"] == "error", f"{value!r} was accepted"
+            assert "set_timestep" in _text(result)
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_a_refused_timestep_is_not_installed(self, value: Any) -> None:
+    def test_a_refused_timestep_is_not_installed(self) -> None:
         """The world keeps its dt, so a refused call cannot half-apply.
 
         The write is ``world.timestep = timestep`` under the lock, and Newton
         reads that live on every step, so a value that reached it would be in
         force for the rest of the session.
         """
-        engine = _newton_engine()
-        _set(engine, value)
-        assert _stored_timestep(engine) == pytest.approx(_DEFAULT_DT)
+        for value in UNUSABLE:
+            engine = _newton_engine()
+            _set(engine, value)
+            assert _stored_timestep(engine) == pytest.approx(_DEFAULT_DT)
 
-    @pytest.mark.parametrize("value", BOOLEANS, ids=repr)
-    def test_a_boolean_is_named_as_a_boolean(self, value: Any) -> None:
+    def test_a_boolean_is_named_as_a_boolean(self) -> None:
         """``True`` is refused for being a boolean, not for being out of range.
 
         ``float(True)`` is ``1.0``, which is finite and positive, so a domain
@@ -211,16 +210,17 @@ class TestTheNewtonSetterRefusesWhatNoIntegratorCanHonor:
         mistake was made or the caller reads "must be positive" against a value
         that is.
         """
-        result = _set(_newton_engine(), value)
-        assert result["status"] == "error"
-        assert "bool" in _text(result).lower()
+        for value in BOOLEANS:
+            result = _set(_newton_engine(), value)
+            assert result["status"] == "error"
+            assert "bool" in _text(result).lower()
 
-    @pytest.mark.parametrize("value", USABLE, ids=repr)
-    def test_a_usable_timestep_is_still_accepted(self, value: Any) -> None:
-        engine = _newton_engine()
-        result = _set(engine, value)
-        assert result["status"] == "success", _text(result)
-        assert _stored_timestep(engine) == pytest.approx(float(value))
+    def test_a_usable_timestep_is_still_accepted(self) -> None:
+        for value in USABLE:
+            engine = _newton_engine()
+            result = _set(engine, value)
+            assert result["status"] == "success", _text(result)
+            assert _stored_timestep(engine) == pytest.approx(float(value))
 
     def test_a_large_but_usable_timestep_still_warns_rather_than_refusing(self) -> None:
         """The warn-not-reject arm above 0.1 s is unchanged by the new domain."""
@@ -239,13 +239,13 @@ class TestTheSetterAndTheWorldBuilderAgree:
     ``set_timestep(True)`` installed a 1-second step.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE, ids=repr)
-    def test_the_setter_matches_the_creation_domain(self, value: Any) -> None:
-        creation_refuses = SimEngine._validate_timestep(value, "create_world") is not None
-        setter_refuses = _set(_newton_engine(), value)["status"] == "error"
-        assert setter_refuses == creation_refuses, (
-            f"{value!r}: create_world refuses={creation_refuses}, set_timestep refuses={setter_refuses}"
-        )
+    def test_the_setter_matches_the_creation_domain(self) -> None:
+        for value in UNUSABLE + USABLE:
+            creation_refuses = SimEngine._validate_timestep(value, "create_world") is not None
+            setter_refuses = _set(_newton_engine(), value)["status"] == "error"
+            assert setter_refuses == creation_refuses, (
+                f"{value!r}: create_world refuses={creation_refuses}, set_timestep refuses={setter_refuses}"
+            )
 
 
 class TestBothBackendsSetTimestepAgree:
@@ -256,23 +256,23 @@ class TestBothBackendsSetTimestepAgree:
     disagreed on three values.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE, ids=repr)
-    def test_the_two_backends_return_the_same_verdict(self, value: Any) -> None:
-        pytest.importorskip("mujoco")
-        from strands_robots import Simulation
+    def test_the_two_backends_return_the_same_verdict(self) -> None:
+        for value in UNUSABLE + USABLE:
+            pytest.importorskip("mujoco")
+            from strands_robots import Simulation
 
-        newton_refuses = _set(_newton_engine(), value)["status"] == "error"
+            newton_refuses = _set(_newton_engine(), value)["status"] == "error"
 
-        sim = Simulation(backend="mujoco", mesh=False)
-        try:
-            sim.create_world()
-            mujoco_refuses = sim.set_timestep(value)["status"] == "error"
-        finally:
-            sim.cleanup()
+            sim = Simulation(backend="mujoco", mesh=False)
+            try:
+                sim.create_world()
+                mujoco_refuses = sim.set_timestep(value)["status"] == "error"
+            finally:
+                sim.cleanup()
 
-        assert newton_refuses == mujoco_refuses, (
-            f"{value!r}: newton refuses={newton_refuses}, mujoco refuses={mujoco_refuses}"
-        )
+            assert newton_refuses == mujoco_refuses, (
+                f"{value!r}: newton refuses={newton_refuses}, mujoco refuses={mujoco_refuses}"
+            )
 
 
 def _backend_dir() -> pathlib.Path:
@@ -417,42 +417,42 @@ class TestEveryWorldBuilderRefusesWhatNoIntegratorCanHonor:
     were added later were pinned structurally and never behaviourally.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE_ARGUMENTS, ids=repr)
-    def test_newton_refuses_the_argument(self, value: Any) -> None:
-        result = _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)
-        assert result["status"] == "error"
-        assert "timestep" in _text(result)
+    def test_newton_refuses_the_argument(self) -> None:
+        for value in UNUSABLE_ARGUMENTS:
+            result = _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)
+            assert result["status"] == "error"
+            assert "timestep" in _text(result)
 
-    @pytest.mark.parametrize("value", UNUSABLE_ARGUMENTS, ids=repr)
-    def test_isaac_refuses_the_argument(self, value: Any) -> None:
-        result = _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)
-        assert result["status"] == "error"
-        assert "timestep" in _text(result)
+    def test_isaac_refuses_the_argument(self) -> None:
+        for value in UNUSABLE_ARGUMENTS:
+            result = _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)
+            assert result["status"] == "error"
+            assert "timestep" in _text(result)
 
-    @pytest.mark.parametrize("value", UNUSABLE_ARGUMENTS, ids=repr)
-    def test_the_three_backends_return_the_same_verdict(self, value: Any) -> None:
+    def test_the_three_backends_return_the_same_verdict(self) -> None:
         """A dt one builder refuses cannot be accepted by another.
 
         The shared domain exists so the accepted set is one set; this compares
         the two skeleton-backed builders against the MuJoCo builder that has
         always been pinned, rather than against the staticmethod they all call.
         """
-        pytest.importorskip("mujoco")
-        from strands_robots import Simulation
+        for value in UNUSABLE_ARGUMENTS:
+            pytest.importorskip("mujoco")
+            from strands_robots import Simulation
 
-        newton_refuses = _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)["status"] == "error"
-        isaac_refuses = _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)["status"] == "error"
+            newton_refuses = _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)["status"] == "error"
+            isaac_refuses = _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)["status"] == "error"
 
-        sim = Simulation(backend="mujoco", mesh=False)
-        try:
-            mujoco_refuses = _create_world(sim, timestep=value)["status"] == "error"
-        finally:
-            sim.destroy()
+            sim = Simulation(backend="mujoco", mesh=False)
+            try:
+                mujoco_refuses = _create_world(sim, timestep=value)["status"] == "error"
+            finally:
+                sim.destroy()
 
-        assert newton_refuses == mujoco_refuses == isaac_refuses, (
-            f"{value!r}: mujoco refuses={mujoco_refuses}, "
-            f"newton refuses={newton_refuses}, isaac refuses={isaac_refuses}"
-        )
+            assert newton_refuses == mujoco_refuses == isaac_refuses, (
+                f"{value!r}: mujoco refuses={mujoco_refuses}, "
+                f"newton refuses={newton_refuses}, isaac refuses={isaac_refuses}"
+            )
 
 
 class TestAnUnusableEngineDefaultIsNamedUnderItsOwnKnob:
@@ -466,19 +466,19 @@ class TestAnUnusableEngineDefaultIsNamedUnderItsOwnKnob:
     not an incidental detail. Only the MuJoCo half was pinned.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_newton_names_default_timestep(self, value: Any) -> None:
-        result = _create_world(_newton_world_builder(value))
-        assert result["status"] == "error"
-        assert "default_timestep" in _text(result)
+    def test_newton_names_default_timestep(self) -> None:
+        for value in UNUSABLE:
+            result = _create_world(_newton_world_builder(value))
+            assert result["status"] == "error"
+            assert "default_timestep" in _text(result)
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_isaac_names_physics_dt(self, value: Any) -> None:
-        result = _create_world(_isaac_engine(value))
-        assert result["status"] == "error"
-        assert "physics_dt" in _text(result)
-        # The knob the caller did not touch must not be blamed instead.
-        assert "default_timestep" not in _text(result)
+    def test_isaac_names_physics_dt(self) -> None:
+        for value in UNUSABLE:
+            result = _create_world(_isaac_engine(value))
+            assert result["status"] == "error"
+            assert "physics_dt" in _text(result)
+            # The knob the caller did not touch must not be blamed instead.
+            assert "default_timestep" not in _text(result)
 
 
 class TestTheConfigGuardCannotSeeEveryUnusableDefault:
@@ -497,9 +497,8 @@ class TestTheConfigGuardCannotSeeEveryUnusableDefault:
     Newton cell keeps the last surface the effective-dt check protects.
     """
 
-    @pytest.mark.parametrize("value", [float("nan"), float("inf"), True, 10**400], ids=repr)
     @pytest.mark.parametrize("field", ["physics_dt", "rendering_dt"])
-    def test_isaac_config_refuses_an_unusable_default_at_construction(self, field: str, value: Any) -> None:
+    def test_isaac_config_refuses_an_unusable_default_at_construction(self, field: str) -> None:
         """The gap is closed: the config cannot hold a dt no integrator honors.
 
         ``IsaacConfig`` grades ``physics_dt`` and ``rendering_dt`` on the shared
@@ -511,8 +510,10 @@ class TestTheConfigGuardCannotSeeEveryUnusableDefault:
         """
         from strands_robots.simulation.isaac.config import IsaacConfig
 
-        with pytest.raises(ValueError, match=field):
-            IsaacConfig(**{field: value})
+        unusable: list[Any] = [float("nan"), float("inf"), True, 10**400]
+        for value in unusable:
+            with pytest.raises(ValueError, match=field):
+                IsaacConfig(**{field: value})
 
     def test_the_newton_constructor_stores_the_default_unvalidated(self) -> None:
         """Source fact behind the fixture: ``__init__`` only assigns it."""
@@ -531,10 +532,10 @@ class TestARefusedWorldBuilderCostsNoSolverWork:
     than after the world is under construction.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE_ARGUMENTS, ids=repr)
-    def test_a_refused_value_never_reaches_the_solver(self, value: Any) -> None:
-        assert _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)["status"] == "error"
-        assert _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)["status"] == "error"
+    def test_a_refused_value_never_reaches_the_solver(self) -> None:
+        for value in UNUSABLE_ARGUMENTS:
+            assert _create_world(_newton_world_builder(_DEFAULT_DT), timestep=value)["status"] == "error"
+            assert _create_world(_isaac_engine(_DEFAULT_DT), timestep=value)["status"] == "error"
 
     def test_an_accepted_value_proceeds_past_the_guard(self) -> None:
         with pytest.raises(AttributeError):
@@ -663,13 +664,12 @@ class TestTheIsaacLegacyDefaultCannotOutrunTheWorldBuilder:
     #: the asymmetry it is in :meth:`test_an_unstated_default_leaves_the_field_alone`.
     UNUSABLE_DEFAULTS = [value for value in UNUSABLE if value is not None]
 
-    @pytest.mark.parametrize("value", UNUSABLE_DEFAULTS, ids=repr)
-    def test_an_unusable_default_is_refused_under_the_spelling_used(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="default_timestep"):
-            _legacy_isaac(value)
+    def test_an_unusable_default_is_refused_under_the_spelling_used(self) -> None:
+        for value in self.UNUSABLE_DEFAULTS:
+            with pytest.raises(ValueError, match="default_timestep"):
+                _legacy_isaac(value)
 
-    @pytest.mark.parametrize("value", BOOLEANS, ids=repr)
-    def test_a_boolean_default_cannot_reach_a_world_the_builder_accepts(self, value: Any) -> None:
+    def test_a_boolean_default_cannot_reach_a_world_the_builder_accepts(self) -> None:
         """The end-to-end claim: the builder's boolean arm is not outrun.
 
         Either the shortcut refuses the value, or the builder does. Before the
@@ -677,33 +677,34 @@ class TestTheIsaacLegacyDefaultCannotOutrunTheWorldBuilder:
         ``1.0`` that ``float(True)`` produced and the builder had nothing left to
         recognise.
         """
-        try:
-            sim = _legacy_isaac(value)
-        except ValueError:
-            return
-        assert _builder_verdict(_engine_holding(sim._config)) == "refused", (
-            f"default_timestep={value!r} was stored as "
-            f"physics_dt={sim._config.physics_dt!r} and the world builder accepted it"
-        )
+        for value in BOOLEANS:
+            try:
+                sim = _legacy_isaac(value)
+            except ValueError:
+                continue
+            assert _builder_verdict(_engine_holding(sim._config)) == "refused", (
+                f"default_timestep={value!r} was stored as "
+                f"physics_dt={sim._config.physics_dt!r} and the world builder accepted it"
+            )
 
-    @pytest.mark.parametrize("value", BOOLEANS, ids=repr)
-    def test_both_spellings_of_one_default_reach_one_verdict(self, value: Any) -> None:
+    def test_both_spellings_of_one_default_reach_one_verdict(self) -> None:
         """The canonical field and the shortcut are two names for one dt."""
-        canonical = _builder_verdict(_isaac_engine(value))
-        try:
-            _legacy_isaac(value)
-        except ValueError:
-            legacy = "refused"
-        else:
-            legacy = "accepted"
-        assert canonical == legacy == "refused"
+        for value in BOOLEANS:
+            canonical = _builder_verdict(_isaac_engine(value))
+            try:
+                _legacy_isaac(value)
+            except ValueError:
+                legacy = "refused"
+            else:
+                legacy = "accepted"
+            assert canonical == legacy == "refused"
 
-    @pytest.mark.parametrize("value", USABLE, ids=repr)
-    def test_a_usable_default_is_still_installed(self, value: Any) -> None:
+    def test_a_usable_default_is_still_installed(self) -> None:
         """The control: grading before converting must refuse nothing that worked."""
-        sim = _legacy_isaac(value)
-        assert float(sim._config.physics_dt) == pytest.approx(float(value))
-        assert _builder_verdict(_engine_holding(sim._config)) == "accepted"
+        for value in USABLE:
+            sim = _legacy_isaac(value)
+            assert float(sim._config.physics_dt) == pytest.approx(float(value))
+            assert _builder_verdict(_engine_holding(sim._config)) == "accepted"
 
     def test_an_unstated_default_leaves_the_field_alone(self) -> None:
         """``None`` is this shortcut's "not supplied", so the field keeps its default."""
