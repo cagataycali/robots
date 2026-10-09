@@ -418,37 +418,36 @@ class TestTheGuardJudgesExactlyThePairsBothDomainsAccept:
     rate disagreement for what is really one parameter's own error.
     """
 
-    @pytest.mark.parametrize("rate", RATE_SPELLINGS, ids=repr)
-    @pytest.mark.parametrize("fps", RATE_SPELLINGS, ids=repr)
-    def test_the_verdict_follows_the_two_domains(self, fps: Any, rate: Any) -> None:
-        judged = requested_rate_mismatch_reason("run_policy", fps, rate) is not None
-        both_usable = (
-            dataset_recording_option_error("start_recording", fps) is None
-            and positive_finite_number_error(rate, "control_frequency", "run_policy") is None
-        )
-        if not both_usable:
-            assert not judged, "a pair one of whose halves is its own parameter error was read as a rate disagreement"
-            return
-        if float(fps) == float(rate):
-            assert not judged
-        else:
-            assert judged, "a pair both domains accept was passed through unjudged"
+    def test_the_verdict_follows_the_two_domains(self) -> None:
+        """Every pair of spellings, judged in one cell; the grid must reach all three outcomes.
 
-    def test_the_grid_reaches_all_three_outcomes(self) -> None:
-        """Non-vacuity: a grid that never lands in a bucket asserts nothing there."""
+        One loop rather than 225 parametrized cells: the verdict is a pure
+        function of the pair, and the failure message names the pair. The
+        outcome set is the non-vacuity check - a grid that never lands in a
+        bucket asserts nothing there.
+        """
         outcomes = set()
         for fps in RATE_SPELLINGS:
             for rate in RATE_SPELLINGS:
-                usable = (
+                judged = requested_rate_mismatch_reason("run_policy", fps, rate) is not None
+                both_usable = (
                     dataset_recording_option_error("start_recording", fps) is None
                     and positive_finite_number_error(rate, "control_frequency", "run_policy") is None
                 )
-                if not usable:
+                if not both_usable:
                     outcomes.add("one half unusable")
+                    assert not judged, (
+                        f"(fps={fps!r}, rate={rate!r}): a pair one of whose halves is its own parameter "
+                        "error was read as a rate disagreement"
+                    )
                 elif float(fps) == float(rate):
                     outcomes.add("agreeing")
+                    assert not judged, f"(fps={fps!r}, rate={rate!r}): an agreeing pair was refused"
                 else:
                     outcomes.add("disagreeing")
+                    assert judged, (
+                        f"(fps={fps!r}, rate={rate!r}): a pair both domains accept was passed through unjudged"
+                    )
         assert outcomes == {"one half unusable", "agreeing", "disagreeing"}
 
 
