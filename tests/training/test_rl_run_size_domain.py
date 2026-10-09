@@ -115,31 +115,22 @@ class TestEveryRlBackendRefusesAnUnusableRunSize:
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, provider: str, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field), f"{provider} accepted {field}={value!r}"
+    def test_the_problem_names_the_field_and_the_domain(self, provider: str, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            problems = _field_problems(provider, spec, field)
+            assert problems == [positive_count_error(value, field, provider)], f"{provider} {field}={value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_and_the_domain(
-        self, provider: str, spec: RLTrainSpec, field: str, value: Any
-    ) -> None:
-        setattr(spec, field, value)
-        (problem,) = _field_problems(provider, spec, field)
-        assert problem == positive_count_error(value, field, provider)
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_a_non_count_never_reaches_a_run(self, provider: str, spec: RLTrainSpec, field: str, value: Any) -> None:
+    def test_a_non_count_never_reaches_a_run(self, provider: str, spec: RLTrainSpec, field: str) -> None:
         """The refusal precedes ``setup``, so nothing is built before it."""
-        setattr(spec, field, value)
-        result = create_trainer(provider).train(spec)
-        assert result.status == "error"
-        assert result.checkpoint_dir in (None, "")
-        assert f"{field} must be a positive integer" in result.message
+        for value in NOT_A_COUNT:
+            setattr(spec, field, value)
+            result = create_trainer(provider).train(spec)
+            assert result.status == "error", f"{value!r}"
+            assert result.checkpoint_dir in (None, ""), f"{value!r}"
+            assert f"{field} must be a positive integer" in result.message, f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
@@ -147,10 +138,10 @@ class TestTheUsableDomainIsUntouched:
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_positive_integer_is_accepted(self, provider: str, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field) == []
+    def test_a_positive_integer_is_accepted(self, provider: str, spec: RLTrainSpec, field: str) -> None:
+        for value in USABLE:
+            setattr(spec, field, value)
+            assert _field_problems(provider, spec, field) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
@@ -159,14 +150,14 @@ class TestTheUsableDomainIsUntouched:
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", REFUSED_BY_THE_SHARED_COUNT_RULE)
     def test_a_numpy_integer_is_refused_although_range_would_accept_it(
-        self, provider: str, spec: RLTrainSpec, field: str, value: Any
+        self, provider: str, spec: RLTrainSpec, field: str
     ) -> None:
         """The documented cost of the strict-``int`` rule, pinned not implied."""
-        assert len(range(value)) == int(value)
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field)
+        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
+            assert len(range(value)) == int(value), f"{value!r}"
+            setattr(spec, field, value)
+            assert _field_problems(provider, spec, field), f"{value!r}"
 
 
 class TestASupervisedBackendStaysQuiet:
@@ -174,10 +165,10 @@ class TestASupervisedBackendStaysQuiet:
 
     @pytest.mark.parametrize("provider", SUPERVISED_BACKENDS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field) == []
+    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            assert _field_problems(provider, spec, field) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", SUPERVISED_BACKENDS)
     def test_but_it_still_refuses_the_run_size_it_does_read(self, provider: str, spec: RLTrainSpec) -> None:
@@ -190,11 +181,11 @@ class TestTheDomainIsTheSharedCountRule:
     """The gate contributes no rule of its own beyond reading the two fields."""
 
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE])
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        shared = positive_count_error(value, field, "ppo")
-        assert (rl_run_size_problems(spec, context="ppo") == []) is (shared is None)
+    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str) -> None:
+        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
+            setattr(spec, field, value)
+            shared = positive_count_error(value, field, "ppo")
+            assert (rl_run_size_problems(spec, context="ppo") == []) is (shared is None), f"{value!r}"
 
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
     def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec, field: str) -> None:
@@ -243,10 +234,10 @@ class TestTheLoopBoundIsDerivedThroughAClamp:
         assert "num_iters = max(1, spec.total_timesteps // steps_per_iter)" in source
         assert "for it in range(num_iters):" in source
 
-    @pytest.mark.parametrize("value", SILENTLY_ONE_ITERATION)
-    def test_the_clamp_reads_a_non_count_as_a_single_iteration(self, value: Any) -> None:
+    def test_the_clamp_reads_a_non_count_as_a_single_iteration(self) -> None:
         """The silent half: no exception, one iteration, a successful report."""
-        assert len(range(max(1, value // 4))) == 1
+        for value in SILENTLY_ONE_ITERATION:
+            assert len(range(max(1, value // 4))) == 1, f"{value!r}"
 
     def test_a_fraction_above_one_iteration_raises_out_of_range_instead(self) -> None:
         """The late half: a float bound, raised only once the loop is reached."""
@@ -259,11 +250,12 @@ class TestTheLoopBoundIsDerivedThroughAClamp:
         assert np.isnan(float("inf") // 4)
         assert max(1, float("inf") // 4) == 1
 
-    @pytest.mark.parametrize("value", ["16", None])
-    def test_a_non_numeric_budget_raises_out_of_the_comparison_itself(self, value: Any) -> None:
+    def test_a_non_numeric_budget_raises_out_of_the_comparison_itself(self) -> None:
         """Why a local ``<= 0`` cannot even report: it raises before appending."""
-        with pytest.raises(TypeError, match="not supported between instances"):
-            _ = value <= 0
+        non_numeric: list[Any] = ["16", None]
+        for value in non_numeric:
+            with pytest.raises(TypeError, match="not supported between instances"):
+                _ = value <= 0
 
 
 class TestNumEnvsIsNotInTheSharedDomain:
@@ -297,15 +289,15 @@ class TestNumEnvsIsNotInTheSharedDomain:
         assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p]
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_the_shared_half_reaches_it_on_both_backends(self, provider: str, value: Any, spec: RLTrainSpec) -> None:
+    def test_the_shared_half_reaches_it_on_both_backends(self, provider: str, spec: RLTrainSpec) -> None:
         """The half that IS shared: a non-count is refused wherever it is read.
 
         The per-backend line is about which counts are usable. It is not about
         whether the value is a count, so no backend gets to leave that open.
         """
-        spec.num_envs = value
-        assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p]
+        for value in NOT_A_COUNT:
+            spec.num_envs = value
+            assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p], f"{value!r}"
 
 
 class TestTheDivisibilityRelationIsAskedOnlyOfACount:

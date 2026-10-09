@@ -113,51 +113,43 @@ class TestFastSacRefusesAnUnusableReplayCount:
     """FastSAC refuses every value its replay loop cannot be built from."""
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems("fast_sac", spec, field), f"fast_sac accepted {field}={value!r}"
+    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            problems = _field_problems("fast_sac", spec, field)
+            assert problems == [positive_count_error(value, field, "fast_sac")], f"fast_sac {field}={value!r}"
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        (problem,) = _field_problems("fast_sac", spec, field)
-        assert problem == positive_count_error(value, field, "fast_sac")
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_a_non_count_never_reaches_a_run(self, spec: RLTrainSpec, field: str, value: Any) -> None:
+    def test_a_non_count_never_reaches_a_run(self, spec: RLTrainSpec, field: str) -> None:
         """The refusal precedes ``setup``, so nothing is built before it."""
-        setattr(spec, field, value)
-        result = create_trainer("fast_sac").train(spec)
-        assert result.status == "error"
-        assert result.checkpoint_dir in (None, "")
-        assert f"{field} must be a positive integer" in result.message
+        for value in NOT_A_COUNT:
+            setattr(spec, field, value)
+            result = create_trainer("fast_sac").train(spec)
+            assert result.status == "error", f"{value!r}"
+            assert result.checkpoint_dir in (None, ""), f"{value!r}"
+            assert f"{field} must be a positive integer" in result.message, f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
     """The gate refuses only what the replay loop cannot use."""
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems("fast_sac", spec, field) == []
+    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec, field: str) -> None:
+        for value in USABLE:
+            setattr(spec, field, value)
+            assert _field_problems("fast_sac", spec, field) == [], f"{value!r}"
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
     def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec, field: str) -> None:
         assert _field_problems("fast_sac", spec, field) == []
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", REFUSED_BY_THE_SHARED_COUNT_RULE)
-    def test_a_numpy_integer_is_refused_although_range_would_accept_it(
-        self, spec: RLTrainSpec, field: str, value: Any
-    ) -> None:
+    def test_a_numpy_integer_is_refused_although_range_would_accept_it(self, spec: RLTrainSpec, field: str) -> None:
         """The documented cost of the strict-``int`` rule, pinned not implied."""
-        assert len(range(value)) == int(value)
-        setattr(spec, field, value)
-        assert _field_problems("fast_sac", spec, field)
+        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
+            assert len(range(value)) == int(value), f"{value!r}"
+            setattr(spec, field, value)
+            assert _field_problems("fast_sac", spec, field), f"{value!r}"
 
 
 class TestABackendThatDoesNotReadThemStaysQuiet:
@@ -165,10 +157,10 @@ class TestABackendThatDoesNotReadThemStaysQuiet:
 
     @pytest.mark.parametrize("provider", QUIET_BACKENDS)
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field) == []
+    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            assert _field_problems(provider, spec, field) == [], f"{value!r}"
 
     def test_ppo_still_refuses_the_run_size_it_does_read(self, spec: RLTrainSpec) -> None:
         """Non-vacuity: PPO's silence here is scoping, not a backend that checks nothing."""
@@ -185,11 +177,11 @@ class TestTheDomainIsTheSharedCountRule:
     """The gate contributes no rule of its own beyond reading the three fields."""
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    @pytest.mark.parametrize("value", [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE])
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        shared = positive_count_error(value, field, "fast_sac")
-        assert (rl_replay_problems(spec, context="fast_sac") == []) is (shared is None)
+    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str) -> None:
+        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
+            setattr(spec, field, value)
+            shared = positive_count_error(value, field, "fast_sac")
+            assert (rl_replay_problems(spec, context="fast_sac") == []) is (shared is None), f"{value!r}"
 
     @pytest.mark.parametrize("field", REPLAY_FIELDS)
     def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec, field: str) -> None:
@@ -235,10 +227,10 @@ class TestTheCountsAreConsumedDirectlyAsCounts:
         assert "self.buffer.sample(spec.batch_size)" in source  # sample size
         assert "for _ in range(spec.gradient_steps):" in source  # range() bound
 
-    @pytest.mark.parametrize("value", SILENTLY_DEGENERATE_OR_LATE)
-    def test_a_non_count_survives_the_local_comparison(self, value: Any) -> None:
+    def test_a_non_count_survives_the_local_comparison(self) -> None:
         """Why a local ``<= 0`` is weaker: each of these passes it."""
-        assert not (value <= 0)
+        for value in SILENTLY_DEGENERATE_OR_LATE:
+            assert not (value <= 0), f"{value!r}"
 
     def test_a_bool_is_a_degenerate_size_of_one(self) -> None:
         """The silent half: ``True`` is a one-slot buffer / a batch of one."""
@@ -249,11 +241,12 @@ class TestTheCountsAreConsumedDirectlyAsCounts:
         """``int(0.5) == 0`` - the zero-capacity buffer the IndexError came from."""
         assert int(0.5) == 0
 
-    @pytest.mark.parametrize("value", ["256", None])
-    def test_a_non_numeric_count_raises_out_of_the_comparison_itself(self, value: Any) -> None:
+    def test_a_non_numeric_count_raises_out_of_the_comparison_itself(self) -> None:
         """Why a local ``<= 0`` cannot even report: it raises before appending."""
-        with pytest.raises(TypeError, match="not supported between instances"):
-            _ = value <= 0
+        non_numeric: list[Any] = ["256", None]
+        for value in non_numeric:
+            with pytest.raises(TypeError, match="not supported between instances"):
+                _ = value <= 0
 
 
 class TestTauAndLearningStartsAreNotInThisDomain:

@@ -97,16 +97,14 @@ class TestEveryBackendRefusesAnUnusableRunSize:
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_unusable_run_size_is_reported(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str, value: Any
-    ) -> None:
-        trainer = trainer_cls()
-        problems = trainer.validate(_mutate(spec, field, value))
-        named = [p for p in problems if field in p]
-        assert named, f"{trainer_cls.__name__} accepted {field}={value!r}: {problems}"
-        assert "must be a positive integer" in named[0]
-        assert repr(value) in named[0], named[0]
+    def test_unusable_run_size_is_reported(self, spec: TrainSpec, trainer_cls: type[Trainer], field: str) -> None:
+        for value in UNUSABLE:
+            trainer = trainer_cls()
+            problems = trainer.validate(_mutate(spec, field, value))
+            named = [p for p in problems if field in p]
+            assert named, f"{trainer_cls.__name__} accepted {field}={value!r}: {problems}"
+            assert "must be a positive integer" in named[0], f"{value!r}"
+            assert repr(value) in named[0], named[0]
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -122,13 +120,13 @@ class TestValidateReportsInsteadOfRaising:
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    @pytest.mark.parametrize("value", NOT_COMPARABLE)
     def test_a_non_comparable_value_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str, value: Any
+        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
     ) -> None:
-        problems = trainer_cls().validate(_mutate(spec, field, value))
-        assert isinstance(problems, list)
-        assert any(field in p for p in problems), problems
+        for value in NOT_COMPARABLE:
+            problems = trainer_cls().validate(_mutate(spec, field, value))
+            assert isinstance(problems, list), f"{value!r}"
+            assert any(field in p for p in problems), problems
 
 
 class TestAUsableRunSizeIsUntouched:
@@ -262,15 +260,15 @@ class TestOneOwnerForTheRunSizeDomain:
         assert seen == {t.__name__ for t in SUPERVISED_TRAINERS + STEPS_ONLY_TRAINERS}, seen
 
     @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
-    @pytest.mark.parametrize("value", UNUSABLE)
     def test_a_steps_only_backend_refuses_an_unusable_steps_in_the_shared_wording(
-        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer], value: Any
+        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer]
     ) -> None:
-        trainer = trainer_cls()
-        spec = TrainSpec(output_dir=str(tmp_path), extra={"task": "Isaac-Cartpole"})
-        named = [p for p in trainer.validate(_mutate(spec, "steps", value)) if ": steps " in p]
-        assert named and "must be a positive integer" in named[0], named
-        assert named[0].startswith(f"{trainer.provider_name}: "), named
+        for value in UNUSABLE:
+            trainer = trainer_cls()
+            spec = TrainSpec(output_dir=str(tmp_path), extra={"task": "Isaac-Cartpole"})
+            named = [p for p in trainer.validate(_mutate(spec, "steps", value)) if ": steps " in p]
+            assert named and "must be a positive integer" in named[0], named
+            assert named[0].startswith(f"{trainer.provider_name}: "), named
 
     @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
     def test_a_steps_only_backend_ignores_the_batch_it_never_reads(
