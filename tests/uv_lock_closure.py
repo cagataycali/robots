@@ -14,8 +14,10 @@ distribution absent that some environment does resolve.
 
 from __future__ import annotations
 
+import functools
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from packaging.utils import canonicalize_name
 
@@ -25,6 +27,19 @@ _LOCK = Path(__file__).resolve().parents[1] / "uv.lock"
 ROOT = "strands-robots"
 
 
+@functools.cache
+def uv_lock() -> dict[str, Any]:
+    """The parsed lock, read once per process. Callers must not mutate it.
+
+    ``uv.lock`` is 1.5 MB of TOML and costs about a quarter of a second to parse;
+    a dozen packaging rules read it, several once per cell, which came to 70
+    parses in one process. The file does not change during a session.
+    """
+    with _LOCK.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+@functools.cache
 def locked_packages() -> dict[str, list[dict]]:
     """Every ``[[package]]`` entry in the lock, grouped by distribution name.
 
@@ -32,10 +47,8 @@ def locked_packages() -> dict[str, list[dict]]:
     PyPy-on-win32 marker on ``autobahn`` produces two entries) - so the value is
     a list and the walk reads all of them.
     """
-    with _LOCK.open("rb") as handle:
-        locked = tomllib.load(handle)["package"]
     by_name: dict[str, list[dict]] = {}
-    for package in locked:
+    for package in uv_lock()["package"]:
         by_name.setdefault(package["name"], []).append(package)
     return by_name
 
@@ -51,6 +64,7 @@ def requested_extras(entry: dict) -> tuple[str, ...]:
     return tuple(requested) if isinstance(requested, list) else (requested,)
 
 
+@functools.cache
 def lock_closure(extra: str | None) -> frozenset[str]:
     """Canonical names an install of *extra* resolves to (``None`` = base install).
 

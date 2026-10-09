@@ -60,6 +60,8 @@ from typing import Any
 import pytest
 from packaging.requirements import Requirement
 
+from tests.uv_lock_closure import uv_lock
+
 _ROOT = Path(__file__).resolve().parents[1]
 _SCRIPT = _ROOT / "scripts" / "check_lockfile_parity.py"
 _PYPROJECT = _ROOT / "pyproject.toml"
@@ -88,7 +90,7 @@ def manifest() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def lock() -> dict[str, Any]:
-    return tomllib.loads(_LOCK.read_text(encoding="utf-8"))
+    return uv_lock()
 
 
 @pytest.fixture(scope="module")

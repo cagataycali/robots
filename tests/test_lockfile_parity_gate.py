@@ -69,6 +69,8 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from tests.uv_lock_closure import uv_lock
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
 _LOCK = _REPO_ROOT / "uv.lock"
@@ -261,7 +263,7 @@ def _locked_wheel_counts() -> dict[str, list[tuple[str, int]]]:
     the artifact lists are tables, not the two header lines a version needs.
     """
     counts: dict[str, list[tuple[str, int]]] = defaultdict(list)
-    for package in tomllib.loads(_LOCK.read_text(encoding="utf-8"))["package"]:
+    for package in uv_lock()["package"]:
         name = _canonical(package["name"])
         counts[name].append((package.get("version", "?"), len(package.get("wheels", ()))))
     return dict(counts)

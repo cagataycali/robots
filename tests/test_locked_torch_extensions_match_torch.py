@@ -27,12 +27,9 @@ one.
 
 from __future__ import annotations
 
-import tomllib
-from pathlib import Path
-
 import pytest
 
-_LOCK = Path(__file__).resolve().parents[1] / "uv.lock"
+from tests.uv_lock_closure import uv_lock
 
 #: Distributions that ship compiled libraries linked against libtorch. A
 #: mismatched pair fails at import (a missing C++ symbol), never at resolution,
@@ -46,7 +43,7 @@ def _locked_versions() -> dict[str, set[str]]:
     A name can hold several ``[[package]]`` entries - uv writes one per
     resolution fork - which is exactly the shape this module grades.
     """
-    packages = tomllib.loads(_LOCK.read_text(encoding="utf-8"))["package"]
+    packages = uv_lock()["package"]
     versions: dict[str, set[str]] = {}
     for package in packages:
         version = package.get("version")
@@ -57,7 +54,7 @@ def _locked_versions() -> dict[str, set[str]]:
 
 def _declared_dependencies(name: str, versions: dict[str, set[str]]) -> set[str]:
     """Names the lock records as dependencies of every entry of *name*."""
-    packages = tomllib.loads(_LOCK.read_text(encoding="utf-8"))["package"]
+    packages = uv_lock()["package"]
     assert name in versions, f"{name} is not in the lock"
     declared: set[str] = set()
     for package in packages:
