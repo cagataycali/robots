@@ -32,13 +32,18 @@ top-level module.
 
 from __future__ import annotations
 
+import ast
 import shutil
 import subprocess
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+import strands_robots
+from tests._package_ast import parse_file
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
@@ -146,6 +151,62 @@ def test_mypy_clean_on_unitree_importing_modules():
         if "unitree_sdk2py" in line and ("import-untyped" in line or "import-not-found" in line)
     ]
     assert not offending, "mypy reported unsilenced unitree_sdk2py import errors:\n" + "\n".join(offending)
+
+
+def _modules_mypy_does_not_follow() -> set[str]:
+    """Top-level names of the libraries a ``follow_imports = "skip"`` override names."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    skipped: set[str] = set()
+    for override in data["tool"]["mypy"].get("overrides", []):
+        if override.get("follow_imports") == "skip":
+            modules = override.get("module", [])
+            skipped.update(m.removesuffix(".*") for m in ([modules] if isinstance(modules, str) else modules))
+    return skipped
+
+
+def _module_scope_imports(tree: ast.Module) -> Iterator[tuple[int, str]]:
+    """Yield ``(line, module)`` for every import that runs or types at module scope.
+
+    A function body is the one place an import neither runs at import time nor
+    names a type in a signature, so only function bodies are left out: class
+    bodies and ``if TYPE_CHECKING:`` blocks count.
+    """
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            continue
+        if isinstance(node, ast.Import):
+            yield from ((node.lineno, alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            yield node.lineno, node.module
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def test_no_library_mypy_skips_types_the_package():
+    """The libraries mypy does not follow are ones the package only calls into from a function.
+
+    ``transformers``, ``diffusers``, ``warp`` and ``google`` ship ``py.typed``,
+    so without the override mypy analyses their whole source on every lint
+    run - a third of its time - for a handful of lazy imports. Skipping a
+    library makes everything imported from it ``Any``, which is harmless inside
+    a function body and silently untyped anywhere else: a module-scope or
+    ``TYPE_CHECKING`` import of a skipped library would put an unchecked type in
+    a signature. Such an import belongs on the followed side of the override.
+    """
+    skipped = _modules_mypy_does_not_follow()
+    assert {"transformers", "diffusers"} <= skipped, f"mypy follows the heavy typed libraries again: {sorted(skipped)}"
+    planted = ast.parse("import transformers\nclass A:\n    import diffusers\ndef f():\n    import warp\n")
+    assert sorted(name for _, name in _module_scope_imports(planted)) == ["diffusers", "transformers"]
+
+    root = Path(strands_robots.__file__).resolve().parent
+    typed_by_a_skip = [
+        f"strands_robots/{path.relative_to(root)}:{line} imports {name}"
+        for path in sorted(root.rglob("*.py"))
+        for line, name in _module_scope_imports(parse_file(path))
+        if name.split(".")[0] in skipped
+    ]
+    assert not typed_by_a_skip, "a library mypy does not follow types the package:\n" + "\n".join(typed_by_a_skip)
 
 
 def _mypy_importable() -> bool:
