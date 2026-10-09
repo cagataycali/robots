@@ -166,6 +166,7 @@ from packaging.version import Version  # noqa: E402
 from tests._blocked_module import blocked  # noqa: E402
 from tests._docs_hooks import docs_hook  # noqa: E402
 from tests._package_ast import parse_file, parse_source, walk_tree  # noqa: E402
+from tests.uv_lock_closure import uv_lock  # noqa: E402
 
 
 def _lerobot_extra_requirement() -> Requirement:
@@ -1301,7 +1302,6 @@ def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
 # package, deliberately not the version currently resolved: the floor states the
 # requirement, so it stays correct as the resolution moves above it.
 
-_UV_LOCK = _REPO_ROOT / "uv.lock"
 
 #: Transitive package -> the HIGH advisory its floor clears. These are the
 #: packages a floor is *required* for; the constraint table may hold more.
@@ -1332,7 +1332,7 @@ def _locked_versions() -> dict[str, list[Version]]:
     A name maps to more than one version when ``[tool.uv] conflicts`` forks the
     resolution, so a floor has to hold for *each* fork, not just the first.
     """
-    lock = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
+    lock = uv_lock()
     out: dict[str, list[Version]] = {}
     for package in lock.get("package", []):
         if "version" in package:
@@ -1545,7 +1545,7 @@ def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
     The floors above are declarations; this is the resolved fact a
     ``uv sync``/``uv run`` user actually gets.
     """
-    lock = tomllib.loads((_REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    lock = uv_lock()
     locked = sorted({p["version"] for p in lock.get("package", []) if p["name"] == "diffusers" and p.get("version")})
     assert locked, "uv.lock must resolve diffusers (the cosmos3-diffusers extra declares it)"
     for version in locked:
