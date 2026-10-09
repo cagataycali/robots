@@ -74,26 +74,26 @@ from tests._package_ast import parse_file, walk_tree
 # ``np.array(True)`` or a reduction produces). numpy.bool_ is not a bool
 # subclass, so an isinstance-only gate catches the first two and misses the rest -
 # which is exactly the Mode B defect this pins.
-_BOOLEANS = [True, False, np.True_, np.bool_(False), np.array(True)]
+_BOOLEANS: list[Any] = [True, False, np.True_, np.bool_(False), np.array(True)]
 _BOOLEAN_IDS = ["True", "False", "np_true", "np_false", "zero_d_array"]
 
 # The subset that must be refused where the domain also excludes zero (a
 # timestep, a mass): ``False`` and ``np.False_`` would be refused by the
 # positivity check anyway, so pinning them there would not distinguish the bool
 # gate from the pre-existing one.
-_TRUTHY_BOOLEANS = [True, np.True_, np.array(True)]
+_TRUTHY_BOOLEANS: list[Any] = [True, np.True_, np.array(True)]
 _TRUTHY_IDS = ["True", "np_true", "zero_d_array"]
 
 # Numeric values a caller legitimately passes. ``1``, ``np.uint8(1)`` and
 # ``np.int64(1)`` are the load-bearing entries: they coerce to the same 1.0 the
 # boolean would have written.
-_POSITIVE_NUMBERS = [1, 0.5, 2, np.float64(0.3), np.int64(1), np.uint8(1), np.float32(0.7), np.array(0.7)]
+_POSITIVE_NUMBERS: list[Any] = [1, 0.5, 2, np.float64(0.3), np.int64(1), np.uint8(1), np.float32(0.7), np.array(0.7)]
 _POSITIVE_IDS = ["int_1", "float", "int_2", "np_float", "np_int64_1", "np_uint8_1", "np_float32", "zero_d_array"]
 
-_ANY_NUMBERS = [0, 1, -1, 0.5, -1.25, np.float64(0.3), np.int64(1), np.uint8(1), np.array(0.7)]
+_ANY_NUMBERS: list[Any] = [0, 1, -1, 0.5, -1.25, np.float64(0.3), np.int64(1), np.uint8(1), np.array(0.7)]
 _ANY_IDS = ["int_0", "int_1", "int_neg1", "float", "neg_float", "np_float", "np_int64_1", "np_uint8_1", "zero_d_array"]
 
-_NON_FINITE = [float("nan"), float("inf"), float("-inf")]
+_NON_FINITE: list[Any] = [float("nan"), float("inf"), float("-inf")]
 _NON_FINITE_IDS = ["nan", "inf", "neg_inf"]
 
 
@@ -113,31 +113,31 @@ class TestGravityRefusesABoolean:
     the sim-level classes below prove the public methods route through it.
     """
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_a_boolean_scalar_is_refused(self, value: Any) -> None:
+    def test_a_boolean_scalar_is_refused(self) -> None:
         """``set_gravity(True)`` was a +1 m/s^2 gravity pointing up, under success."""
-        components, err = SimEngine._normalize_gravity(value, "set_gravity")
-        assert err is not None, f"{value!r} was accepted as a gravity scalar"
-        assert components is None, "a refused gravity must normalize nothing"
+        for value in _BOOLEANS:
+            components, err = SimEngine._normalize_gravity(value, "set_gravity")
+            assert err is not None, f"{value!r} was accepted as a gravity scalar"
+            assert components is None, "a refused gravity must normalize nothing"
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize("axis", [0, 1, 2], ids=["x", "y", "z"])
-    def test_a_boolean_component_is_refused_on_every_axis(self, value: Any, axis: int) -> None:
-        vector: list[Any] = [0.0, 0.0, -9.81]
-        vector[axis] = value
-        components, err = SimEngine._normalize_gravity(vector, "set_gravity")
-        assert err is not None, f"{value!r} was accepted as gravity component {axis}"
-        assert components is None, "the normalization is all-or-nothing"
+    def test_a_boolean_component_is_refused_on_every_axis(self, axis: int) -> None:
+        for value in _BOOLEANS:
+            vector: list[Any] = [0.0, 0.0, -9.81]
+            vector[axis] = value
+            components, err = SimEngine._normalize_gravity(vector, "set_gravity")
+            assert err is not None, f"{value!r} was accepted as gravity component {axis}"
+            assert components is None, "the normalization is all-or-nothing"
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_the_refusal_names_the_parameter_and_carries_the_reason(self, value: Any) -> None:
-        _, err = SimEngine._normalize_gravity(value, "create_world", param="gravity")
-        assert err is not None
-        text = _text(err)
-        assert "create_world" in text
-        assert "'gravity'" in text
-        assert "not a bool" in text, "the message must distinguish a bool from a plain non-number"
-        assert _BOOLEAN_WORLD_REASON in text, "the refusal must carry the reason, not just the rejection"
+    def test_the_refusal_names_the_parameter_and_carries_the_reason(self) -> None:
+        for value in _BOOLEANS:
+            _, err = SimEngine._normalize_gravity(value, "create_world", param="gravity")
+            assert err is not None
+            text = _text(err)
+            assert "create_world" in text
+            assert "'gravity'" in text
+            assert "not a bool" in text, "the message must distinguish a bool from a plain non-number"
+            assert _BOOLEAN_WORLD_REASON in text, "the refusal must carry the reason, not just the rejection"
 
     def test_a_numpy_boolean_scalar_is_no_longer_refused_as_a_length_problem(self) -> None:
         """The pre-fix message named a component count for a value that has none.
@@ -157,11 +157,11 @@ class TestGravityRefusesABoolean:
     # A 0-d numeric array is absent: it is not numbers.Real either, so it takes
     # the vector path and fails len() - see
     # test_a_zero_d_numeric_array_scalar_is_still_a_length_error.
-    @pytest.mark.parametrize("value", _ANY_NUMBERS[:-1], ids=_ANY_IDS[:-1])
-    def test_numeric_scalars_are_still_accepted(self, value: Any) -> None:
-        components, err = SimEngine._normalize_gravity(value, "set_gravity")
-        assert err is None, f"{value!r} was refused: {err}"
-        assert components == [0.0, 0.0, float(value)]
+    def test_numeric_scalars_are_still_accepted(self) -> None:
+        for value in _ANY_NUMBERS[:-1]:
+            components, err = SimEngine._normalize_gravity(value, "set_gravity")
+            assert err is None, f"{value!r} was refused: {err}"
+            assert components == [0.0, 0.0, float(value)]
 
     def test_a_zero_d_numeric_array_scalar_is_still_a_length_error(self) -> None:
         """Unchanged by this fix, and pinned so the asymmetry is on the record.
@@ -177,11 +177,11 @@ class TestGravityRefusesABoolean:
         assert components is None
         assert "not a bool" not in _text(err), "a numeric 0-d array is not a bool"
 
-    @pytest.mark.parametrize("value", _ANY_NUMBERS, ids=_ANY_IDS)
-    def test_numeric_components_are_still_accepted(self, value: Any) -> None:
-        components, err = SimEngine._normalize_gravity([value, 0.0, -9.81], "set_gravity")
-        assert err is None, f"{value!r} was refused: {err}"
-        assert components == [float(value), 0.0, -9.81]
+    def test_numeric_components_are_still_accepted(self) -> None:
+        for value in _ANY_NUMBERS:
+            components, err = SimEngine._normalize_gravity([value, 0.0, -9.81], "set_gravity")
+            assert err is None, f"{value!r} was refused: {err}"
+            assert components == [float(value), 0.0, -9.81]
 
     def test_one_is_accepted_though_it_is_what_true_would_have_written(self) -> None:
         """Separates "refuses a boolean" from "refuses anything equal to 1"."""
@@ -194,13 +194,13 @@ class TestGravityRefusesABoolean:
         assert err is None
         assert components == [0.0, 0.0, -9.81]
 
-    @pytest.mark.parametrize("value", _NON_FINITE, ids=_NON_FINITE_IDS)
-    def test_a_non_finite_component_keeps_its_own_message(self, value: Any) -> None:
+    def test_a_non_finite_component_keeps_its_own_message(self) -> None:
         """The bool gate is additive - it must not relabel a nan as a bool."""
-        _, err = SimEngine._normalize_gravity([0.0, 0.0, value], "set_gravity")
-        assert err is not None
-        assert "not a bool" not in _text(err)
-        assert "finite" in _text(err)
+        for value in _NON_FINITE:
+            _, err = SimEngine._normalize_gravity([0.0, 0.0, value], "set_gravity")
+            assert err is not None
+            assert "not a bool" not in _text(err)
+            assert "finite" in _text(err)
 
     def test_a_wrong_length_vector_keeps_its_own_message(self) -> None:
         _, err = SimEngine._normalize_gravity([0.0, -9.81], "set_gravity")
@@ -212,26 +212,26 @@ class TestGravityRefusesABoolean:
 class TestNoiseMagnitudesAndRandomizationRangesRefuseABoolean:
     """A sigma or a scale bound of ``1`` is a distribution, not a flag."""
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_a_boolean_magnitude_is_refused(self, value: Any) -> None:
-        reason = finite_non_negative_error(value, "std", "set_obs_noise")
-        assert reason is not None, f"{value!r} was accepted as a noise magnitude"
-        assert "not a bool" in reason
-        assert _BOOLEAN_WORLD_REASON in reason
+    def test_a_boolean_magnitude_is_refused(self) -> None:
+        for value in _BOOLEANS:
+            reason = finite_non_negative_error(value, "std", "set_obs_noise")
+            assert reason is not None, f"{value!r} was accepted as a noise magnitude"
+            assert "not a bool" in reason
+            assert _BOOLEAN_WORLD_REASON in reason
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize("position", [0, 1], ids=["lo", "hi"])
-    def test_a_boolean_range_bound_is_refused(self, value: Any, position: int) -> None:
-        bounds: list[Any] = [0.5, 2.0]
-        bounds[position] = value
-        reason = randomization_range_error(tuple(bounds), "mass")
-        assert reason is not None, f"{value!r} was accepted as range bound {position}"
-        assert "not bools" in reason
-        assert _BOOLEAN_WORLD_REASON in reason
+    def test_a_boolean_range_bound_is_refused(self, position: int) -> None:
+        for value in _BOOLEANS:
+            bounds: list[Any] = [0.5, 2.0]
+            bounds[position] = value
+            reason = randomization_range_error(tuple(bounds), "mass")
+            assert reason is not None, f"{value!r} was accepted as range bound {position}"
+            assert "not bools" in reason
+            assert _BOOLEAN_WORLD_REASON in reason
 
-    @pytest.mark.parametrize("value", _POSITIVE_NUMBERS, ids=_POSITIVE_IDS)
-    def test_numeric_magnitudes_are_still_accepted(self, value: Any) -> None:
-        assert finite_non_negative_error(value, "std", "set_obs_noise") is None
+    def test_numeric_magnitudes_are_still_accepted(self) -> None:
+        for value in _POSITIVE_NUMBERS:
+            assert finite_non_negative_error(value, "std", "set_obs_noise") is None
 
     def test_zero_noise_is_still_accepted(self) -> None:
         """``0`` disables the noise and is the documented way to do so."""
@@ -249,11 +249,11 @@ class TestNoiseMagnitudesAndRandomizationRangesRefuseABoolean:
         assert "finite" in str(randomization_range_error((0.0, float("inf")), "mass"))
         assert "pair of numbers" in str(randomization_range_error("wide", "mass"))
 
-    @pytest.mark.parametrize("value", _NON_FINITE, ids=_NON_FINITE_IDS)
-    def test_a_non_finite_magnitude_keeps_its_own_message(self, value: Any) -> None:
-        reason = finite_non_negative_error(value, "std", "set_obs_noise")
-        assert reason is not None
-        assert "not a bool" not in reason
+    def test_a_non_finite_magnitude_keeps_its_own_message(self) -> None:
+        for value in _NON_FINITE:
+            reason = finite_non_negative_error(value, "std", "set_obs_noise")
+            assert reason is not None
+            assert "not a bool" not in reason
 
     def test_a_negative_magnitude_keeps_its_own_message(self) -> None:
         reason = finite_non_negative_error(-0.1, "std", "set_obs_noise")
@@ -267,24 +267,24 @@ class TestNoiseMagnitudesAndRandomizationRangesRefuseABoolean:
 
 
 class TestTimestepRefusesEveryBooleanSpellingNotJustThePythonOne:
-    @pytest.mark.parametrize("value", _TRUTHY_BOOLEANS, ids=_TRUTHY_IDS)
-    def test_a_boolean_timestep_is_refused(self, value: Any) -> None:
+    def test_a_boolean_timestep_is_refused(self) -> None:
         """``np.True_`` was a 1-second dt under ``status="success"``."""
-        err = SimEngine._validate_timestep(value, "set_timestep")
-        assert err is not None, f"{value!r} was accepted as a timestep"
-        assert "not a bool" in _text(err)
-        assert _BOOLEAN_WORLD_REASON in _text(err)
+        for value in _TRUTHY_BOOLEANS:
+            err = SimEngine._validate_timestep(value, "set_timestep")
+            assert err is not None, f"{value!r} was accepted as a timestep"
+            assert "not a bool" in _text(err)
+            assert _BOOLEAN_WORLD_REASON in _text(err)
 
-    @pytest.mark.parametrize("value", _TRUTHY_BOOLEANS, ids=_TRUTHY_IDS)
-    def test_the_refusal_names_the_method_and_the_parameter(self, value: Any) -> None:
-        err = SimEngine._validate_timestep(value, "create_world", param="default_timestep")
-        assert err is not None
-        assert "create_world" in _text(err)
-        assert "default_timestep" in _text(err)
+    def test_the_refusal_names_the_method_and_the_parameter(self) -> None:
+        for value in _TRUTHY_BOOLEANS:
+            err = SimEngine._validate_timestep(value, "create_world", param="default_timestep")
+            assert err is not None
+            assert "create_world" in _text(err)
+            assert "default_timestep" in _text(err)
 
-    @pytest.mark.parametrize("value", _POSITIVE_NUMBERS, ids=_POSITIVE_IDS)
-    def test_positive_numeric_timesteps_are_still_accepted(self, value: Any) -> None:
-        assert SimEngine._validate_timestep(value, "set_timestep") is None
+    def test_positive_numeric_timesteps_are_still_accepted(self) -> None:
+        for value in _POSITIVE_NUMBERS:
+            assert SimEngine._validate_timestep(value, "set_timestep") is None
 
     def test_the_default_timestep_is_still_accepted(self) -> None:
         assert SimEngine._validate_timestep(0.002, "set_timestep") is None
@@ -294,36 +294,36 @@ class TestTimestepRefusesEveryBooleanSpellingNotJustThePythonOne:
         assert SimEngine._validate_timestep(1, "set_timestep") is None
         assert SimEngine._validate_timestep(1.0, "set_timestep") is None
 
-    @pytest.mark.parametrize("value", [0, 0.0, -1, -0.002, *_NON_FINITE, "fast", None])
-    def test_the_pre_existing_domain_keeps_its_own_message(self, value: Any) -> None:
-        err = SimEngine._validate_timestep(value, "set_timestep")
-        assert err is not None
-        assert "not a bool" not in _text(err)
-        assert "must be a finite positive number" in _text(err)
+    def test_the_pre_existing_domain_keeps_its_own_message(self) -> None:
+        for value in [0, 0.0, -1, -0.002, *_NON_FINITE, "fast", None]:
+            err = SimEngine._validate_timestep(value, "set_timestep")
+            assert err is not None
+            assert "not a bool" not in _text(err)
+            assert "must be a finite positive number" in _text(err)
 
 
 class TestMassRefusesEveryBooleanSpellingNotJustThePythonOne:
-    @pytest.mark.parametrize("value", _TRUTHY_BOOLEANS, ids=_TRUTHY_IDS)
-    def test_a_boolean_mass_is_refused(self, value: Any) -> None:
+    def test_a_boolean_mass_is_refused(self) -> None:
         """``np.True_`` was a 1 kg body under ``status="success"``."""
-        err = SimEngine._validate_mass(value, "set_body_properties")
-        assert err is not None, f"{value!r} was accepted as a mass"
-        assert "not a bool" in _text(err)
-        assert _BOOLEAN_WORLD_REASON in _text(err)
+        for value in _TRUTHY_BOOLEANS:
+            err = SimEngine._validate_mass(value, "set_body_properties")
+            assert err is not None, f"{value!r} was accepted as a mass"
+            assert "not a bool" in _text(err)
+            assert _BOOLEAN_WORLD_REASON in _text(err)
 
-    @pytest.mark.parametrize("value", _POSITIVE_NUMBERS, ids=_POSITIVE_IDS)
-    def test_positive_numeric_masses_are_still_accepted(self, value: Any) -> None:
-        assert SimEngine._validate_mass(value, "set_body_properties") is None
+    def test_positive_numeric_masses_are_still_accepted(self) -> None:
+        for value in _POSITIVE_NUMBERS:
+            assert SimEngine._validate_mass(value, "set_body_properties") is None
 
     def test_a_one_kilogram_mass_is_still_accepted(self) -> None:
         assert SimEngine._validate_mass(1, "set_body_properties") is None
         assert SimEngine._validate_mass(1.0, "set_body_properties") is None
 
-    @pytest.mark.parametrize("value", [0, 0.0, -1, *_NON_FINITE, "heavy", None])
-    def test_the_pre_existing_domain_keeps_its_own_message(self, value: Any) -> None:
-        err = SimEngine._validate_mass(value, "set_body_properties")
-        assert err is not None
-        assert "not a bool" not in _text(err)
+    def test_the_pre_existing_domain_keeps_its_own_message(self) -> None:
+        for value in [0, 0.0, -1, *_NON_FINITE, "heavy", None]:
+            err = SimEngine._validate_mass(value, "set_body_properties")
+            assert err is not None
+            assert "not a bool" not in _text(err)
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,6 @@ class TestTheVectorCoercionRefusesABooleanComponent:
 
         return _coerce_finite_vector(*args, **kwargs)
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize(
         ("name", "method"),
         [
@@ -356,21 +355,22 @@ class TestTheVectorCoercionRefusesABooleanComponent:
             ("color", "add_object"),
         ],
     )
-    def test_a_boolean_component_is_refused_on_every_surface(self, value: Any, name: str, method: str) -> None:
-        floats, err = self._coerce([value, 0.5, 0.5], name, method)
-        assert err is not None, f"{value!r} was accepted as a {name} component"
-        assert floats is None, "a refused vector must coerce nothing"
-        assert method in _text(err)
-        assert f"'{name}'" in _text(err)
+    def test_a_boolean_component_is_refused_on_every_surface(self, name: str, method: str) -> None:
+        for value in _BOOLEANS:
+            floats, err = self._coerce([value, 0.5, 0.5], name, method)
+            assert err is not None, f"{value!r} was accepted as a {name} component"
+            assert floats is None, "a refused vector must coerce nothing"
+            assert method in _text(err)
+            assert f"'{name}'" in _text(err)
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize("index", [0, 1, 2], ids=["first", "middle", "last"])
-    def test_a_boolean_anywhere_in_the_vector_refuses_the_whole_vector(self, value: Any, index: int) -> None:
-        vector: list[Any] = [0.1, 0.2, 0.3]
-        vector[index] = value
-        floats, err = self._coerce(vector, "origin", "raycast")
-        assert err is not None, f"{value!r} accepted at index {index}"
-        assert floats is None, "a partial coercion would cast a ray the caller never asked for"
+    def test_a_boolean_anywhere_in_the_vector_refuses_the_whole_vector(self, index: int) -> None:
+        for value in _BOOLEANS:
+            vector: list[Any] = [0.1, 0.2, 0.3]
+            vector[index] = value
+            floats, err = self._coerce(vector, "origin", "raycast")
+            assert err is not None, f"{value!r} accepted at index {index}"
+            assert floats is None, "a partial coercion would cast a ray the caller never asked for"
 
     def test_the_refusal_carries_the_vector_reason_not_the_state_writer_one(self) -> None:
         """The reason must name the quantities this helper actually guards.
@@ -390,12 +390,12 @@ class TestTheVectorCoercionRefusesABooleanComponent:
         assert _BOOLEAN_STATE_REASON not in text
         assert "radian" not in text, "a raycast origin is not measured in radians"
 
-    @pytest.mark.parametrize("value", _ANY_NUMBERS, ids=_ANY_IDS)
-    def test_numeric_components_are_still_accepted(self, value: Any) -> None:
-        floats, err = self._coerce([value, 0.0, 0.0], "origin", "raycast")
-        assert err is None, f"{value!r} was refused: {err}"
-        assert floats is not None
-        assert floats[0] == pytest.approx(float(value))
+    def test_numeric_components_are_still_accepted(self) -> None:
+        for value in _ANY_NUMBERS:
+            floats, err = self._coerce([value, 0.0, 0.0], "origin", "raycast")
+            assert err is None, f"{value!r} was refused: {err}"
+            assert floats is not None
+            assert floats[0] == pytest.approx(float(value))
 
     def test_a_unit_vector_is_still_accepted(self) -> None:
         """``[1, 0, 0]`` is the component-wise value ``True`` would have written."""
@@ -419,12 +419,12 @@ class TestTheVectorCoercionRefusesABooleanComponent:
         assert err is None
         assert floats == [1.0, 1.0, 1.0, 1.0]
 
-    @pytest.mark.parametrize("value", _NON_FINITE, ids=_NON_FINITE_IDS)
-    def test_a_non_finite_component_keeps_its_own_message(self, value: Any) -> None:
-        _, err = self._coerce([value, 0.0, 0.0], "origin", "raycast")
-        assert err is not None
-        assert "not a bool" not in _text(err)
-        assert "finite" in _text(err)
+    def test_a_non_finite_component_keeps_its_own_message(self) -> None:
+        for value in _NON_FINITE:
+            _, err = self._coerce([value, 0.0, 0.0], "origin", "raycast")
+            assert err is not None
+            assert "not a bool" not in _text(err)
+            assert "finite" in _text(err)
 
     def test_a_non_numeric_component_keeps_its_own_message(self) -> None:
         _, err = self._coerce(["a", 0.0, 0.0], "origin", "raycast")
@@ -448,13 +448,13 @@ class TestTheVectorCoercionRefusesABooleanComponent:
 class TestOnePredicateNotSix:
     """Every validator answers "is this a boolean" the same way."""
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_the_shared_predicate_reports_every_boolean_spelling(self, value: Any) -> None:
-        assert is_boolean(value) is True
+    def test_the_shared_predicate_reports_every_boolean_spelling(self) -> None:
+        for value in _BOOLEANS:
+            assert is_boolean(value) is True
 
-    @pytest.mark.parametrize("value", _ANY_NUMBERS, ids=_ANY_IDS)
-    def test_the_shared_predicate_reports_no_number_as_boolean(self, value: Any) -> None:
-        assert is_boolean(value) is False
+    def test_the_shared_predicate_reports_no_number_as_boolean(self) -> None:
+        for value in _ANY_NUMBERS:
+            assert is_boolean(value) is False
 
     @pytest.mark.parametrize(
         "validator",
@@ -750,57 +750,57 @@ def scene_sim(tmp_path):
 
 @requires_mujoco
 class TestCreateWorldRefusesABoolean:
-    @pytest.mark.parametrize("value", _TRUTHY_BOOLEANS, ids=_TRUTHY_IDS)
-    def test_a_boolean_timestep_is_refused(self, value: Any) -> None:
-        from strands_robots.simulation import Simulation
+    def test_a_boolean_timestep_is_refused(self) -> None:
+        for value in _TRUTHY_BOOLEANS:
+            from strands_robots.simulation import Simulation
 
-        sim = Simulation()
-        try:
-            result = sim.create_world(timestep=value)
-            assert result["status"] == "error", f"{value!r} built a world with a 1-second dt"
-            assert "not a bool" in _text(result)
-            # A refused create_world must not leave a half-built world behind.
-            assert sim.step(1)["status"] == "error"
-        finally:
-            sim.destroy()
+            sim = Simulation()
+            try:
+                result = sim.create_world(timestep=value)
+                assert result["status"] == "error", f"{value!r} built a world with a 1-second dt"
+                assert "not a bool" in _text(result)
+                # A refused create_world must not leave a half-built world behind.
+                assert sim.step(1)["status"] == "error"
+            finally:
+                sim.destroy()
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_a_boolean_gravity_is_refused(self, value: Any) -> None:
-        from strands_robots.simulation import Simulation
+    def test_a_boolean_gravity_is_refused(self) -> None:
+        for value in _BOOLEANS:
+            from strands_robots.simulation import Simulation
 
-        sim = Simulation()
-        try:
-            result = sim.create_world(gravity=value)
-            assert result["status"] == "error", f"{value!r} built a world with gravity 1.0"
-            assert "not a bool" in _text(result)
-        finally:
-            sim.destroy()
+            sim = Simulation()
+            try:
+                result = sim.create_world(gravity=value)
+                assert result["status"] == "error", f"{value!r} built a world with gravity 1.0"
+                assert "not a bool" in _text(result)
+            finally:
+                sim.destroy()
 
 
 @requires_mujoco
 class TestTheWorldSettersRefuseABooleanAndWriteNothing:
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_a_boolean_gravity_leaves_opt_gravity_untouched(self, scene_sim, value: Any) -> None:
-        before = [float(g) for g in scene_sim._world._model.opt.gravity]
-        result = scene_sim.set_gravity(value)
-        assert result["status"] == "error", f"{value!r} was applied as a gravity"
-        assert "not a bool" in _text(result)
-        assert [float(g) for g in scene_sim._world._model.opt.gravity] == before
+    def test_a_boolean_gravity_leaves_opt_gravity_untouched(self, scene_sim) -> None:
+        for value in _BOOLEANS:
+            before = [float(g) for g in scene_sim._world._model.opt.gravity]
+            result = scene_sim.set_gravity(value)
+            assert result["status"] == "error", f"{value!r} was applied as a gravity"
+            assert "not a bool" in _text(result)
+            assert [float(g) for g in scene_sim._world._model.opt.gravity] == before
 
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
-    def test_a_boolean_gravity_component_leaves_opt_gravity_untouched(self, scene_sim, value: Any) -> None:
-        before = [float(g) for g in scene_sim._world._model.opt.gravity]
-        result = scene_sim.set_gravity([value, 0.0, -9.81])
-        assert result["status"] == "error"
-        assert [float(g) for g in scene_sim._world._model.opt.gravity] == before
+    def test_a_boolean_gravity_component_leaves_opt_gravity_untouched(self, scene_sim) -> None:
+        for value in _BOOLEANS:
+            before = [float(g) for g in scene_sim._world._model.opt.gravity]
+            result = scene_sim.set_gravity([value, 0.0, -9.81])
+            assert result["status"] == "error"
+            assert [float(g) for g in scene_sim._world._model.opt.gravity] == before
 
-    @pytest.mark.parametrize("value", _TRUTHY_BOOLEANS, ids=_TRUTHY_IDS)
-    def test_a_boolean_timestep_leaves_opt_timestep_untouched(self, scene_sim, value: Any) -> None:
-        before = float(scene_sim._world._model.opt.timestep)
-        result = scene_sim.set_timestep(value)
-        assert result["status"] == "error", f"{value!r} was applied as a dt"
-        assert "not a bool" in _text(result)
-        assert float(scene_sim._world._model.opt.timestep) == before
+    def test_a_boolean_timestep_leaves_opt_timestep_untouched(self, scene_sim) -> None:
+        for value in _TRUTHY_BOOLEANS:
+            before = float(scene_sim._world._model.opt.timestep)
+            result = scene_sim.set_timestep(value)
+            assert result["status"] == "error", f"{value!r} was applied as a dt"
+            assert "not a bool" in _text(result)
+            assert float(scene_sim._world._model.opt.timestep) == before
 
     def test_a_numeric_gravity_is_still_applied(self, scene_sim) -> None:
         result = scene_sim.set_gravity([0.0, 0.0, -1.62])
@@ -826,14 +826,14 @@ class TestTheWorldSettersRefuseABooleanAndWriteNothing:
 
 @requires_mujoco
 class TestRaycastRefusesABooleanComponent:
-    @pytest.mark.parametrize("value", _BOOLEANS, ids=_BOOLEAN_IDS)
     @pytest.mark.parametrize("param", ["origin", "direction"])
-    def test_a_boolean_component_is_refused(self, scene_sim, value: Any, param: str) -> None:
-        kwargs: dict[str, Any] = {"origin": [0.0, 0.0, 1.0], "direction": [0.0, 0.0, -1.0]}
-        kwargs[param] = [value, 0.0, 0.0]
-        result = scene_sim.raycast(**kwargs)
-        assert result["status"] == "error", f"{value!r} was cast as a {param}"
-        assert "not a bool" in _text(result)
+    def test_a_boolean_component_is_refused(self, scene_sim, param: str) -> None:
+        for value in _BOOLEANS:
+            kwargs: dict[str, Any] = {"origin": [0.0, 0.0, 1.0], "direction": [0.0, 0.0, -1.0]}
+            kwargs[param] = [value, 0.0, 0.0]
+            result = scene_sim.raycast(**kwargs)
+            assert result["status"] == "error", f"{value!r} was cast as a {param}"
+            assert "not a bool" in _text(result)
 
     def test_a_numeric_ray_is_still_cast(self, scene_sim) -> None:
         result = scene_sim.raycast(origin=[0.0, 0.0, 1.0], direction=[0.0, 0.0, -1.0])
