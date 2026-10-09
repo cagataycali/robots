@@ -204,6 +204,9 @@ ACCEPTED = [
     pytest.param(np.float64(2.0), 2, id="np.float64(2.0)"),
 ]
 
+#: The probe values themselves, for cells that walk the whole table in one loop.
+UNUSABLE_VALUES = [param.values[0] for param in UNUSABLE]
+ACCEPTED_ROWS = [tuple(param.values) for param in ACCEPTED]
 
 # The three outcomes the superseded ``episode < 0`` produced, split by what that
 # comparison *did* rather than by what the value looks like. Referenced by probe
@@ -237,20 +240,20 @@ class TestThePremise:
     added later cannot silently escape the premise.
     """
 
-    @pytest.mark.parametrize("value", _premise_values("passed"), ids=_PREMISE_GROUPS["passed"])
-    def test_the_superseded_comparison_did_not_refuse_these(self, value):
-        assert superseded_non_negative_test(value) is False
+    def test_the_superseded_comparison_did_not_refuse_these(self):
+        for value in _premise_values("passed"):
+            assert superseded_non_negative_test(value) is False, value
 
-    @pytest.mark.parametrize("value", _premise_values("refused"), ids=_PREMISE_GROUPS["refused"])
-    def test_the_superseded_comparison_did_refuse_these(self, value):
+    def test_the_superseded_comparison_did_refuse_these(self):
         # These the old comparison caught, which is why the shared rule reports
         # them with the same message rather than a new one.
-        assert superseded_non_negative_test(value) is True
+        for value in _premise_values("refused"):
+            assert superseded_non_negative_test(value) is True, value
 
-    @pytest.mark.parametrize("value", _premise_values("unorderable"), ids=_PREMISE_GROUPS["unorderable"])
-    def test_the_superseded_comparison_raised_instead_of_refusing(self, value):
-        with pytest.raises(TypeError):
-            superseded_non_negative_test(value)
+    def test_the_superseded_comparison_raised_instead_of_refusing(self):
+        for value in _premise_values("unorderable"):
+            with pytest.raises(TypeError):
+                superseded_non_negative_test(value)
 
     def test_the_premise_covers_every_probe_value(self):
         """Guard: no ``UNUSABLE`` entry escapes the premise, and none is claimed twice."""
@@ -264,49 +267,49 @@ class TestThePremise:
         assert table[True].item() == 10
         assert table[False].item() == 0
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_shared_rule_refuses_every_probe(self, value):
-        assert non_negative_whole_number_error(value, "episode", "ctx") is not None
+    def test_the_shared_rule_refuses_every_probe(self):
+        for value in UNUSABLE_VALUES:
+            assert non_negative_whole_number_error(value, "episode", "ctx") is not None, value
 
-    @pytest.mark.parametrize("value,expected", ACCEPTED)
-    def test_the_shared_rule_accepts_every_usable_index(self, value, expected):
-        assert non_negative_whole_number_error(value, "episode", "ctx") is None
-        assert int(value) == expected
+    def test_the_shared_rule_accepts_every_usable_index(self):
+        for value, expected in ACCEPTED_ROWS:
+            assert non_negative_whole_number_error(value, "episode", "ctx") is None, (value, expected)
+            assert int(value) == expected, (value, expected)
 
 
 # ── the loader ──────────────────────────────────────────────────────
 
 
 class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_raises_value_error_naming_the_parameter(self, value, fake_lerobot):
-        from strands_robots.dataset_source import load_lerobot_episode
+    def test_it_raises_value_error_naming_the_parameter(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        with pytest.raises(ValueError) as excinfo:
-            load_lerobot_episode("fake/repo", value)
-        msg = str(excinfo.value)
-        assert "load_lerobot_episode" in msg
-        assert "episode" in msg
+            with pytest.raises(ValueError) as excinfo:
+                load_lerobot_episode("fake/repo", value)
+            msg = str(excinfo.value)
+            assert "load_lerobot_episode" in msg, value
+            assert "episode" in msg, value
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_is_the_shared_rule_verbatim(self, value, fake_lerobot):
-        from strands_robots.dataset_source import load_lerobot_episode
+    def test_the_refusal_is_the_shared_rule_verbatim(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        expected = non_negative_whole_number_error(value, "episode", "load_lerobot_episode")
-        assert expected is not None
-        with pytest.raises(ValueError) as excinfo:
-            load_lerobot_episode("fake/repo", value)
-        assert str(excinfo.value) == expected
+            expected = non_negative_whole_number_error(value, "episode", "load_lerobot_episode")
+            assert expected is not None, value
+            with pytest.raises(ValueError) as excinfo:
+                load_lerobot_episode("fake/repo", value)
+            assert str(excinfo.value) == expected, value
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_no_dataset_is_constructed(self, value, fake_lerobot):
+    def test_no_dataset_is_constructed(self, fake_lerobot):
         """The refusal lands before the hub download, not after it."""
-        from strands_robots.dataset_source import load_lerobot_episode
+        for value in UNUSABLE_VALUES:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        with pytest.raises(ValueError):
-            load_lerobot_episode("fake/repo", value)
-        assert fake_lerobot.constructions == []
-        assert fake_lerobot.scans == []
+            with pytest.raises(ValueError):
+                load_lerobot_episode("fake/repo", value)
+            assert fake_lerobot.constructions == [], value
+            assert fake_lerobot.scans == [], value
 
     def test_a_bool_no_longer_resolves_an_episode(self, fake_lerobot):
         """The load-bearing row: ``True`` resolved episode 1 pre-fix."""
@@ -324,23 +327,23 @@ class TestLoadLerobotEpisodeRefusesAnUnusableIndex:
         assert "has no frames" not in msg
         assert "out of range" not in msg
 
-    @pytest.mark.parametrize("value", ["0", [0], None])
-    def test_a_non_numeric_index_no_longer_raises_type_error(self, value, fake_lerobot):
+    def test_a_non_numeric_index_no_longer_raises_type_error(self, fake_lerobot):
         """The loader documents ``ValueError`` as its refusal channel."""
-        from strands_robots.dataset_source import load_lerobot_episode
+        for value in ["0", [0], None]:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        with pytest.raises(ValueError):
-            load_lerobot_episode("fake/repo", value)
+            with pytest.raises(ValueError):
+                load_lerobot_episode("fake/repo", value)
 
 
 class TestLoadLerobotEpisodeAcceptedDomain:
-    @pytest.mark.parametrize("value,expected_episode", ACCEPTED)
-    def test_an_accepted_index_resolves_that_episode(self, value, expected_episode, fake_lerobot):
-        from strands_robots.dataset_source import load_lerobot_episode
+    def test_an_accepted_index_resolves_that_episode(self, fake_lerobot):
+        for value, expected_episode in ACCEPTED_ROWS:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        _, start, length = load_lerobot_episode("fake/repo", value)
-        assert _STARTS[start] == expected_episode
-        assert length == _EPISODE_LENGTHS[expected_episode]
+            _, start, length = load_lerobot_episode("fake/repo", value)
+            assert _STARTS[start] == expected_episode, (value, expected_episode)
+            assert length == _EPISODE_LENGTHS[expected_episode], (value, expected_episode)
 
     def test_an_integral_float_uses_the_index_not_the_full_scan(self, fake_lerobot):
         """``2.0`` fell through to an O(len(dataset)) boundary scan pre-fix.
@@ -374,35 +377,35 @@ def _runner():
 
 
 class TestReplayRefusesAnUnusableIndex:
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_returns_the_error_envelope(self, value, fake_lerobot):
-        runner, _ = _runner()
-        result = runner.replay(repo_id="fake/repo", episode=value)
-        assert result["status"] == "error"
-        text = result["content"][0]["text"]
-        assert "replay" in text
-        assert "episode" in text
+    def test_it_returns_the_error_envelope(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            runner, _ = _runner()
+            result = runner.replay(repo_id="fake/repo", episode=value)
+            assert result["status"] == "error", value
+            text = result["content"][0]["text"]
+            assert "replay" in text, value
+            assert "episode" in text, value
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_is_the_shared_rule_verbatim(self, value, fake_lerobot):
-        runner, _ = _runner()
-        expected = non_negative_whole_number_error(value, "episode", "replay")
-        assert expected is not None
-        result = runner.replay(repo_id="fake/repo", episode=value)
-        assert result["content"][0]["text"] == expected
+    def test_the_refusal_is_the_shared_rule_verbatim(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            runner, _ = _runner()
+            expected = non_negative_whole_number_error(value, "episode", "replay")
+            assert expected is not None, value
+            result = runner.replay(repo_id="fake/repo", episode=value)
+            assert result["content"][0]["text"] == expected, value
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_never_raises(self, value, fake_lerobot):
+    def test_it_never_raises(self, fake_lerobot):
         """``replay`` documents the status dict as its only failure channel."""
-        runner, _ = _runner()
-        assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error"
+        for value in UNUSABLE_VALUES:
+            runner, _ = _runner()
+            assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error", value
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_no_dataset_is_downloaded_and_no_action_is_sent(self, value, fake_lerobot):
-        runner, sim = _runner()
-        runner.replay(repo_id="fake/repo", episode=value)
-        assert fake_lerobot.constructions == []
-        assert getattr(sim, "sent_actions", []) == []
+    def test_no_dataset_is_downloaded_and_no_action_is_sent(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            runner, sim = _runner()
+            runner.replay(repo_id="fake/repo", episode=value)
+            assert fake_lerobot.constructions == [], value
+            assert getattr(sim, "sent_actions", []) == [], value
 
     def test_a_bool_no_longer_replays_the_second_episode(self, fake_lerobot):
         runner, sim = _runner()
@@ -414,38 +417,38 @@ class TestReplayRefusesAnUnusableIndex:
 class TestTheLoaderAndTheFacadeAgree:
     """One value, one verdict, whichever surface the caller reached."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_both_refuse_every_unusable_index(self, value, fake_lerobot):
-        from strands_robots.dataset_source import load_lerobot_episode
+    def test_both_refuse_every_unusable_index(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        runner, _ = _runner()
-        assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error"
-        with pytest.raises(ValueError):
-            load_lerobot_episode("fake/repo", value)
+            runner, _ = _runner()
+            assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error", value
+            with pytest.raises(ValueError):
+                load_lerobot_episode("fake/repo", value)
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_two_messages_differ_only_in_the_context(self, value, fake_lerobot):
-        facade = non_negative_whole_number_error(value, "episode", "replay")
-        loader = non_negative_whole_number_error(value, "episode", "load_lerobot_episode")
-        assert facade is not None and loader is not None
-        assert facade.replace("replay:", "", 1) == loader.replace("load_lerobot_episode:", "", 1)
+    def test_the_two_messages_differ_only_in_the_context(self, fake_lerobot):
+        for value in UNUSABLE_VALUES:
+            facade = non_negative_whole_number_error(value, "episode", "replay")
+            loader = non_negative_whole_number_error(value, "episode", "load_lerobot_episode")
+            assert facade is not None and loader is not None, value
+            assert facade.replace("replay:", "", 1) == loader.replace("load_lerobot_episode:", "", 1), value
 
 
 # ── the guard is the shared rule, not a second copy of it ───────────
 
 
 class TestTheRefusalAddsNothingLocal:
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_neither_surface_narrows_or_widens_the_shared_domain(self, value, fake_lerobot):
+    def test_neither_surface_narrows_or_widens_the_shared_domain(self, fake_lerobot):
         """No carve-out: the accepted set is exactly the shared rule's."""
-        from strands_robots.dataset_source import load_lerobot_episode
+        for value in UNUSABLE_VALUES:
+            from strands_robots.dataset_source import load_lerobot_episode
 
-        runner, _ = _runner()
-        shared_refuses = non_negative_whole_number_error(value, "episode", "replay") is not None
-        assert shared_refuses is True
-        assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error"
-        with pytest.raises(ValueError):
-            load_lerobot_episode("fake/repo", value)
+            runner, _ = _runner()
+            shared_refuses = non_negative_whole_number_error(value, "episode", "replay") is not None
+            assert shared_refuses is True, value
+            assert runner.replay(repo_id="fake/repo", episode=value)["status"] == "error", value
+            with pytest.raises(ValueError):
+                load_lerobot_episode("fake/repo", value)
 
     def test_the_old_bare_comparison_message_is_gone(self):
         source = pathlib.Path(
@@ -770,19 +773,19 @@ class TestTheCollectionSpellingsRefuseAnUnusableIndex:
         episode_labels.annotate_episode(root, 1, quality="high", model="m")
         return root
 
-    @pytest.mark.parametrize("bad", [True, False, 2.5, -1, "0", None, [0]])
-    def test_a_recorded_verdict_index_outside_the_domain_is_refused(self, tmp_path, bad):
+    def test_a_recorded_verdict_index_outside_the_domain_is_refused(self, tmp_path):
         root = tmp_path / "ds"
         root.mkdir()
-        with pytest.raises(ValueError, match="non-negative whole number"):
-            episode_labels.record_deterministic_verdicts(root, [{"episode": bad, "success": True}])
-        assert not episode_labels.labels_path(root).exists(), "a refused verdict must write no sidecar"
+        for bad in [True, False, 2.5, -1, "0", None, [0]]:
+            with pytest.raises(ValueError, match="non-negative whole number"):
+                episode_labels.record_deterministic_verdicts(root, [{"episode": bad, "success": True}])
+            assert not episode_labels.labels_path(root).exists(), "a refused verdict must write no sidecar"
 
-    @pytest.mark.parametrize("bad", [True, False, 2.5, -1, "0", None])
-    def test_a_holdout_episode_key_outside_the_domain_is_refused(self, tmp_path, bad):
+    def test_a_holdout_episode_key_outside_the_domain_is_refused(self, tmp_path):
         root = self._labeled_dataset(tmp_path)
-        with pytest.raises(ValueError, match="non-negative whole number"):
-            episode_labels.measure_agreement(root, {bad: {"quality": "high"}})
+        for bad in [True, False, 2.5, -1, "0", None]:
+            with pytest.raises(ValueError, match="non-negative whole number"):
+                episode_labels.measure_agreement(root, {bad: {"quality": "high"}})
 
     def test_both_refusals_name_the_episode_index(self, tmp_path):
         """The refusal names the quantity, so the caller knows what to fix.

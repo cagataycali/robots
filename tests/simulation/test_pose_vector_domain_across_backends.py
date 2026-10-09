@@ -141,30 +141,30 @@ GOOD_ORIENTATION = np.array([1.0, 0.0, 0.0, 0.0])
 class TestTheSharedDomain:
     """``coerce_pose_vector`` is the single definition every call site shares."""
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        value, err = coerce_pose_vector("add_object", "position", vec, 3)
-        assert err is not None, vec
-        assert value is None
-        assert err.startswith("add_object: 'position'")
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            value, err = coerce_pose_vector("add_object", "position", vec, 3)
+            assert err is not None, vec
+            assert value is None, vec
+            assert err.startswith("add_object: 'position'"), vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_unusable_orientation_is_refused(self, vec):
-        _value, err = coerce_pose_vector("add_object", "orientation", vec, 4)
-        assert err is not None, vec
+    def test_unusable_orientation_is_refused(self):
+        for vec in UNUSABLE_ORIENTATIONS:
+            _value, err = coerce_pose_vector("add_object", "orientation", vec, 4)
+            assert err is not None, vec
 
-    @pytest.mark.parametrize("vec", GOOD_POSITIONS)
-    def test_a_usable_position_normalizes_to_plain_floats(self, vec):
+    def test_a_usable_position_normalizes_to_plain_floats(self):
         """Accepted, and the NumPy scalars do not outlive the boundary.
 
         The pose is stored on :class:`SimObject` / :class:`SimRobot` (both
         annotated ``list[float]``) and echoed in the agent-visible status text,
         so a surviving ``np.float64`` would leak ``np.float64(0.4)`` into it.
         """
-        value, err = coerce_pose_vector("add_object", "position", vec, 3)
-        assert err is None, vec
-        assert value == [0.4, 0.2, 0.3] or value == pytest.approx([0.4, 0.2, 0.3])
-        assert all(type(v) is float for v in value)
+        for vec in GOOD_POSITIONS:
+            value, err = coerce_pose_vector("add_object", "position", vec, 3)
+            assert err is None, vec
+            assert value == [0.4, 0.2, 0.3] or value == pytest.approx([0.4, 0.2, 0.3]), vec
+            assert all(type(v) is float for v in value), vec
 
     def test_omitted_is_not_refused(self):
         """``None`` means omitted - the caller applies its own documented default."""
@@ -201,30 +201,30 @@ def _newton_stub_with_object() -> Any:
 
 
 class TestNewtonAddObject:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_object(stub, "crate", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_object(stub, "crate", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_unusable_orientation_is_refused(self, vec):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_object(stub, "crate", orientation=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'orientation'" in result["content"][0]["text"]
+    def test_unusable_orientation_is_refused(self):
+        for vec in UNUSABLE_ORIENTATIONS:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_object(stub, "crate", orientation=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'orientation'" in result["content"][0]["text"], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_a_refused_pose_registers_no_object(self, vec):
+    def test_a_refused_pose_registers_no_object(self):
         """No half-placed object: the registry is untouched.
 
         Pre-fix ``[]`` reported success and registered the crate at the default
         origin, and ``[nan, 0, 0]`` registered it with a non-finite position.
         """
-        stub = _newton_stub()
-        NewtonSimEngine.add_object(stub, "crate", position=vec)
-        assert dict(stub._world.objects) == {}
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub()
+            NewtonSimEngine.add_object(stub, "crate", position=vec)
+            assert dict(stub._world.objects) == {}, vec
 
     def test_a_numpy_pose_is_accepted_and_normalized(self):
         """Pre-fix this raised ``ValueError: truth value of an array ...``."""
@@ -247,20 +247,20 @@ class TestNewtonAddObject:
 
 
 class TestNewtonAddRobot:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec, tmp_path):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_robot(stub, "arm", urdf_path=str(tmp_path / "arm.urdf"), position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
-        assert dict(stub._world.robots) == {}
+    def test_unusable_position_is_refused(self, tmp_path):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_robot(stub, "arm", urdf_path=str(tmp_path / "arm.urdf"), position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
+            assert dict(stub._world.robots) == {}, vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_unusable_orientation_is_refused(self, vec, tmp_path):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_robot(stub, "arm", urdf_path=str(tmp_path / "arm.urdf"), orientation=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'orientation'" in result["content"][0]["text"]
+    def test_unusable_orientation_is_refused(self, tmp_path):
+        for vec in UNUSABLE_ORIENTATIONS:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_robot(stub, "arm", urdf_path=str(tmp_path / "arm.urdf"), orientation=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'orientation'" in result["content"][0]["text"], vec
 
     def test_the_refusal_precedes_the_asset_resolution(self):
         """A bad pose is reported as such, not as a missing asset.
@@ -276,18 +276,18 @@ class TestNewtonAddRobot:
 
 
 class TestNewtonMoveObject:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _newton_stub_with_object()
-        result = NewtonSimEngine.move_object(stub, "crate", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub_with_object()
+            result = NewtonSimEngine.move_object(stub, "crate", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_a_refused_move_leaves_the_object_where_it_was(self, vec):
-        stub = _newton_stub_with_object()
-        NewtonSimEngine.move_object(stub, "crate", position=vec)
-        assert stub._world.objects["crate"].position == [0.0, 0.0, 0.0]
+    def test_a_refused_move_leaves_the_object_where_it_was(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub_with_object()
+            NewtonSimEngine.move_object(stub, "crate", position=vec)
+            assert stub._world.objects["crate"].position == [0.0, 0.0, 0.0], vec
 
     def test_a_numpy_move_is_accepted_and_normalized(self):
         stub = _newton_stub_with_object()
@@ -332,23 +332,23 @@ class TestNewtonAddCamera:
     verdicts themselves are pinned once, there.
     """
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_a_refused_pose_registers_no_camera(self, vec):
+    def test_a_refused_pose_registers_no_camera(self):
         """No half-registered camera: a refused pose leaves the registry alone.
 
         A camera stored with a wrong-length or non-finite pose is not inert -
         ``_look_at_quat`` divides the view vector by a ``nan`` norm, so
         ``render`` returns a frame from an all-NaN camera under a success result.
         """
-        stub = _newton_stub()
-        NewtonSimEngine.add_camera(stub, "front", position=vec, target=[0.0, 0.0, 0.1])
-        assert dict(stub._world.cameras) == {}
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub()
+            NewtonSimEngine.add_camera(stub, "front", position=vec, target=[0.0, 0.0, 0.1])
+            assert dict(stub._world.cameras) == {}, vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_a_refused_target_registers_no_camera(self, vec):
-        stub = _newton_stub()
-        NewtonSimEngine.add_camera(stub, "front", position=[0.0, -0.6, 0.4], target=vec)
-        assert dict(stub._world.cameras) == {}
+    def test_a_refused_target_registers_no_camera(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _newton_stub()
+            NewtonSimEngine.add_camera(stub, "front", position=[0.0, -0.6, 0.4], target=vec)
+            assert dict(stub._world.cameras) == {}, vec
 
     def test_a_numpy_pose_is_accepted_and_normalized(self):
         """Accepted, and the NumPy scalars do not outlive the boundary.
@@ -442,21 +442,21 @@ def _isaac_stub_with_robot() -> Any:
 
 
 class TestIsaacAddObject:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_object(stub, "crate", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
-        assert stub._objects == {}
-        assert stub._prim_registry == []
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_object(stub, "crate", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
+            assert stub._objects == {}, vec
+            assert stub._prim_registry == [], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_unusable_orientation_is_refused(self, vec):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_object(stub, "crate", orientation=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'orientation'" in result["content"][0]["text"]
+    def test_unusable_orientation_is_refused(self):
+        for vec in UNUSABLE_ORIENTATIONS:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_object(stub, "crate", orientation=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'orientation'" in result["content"][0]["text"], vec
 
     def test_a_string_position_is_no_longer_read_per_character(self):
         """``list("abc")`` produced the 3-"component" position ``['a','b','c']``.
@@ -498,17 +498,16 @@ class TestIsaacAddObject:
 
 
 class TestIsaacAddRobot:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_robot(stub, "arm", data_config="panda", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
-        assert stub._robots == {}
-        assert stub._prim_registry == []
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_robot(stub, "arm", data_config="panda", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
+            assert stub._robots == {}, vec
+            assert stub._prim_registry == [], vec
 
-    @pytest.mark.parametrize("vec", (UNUSABLE_ORIENTATIONS[0], UNUSABLE_ORIENTATIONS[1], "abcd"))
-    def test_a_wrong_length_quaternion_reports_its_real_defect(self, vec):
+    def test_a_wrong_length_quaternion_reports_its_real_defect(self):
         """Not "orientation is not applied on the Isaac backend".
 
         That reject exists for a well-formed NON-IDENTITY quaternion, which the
@@ -516,11 +515,12 @@ class TestIsaacAddRobot:
         different mistake, so the pose domain has to be checked first or the
         caller is told to omit a parameter they mis-spelled instead.
         """
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_robot(stub, "arm", data_config="panda", orientation=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'orientation'" in result["content"][0]["text"]
-        assert "not applied on the Isaac" not in result["content"][0]["text"]
+        for vec in (UNUSABLE_ORIENTATIONS[0], UNUSABLE_ORIENTATIONS[1], "abcd"):
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_robot(stub, "arm", data_config="panda", orientation=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'orientation'" in result["content"][0]["text"], vec
+            assert "not applied on the Isaac" not in result["content"][0]["text"], vec
 
     def test_the_identity_only_reject_still_reports_its_own_reason(self):
         """A well-formed non-identity quaternion keeps the unsupported-feature error."""
@@ -554,19 +554,19 @@ class TestIsaacAddRobot:
 
 
 class TestIsaacMoveObject:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _isaac_stub_with_object()
-        result = IsaacSimulation.move_object(stub, "crate", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _isaac_stub_with_object()
+            result = IsaacSimulation.move_object(stub, "crate", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_a_refused_move_writes_no_pose(self, vec):
+    def test_a_refused_move_writes_no_pose(self):
         """The refusal precedes the transform write, so nothing half-moves."""
-        stub = _isaac_stub_with_object()
-        IsaacSimulation.move_object(stub, "crate", position=vec)
-        assert stub._objects["crate"].handle.poses == []
+        for vec in UNUSABLE_POSITIONS:
+            stub = _isaac_stub_with_object()
+            IsaacSimulation.move_object(stub, "crate", position=vec)
+            assert stub._objects["crate"].handle.poses == [], vec
 
     def test_an_over_long_position_is_refused_not_truncated(self):
         """``np.array(position[:3])`` silently wrote the first 3 of 5.
@@ -596,20 +596,20 @@ class TestIsaacMoveObject:
 
 
 class TestIsaacSetRobotPose:
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_unusable_position_is_refused(self, vec):
-        stub = _isaac_stub_with_robot()
-        result = IsaacSimulation.set_robot_pose(stub, "arm", position=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'position'" in result["content"][0]["text"]
-        assert stub._robots["arm"].articulation.poses == []
+    def test_unusable_position_is_refused(self):
+        for vec in UNUSABLE_POSITIONS:
+            stub = _isaac_stub_with_robot()
+            result = IsaacSimulation.set_robot_pose(stub, "arm", position=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'position'" in result["content"][0]["text"], vec
+            assert stub._robots["arm"].articulation.poses == [], vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_unusable_orientation_is_refused(self, vec):
-        stub = _isaac_stub_with_robot()
-        result = IsaacSimulation.set_robot_pose(stub, "arm", orientation=vec)
-        assert result["status"] == "error", (vec, result)
-        assert "'orientation'" in result["content"][0]["text"]
+    def test_unusable_orientation_is_refused(self):
+        for vec in UNUSABLE_ORIENTATIONS:
+            stub = _isaac_stub_with_robot()
+            result = IsaacSimulation.set_robot_pose(stub, "arm", orientation=vec)
+            assert result["status"] == "error", (vec, result)
+            assert "'orientation'" in result["content"][0]["text"], vec
 
     def test_an_over_long_pose_is_refused_not_truncated(self):
         stub = _isaac_stub_with_robot()
@@ -644,33 +644,33 @@ class TestEveryBackendGivesTheSameVerdict:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_add_object_position_verdicts_match(self, mj_sim, vec):
-        mj = mj_sim.add_object("crate", position=vec)
-        nt = NewtonSimEngine.add_object(_newton_stub(), "crate", position=vec)
-        ic = IsaacSimulation.add_object(_isaac_stub(), "crate", position=vec)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
-        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
-        assert len(texts) == 1, texts
+    def test_add_object_position_verdicts_match(self, mj_sim):
+        for vec in UNUSABLE_POSITIONS:
+            mj = mj_sim.add_object("crate", position=vec)
+            nt = NewtonSimEngine.add_object(_newton_stub(), "crate", position=vec)
+            ic = IsaacSimulation.add_object(_isaac_stub(), "crate", position=vec)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+            texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+            assert len(texts) == 1, texts
 
-    @pytest.mark.parametrize("vec", UNUSABLE_ORIENTATIONS)
-    def test_add_object_orientation_verdicts_match(self, mj_sim, vec):
-        mj = mj_sim.add_object("crate", orientation=vec)
-        nt = NewtonSimEngine.add_object(_newton_stub(), "crate", orientation=vec)
-        ic = IsaacSimulation.add_object(_isaac_stub(), "crate", orientation=vec)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
-        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
-        assert len(texts) == 1, texts
+    def test_add_object_orientation_verdicts_match(self, mj_sim):
+        for vec in UNUSABLE_ORIENTATIONS:
+            mj = mj_sim.add_object("crate", orientation=vec)
+            nt = NewtonSimEngine.add_object(_newton_stub(), "crate", orientation=vec)
+            ic = IsaacSimulation.add_object(_isaac_stub(), "crate", orientation=vec)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+            texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+            assert len(texts) == 1, texts
 
-    @pytest.mark.parametrize("vec", GOOD_POSITIONS)
-    def test_a_usable_pose_is_accepted_everywhere(self, mj_sim, vec):
+    def test_a_usable_pose_is_accepted_everywhere(self, mj_sim):
         """The parity is two-way: no backend refuses a pose another honors."""
-        assert mj_sim.add_object("crate", position=vec)["status"] == "success"
-        assert NewtonSimEngine.add_object(_newton_stub(), "crate", position=vec)["status"] == "success"
-        assert IsaacSimulation.add_object(_isaac_stub(), "crate", position=vec)["status"] == "success"
+        # One world for every row, so each accepted pose places its own object.
+        for i, vec in enumerate(GOOD_POSITIONS):
+            assert mj_sim.add_object(f"crate_{i}", position=vec)["status"] == "success", vec
+            assert NewtonSimEngine.add_object(_newton_stub(), "crate", position=vec)["status"] == "success", vec
+            assert IsaacSimulation.add_object(_isaac_stub(), "crate", position=vec)["status"] == "success", vec
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_add_camera_position_verdicts_match(self, mj_sim, vec):
+    def test_add_camera_position_verdicts_match(self, mj_sim):
         """A camera pose one backend refuses is refused by all of them.
 
         The invariant each ``add_camera`` docstring states - "these are the same
@@ -679,32 +679,33 @@ class TestEveryBackendGivesTheSameVerdict:
         rather than in the per-backend camera modules because two of the three
         need an install CI does not have.
         """
-        mj = mj_sim.add_camera(name="wrist", position=vec, target=[0.0, 0.0, 0.1])
-        nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
-        ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
-        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
-        assert len(texts) == 1, texts
+        for vec in UNUSABLE_POSITIONS:
+            mj = mj_sim.add_camera(name="wrist", position=vec, target=[0.0, 0.0, 0.1])
+            nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
+            ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=vec, target=[0.0, 0.0, 0.1])
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+            texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+            assert len(texts) == 1, texts
 
-    @pytest.mark.parametrize("vec", UNUSABLE_POSITIONS)
-    def test_add_camera_target_verdicts_match(self, mj_sim, vec):
+    def test_add_camera_target_verdicts_match(self, mj_sim):
         """``target`` is a pose vector too, and takes the same domain."""
-        mj = mj_sim.add_camera(name="wrist", position=[0.0, -0.6, 0.4], target=vec)
-        nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
-        ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
-        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
-        assert len(texts) == 1, texts
+        for vec in UNUSABLE_POSITIONS:
+            mj = mj_sim.add_camera(name="wrist", position=[0.0, -0.6, 0.4], target=vec)
+            nt = NewtonSimEngine.add_camera(_newton_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
+            ic = IsaacSimulation.add_camera(_isaac_stub(), "wrist", position=[0.0, -0.6, 0.4], target=vec)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+            texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+            assert len(texts) == 1, texts
 
-    @pytest.mark.parametrize("vec", (UNUSABLE_POSITIONS[0], [NAN, 0.0, 0.0], "abc"))
-    def test_move_object_position_verdicts_match(self, mj_sim, vec):
+    def test_move_object_position_verdicts_match(self, mj_sim):
         assert mj_sim.add_object("crate", position=[0.0, 0.0, 0.5])["status"] == "success"
-        mj = mj_sim.move_object("crate", position=vec)
-        nt = NewtonSimEngine.move_object(_newton_stub_with_object(), "crate", position=vec)
-        ic = IsaacSimulation.move_object(_isaac_stub_with_object(), "crate", position=vec)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
-        texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
-        assert len(texts) == 1, texts
+        for vec in (UNUSABLE_POSITIONS[0], [NAN, 0.0, 0.0], "abc"):
+            mj = mj_sim.move_object("crate", position=vec)
+            nt = NewtonSimEngine.move_object(_newton_stub_with_object(), "crate", position=vec)
+            ic = IsaacSimulation.move_object(_isaac_stub_with_object(), "crate", position=vec)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (vec, mj, nt, ic)
+            texts = {mj["content"][0]["text"], nt["content"][0]["text"], ic["content"][0]["text"]}
+            assert len(texts) == 1, texts
 
 
 # --------------------------------------------------------------------------- #

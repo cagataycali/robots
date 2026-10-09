@@ -215,16 +215,6 @@ def _text(result: dict[str, Any]) -> str:
 class TestTheSharedDomain:
     """``non_negative_whole_number_error`` is the single definition all three share."""
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused(self, count: Any) -> None:
-        error = non_negative_whole_number_error(count, "n_steps", "step")
-        assert error is not None, count
-        assert "n_steps" in error
-
-    @pytest.mark.parametrize(("count", "_expected"), USABLE_COUNTS)
-    def test_a_usable_count_is_accepted(self, count: Any, _expected: int) -> None:
-        assert non_negative_whole_number_error(count, "n_steps", "step") is None, count
-
     def test_zero_is_accepted_and_one_below_it_is_not(self) -> None:
         """The floor is the whole reason this is not ``positive_whole_number_error``."""
         assert non_negative_whole_number_error(0, "n_steps", "step") is None
@@ -233,7 +223,7 @@ class TestTheSharedDomain:
     def test_an_accepted_count_survives_the_int_coercion_it_is_paired_with(self) -> None:
         """The guard exists so the ``int()`` that follows it cannot raise."""
         for count, expected in USABLE_COUNTS:
-            assert non_negative_whole_number_error(count, "n_steps", "step") is None
+            assert non_negative_whole_number_error(count, "n_steps", "step") is None, count
             assert int(count) == expected
 
     def test_a_non_finite_count_is_refused_rather_than_raising(self) -> None:
@@ -245,10 +235,11 @@ class TestTheSharedDomain:
         error = non_negative_whole_number_error(-5, "n_steps", "step")
         assert error == "step: n_steps must be a non-negative whole number, got -5."
 
-    def test_the_message_is_ascii(self) -> None:
+    def test_every_unusable_count_is_refused_in_ascii_naming_the_parameter(self) -> None:
         for count in UNUSABLE_COUNTS:
             error = non_negative_whole_number_error(count, "n_steps", "step")
-            assert error is not None
+            assert error is not None, _count_id(count) or repr(count)
+            assert "n_steps" in error
             error.encode("ascii")
 
 
@@ -340,11 +331,11 @@ class TestEveryRealGetsAVerdictAndNothingRaises:
         assert error is not None
         assert "_RealWithAnUnprintableRepr" in error
 
-    @pytest.mark.parametrize("count", ALL_PROBES, ids=_count_id)
-    def test_the_verdict_is_a_string_or_none_for_every_probe(self, count: Any) -> None:
+    def test_the_verdict_is_a_string_or_none_for_every_probe(self) -> None:
         """The contract as one assertion, over every value this module names."""
-        verdict = non_negative_whole_number_error(count, "n_steps", "step")
-        assert verdict is None or isinstance(verdict, str)
+        for count in ALL_PROBES:
+            verdict = non_negative_whole_number_error(count, "n_steps", "step")
+            assert verdict is None or isinstance(verdict, str), type(count)
 
     def test_the_count_is_coerced_with_int_because_numpy_has_no_trunc(self) -> None:
         """``math.trunc`` is the conversion the ABC guarantees and is unusable here.
@@ -457,27 +448,6 @@ def _newton_stub() -> tuple[Any, SimWorld]:
 # MuJoCo                                                                      #
 # --------------------------------------------------------------------------- #
 class TestMuJoCoStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused(self, count: Any) -> None:
-        stub, _calls = _mujoco_stub()
-        result = MuJoCoSimEngine.step(stub, count)
-        assert result["status"] == "error", (count, result)
-        assert "n_steps" in _text(result)
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_a_refused_count_advances_nothing(self, count: Any) -> None:
-        stub, calls = _mujoco_stub()
-        assert MuJoCoSimEngine.step(stub, count)["status"] == "error"
-        assert calls["n"] == 0
-        assert stub._world.step_count == 0
-        assert stub._world.sim_time == 0.0
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_a_usable_count_advances_exactly_that_many(self, count: Any, expected: int) -> None:
-        stub, calls = _mujoco_stub()
-        assert MuJoCoSimEngine.step(stub, count)["status"] == "success", count
-        assert calls["n"] == expected
-
     def test_an_infinite_count_is_refused_rather_than_raising_overflow(self) -> None:
         """``int(inf)`` raises ``OverflowError``, which the old guard let through."""
         stub, calls = _mujoco_stub()
@@ -513,27 +483,6 @@ class TestMuJoCoStep:
 # Newton                                                                      #
 # --------------------------------------------------------------------------- #
 class TestNewtonStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused(self, count: Any) -> None:
-        stub, _world = _newton_stub()
-        result = NewtonSimEngine.step(stub, count)
-        assert result["status"] == "error", (count, result)
-        assert "n_steps" in _text(result)
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_a_refused_count_advances_nothing(self, count: Any) -> None:
-        """Pre-fix, ``-5`` / ``nan`` / ``True`` each advanced one step."""
-        stub, world = _newton_stub()
-        assert NewtonSimEngine.step(stub, count)["status"] == "error"
-        assert world.step_count == 0
-        assert world.sim_time == 0.0
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_a_usable_count_advances_exactly_that_many(self, count: Any, expected: int) -> None:
-        stub, world = _newton_stub()
-        assert NewtonSimEngine.step(stub, count)["status"] == "success", count
-        assert world.step_count == expected
-
     def test_zero_is_a_no_op_rather_than_one_step(self) -> None:
         """``_advance``'s ``max(1, n_steps)`` floor stepped once for a zero."""
         stub, world = _newton_stub()
@@ -573,28 +522,6 @@ class TestNewtonStep:
 # Isaac                                                                       #
 # --------------------------------------------------------------------------- #
 class TestIsaacStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused(self, count: Any) -> None:
-        stub, _calls = _isaac_stub()
-        result = IsaacSimulation.step(stub, count)
-        assert result["status"] == "error", (count, result)
-        assert "n_steps" in _text(result)
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_a_refused_count_advances_nothing(self, count: Any) -> None:
-        stub, calls = _isaac_stub()
-        assert IsaacSimulation.step(stub, count)["status"] == "error"
-        assert calls["n"] == 0
-        assert stub._step_count == 0
-        assert stub._sim_time == 0.0
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_a_usable_count_advances_exactly_that_many(self, count: Any, expected: int) -> None:
-        stub, calls = _isaac_stub()
-        assert IsaacSimulation.step(stub, count)["status"] == "success", count
-        assert calls["n"] == expected
-        assert stub._step_count == expected
-
     def test_a_negative_count_is_refused_rather_than_reported_as_success(self) -> None:
         """``range(-5)`` was empty, so it reported success having stepped nothing."""
         stub, calls = _isaac_stub()
@@ -630,56 +557,56 @@ class TestIsaacStep:
 # Cross-backend parity                                                        #
 # --------------------------------------------------------------------------- #
 class TestEveryBackendGivesTheSameVerdict:
-    """A count one backend refuses is refused by all of them, in the same words."""
+    """A count one backend refuses is refused by all of them, in the same words.
+
+    One cell walks the whole value table on all three stand-ins: the backends
+    share one guard, so a per-backend, per-value cell grid repeated the table
+    once per backend. The failing value is named in the assertion message.
+    """
 
     @staticmethod
-    def _all_three(count: Any) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-        return (
-            MuJoCoSimEngine.step(_mujoco_stub()[0], count),
-            NewtonSimEngine.step(_newton_stub()[0], count),
-            IsaacSimulation.step(_isaac_stub()[0], count),
-        )
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused_everywhere(self, count: Any) -> None:
-        mj, nt, ic = self._all_three(count)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (count, mj, nt, ic)
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_the_shared_refusal_has_one_wording(self, count: Any) -> None:
-        """Two spellings of one verdict is how backend domains start to drift."""
-        mj, nt, ic = self._all_three(count)
-        assert {_text(mj), _text(nt), _text(ic)} == {_text(mj)}, (count, _text(mj), _text(nt), _text(ic))
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_a_usable_count_is_accepted_everywhere(self, count: Any, expected: int) -> None:
-        """The parity is two-way: no backend refuses a count another honors."""
-        mj, nt, ic = self._all_three(count)
-        assert mj["status"] == nt["status"] == ic["status"] == "success", (count, mj, nt, ic)
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_the_same_count_advances_the_same_number_of_steps(self, count: Any, expected: int) -> None:
-        """The verdict agreeing is not enough: the effect has to agree too."""
+    def _step_all_three(count: Any) -> tuple[list[dict[str, Any]], list[int], list[float]]:
+        """Step a fresh stand-in of every backend; return results, steps taken, clocks."""
         mj_stub, mj_calls = _mujoco_stub()
         nt_stub, nt_world = _newton_stub()
         ic_stub, ic_calls = _isaac_stub()
-        MuJoCoSimEngine.step(mj_stub, count)
-        NewtonSimEngine.step(nt_stub, count)
-        IsaacSimulation.step(ic_stub, count)
-        assert mj_calls["n"] == nt_world.step_count == ic_calls["n"] == expected, count
+        results = [
+            MuJoCoSimEngine.step(mj_stub, count),
+            NewtonSimEngine.step(nt_stub, count),
+            IsaacSimulation.step(ic_stub, count),
+        ]
+        advanced = [mj_calls["n"], nt_world.step_count, ic_calls["n"]]
+        # Every counter a backend keeps, so a refusal that touched any one shows.
+        counters = [mj_stub._world.step_count, ic_stub._step_count]
+        clocks = [mj_stub._world.sim_time, nt_world.sim_time, ic_stub._sim_time]
+        return results, advanced + counters, clocks
+
+    def test_an_unusable_count_is_refused_everywhere_in_one_wording_and_advances_nothing(self) -> None:
+        for count in UNUSABLE_COUNTS:
+            name = _count_id(count) or repr(count)
+            results, advanced, clocks = self._step_all_three(count)
+            assert [r["status"] for r in results] == ["error"] * 3, (name, results)
+            texts = {_text(r) for r in results}
+            # Two spellings of one verdict is how backend domains start to drift.
+            assert len(texts) == 1, (name, texts)
+            assert "n_steps" in texts.pop(), name
+            assert advanced == [0] * 5, (name, advanced)
+            assert clocks == [0.0] * 3, (name, clocks)
+
+    def test_a_usable_count_advances_every_backend_exactly_that_far(self) -> None:
+        """The parity is two-way, and the effect has to agree as well as the verdict."""
+        for count, expected in USABLE_COUNTS:
+            results, advanced, _clocks = self._step_all_three(count)
+            assert [r["status"] for r in results] == ["success"] * 3, (count, results)
+            assert advanced[:3] == [expected] * 3, (count, advanced)
+            assert advanced[4] == expected, (count, "isaac _step_count", advanced[4])
 
     def test_zero_is_a_no_op_on_every_backend(self) -> None:
         """The row that used to disagree: MuJoCo no-op, Newton one step, Isaac none."""
-        mj_stub, mj_calls = _mujoco_stub()
-        nt_stub, nt_world = _newton_stub()
-        ic_stub, ic_calls = _isaac_stub()
-        results = (
-            MuJoCoSimEngine.step(mj_stub, 0),
-            NewtonSimEngine.step(nt_stub, 0),
-            IsaacSimulation.step(ic_stub, 0),
-        )
+        results, advanced, clocks = self._step_all_three(0)
         assert all(result["status"] == "success" for result in results), results
-        assert mj_calls["n"] == nt_world.step_count == ic_calls["n"] == 0
+        assert advanced[:3] == [0, 0, 0]
+        assert clocks[1] == 0.0
 
 
 class TestTheParityHoldsOnACompiledModel:
@@ -695,28 +622,22 @@ class TestTheParityHoldsOnACompiledModel:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_an_unusable_count_is_refused_on_a_real_world(self, mj_sim: Any, count: Any) -> None:
-        result = mj_sim.step(count)
-        assert result["status"] == "error", (count, result)
-        assert "n_steps" in _text(result)
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_COUNTS)
-    def test_a_usable_count_advances_a_real_world_exactly_that_far(
-        self, mj_sim: Any, count: Any, expected: int
-    ) -> None:
-        before = mj_sim._world.step_count
-        assert mj_sim.step(count)["status"] == "success", count
-        assert mj_sim._world.step_count - before == expected
-
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
-    def test_a_refused_count_leaves_a_real_clock_untouched(self, mj_sim: Any, count: Any) -> None:
+    def test_an_unusable_count_is_refused_and_leaves_a_real_clock_untouched(self, mj_sim: Any) -> None:
         """The ``inf`` row left Newton's clock at ``inf`` for the world's lifetime."""
         assert mj_sim.step(2)["status"] == "success"
-        steps, elapsed = mj_sim._world.step_count, mj_sim._world.sim_time
-        assert mj_sim.step(count)["status"] == "error"
-        assert mj_sim._world.step_count == steps
-        assert mj_sim._world.sim_time == elapsed
+        for count in UNUSABLE_COUNTS:
+            name = _count_id(count) or repr(count)
+            steps, elapsed = mj_sim._world.step_count, mj_sim._world.sim_time
+            result = mj_sim.step(count)
+            assert result["status"] == "error", (name, result)
+            assert "n_steps" in _text(result), name
+            assert (mj_sim._world.step_count, mj_sim._world.sim_time) == (steps, elapsed), name
+
+    def test_a_usable_count_advances_a_real_world_exactly_that_far(self, mj_sim: Any) -> None:
+        for count, expected in USABLE_COUNTS:
+            before = mj_sim._world.step_count
+            assert mj_sim.step(count)["status"] == "success", count
+            assert mj_sim._world.step_count - before == expected, count
 
 
 # --------------------------------------------------------------------------- #
