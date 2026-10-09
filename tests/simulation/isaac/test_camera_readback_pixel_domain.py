@@ -66,6 +66,7 @@ import pytest
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation, _CameraState
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source
 from tests.simulation._isaac_engine import isaac_engine
 
 #: The camera's native render size. Both readback surfaces accept only this
@@ -325,7 +326,7 @@ def _dims_surfaces() -> dict[str, tuple[bool, bool]]:
     validated dims) by construction rather than by an exemption list.
     """
     src = inspect.getsource(inspect.getmodule(IsaacSimulation))  # type: ignore[arg-type]
-    tree = ast.parse(src)
+    tree = parse_source(src)
     out: dict[str, tuple[bool, bool]] = {}
     for cls in tree.body:
         if not isinstance(cls, ast.ClassDef) or cls.name != "IsaacSimulation":

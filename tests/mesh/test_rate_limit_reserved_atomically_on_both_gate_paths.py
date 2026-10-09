@@ -41,6 +41,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 rmt = importlib.import_module("strands_robots.tools.robot_mesh")
 
 ACTION = "emergency_stop"
@@ -243,7 +245,7 @@ class TestReservingIsTheOnlyWayASlotIsConsumed:
         """Assignments in ``robot_mesh`` whose value is the atomic reservation."""
         fn = next(
             n
-            for n in ast.walk(ast.parse(source))
+            for n in walk_tree(parse_source(source))
             if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == "robot_mesh"
         )
         return [

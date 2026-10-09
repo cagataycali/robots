@@ -92,7 +92,7 @@ import pytest
 
 from strands_robots.drivers.unitree._common import UNITREE_SDK_INSTALL, sdk_missing
 from strands_robots.training.lerobot import _LEROBOT_CALL_TIME_PACKAGES
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -582,7 +582,7 @@ def test_the_goal_rule_separates_a_read_key_from_a_dead_one() -> None:
     anchors = _anchors(read)
 
     def dead(text: str) -> list[str]:
-        tree = ast.parse(text)
+        tree = parse_source(text)
         return [key for _, _, keys in _goal_citations(text, tree, anchors) for key in keys if key not in read]
 
     assert dead('G = {"target_velocity": [0.4, 0.0, 0.0], "height": 0.7}') == []

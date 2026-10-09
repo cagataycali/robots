@@ -33,6 +33,7 @@ import pytest
 
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_source, walk_tree
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
 _FREE_BASE = "floating_base_joint"
@@ -169,7 +170,7 @@ class TestNoBackendFallsBackToTheJointNameVocabulary:
         """Every ``_DatasetRecorder.create(...)`` call in ``source``."""
         return [
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "create"

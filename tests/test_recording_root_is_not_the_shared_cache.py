@@ -96,7 +96,7 @@ import ast
 import functools
 from pathlib import Path
 
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _TESTS_ROOT = Path(__file__).resolve().parent
 
@@ -161,7 +161,7 @@ def _names_a_repo_id(call: ast.Call, *, direct: bool) -> bool:
 
 def _sole_call(source: str) -> ast.Call:
     """The one call expression in ``source``, for the exemplars below."""
-    statement = ast.parse(source).body[0]
+    statement = parse_source(source).body[0]
     assert isinstance(statement, ast.Expr), source
     call = statement.value
     assert isinstance(call, ast.Call), source

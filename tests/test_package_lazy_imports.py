@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 
 class TestEagerLightSymbols:
@@ -129,7 +129,7 @@ class TestStaticExportContract:
     @staticmethod
     def _type_checking_imported_names() -> set[str]:
         source = Path(strands_robots.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = parse_source(source)
         names: set[str] = set()
         for node in ast.walk(tree):
             # Match the top-level ``if TYPE_CHECKING:`` guard.

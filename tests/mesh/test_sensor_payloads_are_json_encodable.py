@@ -36,6 +36,7 @@ import pytest
 
 from strands_robots.mesh import sensors as mesh_sensors
 from strands_robots.mesh.sensors import _JSONABLE_MAX_DEPTH, SensorLoopsMixin, _jsonable
+from tests._package_ast import parse_source, walk_tree
 
 
 class _Host(SensorLoopsMixin):
@@ -339,7 +340,7 @@ class TestTheCoercionIsSingleSourced:
         source = pathlib.Path(mesh_sensors.__file__).read_text(encoding="utf-8")
         return [
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name.startswith("_read_")
         ]
 

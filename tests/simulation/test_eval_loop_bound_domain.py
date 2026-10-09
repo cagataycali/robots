@@ -65,6 +65,7 @@ import strands_robots.simulation.policy_runner as runner_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source
 
 from .test_benchmark_horizon_domain import _AttributeBenchmark
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
@@ -379,7 +380,7 @@ class TestEveryRunnerSurfaceOwnsItsLoopBounds:
     @staticmethod
     def _public_surfaces(source: str) -> dict[str, set[str]]:
         """Public ``PolicyRunner`` methods mapped to the loop bounds they declare."""
-        tree = ast.parse(source)
+        tree = parse_source(source)
         found: dict[str, set[str]] = {}
         for cls in tree.body:
             if not isinstance(cls, ast.ClassDef) or cls.name != "PolicyRunner":
@@ -395,7 +396,7 @@ class TestEveryRunnerSurfaceOwnsItsLoopBounds:
     @staticmethod
     def _guarded(source: str, method: str) -> set[str]:
         """Bounds ``method`` passes to the shared count domain."""
-        tree = ast.parse(source)
+        tree = parse_source(source)
         guarded: set[str] = set()
         for cls in tree.body:
             if not isinstance(cls, ast.ClassDef) or cls.name != "PolicyRunner":

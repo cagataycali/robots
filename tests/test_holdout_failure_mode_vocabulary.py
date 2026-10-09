@@ -42,6 +42,7 @@ from strands_robots.episode_labels import (
     read_labels,
     record_deterministic_verdicts,
 )
+from tests._package_ast import parse_source, walk_tree
 
 #: Tags outside ``None | FAILURE_MODES``. Every one is asserted against the
 #: vocabulary inside the test, so a tag promoted into the taxonomy stops being
@@ -226,7 +227,7 @@ class TestEveryReaderOfTheTagNamesTheVocabulary:
         """Functions whose code reads the tag without naming its vocabulary."""
         return [
             function.name
-            for function in ast.walk(ast.parse(source))
+            for function in walk_tree(parse_source(source))
             if isinstance(function, ast.FunctionDef)
             and "failure_mode" in (body := cls._body_source(function))
             and "FAILURE_MODES" not in body

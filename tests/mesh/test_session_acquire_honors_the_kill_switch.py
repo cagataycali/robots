@@ -39,6 +39,7 @@ import pytest
 
 import strands_robots.mesh.session as session_mod
 from strands_robots._mesh_switch import AFFIRMATIVE, NEGATIVE
+from tests._package_ast import parse_source
 
 #: Both acquire doors. Graded behaviourally here; :class:`TestEveryAcquireDoorAsksTheSwitch`
 #: checks that only one function body in the module reaches ``zenoh.open``.
@@ -191,7 +192,7 @@ class TestEveryAcquireDoorAsksTheSwitch:
     def _acquire_doors(source: str) -> dict[str, set[str]]:
         """Map each module-level function reaching ``zenoh.open`` to the names it calls."""
         doors: dict[str, set[str]] = {}
-        for node in ast.parse(source).body:
+        for node in parse_source(source).body:
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             called: set[str] = set()

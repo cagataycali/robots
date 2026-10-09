@@ -36,7 +36,7 @@ import strands_robots  # noqa: E402
 from strands_robots.teleop_mixin import TeleopMixin  # noqa: E402
 from strands_robots.teleoperator import _FORWARDABLE_TELEOP_KWARGS  # noqa: E402
 from strands_robots.utils import ensure_lerobot_family_registered  # noqa: E402
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _PYTHON_FENCE = re.compile(r"```python[^\n]*\n(.*?)```", re.DOTALL)  # fences may carry title="..."
@@ -71,7 +71,7 @@ _GRADED_CALLEES = ("attach_teleop", "Teleoperator")
 def _attach_calls(source: str) -> list[tuple[str, str, list[str]]]:
     """``(callee, teleop_type, keyword names)`` for every literal-typed build."""
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []  # a fence with ``...`` placeholders in statement position is prose
     calls: list[tuple[str, str, list[str]]] = []

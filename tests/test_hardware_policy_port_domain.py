@@ -54,6 +54,7 @@ from strands_robots.registry.policies import (
 )
 from strands_robots.utils import tcp_port_error
 from tests._hardware_robot import hardware_robot_on
+from tests._package_ast import parse_source
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
@@ -296,7 +297,7 @@ def _policy_port_surfaces(source: str) -> dict[str, tuple[bool, bool]]:
     ``checks`` is a call to the guard; ``forwards`` is passing the parameter on
     to another call, which is how the internal relay methods satisfy the rule.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: dict[str, tuple[bool, bool]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strands_robots.mesh import core as core_mod  # noqa: F401  -- used by F3-B-1 source-code assertion
+from tests._package_ast import parse_source
 
 
 @pytest.fixture
@@ -161,7 +162,7 @@ class TestPermissiveACLWarningExceptNarrow:
         # AST-scope to the gate method so legitimate ImportError fallbacks
         # in unrelated helper methods do not cause false positives.
         src = Path(core_mod.__file__).read_text()
-        tree = ast.parse(src)
+        tree = parse_source(src)
         gate_src: str | None = None
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "_refuse_under_permissive_default_acl":

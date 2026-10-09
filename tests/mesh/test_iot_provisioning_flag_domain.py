@@ -38,6 +38,7 @@ import pytest
 import strands_robots.mesh.iot.bootstrap as bootstrap_mod
 import strands_robots.mesh.iot.provision as provision_mod
 from strands_robots.utils import boolean_flag_error
+from tests._package_ast import parse_source
 
 ESTOP_SID = "AllowSafetyEstop"
 
@@ -354,7 +355,7 @@ class TestEveryPostureFlagRoutesThroughTheDomain:
     def _flag_surfaces(src: str) -> dict[str, list[str]]:
         """Public top-level functions in *src* mapped to their ``bool`` parameters."""
         found: dict[str, list[str]] = {}
-        for node in ast.parse(src).body:
+        for node in parse_source(src).body:
             if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
                 continue
             args = node.args
@@ -369,7 +370,7 @@ class TestEveryPostureFlagRoutesThroughTheDomain:
 
     @staticmethod
     def _calls_the_domain(src: str, name: str) -> bool:
-        fn = next(n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == name)
+        fn = next(n for n in parse_source(src).body if isinstance(n, ast.FunctionDef) and n.name == name)
         return any(
             isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "boolean_flag_error"
             for n in ast.walk(fn)

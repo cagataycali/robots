@@ -79,6 +79,7 @@ import pytest
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_count_error, positive_finite_number_error
+from tests._package_ast import parse_source
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 
@@ -415,7 +416,7 @@ class TestNoRunnerHorizonSurfaceDrifts:
     def _runner_methods(source: str) -> dict[str, ast.FunctionDef]:
         """Public methods of the ``PolicyRunner`` class in ``source``."""
         found: dict[str, ast.FunctionDef] = {}
-        for cls in ast.parse(source).body:
+        for cls in parse_source(source).body:
             if not isinstance(cls, ast.ClassDef) or cls.name != "PolicyRunner":
                 continue
             for node in cls.body:

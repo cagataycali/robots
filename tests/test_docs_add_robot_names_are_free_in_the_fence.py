@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 import strands_robots
+from tests._package_ast import parse_source
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 #: A python fence, with or without a title (``python title="sketch"``).
@@ -80,7 +81,7 @@ def _duplicate_names(source: str) -> list[str]:
     one after training, each with its own ``so101``.
     """
     try:
-        tree = ast.parse(source)
+        tree = parse_source(source)
     except SyntaxError:
         return []  # a fence with ``...`` placeholders is prose, not code
     taken: dict[str, set[str]] = {}

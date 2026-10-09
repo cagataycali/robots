@@ -36,6 +36,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 mujoco = pytest.importorskip("mujoco")
 
 from strands_robots.simulation import Simulation  # noqa: E402
@@ -230,7 +232,7 @@ def _mujoco_backend_dir() -> Path:
 def _direct_binding_calls(source: str) -> list[str]:
     """Every ``<mod>.mj_name2id(...)`` call in *source*, as ``line:attr`` labels."""
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "mj_name2id":
             found.append(f"{node.lineno}:{node.func.attr}")
     return found

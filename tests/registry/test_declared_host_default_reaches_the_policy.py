@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 from strands_robots.registry.policies import build_policy_kwargs
+from tests._package_ast import parse_source, walk_tree
 
 # ─── registry-derived cases ───────────────────────────────────────────
 
@@ -162,7 +163,9 @@ class TestTheMergeStillTreatsNoneAsUnset:
     def test_the_param_map_loop_skips_none_values(self):
         source = Path(inspect.getfile(build_policy_kwargs)).read_text()
         fn = next(
-            n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
+            n
+            for n in walk_tree(parse_source(source))
+            if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
         )
         loops = {
             str(ast.get_source_segment(source, lp.iter)): str(ast.get_source_segment(source, lp))

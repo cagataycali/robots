@@ -56,6 +56,8 @@ from typing import Any
 import pytest
 import serial
 
+from tests._package_ast import parse_source
+
 serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 # ``Goal_Position`` and ``Goal_Velocity`` are sign-magnitude on the STS/SMS
@@ -296,7 +298,9 @@ class TestTheOptionTablesCannotDriftApart:
         """Map parameter name -> annotation, read from the tool's own source."""
         source = Path(inspect.getfile(serial_mod)).read_text(encoding="utf-8")
         (function,) = [
-            node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == "serial_tool"
+            node
+            for node in parse_source(source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "serial_tool"
         ]
         args = function.args.args + function.args.kwonlyargs
         return {a.arg: ast.unparse(a.annotation) for a in args if a.annotation is not None}

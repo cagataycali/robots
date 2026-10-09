@@ -32,6 +32,8 @@ import pathlib
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _SDK_ROOT = "unitree_sdk2py"
 _TESTS = pathlib.Path(__file__).resolve().parent.parent
 _GATE_NAME = "_HAS_SDK"
@@ -76,7 +78,7 @@ def _scan_the_suites() -> list[tuple[str, int, bool]]:
         source = module.read_text(encoding="utf-8")
         if _GATE_NAME not in source:
             continue
-        rows.extend(_gated_nodes(ast.parse(source), str(module.relative_to(_TESTS.parent))))
+        rows.extend(_gated_nodes(parse_source(source), str(module.relative_to(_TESTS.parent))))
     return rows
 
 

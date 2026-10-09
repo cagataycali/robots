@@ -25,6 +25,7 @@ import pytest
 import serial
 
 from strands_robots.tools.pose_tool import PoseManager, pose_tool
+from tests._package_ast import parse_source, walk_tree
 from tests.tools.conftest import ReadingSerial, position_packet
 
 pose_tool_module = importlib.import_module("strands_robots.tools.pose_tool")
@@ -225,7 +226,7 @@ class TestBothReadersShareOneAccountOfCompleteness:
         source = pathlib.Path(inspect.getfile(pose_tool_module)).read_text()
         defs = [
             node.name
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == "_joints_that_did_not_answer"
         ]
         assert defs == ["_joints_that_did_not_answer"]
@@ -235,7 +236,7 @@ class TestBothReadersShareOneAccountOfCompleteness:
         source = pathlib.Path(inspect.getfile(pose_tool_module)).read_text()
         tool = next(
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == "pose_tool"
         )
         readers = sum(

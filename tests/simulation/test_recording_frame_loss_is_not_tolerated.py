@@ -40,6 +40,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 
 from strands_robots.dataset_recorder import DatasetRecorder, RecordingFrameError
@@ -315,7 +317,7 @@ def _on_frame_guards() -> list[ast.Try]:
     handler guard and the docstring guard below, which must agree about which
     handlers define the posture.
     """
-    tree = ast.parse(inspect.getsource(sys.modules[PolicyRunner.__module__]))
+    tree = parse_source(inspect.getsource(sys.modules[PolicyRunner.__module__]))
 
     def calls_on_frame(node: ast.Try) -> bool:
         return any(
@@ -404,7 +406,7 @@ def _doc_blocks(docstring: str) -> list[str]:
 def _posture_blocks(source: str) -> list[tuple[str, str]]:
     """Return ``(owner, text)`` for each doc block describing the hook posture."""
     graded: list[tuple[str, str]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Module):
             continue
         docstring = ast.get_docstring(node, clean=False)

@@ -41,6 +41,7 @@ import pytest
 
 import strands_robots.mesh.transport.iot_transport as iot_transport
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
+from tests._package_ast import parse_source
 
 from .test_iot_reconnect_client_lifecycle import _FakeClient, _make_certs
 
@@ -232,7 +233,7 @@ def _teardown_handlers(source: str) -> list[tuple[int, bool]]:
     Returns ``(lineno, logs)`` per handler so a site that tolerates a teardown
     failure without recording it is visible as ``logs=False``.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     found: list[tuple[int, bool]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Try):

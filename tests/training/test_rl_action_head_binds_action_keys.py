@@ -51,6 +51,7 @@ import strands_robots.training.rl as rl_pkg
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.training.rl.env import SimEnv
+from tests._package_ast import parse_source, walk_tree
 from tests.training._engine_stand_in import EngineStandIn
 
 _ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
@@ -258,7 +259,7 @@ def _training_modules() -> list[Path]:
 def _joint_name_reads(source: str) -> list[str]:
     """Names of functions calling ``robot_joint_names``, at any receiver."""
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef):
             continue
         for call in ast.walk(node):
@@ -300,7 +301,7 @@ class TestNoTrainingModuleReadsTheJointList:
 def _metadata_action_key_reads(source: str) -> set[str]:
     """Functions building a metadata dict with an ``action_keys`` entry."""
     found = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef):
             continue
         for sub in ast.walk(node):

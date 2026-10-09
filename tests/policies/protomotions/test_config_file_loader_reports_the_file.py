@@ -66,7 +66,7 @@ from strands_robots.policies.protomotions.config import (  # noqa: E402
     ProtoMotionsConfig,
     load_config_from_yaml,
 )
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _POLICY_CONFIG_ROOT = Path(inspect.getsourcefile(pm_config) or "").resolve().parents[2]
 
@@ -259,7 +259,7 @@ def loader(path):
 
     @staticmethod
     def _parse(source: str) -> ast.FunctionDef:
-        module = ast.parse(source)
+        module = parse_source(source)
         function = module.body[0]
         assert isinstance(function, ast.FunctionDef)
         return function

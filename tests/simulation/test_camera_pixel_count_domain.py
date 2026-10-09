@@ -86,6 +86,7 @@ import pytest
 from strands_robots.simulation.isaac.simulation import _MIN_RENDER_PX
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source, walk_tree
 
 from .isaac.test_add_camera_numeric_validation import _engine as _isaac_engine
 from .mujoco._gl_probe import requires_gl
@@ -525,7 +526,7 @@ class TestNoNewtonDimensionSurfaceDrifts:
     def _classify(src: str) -> dict[str, str]:
         """Map each public dimension-taking method to how it reaches the domain."""
         found: dict[str, str] = {}
-        for cls in ast.walk(ast.parse(src)):
+        for cls in walk_tree(parse_source(src)):
             if not isinstance(cls, ast.ClassDef):
                 continue
             for fn in ast.iter_child_nodes(cls):

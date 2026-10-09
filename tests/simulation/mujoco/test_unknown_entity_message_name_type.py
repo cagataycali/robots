@@ -38,6 +38,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source
+
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.base import SimEngine, close_match_hint  # noqa: E402
@@ -311,7 +313,7 @@ _EXPECTED_HELPERS = {
 
 def _unknown_entity_helpers(source: str) -> dict[str, ast.FunctionDef]:
     """Map ``name`` -> node for every ``_unknown_*_msg`` helper in *source*."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     return {
         node.name: node
         for node in ast.walk(tree)

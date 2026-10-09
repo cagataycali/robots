@@ -66,6 +66,7 @@ import pytest
 from strands_robots.mesh import security
 from strands_robots.mesh.security import ValidationError, validate_command
 from strands_robots.utils import positive_whole_number_error
+from tests._package_ast import parse_source
 
 # Every field ``validate_command`` routes through ``_coerce_int``, with the
 # minimal payload that reaches it and the ``hi`` bound declared at its call
@@ -294,7 +295,7 @@ class TestEveryWireCountIsHeldToTheDomain:
     @staticmethod
     def _coerced_int_fields() -> set[str]:
         source = pathlib.Path(security.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = parse_source(source)
         found: set[str] = set()
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef) or node.name != "validate_command":

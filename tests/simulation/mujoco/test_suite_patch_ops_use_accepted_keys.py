@@ -30,6 +30,7 @@ import pytest
 pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.scene_ops import _PATCH_OP_KEYS  # noqa: E402
+from tests._package_ast import parse_source, walk_tree  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEST_ROOTS = ("tests", "tests_integ")
@@ -41,18 +42,17 @@ TEST_ROOTS = ("tests", "tests_integ")
 REJECTION_MODULE = "test_patch_scene_mjcf_unknown_op_keys.py"
 
 
-def _unread_keys_in(source: str, filename: str) -> list[tuple[int, str, list[str]]]:
+def _unread_keys_in(source: str) -> list[tuple[int, str, list[str]]]:
     """Locate op-dict literals in ``source`` whose keys are outside the vocabulary.
 
     Args:
         source: Python source text to scan.
-        filename: Name used in parse errors.
 
     Returns:
         One ``(lineno, op, sorted unread keys)`` tuple per offending literal.
     """
     findings: list[tuple[int, str, list[str]]] = []
-    for node in ast.walk(ast.parse(source, filename=filename)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Dict):
             continue
         keys = {key.value for key in node.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
@@ -85,7 +85,7 @@ def test_no_test_module_sends_an_unread_patch_op_key():
     for path in _suite_modules():
         if path.name == REJECTION_MODULE:
             continue
-        for lineno, op, unread in _unread_keys_in(path.read_text(encoding="utf-8"), path.name):
+        for lineno, op, unread in _unread_keys_in(path.read_text(encoding="utf-8")):
             accepted = ", ".join(sorted(_PATCH_OP_KEYS[op]))
             offenders.append(
                 f"{path.relative_to(REPO_ROOT)}:{lineno}: {op} does not read {unread} (accepted: {accepted})"
@@ -101,12 +101,12 @@ def test_the_scanner_detects_a_planted_unread_key():
     # Without this, a scanner that silently matched nothing would look like a
     # clean suite.
     planted = 'sim.patch_scene_mjcf([{"op": "add_body", "name": "rig", "position": [0, 0, 1]}])\n'
-    assert _unread_keys_in(planted, "planted.py") == [(1, "add_body", ["position"])]
+    assert _unread_keys_in(planted) == [(1, "add_body", ["position"])]
 
 
 def test_a_correctly_spelled_op_is_not_flagged():
     ok = 'sim.patch_scene_mjcf([{"op": "add_body", "name": "rig", "pos": [0, 0, 1]}])\n'
-    assert _unread_keys_in(ok, "ok.py") == []
+    assert _unread_keys_in(ok) == []
 
 
 def test_the_exempted_module_still_earns_its_exemption():
@@ -114,4 +114,4 @@ def test_the_exempted_module_still_earns_its_exemption():
     # exemption is stale and should be deleted rather than left as a hole.
     exempt = [p for p in _suite_modules() if p.name == REJECTION_MODULE]
     assert exempt, f"{REJECTION_MODULE} not found - drop the exemption"
-    assert _unread_keys_in(exempt[0].read_text(encoding="utf-8"), REJECTION_MODULE)
+    assert _unread_keys_in(exempt[0].read_text(encoding="utf-8"))

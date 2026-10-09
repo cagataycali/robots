@@ -45,6 +45,7 @@ import pathlib
 import pytest
 
 from strands_robots.mesh.session import STREAM_HZ, stream_min_period_from_env
+from tests._package_ast import parse_source
 
 #: Modules that hold a ``publish_step`` throttle period.
 THROTTLE_SITES = [
@@ -159,7 +160,7 @@ class TestNeitherCallSiteDividesTheRawEnvValue:
     @pytest.mark.parametrize("relpath", THROTTLE_SITES)
     def test_the_module_does_not_read_the_knob_directly(self, relpath) -> None:
         source = (_repo_root() / relpath).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = parse_source(source)
 
         # A string literal naming the knob outside a comment means the module
         # resolved it itself instead of calling the shared resolver.
@@ -192,7 +193,7 @@ def _throttle_clock_base(relpath: str) -> tuple[str, str]:
     differently is still read.
     """
     source = (_repo_root() / relpath).read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = parse_source(source)
 
     gates = [
         node

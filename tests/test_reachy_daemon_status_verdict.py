@@ -61,6 +61,7 @@ from typing import Any
 import pytest
 
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_source
 
 pytest.importorskip("device_connect_edge")
 
@@ -400,7 +401,7 @@ class TestWhyTheEnvelopeOwnsTheVerdict:
 def _class_body(rmd: Any) -> ast.ClassDef:
     """The ``ReachyMiniDriver`` class node, parsed from its own source file."""
     source = Path(rmd.__file__).read_text(encoding="utf-8")
-    for node in ast.parse(source).body:
+    for node in parse_source(source).body:
         if isinstance(node, ast.ClassDef) and node.name == "ReachyMiniDriver":
             return node
     raise AssertionError("ReachyMiniDriver not found in the driver module")

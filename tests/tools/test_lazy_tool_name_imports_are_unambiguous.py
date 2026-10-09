@@ -61,7 +61,7 @@ import pytest
 
 import strands_robots
 import strands_robots.tools as tools_pkg
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _PACKAGE_ROOT = Path(strands_robots.__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_ROOT.parent
@@ -133,7 +133,7 @@ def _ambiguous_reads_in_fence(body: str, shadowable: frozenset[str]) -> list[tup
         ``(line within the fence, name)`` for each shadowable name read off the package.
     """
     try:
-        return _ambiguous_reads(ast.parse(body), shadowable)
+        return _ambiguous_reads(parse_source(body), shadowable)
     except SyntaxError:
         return sorted(
             (body[: match.start()].count("\n") + 1, name)

@@ -47,6 +47,8 @@ from typing import Any
 import pytest
 import serial
 
+from tests._package_ast import parse_source, walk_tree
+
 serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
 
 #: Bit index the vendor declares for ``Goal_Velocity`` on the STS/SMS series -
@@ -148,7 +150,7 @@ def _velocity_ceiling_expression() -> str:
     source = Path(inspect.getfile(serial_mod)).read_text(encoding="utf-8")
     (assignment,) = [
         node
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.AnnAssign)
         and isinstance(node.target, ast.Name)
         and node.target.id == "_REGISTER_FIELDS"

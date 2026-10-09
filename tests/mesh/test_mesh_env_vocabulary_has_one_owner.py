@@ -43,6 +43,7 @@ from strands_robots._mesh_switch import (
 from strands_robots.mesh import core as mesh_core
 from strands_robots.mesh.core import mesh_disabled_by_env
 from strands_robots.robot import _mesh_env_opt_in
+from tests._package_ast import parse_source
 
 _OWNER_LOGGER = "strands_robots._mesh_switch"
 
@@ -213,7 +214,7 @@ class TestTheVocabularyCannotRESplit:
         Zenoh-backed session and core import eagerly at ``Robot`` import time.
         """
         source = Path(_mesh_switch.__file__).read_text(encoding="utf-8")
-        tree = ast.parse(source)
+        tree = parse_source(source)
         imported = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:

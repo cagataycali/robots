@@ -46,6 +46,7 @@ import pytest
 from strands_robots.policies.cosmos3 import Cosmos3DiffusersBackend
 from strands_robots.policies.cosmos3.embodiments import get_embodiment
 from strands_robots.policies.cosmos3.policy_diffusers import _install_hint, _to_numpy
+from tests._package_ast import parse_source
 
 # The three functions that raise the shared install hint. Pinned as a set so a
 # fourth site cannot ship without a decision about whether it is driven.
@@ -235,7 +236,7 @@ class TestTheRefusalSiteSetIsPinned:
     def _sites_raising_the_hint(source: str) -> set[str]:
         """Functions whose body raises ``ImportError(_install_hint())``."""
         found: set[str] = set()
-        tree = ast.parse(source)
+        tree = parse_source(source)
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue

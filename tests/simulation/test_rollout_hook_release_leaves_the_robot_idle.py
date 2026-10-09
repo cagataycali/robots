@@ -54,6 +54,7 @@ import pytest
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimRobot, SimWorld
+from tests._package_ast import parse_source, walk_tree
 from tests.simulation._isaac_engine import isaac_engine
 
 _SO100_JOINTS = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw"]
@@ -371,7 +372,7 @@ class TestTheReleaseHasOneOwnerOnTheBackendsWithNoOverride:
         found: set[str] = set()
         for module in sorted(root.glob("*.py")):
             text = module.read_text()
-            for cls in (n for n in ast.walk(ast.parse(text)) if isinstance(n, ast.ClassDef)):
+            for cls in (n for n in walk_tree(parse_source(text)) if isinstance(n, ast.ClassDef)):
                 for member in cls.body:
                     if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef):
                         body = ast.get_source_segment(text, member) or ""

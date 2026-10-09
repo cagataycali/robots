@@ -32,6 +32,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine  # noqa: E402
@@ -118,7 +120,7 @@ def _literal_dispatch_calls(source: str) -> list[tuple[int, str, tuple[str, ...]
     two-argument calls.
     """
     found: list[tuple[int, str, tuple[str, ...]]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Call):
             continue
         for first, second in zip(node.args, node.args[1:], strict=False):

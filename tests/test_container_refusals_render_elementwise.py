@@ -90,6 +90,7 @@ from strands_robots.utils import (
     refusal_container_repr,
     refusal_repr,
 )
+from tests._package_ast import parse_source, walk_tree
 
 # --------------------------------------------------------------------------- #
 # Probes                                                                      #
@@ -813,7 +814,7 @@ class TestEveryContainerGuardRoutesThroughTheRenderer:
     @staticmethod
     def _function(name: str) -> ast.FunctionDef:
         source = pathlib.Path(inspect.getfile(utils)).read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
+        for node in walk_tree(parse_source(source)):
             if isinstance(node, ast.FunctionDef) and node.name == name:
                 return node
         raise AssertionError(f"{name} not found in utils.py")

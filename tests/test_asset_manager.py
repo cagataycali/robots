@@ -24,6 +24,7 @@ from strands_robots.registry.user_registry import (
     _invalidate_cache,
     register_robot,
 )
+from tests._package_ast import parse_source, walk_tree
 
 #: This repository, located from this file: a relative literal resolves against
 #: the working directory, so the example read below raised ``FileNotFoundError``
@@ -813,7 +814,7 @@ class TestTheDirectoryResolverCanDeclineTheSameFetch:
         source = (_REPO_ROOT / "examples/so101_curobo/planner.py").read_text()
         helper = next(
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == "_so101_cache_urdf"
         )
         called = {

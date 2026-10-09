@@ -20,6 +20,7 @@ import pytest
 
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from tests._package_ast import parse_source, walk_tree
 from tests.simulation._isaac_engine import isaac_engine
 
 _TESTS = Path(__file__).resolve().parents[1]
@@ -45,7 +46,7 @@ def _restates_a_default(attr: str, value: str) -> bool:
 def restated_defaults(source: str) -> list[str]:
     """``engine.<attr>`` assignments right after a skeleton that restate ``__init__``."""
     found = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         body = getattr(node, "body", None)
         if not isinstance(body, list):
             continue

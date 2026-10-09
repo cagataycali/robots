@@ -47,7 +47,7 @@ from strands_robots.drivers.feetech.protocol import (
     sync_write_packet,
     write_packet,
 )
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 
 # ---------------------------------------------------------------------------
@@ -535,7 +535,7 @@ class TestTheWireFormatIsDecidedInOnePlace:
     @staticmethod
     def _shift_by_eight_sites(source: str) -> list[int]:
         """Lines spelling a byte-order shift, i.e. ``<< 8`` or ``>> 8``."""
-        tree = ast.parse(source)
+        tree = parse_source(source)
         return sorted(
             node.lineno
             for node in ast.walk(tree)

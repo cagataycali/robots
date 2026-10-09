@@ -59,6 +59,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source
+
 pytest.importorskip("pyarrow")
 
 import pyarrow as pa  # noqa: E402
@@ -82,7 +84,7 @@ def _verifier_ast() -> ast.FunctionDef:
     source = _EXAMPLE.read_text(encoding="utf-8")
     return next(
         node
-        for node in ast.parse(source).body
+        for node in parse_source(source).body
         if isinstance(node, ast.FunctionDef) and node.name == "_verify_parquet_truth"
     )
 
@@ -213,7 +215,7 @@ class TestTheExampleReadsTheDatasetThroughTheSharedChecker:
         source = _EXAMPLE.read_text(encoding="utf-8")
         function = next(
             node
-            for node in ast.parse(source).body
+            for node in parse_source(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "_verify_parquet_truth"
         )
         called = {
@@ -231,7 +233,7 @@ class TestTheExampleReadsTheDatasetThroughTheSharedChecker:
         source = _EXAMPLE.read_text(encoding="utf-8")
         function = next(
             node
-            for node in ast.parse(source).body
+            for node in parse_source(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "_verify_parquet_truth"
         )
         body = ast.unparse(function)

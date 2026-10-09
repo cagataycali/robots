@@ -52,7 +52,7 @@ import pathlib
 
 import pytest
 
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 from tests.tools.test_agent_tool_parameter_descriptions import _BOUND_TOOLS, _declared_parameters
 
 _PACKAGE_ROOT = pathlib.Path(__file__).resolve().parents[2] / "strands_robots"
@@ -143,7 +143,7 @@ class TestTheRuleIsWhatTheModelCanObserve:
 
     @staticmethod
     def _dead(source: str) -> list[str]:
-        func = ast.parse(source).body[0]
+        func = parse_source(source).body[0]
         assert isinstance(func, ast.FunctionDef)
         return _dead_parameters(func)
 

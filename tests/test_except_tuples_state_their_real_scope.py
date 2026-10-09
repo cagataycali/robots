@@ -59,7 +59,7 @@ from typing import Any
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 #: Trees scanned for the rule. Reached through the imported package so a layout
 #: change cannot silently narrow the scan to nothing.
@@ -176,7 +176,7 @@ def redundant_tuple_members(source: str) -> list[tuple[int, str]]:
         ``(lineno, "Narrow < Broad")`` per redundancy, sorted. A member this
         rule cannot resolve is skipped rather than reported.
     """
-    tree = ast.parse(source)
+    tree = parse_source(source)
     return _redundancies(tree, _tuple_handlers(tree))
 
 

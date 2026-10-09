@@ -43,6 +43,7 @@ import pytest
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import positive_count_error, positive_finite_number_error
+from tests._package_ast import parse_source
 from tests.tools.test_run_policy import _FakeSim
 
 rp_mod = importlib.import_module("strands_robots.tools.run_policy")
@@ -215,7 +216,7 @@ _NUMERIC_ANNOTATIONS = {"int", "float", "int | None", "float | None"}
 
 def _tool_function(source: str) -> ast.FunctionDef:
     """Return the ``run_policy`` tool's own FunctionDef from ``source``."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     return next(
         node
         for node in ast.walk(tree)

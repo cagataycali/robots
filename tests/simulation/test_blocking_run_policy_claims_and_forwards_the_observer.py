@@ -48,7 +48,7 @@ from strands_robots.simulation.observers import (
     RunPolicyStarted,
     RunPolicyStep,
 )
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 N_STEPS = 12
 CONTROL_HZ = 30.0
@@ -235,7 +235,7 @@ def _planted_method(source: str) -> ast.FunctionDef:
     assertions. The assertions also make a malformed exemplar fail here, naming
     the snippet, instead of at the predicate under test.
     """
-    cls = ast.parse(source).body[0]
+    cls = parse_source(source).body[0]
     assert isinstance(cls, ast.ClassDef), source
     fn = cls.body[0]
     assert isinstance(fn, ast.FunctionDef), source

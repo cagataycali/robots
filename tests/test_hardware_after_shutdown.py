@@ -87,6 +87,7 @@ from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import TaskStatus
 from strands_robots.policies.base import Policy
 from tests._hardware_robot import hardware_robot_on
+from tests._package_ast import parse_source
 
 #: Upper bound on any wait, so a broken contract fails instead of hanging.
 DEADLINE = 10.0
@@ -559,7 +560,7 @@ class TestWhatAnInterruptedBringUpStillReports:
 def _rollout_module_ast() -> ast.Module:
     """Parse the hardware-robot module the three readers live in."""
     source = pathlib.Path(hardware_robot.__file__).read_text(encoding="utf-8")
-    return ast.parse(source)
+    return parse_source(source)
 
 
 def _function_named(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:

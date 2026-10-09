@@ -44,6 +44,7 @@ from strands_robots.simulation.isaac.loaders import (
     load_mjcf,
     load_urdf,
 )
+from tests._package_ast import parse_source, walk_tree
 
 from .test_urdf_link_pose import INERTIAL
 
@@ -271,7 +272,7 @@ class TestNoCallSiteCanInheritAFormatsDefault:
         source = pathlib.Path(loaders.__file__).read_text(encoding="utf-8")
         calls = [
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_parse_axis"
         ]
         assert calls, "no _parse_axis call sites found; this rule would grade nothing"

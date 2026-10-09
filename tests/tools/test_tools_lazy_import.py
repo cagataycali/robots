@@ -30,6 +30,7 @@ from collections.abc import Iterator
 import pytest
 
 import strands_robots.tools as tools_pkg
+from tests._package_ast import parse_source
 
 
 def test_all_lists_every_lazy_import_name() -> None:
@@ -182,7 +183,7 @@ class TestMaterializingAToolDoesNotConfigureTheHostProcess:
             for child in ast.iter_child_nodes(node):
                 visit(child)
 
-        for statement in ast.parse(source).body:
+        for statement in parse_source(source).body:
             visit(statement)
         return found
 

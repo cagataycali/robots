@@ -40,6 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
@@ -341,7 +343,7 @@ class TestNoRefusalFollowsTheDeletion:
         """``(deletion lineno, recorder lineno, refusal linenos between them)``."""
         start = next(
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == "start_recording"
         )
         deletion = next(

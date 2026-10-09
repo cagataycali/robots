@@ -48,7 +48,7 @@ from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobo
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.tools.use_rtps import use_rtps
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 ros_mod = importlib.import_module("strands_robots.tools.use_ros")
 
@@ -471,7 +471,7 @@ class TestNoOperatorIsAskedUnderTheTransportLock:
         source = Path(inspect.getsourcefile(entry_point) or "").read_text(encoding="utf-8")
         dispatch = next(
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == entry_point.__name__
         )
         lock_blocks = [

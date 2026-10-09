@@ -64,6 +64,7 @@ from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.models import SimRobot, SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
+from tests._package_ast import parse_source
 
 from .test_recording_preflight_refusals_across_backends import (
     _SO100_JOINTS,
@@ -333,7 +334,7 @@ class TestEveryCellRunsWithoutAnOptionalBackend:
     def test_no_engine_factory_asks_for_an_optional_package(self) -> None:
         """``importorskip`` in a factory is what made three cells skip before."""
         source = pathlib.Path(__file__).read_text()
-        tree = ast.parse(source)
+        tree = parse_source(source)
         factories = {"_mujoco_skeleton", "_newton_skeleton", "_isaac_skeleton"}
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in factories:
