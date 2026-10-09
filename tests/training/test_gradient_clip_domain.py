@@ -182,57 +182,63 @@ def _clip_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOnPolicyBackendRefusesAnUnusableGradientClip:
     """PPO refuses every value ``clip_grad_norm_`` cannot honor."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.max_grad_norm = value
-        assert _clip_problems(ON_POLICY, spec), f"ppo accepted max_grad_norm={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.max_grad_norm = value
+            assert _clip_problems(ON_POLICY, spec), f"ppo accepted max_grad_norm={value!r}"
 
-    @pytest.mark.parametrize("value", PLAIN_REFUSAL)
-    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.max_grad_norm = value
-        (problem,) = _clip_problems(ON_POLICY, spec)
-        assert "max_grad_norm" in problem
-        assert "must be a positive finite number" in problem
-        assert repr(value) in problem, problem
+    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec) -> None:
+        for value in PLAIN_REFUSAL:
+            spec.max_grad_norm = value
+            problems = _clip_problems(ON_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert "max_grad_norm" in problem, f"{value!r}"
+            assert "must be a positive finite number" in problem, f"{value!r}"
+            assert repr(value) in problem, problem
 
-    @pytest.mark.parametrize("value", BEYOND_FLOAT_RANGE)
-    def test_a_value_past_the_float64_range_is_refused_with_its_own_reason(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_a_value_past_the_float64_range_is_refused_with_its_own_reason(self, spec: RLTrainSpec) -> None:
         """It is positive and finite, so ``must be a positive finite number`` would be false of it."""
-        spec.max_grad_norm = value
-        (problem,) = _clip_problems(ON_POLICY, spec)
-        assert "max_grad_norm" in problem
-        assert "must be within the range of a 64-bit float" in problem
-        assert "must be a positive finite number" not in problem
-        assert repr(value) in problem
+        for value in BEYOND_FLOAT_RANGE:
+            spec.max_grad_norm = value
+            problems = _clip_problems(ON_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert "max_grad_norm" in problem, f"{value!r}"
+            assert "must be within the range of a 64-bit float" in problem, f"{value!r}"
+            assert "must be a positive finite number" not in problem, f"{value!r}"
+            assert repr(value) in problem, f"{value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.max_grad_norm = value
-        (problem,) = _clip_problems(ON_POLICY, spec)
-        assert problem.startswith(f"{ON_POLICY}: ")
+    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.max_grad_norm = value
+            problems = _clip_problems(ON_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem.startswith(f"{ON_POLICY}: "), f"{value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_preflight_reports_rather_than_raises(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_the_preflight_reports_rather_than_raises(self, spec: RLTrainSpec) -> None:
         """``validate`` is read-only, so even a value ``float()`` chokes on reports."""
-        spec.max_grad_norm = value
-        assert isinstance(create_trainer(ON_POLICY).validate(spec), list)
+        for value in UNUSABLE:
+            spec.max_grad_norm = value
+            assert isinstance(create_trainer(ON_POLICY).validate(spec), list), f"{value!r}"
 
-    @pytest.mark.parametrize("value", SILENT)
-    def test_a_silently_honored_value_never_reaches_a_run(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_a_silently_honored_value_never_reaches_a_run(self, spec: RLTrainSpec) -> None:
         """``train`` is fail-closed on ``validate``, so no rollout is collected."""
-        spec.max_grad_norm = value
-        result = create_trainer(ON_POLICY).train(spec)
-        assert result.status == "error"
-        assert "max_grad_norm" in result.message
+        for value in SILENT:
+            spec.max_grad_norm = value
+            result = create_trainer(ON_POLICY).train(spec)
+            assert result.status == "error", f"{value!r}"
+            assert "max_grad_norm" in result.message, f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
     """Every bound the clip can honor still passes."""
 
-    @pytest.mark.parametrize("value", [*USABLE, *NO_CLIPPING])
-    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.max_grad_norm = value
-        assert _clip_problems(ON_POLICY, spec) == []
+    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec) -> None:
+        for value in [*USABLE, *NO_CLIPPING]:
+            spec.max_grad_norm = value
+            assert _clip_problems(ON_POLICY, spec) == [], f"{value!r}"
 
     def test_the_shipped_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
         assert spec.max_grad_norm == 1.0
@@ -249,24 +255,24 @@ class TestTheUsableDomainIsUntouched:
 class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
     """The local domain's whole contribution is accepting "do not clip"."""
 
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_it_agrees_with_the_shared_positive_finite_rule(self, value: Any) -> None:
-        mine = _clip_bound_error(value, "max_grad_norm", "ppo")
-        shared = positive_finite_number_error(value, "max_grad_norm", "ppo")
-        assert mine == shared, f"diverged on {value!r}: {mine!r} vs {shared!r}"
+    def test_it_agrees_with_the_shared_positive_finite_rule(self) -> None:
+        for value in [*USABLE, *UNUSABLE]:
+            mine = _clip_bound_error(value, "max_grad_norm", "ppo")
+            shared = positive_finite_number_error(value, "max_grad_norm", "ppo")
+            assert mine == shared, f"diverged on {value!r}: {mine!r} vs {shared!r}"
 
-    @pytest.mark.parametrize("value", NO_CLIPPING)
-    def test_infinity_is_the_carve_out(self, value: Any) -> None:
-        assert _clip_bound_error(value, "max_grad_norm", "ppo") is None
-        assert positive_finite_number_error(value, "max_grad_norm", "ppo") is not None
+    def test_infinity_is_the_carve_out(self) -> None:
+        for value in NO_CLIPPING:
+            assert _clip_bound_error(value, "max_grad_norm", "ppo") is None, f"{value!r}"
+            assert positive_finite_number_error(value, "max_grad_norm", "ppo") is not None, f"{value!r}"
 
     def test_negative_infinity_is_not_carved_out(self) -> None:
         assert _clip_bound_error(float("-inf"), "max_grad_norm", "ppo") is not None
 
-    @pytest.mark.parametrize("value", [*BEYOND_FLOAT_RANGE, *UNREADABLE_REAL])
-    def test_the_carve_out_declines_rather_than_raising(self, value: Any) -> None:
+    def test_the_carve_out_declines_rather_than_raising(self) -> None:
         """A value the carve-out cannot read is delegated, never raised on."""
-        assert isinstance(_clip_bound_error(value, "max_grad_norm", "ppo"), str)
+        for value in [*BEYOND_FLOAT_RANGE, *UNREADABLE_REAL]:
+            assert isinstance(_clip_bound_error(value, "max_grad_norm", "ppo"), str), f"{value!r}"
 
     def test_the_unreadable_probes_span_the_prescribed_conversion_errors(self) -> None:
         """Non-vacuity for the wrapper, and a guard against the probes drifting.
@@ -294,10 +300,10 @@ class TestTheBackendsThatDoNotClipStaySilent:
     """A backend that never reads the field must not report on it."""
 
     @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_no_problem_is_reported(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.max_grad_norm = value
-        assert _clip_problems(provider, spec) == []
+    def test_no_problem_is_reported(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in UNUSABLE:
+            spec.max_grad_norm = value
+            assert _clip_problems(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
     def test_the_silence_is_scoping_and_not_an_empty_preflight(self, spec: RLTrainSpec, provider: str) -> None:

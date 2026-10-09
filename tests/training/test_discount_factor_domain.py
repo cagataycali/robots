@@ -88,26 +88,24 @@ class TestEveryRLBackendRefusesAnUnusableDiscountFactor:
     """Both backends refuse every value the return cannot be discounted by."""
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.gamma = value
-        assert _gamma_problems(provider, spec), f"{provider} accepted gamma={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in UNUSABLE:
+            spec.gamma = value
+            assert _gamma_problems(provider, spec), f"{provider} accepted gamma={value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", OUT_OF_INTERVAL)
-    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
+    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec, provider: str) -> None:
         """The message states the domain, so the fix needs no guesswork."""
-        spec.gamma = value
-        assert any("must be in [0, 1]" in p for p in _gamma_problems(provider, spec))
+        for value in OUT_OF_INTERVAL:
+            spec.gamma = value
+            assert any("must be in [0, 1]" in p for p in _gamma_problems(provider, spec)), f"{value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_FINITE_NUMBER)
-    def test_a_non_numeric_value_reads_like_every_other_numeric_field(
-        self, spec: RLTrainSpec, provider: str, value: Any
-    ) -> None:
+    def test_a_non_numeric_value_reads_like_every_other_numeric_field(self, spec: RLTrainSpec, provider: str) -> None:
         """Type / bool / finiteness refusals come from the shared domain."""
-        spec.gamma = value
-        assert any("must be a finite number" in p for p in _gamma_problems(provider, spec))
+        for value in NOT_A_FINITE_NUMBER:
+            spec.gamma = value
+            assert any("must be a finite number" in p for p in _gamma_problems(provider, spec)), f"{value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, provider: str) -> None:
@@ -115,29 +113,27 @@ class TestEveryRLBackendRefusesAnUnusableDiscountFactor:
         assert _gamma_problems(provider, spec)
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_FINITE_NUMBER)
-    def test_an_unusable_value_is_a_problem_not_an_exception(
-        self, spec: RLTrainSpec, provider: str, value: Any
-    ) -> None:
+    def test_an_unusable_value_is_a_problem_not_an_exception(self, spec: RLTrainSpec, provider: str) -> None:
         """``validate`` returns problems; it must not raise out of the check.
 
         A string or ``None`` would raise from a bare comparison against the
         interval bounds, which is the failure mode a read-only preflight exists
         to replace.
         """
-        spec.gamma = value
-        problems = create_trainer(provider).validate(spec)  # must not raise
-        assert any(p.startswith(f"{provider}: gamma ") for p in problems), problems
+        for value in NOT_A_FINITE_NUMBER:
+            spec.gamma = value
+            problems = create_trainer(provider).validate(spec)  # must not raise
+            assert any(p.startswith(f"{provider}: gamma ") for p in problems), problems
 
 
 class TestTheUsableDomainIsUntouched:
     """No value the return can be discounted by becomes a problem."""
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_is_accepted(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.gamma = value
-        assert _gamma_problems(provider, spec) == [], f"{provider} refused gamma={value!r}"
+    def test_it_is_accepted(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in USABLE:
+            spec.gamma = value
+            assert _gamma_problems(provider, spec) == [], f"{provider} refused gamma={value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_the_default_spec_still_validates_clean(self, spec: RLTrainSpec, provider: str) -> None:
@@ -154,20 +150,20 @@ class TestTheIntervalIsTheWholeLocalContribution:
     identical to every other numeric field's.
     """
 
-    @pytest.mark.parametrize("value", [*USABLE, *NOT_A_FINITE_NUMBER])
-    def test_it_agrees_with_the_shared_domain(self, value: Any) -> None:
-        from strands_robots.utils import finite_number_error
+    def test_it_agrees_with_the_shared_domain(self) -> None:
+        for value in [*USABLE, *NOT_A_FINITE_NUMBER]:
+            from strands_robots.utils import finite_number_error
 
-        local = _closed_unit_interval_error(value, "gamma", "ppo")
-        shared = finite_number_error(value, "gamma", "ppo")
-        assert (local is None) == (shared is None), f"diverged for gamma={value!r}"
+            local = _closed_unit_interval_error(value, "gamma", "ppo")
+            shared = finite_number_error(value, "gamma", "ppo")
+            assert (local is None) == (shared is None), f"diverged for gamma={value!r}"
 
-    @pytest.mark.parametrize("value", OUT_OF_INTERVAL)
-    def test_only_the_interval_diverges(self, value: Any) -> None:
-        from strands_robots.utils import finite_number_error
+    def test_only_the_interval_diverges(self) -> None:
+        for value in OUT_OF_INTERVAL:
+            from strands_robots.utils import finite_number_error
 
-        assert finite_number_error(value, "gamma", "ppo") is None
-        assert _closed_unit_interval_error(value, "gamma", "ppo") is not None
+            assert finite_number_error(value, "gamma", "ppo") is None, f"{value!r}"
+            assert _closed_unit_interval_error(value, "gamma", "ppo") is not None, f"{value!r}"
 
 
 class TestTheDivergenceTheDomainPrevents:

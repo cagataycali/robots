@@ -100,18 +100,14 @@ class TestTheDeterministicBackendRefusesAnUnusableScale:
     """FastTD3 refuses every value neither noise expression can honor."""
 
     @pytest.mark.parametrize("field", NOISE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _noise_reports(DETERMINISTIC_BACKEND, spec, field), f"fast_td3 accepted {field}={value!r}"
-
-    @pytest.mark.parametrize("field", NOISE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        (problem,) = _noise_reports(DETERMINISTIC_BACKEND, spec, field)
-        assert problem.startswith(f"fast_td3: {field} must be a positive finite number"), problem
-        assert repr(value) in problem, problem
+    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            problems = _noise_reports(DETERMINISTIC_BACKEND, spec, field)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem.startswith(f"fast_td3: {field} must be a positive finite number"), problem
+            assert repr(value) in problem, problem
 
     def test_every_unusable_scale_is_reported_at_once(self, spec: RLTrainSpec) -> None:
         """Three bad scalars come back as three problems, not one per round."""
@@ -126,10 +122,10 @@ class TestTheUsableDomainIsUntouched:
     """A scale the expressions honor is not newly refused."""
 
     @pytest.mark.parametrize("field", NOISE_FIELDS)
-    @pytest.mark.parametrize("value", USABLE, ids=repr)
-    def test_a_usable_scale_reports_nothing(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == []
+    def test_a_usable_scale_reports_nothing(self, spec: RLTrainSpec, field: str) -> None:
+        for value in USABLE:
+            setattr(spec, field, value)
+            assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == [], f"{value!r}"
 
     def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
         """The shipped defaults must not trip the new gate."""
@@ -159,11 +155,13 @@ class TestTheGateAddsNothingToTheSharedDomain:
     """The verdict is the shared rule's, so the two cannot drift apart."""
 
     @pytest.mark.parametrize("field", NOISE_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE, ids=repr)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        shared = positive_finite_number_error(value, field, DETERMINISTIC_BACKEND)
-        assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == ([shared] if shared is not None else [])
+    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, field: str) -> None:
+        for value in UNUSABLE + USABLE:
+            setattr(spec, field, value)
+            shared = positive_finite_number_error(value, field, DETERMINISTIC_BACKEND)
+            assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == ([shared] if shared is not None else []), (
+                f"{value!r}"
+            )
 
 
 class TestTheSilentReadingsAreReal:
