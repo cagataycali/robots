@@ -41,7 +41,7 @@ import pytest
 import strands_robots.simulation.base as base_mod
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 
@@ -327,7 +327,7 @@ class TestEveryPublicSurfaceOwnsTheDomain:
         adrift: list[str] = []
         for module, qualnames in _surfaces_taking_the_deadline().items():
             source = (root / module).read_text()
-            tree = ast.parse(source)
+            tree = parse_source(source)
             for qualname in qualnames:
                 cls, method_name = qualname.split(".")
                 func = next(

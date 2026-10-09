@@ -28,6 +28,7 @@ from strands_robots.dataset_recorder import (
     unrecordable_state_columns_error,
 )
 from strands_robots.policies import Policy
+from tests._package_ast import parse_source
 from tests._recorder_stand_in import RecorderStandIn
 
 from .test_dataset_recorder import _CapturingDataset, _state_action_features
@@ -315,7 +316,7 @@ class TestEveryRecordingHookDeclaresItsActionColumns:
     @pytest.mark.parametrize("module_path", HOOK_MODULES)
     def test_every_add_frame_call_scopes_its_action_columns(self, module_path):
         source = (Path(__file__).resolve().parents[1] / module_path).read_text()
-        tree = ast.parse(source)
+        tree = parse_source(source)
         calls = [
             node
             for node in ast.walk(tree)

@@ -64,7 +64,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots.tools as tools_package
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
@@ -282,7 +282,7 @@ class TestPoseToolDescribesItselfConsistently:
         to contradict itself; grading only one half leaves that reachable.
         """
         source = (_TOOLS_ROOT / "pose_tool.py").read_text(encoding="utf-8")
-        dispatched = dispatched_actions(ast.parse(source))
+        dispatched = dispatched_actions(parse_source(source))
         listed = re.search(r'"Available actions: ((?:[^"]|"\s*\n\s*")+)"', source)
         assert listed is not None, "pose_tool no longer lists its actions in the refusal"
         advertised = {name.strip() for name in re.sub(r'"\s*\n\s*"', "", listed.group(1)).split(",")}

@@ -23,6 +23,8 @@ import re
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 #: The settling tolerance, asserted once here and derived everywhere below.
 SETTLING_TOL = 0.015
 
@@ -63,7 +65,7 @@ def _describe_tol(backend: str) -> float:
     source = pathlib.Path(inspect.getfile(importlib.import_module(BACKENDS[backend][2]))).read_text()
     lines = [
         node.value
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and _DESCRIBE_LINE.match(node.value)
     ]
     assert len(lines) == 1, f"expected one move_to describe() line in {backend}, found {lines}"

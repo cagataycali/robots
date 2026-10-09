@@ -21,6 +21,7 @@ import pytest
 from strands_robots.hardware_robot import Robot, RobotTaskState
 from tests._daemon_executor import DaemonThreadExecutor
 from tests._hardware_robot import hardware_robot_on
+from tests._package_ast import parse_source
 
 _TESTS = Path(__file__).resolve().parent
 _MODULE = "strands_robots.hardware_robot"
@@ -64,7 +65,7 @@ def _robot_names(tree: ast.Module) -> set[str]:
 
 def restated_defaults(source: str) -> list[str]:
     """``hw.<attr>`` assignments right after a skeleton that restate ``__init__``."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     skeletons = {f"{name}.__new__({name})" for name in _robot_names(tree)}
     found = []
     for node in ast.walk(tree):

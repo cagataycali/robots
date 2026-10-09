@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from strands_robots.mesh import Mesh
+from tests._package_ast import parse_source, walk_tree
 from tests._wire_source import bound_source
 
 
@@ -415,7 +416,7 @@ def _documented_goal_keys() -> list[str]:
     import strands_robots.simulation.base as base_module
 
     source = Path(base_module.__file__).read_text(encoding="utf-8")
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.FunctionDef) and node.name == "run_policy":
             doc = ast.get_docstring(node) or ""
             break

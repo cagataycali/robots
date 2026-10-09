@@ -47,6 +47,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source
+
 pytest.importorskip("mujoco")
 np = pytest.importorskip("numpy")
 
@@ -185,7 +187,7 @@ def _mjdata_reads_outside_the_lock() -> dict[str, list[int]]:
     facade that holds the lock, which the sibling test below pins directly.
     """
     source = Path(str(inspect.getsourcefile(rendering_mod))).read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = parse_source(source)
     out: dict[str, list[int]] = {}
     for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
         for fn in (m for m in cls.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)):

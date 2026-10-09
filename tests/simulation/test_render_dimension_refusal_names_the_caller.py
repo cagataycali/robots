@@ -42,7 +42,7 @@ from typing import Any
 import pytest
 
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _ROOT = pathlib.Path(inspect.getfile(NewtonSimEngine)).resolve().parents[3]
 
@@ -123,7 +123,7 @@ class TestTheSubjectIsNotPatchedAfterTheFact:
         """
         for module, _helper, _floor in _FUNNELS:
             source = (_ROOT / module).read_text(encoding="utf-8")
-            for statement in ast.walk(ast.parse(source)):
+            for statement in walk_tree(parse_source(source)):
                 if not isinstance(statement, ast.Call):
                     continue
                 func = statement.func

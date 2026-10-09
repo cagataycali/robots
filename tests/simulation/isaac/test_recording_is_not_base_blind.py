@@ -30,6 +30,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("strands_robots.simulation.isaac")
 
 from strands_robots.simulation.isaac.simulation import IsaacSimulation  # noqa: E402
@@ -193,7 +195,7 @@ class TestTheSiblingBackendsDoTheSame:
         ).read_text()
         schema = next(
             node
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, ast.FunctionDef) and node.name == "_collect_recording_schema"
         )
         called = {n.func.id for n in ast.walk(schema) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}

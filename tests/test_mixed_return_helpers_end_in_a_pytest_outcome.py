@@ -50,7 +50,7 @@ import tomllib
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -217,7 +217,7 @@ class TestTheClassifierReadsTheShapeItGrades:
 
     @staticmethod
     def _classify(source: str) -> list[tuple[str, tuple[str, str] | None]]:
-        tree = ast.parse(source)
+        tree = parse_source(source)
         aliases = _imported_callees(tree)
         out: list[tuple[str, tuple[str, str] | None]] = []
         for node in tree.body:

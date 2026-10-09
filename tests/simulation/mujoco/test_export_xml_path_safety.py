@@ -28,6 +28,8 @@ import pathlib
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
@@ -201,7 +203,7 @@ class TestNoAgentCallableSinkWritesAnUnvalidatedPath:
         found = []
         for py in sorted(root.rglob("*.py")):
             text = py.read_text()
-            for fn in ast.walk(ast.parse(text)):
+            for fn in walk_tree(parse_source(text)):
                 if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
                 params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} & _PATH_PARAMS
@@ -242,7 +244,7 @@ class TestNoAgentCallableSinkWritesAnUnvalidatedPath:
 
         text = planted.read_text()
         hits = []
-        for fn in ast.walk(ast.parse(text)):
+        for fn in walk_tree(parse_source(text)):
             if not isinstance(fn, ast.FunctionDef):
                 continue
             params = {a.arg for a in fn.args.args} & _PATH_PARAMS

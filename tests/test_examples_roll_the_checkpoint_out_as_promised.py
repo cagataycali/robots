@@ -45,7 +45,7 @@ from pathlib import Path
 import pytest
 
 import strands_robots
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -66,7 +66,7 @@ _ROLLOUT_CALLS = frozenset({"run_policy", "eval_policy", "load_deployable_actor"
 
 def _module(path: str) -> tuple[str, ast.Module]:
     source = (_REPO_ROOT / path).read_text(encoding="utf-8")
-    return source, ast.parse(source, filename=path)
+    return source, parse_source(source)
 
 
 def _called_name(node: ast.Call) -> str | None:

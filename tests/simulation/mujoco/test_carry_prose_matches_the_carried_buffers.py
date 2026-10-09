@@ -49,6 +49,7 @@ import inspect
 import re
 
 from strands_robots.simulation.mujoco import scene_ops
+from tests._package_ast import parse_source, walk_tree
 
 _REBUILD_FUNCTION = "_recompile_preserving_state"
 
@@ -72,7 +73,7 @@ def _flat(text: str) -> str:
 
 
 def _functions(source: str) -> dict[str, ast.FunctionDef]:
-    return {n.name: n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef)}
+    return {n.name: n for n in walk_tree(parse_source(source)) if isinstance(n, ast.FunctionDef)}
 
 
 def _snapshot_helpers_called(function: ast.FunctionDef) -> set[str]:

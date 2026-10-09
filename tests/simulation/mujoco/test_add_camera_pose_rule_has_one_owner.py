@@ -50,6 +50,8 @@ from typing import Any
 import numpy as np
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco import simulation as sim_mod  # noqa: E402
@@ -113,7 +115,7 @@ def _pose_rule_calls(source: str, method: str) -> list[str]:
     ``ast.walk`` is breadth-first, so the calls are ordered by position here
     rather than taken in traversal order.
     """
-    fn = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == method)
+    fn = next(n for n in walk_tree(parse_source(source)) if isinstance(n, ast.FunctionDef) and n.name == method)
     calls = [
         (c.lineno, c.col_offset, c.func.id)
         for c in ast.walk(fn)

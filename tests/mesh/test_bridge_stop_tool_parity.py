@@ -33,6 +33,7 @@ import strands_robots.drivers.ros.ros_bridge as ros_mod
 import strands_robots.drivers.ros.rosbridge_robot as rbr_mod
 import strands_robots.drivers.ros.rtps_robot as rtps_mod
 from strands_robots.drivers.ros import RosBridgedRobot, RosbridgeRobot, RtpsRobot
+from tests._package_ast import parse_source, walk_tree
 from tests.mesh._transport_stand_in import Transport, stands_in_for
 
 ZERO_TWIST = {"linear": {"x": 0.0}, "angular": {"z": 0.0}}
@@ -226,7 +227,7 @@ def _stop_tool_survey(source: str) -> tuple[set[str], set[str]]:
     """
     owning: set[str] = set()
     exposing: set[str] = set()
-    for cls in (n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef)):
+    for cls in (n for n in walk_tree(parse_source(source)) if isinstance(n, ast.ClassDef)):
         methods = {m.name for m in cls.body if isinstance(m, ast.FunctionDef | ast.AsyncFunctionDef)}
         if not {"drive", "stop", "tools"} <= methods:
             continue

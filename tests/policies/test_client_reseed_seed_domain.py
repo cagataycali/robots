@@ -47,6 +47,7 @@ from strands_robots.policies import _rng
 from strands_robots.policies._rng import reseed_client_rngs
 from strands_robots.simulation.base import MAX_EVAL_SEED
 from strands_robots.simulation.policy_runner import set_eval_seed
+from tests._package_ast import parse_source
 
 #: Seeds this path cannot apply. Each is refused by NumPy's legacy global RNG,
 #: which is the narrowest applier: negatives and anything above
@@ -258,7 +259,7 @@ def test_the_shared_domain_is_imported_lazily() -> None:
     source = pathlib.Path(inspect.getfile(_rng)).read_text(encoding="utf-8")
     leaked = [
         ast.unparse(node)
-        for node in ast.parse(source).body
+        for node in parse_source(source).body
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("strands_robots.simulation")
     ]
     assert not leaked, f"import must stay inside the function: {leaked}"

@@ -30,6 +30,7 @@ import pytest
 
 import strands_robots.drivers.g1 as g1_driver
 from strands_robots.tools.g1.g1_sensors import _SENSORS, g1_sensor
+from tests._package_ast import parse_source, walk_tree
 
 #: sensor -> (cache attribute, a wired cache, the notable reading that sensor's
 #: own suite pinned as riding through verbatim). The notable case is a full
@@ -160,7 +161,7 @@ class TestTheTableIsNotASecondSourceOfTruth:
         """Cache attribute -> the keys its handler's dict literal writes."""
         source = pathlib.Path(g1_driver.__file__).read_text(encoding="utf-8")
         writes: dict[str, tuple[str, ...]] = {}
-        for node in ast.walk(ast.parse(source)):
+        for node in walk_tree(parse_source(source)):
             if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
                 continue
             keys = [k.value for k in node.value.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]

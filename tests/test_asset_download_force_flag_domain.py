@@ -55,6 +55,7 @@ import numpy as np
 import pytest
 
 from strands_robots.assets import download as dl
+from tests._package_ast import parse_source, walk_tree
 
 tool_mod = importlib.import_module("strands_robots.tools.download_assets")
 
@@ -253,7 +254,7 @@ class TestEveryBooleanParameterHasADomain:
     def _definition(module: Any, name: str) -> ast.FunctionDef:
         source = Path(module.__file__).read_text(encoding="utf-8")
         return next(
-            node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name == name
+            node for node in walk_tree(parse_source(source)) if isinstance(node, ast.FunctionDef) and node.name == name
         )
 
     @pytest.mark.parametrize(

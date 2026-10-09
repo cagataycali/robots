@@ -54,6 +54,7 @@ from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.rsl_rl import RslRlTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
+from tests._package_ast import parse_source, walk_tree
 
 # Values no backend can honor, split by how each one failed before the gate.
 
@@ -323,7 +324,7 @@ def _local_learning_rate_comparisons(source: str) -> list[str]:
     That is the shape of a re-implemented domain (``if spec.learning_rate <= 0``).
     """
     hits: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Compare):
             continue
         left = node.left

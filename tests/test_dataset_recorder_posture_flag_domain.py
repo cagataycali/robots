@@ -79,6 +79,7 @@ from strands_robots import dataset_recorder as recorder_mod
 from strands_robots import dataset_transfer
 from strands_robots.simulation.recording import dataset_recording_posture_error
 from strands_robots.utils import boolean_flag_error
+from tests._package_ast import parse_source, walk_tree
 
 # Reached through the module alias rather than a second from-import: the
 # guard-placement tests read the module's own source, and one handle for one
@@ -472,7 +473,7 @@ def _flags_checked_by(source: str, function: str) -> set[str]:
     so the scanner sees either spelling of the same guard.
     """
     checked: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not (isinstance(node, ast.FunctionDef) and node.name == function):
             continue
         for call in ast.walk(node):

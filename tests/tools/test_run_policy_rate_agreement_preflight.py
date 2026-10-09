@@ -50,6 +50,7 @@ from strands_robots.simulation.recording import (
     requested_rate_mismatch_reason,
 )
 from strands_robots.utils import positive_finite_number_error
+from tests._package_ast import parse_source
 from tests.tools.test_run_policy import _FakeSim
 
 rp_mod = importlib.import_module("strands_robots.tools.run_policy")
@@ -462,7 +463,7 @@ def _tool_source() -> str:
 
 def _tool_function(source: str) -> ast.FunctionDef:
     """Return the ``run_policy`` tool's own FunctionDef from ``source``."""
-    tree = ast.parse(source)
+    tree = parse_source(source)
     return next(
         node
         for node in ast.walk(tree)

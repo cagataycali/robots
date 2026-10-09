@@ -58,6 +58,7 @@ from strands_robots.drivers import (
     resolve_driver,
 )
 from strands_robots.registry import get_hardware_type, get_robot, resolve_name
+from tests._package_ast import parse_source
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 #: A python fence, with or without a title (``python title="sketch"`` marks
@@ -312,7 +313,7 @@ def _robots_handed_to_an_agent(block: str) -> list[tuple[int, str, str | None]]:
         ``(line, robot name, driver literal or None)`` for each handed-over robot.
     """
     try:
-        tree = ast.parse(block)
+        tree = parse_source(block)
     except SyntaxError:
         return []
     bound: dict[str, tuple[int, str, str | None]] = {}

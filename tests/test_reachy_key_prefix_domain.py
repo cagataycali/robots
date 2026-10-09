@@ -46,7 +46,7 @@ import pytest
 import strands_robots
 from strands_robots.mesh.security import MAX_PEER_ID_LEN
 from tests._device_connect_real import use_the_real_edge
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 # Prefixes that cannot address a single robot's key expressions. The four
 # wildcards are the dangerous half -- Zenoh accepts every one of them, so they
@@ -341,7 +341,7 @@ class TestTheDomainIsTheSharedMeshIdentifier:
 
     @staticmethod
     def _function(source: str, name: str) -> ast.FunctionDef:
-        for node in ast.walk(ast.parse(source)):
+        for node in walk_tree(parse_source(source)):
             if isinstance(node, ast.FunctionDef) and node.name == name:
                 return node
         raise AssertionError(f"no function named {name!r}")
@@ -410,7 +410,7 @@ def _exported_prefix_constructors(source: str, exported: list[str]) -> dict[str,
     copy of the rule.
     """
     found: dict[str, list[str]] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.ClassDef) or node.name not in exported:
             continue
         for member in node.body:
@@ -428,7 +428,7 @@ def _exported_prefix_constructors(source: str, exported: list[str]) -> dict[str,
 
 def _validates_prefix(source: str, class_name: str) -> bool:
     """True when the class's ``__init__`` calls the shared prefix domain."""
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for member in node.body:
                 if isinstance(member, ast.FunctionDef) and member.name == "__init__":

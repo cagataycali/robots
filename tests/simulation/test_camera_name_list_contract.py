@@ -47,6 +47,7 @@ import pytest
 
 from strands_robots.simulation import Simulation
 from strands_robots.simulation.models import SimWorld
+from tests._package_ast import parse_source, walk_tree
 
 _ARM_XML = """<mujoco model="arm">
   <compiler angle="radian"/>
@@ -288,7 +289,7 @@ def _scanned_modules() -> list[tuple[str, str, str]]:
 def _cameras_surfaces(source: str) -> list[tuple[str, bool]]:
     """Public methods in ``source`` taking ``cameras``, and whether each guards it."""
     found: list[tuple[str, bool]] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
             continue
         argnames = [arg.arg for arg in node.args.args + node.args.kwonlyargs]

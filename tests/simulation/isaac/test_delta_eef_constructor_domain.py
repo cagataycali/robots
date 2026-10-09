@@ -66,6 +66,7 @@ from strands_robots.simulation.isaac.delta_eef import (
 )
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.utils import finite_number_error, positive_finite_number_error
+from tests._package_ast import parse_source
 
 from .test_backend_parity import (  # noqa: F401 - fake_isaacsim_types is a fixture
     _FakeArticulation,
@@ -536,7 +537,7 @@ class TestEveryNumericKnobIsJudged:
     @staticmethod
     def _judged_params(source: str) -> set[str]:
         """Parameter names appearing in a domain-guard tuple in ``__init__``."""
-        tree = ast.parse(source)
+        tree = parse_source(source)
         init = next(
             node
             for cls in tree.body

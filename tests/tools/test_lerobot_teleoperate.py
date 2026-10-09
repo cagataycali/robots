@@ -22,6 +22,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source
+
 pytest.importorskip("psutil")
 
 import importlib
@@ -536,7 +538,7 @@ def test_dagger_preflight_is_a_class_the_docstring_licenses(monkeypatch: pytest.
     source = Path(str(tele_mod.__file__)).read_text(encoding="utf-8")
     builder = next(
         node
-        for node in ast.parse(source).body
+        for node in parse_source(source).body
         if isinstance(node, ast.FunctionDef) and node.name == "build_lerobot_command"
     )
     doc = ast.get_docstring(builder)

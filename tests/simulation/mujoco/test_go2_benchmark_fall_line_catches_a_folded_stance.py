@@ -27,6 +27,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 
 import mujoco  # noqa: E402
@@ -48,7 +50,7 @@ SHIPPED_SPEC_SOURCES = (
 def _spec_literals(source: str) -> list[dict[str, Any]]:
     """Every module-level benchmark-spec dict literal in a chunk of Python source."""
     specs = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Assign):
             continue
         try:

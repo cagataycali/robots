@@ -60,7 +60,7 @@ from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.simulation.base import SimEngine
 from strands_robots.utils import finite_number_error
 from tests._device_connect_real import use_the_real_edge
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source
 
 # The RPCs graded here run as an allowlisted operator: authorization fails
 # closed and is graded in test_device_connect_hardening.py, not here.
@@ -334,7 +334,7 @@ def _motion_rpcs(source: str, exported: list[str]) -> dict[str, list[str]]:
     domain with a different answer.
     """
     found: dict[str, list[str]] = {}
-    for node in ast.parse(source).body:
+    for node in parse_source(source).body:
         if not isinstance(node, ast.ClassDef) or node.name not in exported:
             continue
         for method in node.body:
@@ -353,7 +353,7 @@ def _motion_rpcs(source: str, exported: list[str]) -> dict[str, list[str]]:
 def _method_node(source: str, qualified: str) -> ast.AsyncFunctionDef | ast.FunctionDef | None:
     """The AST node for ``Class.method``, or ``None`` when absent."""
     class_name, method_name = qualified.split(".")
-    for node in ast.parse(source).body:
+    for node in parse_source(source).body:
         if not isinstance(node, ast.ClassDef) or node.name != class_name:
             continue
         for method in node.body:
@@ -436,7 +436,7 @@ class TestNoMotionRpcDrifts:
         source = (self._package_dir() / "reachy_mini_driver.py").read_text(encoding="utf-8")
         helper = next(
             node
-            for node in ast.parse(source).body
+            for node in parse_source(source).body
             if isinstance(node, ast.FunctionDef) and node.name == "_motion_domain_error"
         )
         assert any(

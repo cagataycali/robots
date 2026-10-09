@@ -41,6 +41,7 @@ from strands_robots.training.lerobot import LerobotTrainer
 from strands_robots.training.mock import MockTrainer
 from strands_robots.training.rsl_rl import RslRlTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
+from tests._package_ast import parse_source, walk_tree
 
 # The two factors of the run size, and the values no backend can honor. Split
 # by failure mode so a test can say which contract each value belongs to.
@@ -206,7 +207,7 @@ def _training_modules() -> list[pathlib.Path]:
 def _concrete_trainer_validators(source: str) -> dict[str, ast.FunctionDef]:
     """Map ``ClassName -> its validate() node`` for each ``Trainer`` subclass."""
     found: dict[str, ast.FunctionDef] = {}
-    for node in ast.parse(source).body:
+    for node in parse_source(source).body:
         if not isinstance(node, ast.ClassDef):
             continue
         if not any(isinstance(b, ast.Name) and b.id == "Trainer" for b in node.bases):
@@ -231,7 +232,7 @@ def _local_run_size_comparisons(source: str) -> list[str]:
     comparison against another *field* is a different question and is allowed.
     """
     hits: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Compare):
             continue
         left = node.left

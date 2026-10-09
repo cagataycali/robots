@@ -32,7 +32,7 @@ from pathlib import Path
 
 import strands_robots
 from strands_robots.tools.use_ros import use_ros
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
 _SHOWCASE = _REPO_ROOT / "examples" / "ros2" / "use_ros" / "showcase.py"
@@ -86,7 +86,7 @@ def _called_actions(source: str) -> set[str]:
     call, and crediting one would let the claim be satisfied by restating it.
     """
     called: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Call):
             continue
         for keyword in node.keywords:

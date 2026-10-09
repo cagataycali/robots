@@ -50,6 +50,7 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source
 from tests.tools._camera_stand_in import Camera, stands_in_for
 
 cam_mod = importlib.import_module("strands_robots.tools.lerobot_camera")
@@ -235,7 +236,7 @@ def test_no_span_in_the_module_can_be_built_from_the_wall_clock_again() -> None:
     still written, so this is not read as a module that stopped stamping.
     """
     source = pathlib.Path(str(cam_mod.__file__)).read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = parse_source(source)
 
     wall_reads = [
         node.lineno

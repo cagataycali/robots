@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -97,7 +97,7 @@ def _unknown_mesh_reads(source: str, known: set[str]) -> list[str]:
     silent-no-op case: the value can only ever be the ``getattr`` default.
     """
     found: list[str] = []
-    tree = ast.parse(source)
+    tree = parse_source(source)
     known = known | _locally_assigned_mesh_attributes(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and _MESH_ATTR_RE.match(node.attr) and node.attr not in known:
@@ -157,7 +157,7 @@ def test_the_peer_discovery_example_stops_the_session_it_opened():
     )
     stops = [
         node
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "stop"
     ]
     assert stops, (

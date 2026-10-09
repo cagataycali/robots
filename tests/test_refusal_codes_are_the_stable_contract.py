@@ -45,7 +45,7 @@ import pytest
 
 from strands_robots.mesh.security import ValidationError, validate_command, validate_input_frame
 from strands_robots.policies.factory import UntrustedRemoteCodeError, _check_trust_remote_code
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _PACKAGE = pathlib.Path(__file__).resolve().parent.parent / "strands_robots"
 
@@ -330,7 +330,7 @@ _PACKAGE_TREES: dict[str, ast.Module] = {}
 def _tree(source: str) -> ast.Module:
     """The parsed ``source``: the shared tree for a shipped module, else a fresh parse."""
     tree = _PACKAGE_TREES.get(source)
-    return tree if tree is not None else ast.parse(source)
+    return tree if tree is not None else parse_source(source)
 
 
 @functools.cache

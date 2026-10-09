@@ -70,7 +70,7 @@ import pytest
 import strands_robots.drivers.unitree as unitree_transport
 import strands_robots.tools.g1 as g1_package
 from strands_robots.drivers.unitree._common import snapshot_handle_refusal
-from tests._package_ast import parse_file, walk_tree
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 
 class _AccessorIsData:
@@ -244,7 +244,7 @@ def _snapshot_family_verbs() -> dict[str, Any]:
         source = Path(module.__file__).read_text(encoding="utf-8")
         calls_guard = any(
             isinstance(node, ast.Call) and getattr(node.func, "id", None) == "snapshot_handle_refusal"
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
         )
         if not calls_guard:
             continue

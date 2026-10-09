@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 from strands_robots.mesh.session import HEARTBEAT_HZ, PeerInfo
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 _EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "04_mesh_peer_discovery.py"
 
@@ -33,7 +33,7 @@ _EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "04_mesh_peer_disc
 def _string_keys_read_from_peer_rows(source: str) -> set[str]:
     """Every literal key the example reads off a ``peer`` dict."""
     keys: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)

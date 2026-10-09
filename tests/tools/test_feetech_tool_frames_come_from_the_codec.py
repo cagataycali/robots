@@ -55,6 +55,7 @@ from strands_robots.drivers.feetech.protocol import (
     write_packet,
 )
 from strands_robots.tools.pose_tool import MotorController
+from tests._package_ast import parse_source, walk_tree
 
 pose_mod = importlib.import_module("strands_robots.tools.pose_tool")
 serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
@@ -217,7 +218,7 @@ class TestNeitherToolAssemblesAFrameByHand:
 
         hand_rolled = [
             ast.unparse(node)
-            for node in ast.walk(ast.parse(source))
+            for node in walk_tree(parse_source(source))
             if isinstance(node, (ast.List, ast.Tuple))
             and len(node.elts) >= 2
             and all(isinstance(element, ast.Constant) and element.value == 0xFF for element in node.elts[:2])

@@ -37,6 +37,8 @@ from typing import TypeGuard
 
 import pytest
 
+from tests._package_ast import parse_source
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
 _EMBODIMENTS_JSON = _REPO_ROOT / "strands_robots" / "policies" / "lerobot_local" / "embodiments.json"
@@ -169,7 +171,7 @@ def _example_scripts() -> list[Path]:
 def test_sim_example_uses_sim_embodiment(script: Path) -> None:
     """Sim examples must not pass a hardware (``*_real``) embodiment."""
     source = script.read_text(encoding="utf-8")
-    tree = ast.parse(source)
+    tree = parse_source(source)
     if not _is_sim_robot_example(tree):
         pytest.skip(f"{script.name} is not a sim example")
     hardware = _hardware_embodiments()

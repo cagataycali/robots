@@ -60,6 +60,7 @@ from strands_robots.drivers.feetech.protocol import (
     max_magnitude,
     read_packet,
 )
+from tests._package_ast import parse_source, walk_tree
 from tests.drivers.conftest import FakeServoPort
 
 serial_mod = importlib.import_module("strands_robots.tools.serial_tool")
@@ -107,7 +108,7 @@ def _assigned_expression(module: object, name: str) -> str:
     source = Path(inspect.getfile(module)).read_text(encoding="utf-8")  # type: ignore[arg-type]
     (assignment,) = [
         node
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Assign)
         and len(node.targets) == 1
         and isinstance(node.targets[0], ast.Name)

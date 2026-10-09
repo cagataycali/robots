@@ -55,6 +55,7 @@ from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 from strands_robots.utils import positive_count_error
+from tests._package_ast import parse_source, walk_tree
 
 from .test_policy_runner_async_rtc import _ChunkPolicy, _CountingSim
 from .test_rtc_requery_interval import _CountingSim as _RtcCountingSim
@@ -317,7 +318,7 @@ def _surfaces_taking_the_horizon() -> dict[str, list[str]]:
     """Public ``PolicyRunner`` methods that declare ``action_horizon``."""
     source = pathlib.Path(inspect.getfile(runner_mod)).read_text()
     found: dict[str, list[str]] = {}
-    for cls in ast.walk(ast.parse(source)):
+    for cls in walk_tree(parse_source(source)):
         if not isinstance(cls, ast.ClassDef):
             continue
         for method in cls.body:
@@ -353,7 +354,7 @@ class TestEveryRunnerSurfaceOwnsTheDomain:
 
     def test_each_public_surface_validates_the_horizon(self) -> None:
         source = pathlib.Path(inspect.getfile(runner_mod)).read_text()
-        tree = ast.parse(source)
+        tree = parse_source(source)
         adrift: list[str] = []
         for cls_name, methods in _surfaces_taking_the_horizon().items():
             for method_name in methods:
@@ -389,7 +390,7 @@ class TestEveryRunnerSurfaceOwnsTheDomain:
         cannot appear without this failing.
         """
         source = pathlib.Path(inspect.getfile(runner_mod)).read_text()
-        tree = ast.parse(source)
+        tree = parse_source(source)
         callers = {
             method.name
             for cls in ast.walk(tree)

@@ -50,6 +50,7 @@ from strands_robots.registry.user_registry import (
     register_robot,
     unregister_robot,
 )
+from tests._package_ast import parse_source, walk_tree
 
 _MINIMAL_MJCF = '<mujoco><worldbody><body><geom size="0.1"/></body></worldbody></mujoco>'
 
@@ -184,7 +185,7 @@ def test_the_overlay_is_never_encoded_into_the_destination():
     source = Path(module.__file__).read_text(encoding="utf-8")
     streaming = [
         node
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "dump"

@@ -40,6 +40,7 @@ from strands_robots.policies.base import align_action_values
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.wbc.policy import WBCPolicy
 from strands_robots.utils import boolean_flag_error
+from tests._package_ast import parse_source, walk_tree
 
 
 def _local(value: Any) -> LerobotLocalPolicy:
@@ -139,7 +140,7 @@ def test_the_two_postures_really_move_different_actuators() -> None:
 def _coerced_postures(source: str) -> list[str]:
     """Report ``bool``-annotated parameters a function assigns through ``bool()``."""
     found: list[str] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef):
             continue
         body = ast.unparse(node)

@@ -74,7 +74,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._package_ast import parse_source
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _NOTEBOOKS_DIR = _REPO_ROOT / "examples" / "notebooks"
@@ -326,7 +326,7 @@ def _all_scope_gl_defaults(source: str) -> list[tuple[int, str]]:
     """``(line, value-expression)`` for every ``MUJOCO_GL`` default in any scope."""
     return [
         (getattr(node, "lineno", 0), ast.unparse(value))
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if (value := _gl_default_value(node)) is not None
     ]
 
@@ -488,7 +488,7 @@ class TestAGuardIsRecognisedHoweverTheLineNamesMacOS:
 def _first_import_of(source: str, top_level: str) -> int | None:
     """Line of the earliest import whose top-level module is ``top_level``."""
     earliest: int | None = None
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         names: list[str] = []
         if isinstance(node, ast.Import):
             names = [alias.name for alias in node.names]

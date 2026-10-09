@@ -49,6 +49,7 @@ from pathlib import Path
 
 from strands_robots.drivers import constructor_keywords, get_native_driver_class, resolve_driver
 from strands_robots.simulation.mujoco.simulation import _PUBLISHED_ACTIONS
+from tests._package_ast import parse_source, walk_tree
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
@@ -171,7 +172,7 @@ def real_mode_recipes_in(source: str, name: str) -> list[_RealModeRecipe]:
     """
     text = "\n".join(
         node.value
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
     )
     found: list[_RealModeRecipe] = []
@@ -230,7 +231,7 @@ def _documented_module_runs() -> list[_ModuleRun]:
 def prompt_actions_in(source: str, name: str) -> list[_PromptAction]:
     """The actions the prompt-building text of one module names."""
     strings: list[str] = []
-    tree = ast.parse(source)
+    tree = parse_source(source)
     for node in ast.walk(tree):
         holder: ast.AST | None = None
         if isinstance(node, ast.FunctionDef) and _PROMPT_BUILDER.search(node.name):

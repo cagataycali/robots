@@ -35,6 +35,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 
 from strands_robots.dataset_recorder import DatasetRecorder
@@ -364,7 +366,7 @@ class TestAHealthyEvaluationIsNotRefused:
 def _discarded_flush_verdicts(source: str) -> list[int]:
     """Line numbers of ``save_episode()`` calls whose verdict is thrown away."""
     discarded: list[int] = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Call):
             continue
         func = node.value.func
@@ -377,7 +379,7 @@ def _flush_call_sites(source: str) -> list[int]:
     """Line numbers of every ``save_episode()`` call, discarded or not."""
     return [
         node.lineno
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "save_episode"
     ]
 

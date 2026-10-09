@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._package_ast import parse_source
+
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.scene_ops import install_compiled_model  # noqa: E402
@@ -261,7 +263,7 @@ def _assignment_sites(source: str) -> dict[str, list[int]]:
                             sites.setdefault(enclosing, []).append(child.lineno)
             visit(child, enclosing)
 
-    visit(ast.parse(source), "<module>")
+    visit(parse_source(source), "<module>")
     return sites
 
 

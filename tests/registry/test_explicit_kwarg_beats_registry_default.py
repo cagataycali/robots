@@ -30,6 +30,7 @@ from typing import Any
 import pytest
 
 from strands_robots.registry.policies import build_policy_kwargs
+from tests._package_ast import parse_source, walk_tree
 
 # ─── registry-derived cases ───────────────────────────────────────────
 
@@ -177,14 +178,14 @@ class TestUnknownExtraKeysAreStillDropped:
 def _merge_loop_order(source: str) -> list[str]:
     """The iterables of the three merge loops, in source order."""
     fn = next(
-        n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
+        n for n in walk_tree(parse_source(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
     )
     return [str(ast.get_source_segment(source, lp.iter)) for lp in fn.body if isinstance(lp, ast.For)]
 
 
 def _loop_bodies(source: str) -> dict[str, str]:
     fn = next(
-        n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
+        n for n in walk_tree(parse_source(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_policy_kwargs"
     )
     out = {}
     for lp in fn.body:

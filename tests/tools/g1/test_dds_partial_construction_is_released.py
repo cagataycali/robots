@@ -41,6 +41,7 @@ import pytest
 from strands_robots.drivers.unitree import _dds_engine
 from strands_robots.drivers.unitree._common import reset_dds_state
 from strands_robots.drivers.unitree._dds_engine import DDSPublisher, DDSSubscriberSet
+from tests._package_ast import parse_source, walk_tree
 
 _ENGINE_LOGGER = "strands_robots.drivers.unitree._dds_engine"
 
@@ -473,7 +474,7 @@ def _endpoint_class_names(module_source: str) -> set[str]:
     """
     return {
         alias.name
-        for node in ast.walk(ast.parse(module_source))
+        for node in walk_tree(parse_source(module_source))
         if isinstance(node, ast.ImportFrom) and node.module == "unitree_sdk2py.core.channel"
         for alias in node.names
     }
@@ -483,7 +484,7 @@ def _constructions_that_do_not_release(module_source: str) -> list[str]:
     """``try`` blocks building an SDK endpoint whose handlers do not release it."""
     endpoint_classes = _endpoint_class_names(module_source)
     offenders = []
-    for node in ast.walk(ast.parse(module_source)):
+    for node in walk_tree(parse_source(module_source)):
         if not isinstance(node, ast.Try):
             continue
         builds = [
@@ -512,7 +513,7 @@ def _functions_that_close_an_endpoint(source: str) -> set[str]:
     here as a third name, whichever call site introduced it.
     """
     names: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         for inner in ast.walk(node):

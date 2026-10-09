@@ -40,6 +40,8 @@ from typing import Any
 
 import pytest
 
+from tests._package_ast import parse_source, walk_tree
+
 pytest.importorskip("mujoco")
 
 
@@ -79,7 +81,7 @@ def _functions_recompiling_a_spec_directly() -> list[str]:
     """``scene_ops`` functions that call ``spec.recompile(...)`` themselves."""
     source = pathlib.Path(scene_ops.__file__).read_text(encoding="utf-8")
     out = []
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.FunctionDef):
             continue
         for call in _own_scope_calls(node):
@@ -97,7 +99,7 @@ def _functions_recompiling_a_spec_directly() -> list[str]:
 
 def _patch_scene_mjcf_ast() -> ast.FunctionDef:
     source = pathlib.Path(scene_ops.__file__).read_text(encoding="utf-8")
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.FunctionDef) and node.name == "patch_scene_mjcf":
             return node
     raise AssertionError("patch_scene_mjcf vanished from scene_ops")
@@ -108,7 +110,7 @@ def _functions_calling(symbol: str) -> list[str]:
     source = pathlib.Path(scene_ops.__file__).read_text(encoding="utf-8")
     return [
         node.name
-        for node in ast.walk(ast.parse(source))
+        for node in walk_tree(parse_source(source))
         if isinstance(node, ast.FunctionDef) and symbol in (ast.get_source_segment(source, node) or "")
     ]
 

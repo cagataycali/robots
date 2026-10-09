@@ -47,6 +47,7 @@ import pytest
 import strands_robots
 from strands_robots.utils import dial_host_error
 from tests._device_connect_real import use_the_real_edge
+from tests._package_ast import parse_source, walk_tree
 from tests.test_reachy_api_port_domain import _exported_names
 
 # Values that cannot address the host half of the daemon URL, with what each one
@@ -202,7 +203,7 @@ def _exported_host_constructors(source: str, exported: list[str]) -> dict[str, l
     them re-check it would institutionalize a second copy of the rule.
     """
     found: dict[str, list[str]] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.ClassDef) or node.name not in exported:
             continue
         for member in node.body:
@@ -220,7 +221,7 @@ def _exported_host_constructors(source: str, exported: list[str]) -> dict[str, l
 
 def _validates_host(source: str, class_name: str) -> bool:
     """True when the class's ``__init__`` calls the shared host domain."""
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for member in node.body:
                 if isinstance(member, ast.FunctionDef) and member.name == "__init__":

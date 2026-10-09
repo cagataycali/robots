@@ -42,7 +42,7 @@ import pytest
 import strands_robots
 from strands_robots.utils import tcp_port_error
 from tests._device_connect_real import use_the_real_edge
-from tests._package_ast import parse_file
+from tests._package_ast import parse_file, parse_source, walk_tree
 
 # Values that cannot address a TCP port. ``True`` is included because it is an
 # ``int`` subclass: a bare range test reads it as a silent port 1.
@@ -269,7 +269,7 @@ def _exported_port_constructors(source: str, exported: list[str]) -> dict[str, l
     second copy of the rule.
     """
     found: dict[str, list[str]] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if not isinstance(node, ast.ClassDef) or node.name not in exported:
             continue
         for member in node.body:
@@ -287,7 +287,7 @@ def _exported_port_constructors(source: str, exported: list[str]) -> dict[str, l
 
 def _validates_port(source: str, class_name: str) -> bool:
     """True when the class's ``__init__`` calls the shared port domain."""
-    for node in ast.walk(ast.parse(source)):
+    for node in walk_tree(parse_source(source)):
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             for member in node.body:
                 if isinstance(member, ast.FunctionDef) and member.name == "__init__":
