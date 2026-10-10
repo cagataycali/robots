@@ -45,7 +45,9 @@ def main(argv=None) -> int:
         d = os.path.join(a.root, shard)
         rep_p = os.path.join(d, "GEN-REPORT.json")
         if not os.path.exists(rep_p):
-            summary[shard] = {"status": "NO REPORT — goals unrecoverable, sidecar refused"}
+            summary[shard] = {"status": "NO REPORT — goals unrecoverable, sidecar refused",
+                              "looked_for": rep_p}
+            print(json.dumps({shard: summary[shard]}), flush=True)
             continue
         rep = json.load(open(rep_p))
         seeds = rep.get("kept_seeds") or []
@@ -65,6 +67,7 @@ def main(argv=None) -> int:
         if not seeds or (n_eps and len(seeds) != n_eps):
             summary[shard] = {"status": f"REFUSED: {len(seeds)} seeds vs {n_eps} episodes — "
                                         "ordering cannot be established"}
+            print(json.dumps({shard: summary[shard]}), flush=True)
             continue
         rows, xs, ys = [], [], []
         for i, sd in enumerate(seeds):
@@ -122,7 +125,10 @@ def main(argv=None) -> int:
         print(json.dumps({shard: summary[shard]}), flush=True)
 
     json.dump(summary, open(os.path.join(RUNS, "episodes-sidecar.json"), "w"), indent=1)
-    return 0
+    refused = [k for k, v in summary.items() if "written" not in str(v.get("status"))]
+    if refused:
+        print(json.dumps({"REFUSED": refused}), flush=True)
+    return 1 if refused else 0
 
 
 if __name__ == "__main__":

@@ -266,7 +266,14 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
     print(json.dumps({"phase": "B-done", **{k: v for k, v in rec["passB"].items()
                                             if k != "replay_nondeterminism"}}), flush=True)
     rec["written_task_strings"] = _task_strings(a.out, repo_id)
-    rec["verdict"] = ("OK" if rec["passB"]["single_class"]
+    # it20: a shard whose IN-SHARD goal file failed to write still reported OK, because the error was
+    # recorded in a field no gate read. The goals are the one thing a parquet cannot carry, so this degrades
+    # the verdict rather than sitting in the report as trivia.
+    if rec.get("episodes_jsonl_error"):
+        rec["verdict_note"] = "GOALS NOT WRITTEN IN-SHARD: %s" % str(rec["episodes_jsonl_error"])[:120]
+    rec["verdict"] = ("GOALS MISSING — rebuild the sidecar before publishing"
+                      if rec.get("episodes_jsonl_error") else
+                      "OK" if rec["passB"]["single_class"]
                       and len(rec["written_task_strings"].get("distinct", [])) > 1
                       else "CHECK-REPORT")
     rec["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
