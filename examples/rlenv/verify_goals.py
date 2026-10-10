@@ -67,15 +67,19 @@ def main(argv=None) -> int:
             pol = X.ScriptedReplayPolicy(hz=e.control_hz)
             pol.set_robot_state_keys(list(e.action_keys)); pol.load_plan(kf, task)
             pred = np.asarray(pol.target_at(0), dtype=float)
+            # tol must SCALE: the parquet stores float32, so a round-trip costs eps32*|value| per side,
+            # and an absolute 1.5e-07 silently fails a correct goal whose action is ~1 rad (seen on
+            # so100-push: 1.61e-07, a float32 artefact read as a wrong label).
+            tol_i = max(a.tol, 4.0 * float(np.finfo(np.float32).eps) * float(np.abs(rec).max()))
             d = float(np.abs(pred - rec).max())
             worst = max(worst, d); checked.append(d)
             if d == 0.0: exact += 1
-            elif d > a.tol: bad.append({"episode": int(r["episode_index"]), "max_abs_delta": d})
+            elif d > tol_i: bad.append({"episode": int(r["episode_index"]), "max_abs_delta": d})
     finally:
         try: robot.close()
         except Exception: pass
     out = {"root": a.root, "arm": arm, "task": task, "band_scale": k, "n_checked": len(checked),
-           "bit_exact": exact, "max_abs_delta": worst, "tol": a.tol, "failures": bad,
+           "bit_exact": exact, "max_abs_delta": worst, "tol": a.tol, "tol_rule": "max(tol, 4*eps32*max|recorded action|) per episode", "failures": bad,
            "criterion": "max |replanned first action - recorded first action| <= tol (float32 round-trip)",
            "verdict": ("GOALS VERIFIED - the recorded first action is reproduced from the sidecar goal to float32"
                        if checked and not bad else

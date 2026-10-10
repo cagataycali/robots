@@ -81,7 +81,21 @@ def main(argv=None) -> int:
         with open(out, "w") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
-        summary[shard] = {"status": "written", "episodes": len(rows), "file": out,
+        if a.upload:
+            # it16: this flag was DECLARED and never implemented, so a run that said --upload wrote a
+            # correct local file, uploaded nothing, and reported success -- while the published shard kept
+            # mislabelled goals. A flag that silently does nothing is worse than a missing flag, so it now
+            # uploads AND reads the file back, and the summary carries the round-trip verdict.
+            import huggingface_hub as _H
+            rid = f"cagataydev/strands-vla-rlenv-{shard}"
+            _H.HfApi().upload_file(path_or_fileobj=out, path_in_repo="EPISODES.jsonl", repo_id=rid,
+                repo_type="dataset", commit_message="goals regenerated from the 90000+seed stream, verified")
+            back = [json.loads(l) for l in open(_H.hf_hub_download(rid, "EPISODES.jsonl",
+                    repo_type="dataset", force_download=True))]
+            upl = "UPLOADED AND VERIFIED" if back == rows else f"UPLOAD MISMATCH: {len(back)} rows on hub"
+        else:
+            upl = "not uploaded (--upload off)"
+        summary[shard] = {"status": "written", "upload": upl, "episodes": len(rows), "file": out,
                           "x_range": [round(min(xs), 4), round(max(xs), 4)],
                           "y_range": [round(min(ys), 4), round(max(ys), 4)],
                           "report_band_scale": k, "band_transform_applied": k != 1.0}
