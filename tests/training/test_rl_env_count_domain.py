@@ -122,34 +122,32 @@ class TestEveryBackendRefusesANonCount:
     """The shared half, through the real ``validate`` entry point."""
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_a_non_count_is_refused(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
-        assert _num_envs_problems(provider, spec, value)
+    def test_a_non_count_is_refused(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in NOT_A_COUNT:
+            assert _num_envs_problems(provider, spec, value), f"{value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_the_refusal_names_the_field_and_the_domain(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
+    def test_the_refusal_names_the_field_and_the_domain(self, provider: str, spec: RLTrainSpec) -> None:
         """A caller fixes a field it can name, against a rule it can read."""
-        problems = _num_envs_problems(provider, spec, value)
-        assert any("num_envs must be a positive integer" in p for p in problems), problems
+        for value in NOT_A_COUNT:
+            problems = _num_envs_problems(provider, spec, value)
+            assert any("num_envs must be a positive integer" in p for p in problems), problems
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT)
-    def test_the_refusal_names_the_backend_that_refused(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
+    def test_the_refusal_names_the_backend_that_refused(self, provider: str, spec: RLTrainSpec) -> None:
         """The shared domain carries the caller's own identity into the message."""
-        trainer = create_trainer(provider)
-        problems = _num_envs_problems(provider, spec, value)
-        assert any(p.startswith(f"{trainer.provider_name}: num_envs") for p in problems), problems
+        for value in NOT_A_COUNT:
+            trainer = create_trainer(provider)
+            problems = _num_envs_problems(provider, spec, value)
+            assert any(p.startswith(f"{trainer.provider_name}: num_envs") for p in problems), problems
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", RAISED_OUT_OF_THE_COMPARISON)
-    def test_a_non_numeric_value_is_returned_rather_than_raised(
-        self, provider: str, spec: RLTrainSpec, value: Any
-    ) -> None:
+    def test_a_non_numeric_value_is_returned_rather_than_raised(self, provider: str, spec: RLTrainSpec) -> None:
         """``validate`` is documented to return problems, so it must not raise here."""
-        spec.num_envs = value
-        problems = create_trainer(provider).validate(spec)  # must not raise
-        assert any("num_envs" in p for p in problems), problems
+        for value in RAISED_OUT_OF_THE_COMPARISON:
+            spec.num_envs = value
+            problems = create_trainer(provider).validate(spec)  # must not raise
+            assert any("num_envs" in p for p in problems), problems
 
 
 class TestTheHarmTheDomainReplaces:
@@ -179,12 +177,12 @@ class TestTheHarmTheDomainReplaces:
         assert max(1, 64 * float("nan")) == 1
         assert max(1, 64 * float("inf")) == float("inf")
 
-    @pytest.mark.parametrize("value", FLOAT_BOUND)
-    def test_a_float_makes_the_loop_bound_unusable_as_a_range(self, value: float) -> None:
-        num_iters = max(1, 1000 // max(1, 64 * value))
-        assert isinstance(num_iters, float), (value, num_iters)
-        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-            range(num_iters)  # type: ignore[call-overload]
+    def test_a_float_makes_the_loop_bound_unusable_as_a_range(self) -> None:
+        for value in FLOAT_BOUND:
+            num_iters = max(1, 1000 // max(1, 64 * value))
+            assert isinstance(num_iters, float), (value, num_iters)
+            with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
+                range(num_iters)  # type: ignore[call-overload]
 
     def test_a_large_float_is_clamped_back_to_a_usable_bound_and_is_still_wrong(self) -> None:
         """The float-bound harm has a boundary; past it the harm is the length again.
@@ -199,15 +197,15 @@ class TestTheHarmTheDomainReplaces:
         assert isinstance(num_iters, int)
         assert range(num_iters) is not None
 
-    @pytest.mark.parametrize("value", READS_AS_ONE)
-    def test_a_flag_is_numerically_one_so_the_length_is_not_the_harm(self, value: Any) -> None:
+    def test_a_flag_is_numerically_one_so_the_length_is_not_the_harm(self) -> None:
         """``True`` runs the intended length; what it changes is what the field means.
 
         This is the whole reason the shared domain refuses a ``bool`` rather than
         testing a bound: the arithmetic cannot tell a flag from the count ``1``.
         """
-        assert max(1, 1000 // max(1, 64 * value)) == max(1, 1000 // max(1, 64 * 1))
-        assert positive_count_error(value, "num_envs", "x") is not None
+        for value in READS_AS_ONE:
+            assert max(1, 1000 // max(1, 64 * value)) == max(1, 1000 // max(1, 64 * 1)), f"{value!r}"
+            assert positive_count_error(value, "num_envs", "x") is not None, f"{value!r}"
 
 
 class TestTheDomainIsConsultedBeforeTheCountRule:
@@ -244,17 +242,17 @@ class TestTheDomainIsConsultedBeforeTheCountRule:
 class TestThePerBackendCountRuleIsUnchanged:
     """The scope line the exclusion draws, pinned on this tree too."""
 
-    @pytest.mark.parametrize("value", A_COUNT)
-    def test_the_parallel_backend_accepts_any_positive_count(self, spec: RLTrainSpec, value: int) -> None:
-        assert _num_envs_problems("ppo", spec, value) == []
+    def test_the_parallel_backend_accepts_any_positive_count(self, spec: RLTrainSpec) -> None:
+        for value in A_COUNT:
+            assert _num_envs_problems("ppo", spec, value) == [], f"{value!r}"
 
     def test_the_single_env_backend_accepts_exactly_one(self, spec: RLTrainSpec) -> None:
         assert _num_envs_problems("fast_sac", spec, 1) == []
 
-    @pytest.mark.parametrize("value", [2, 4, 1024])
-    def test_the_single_env_backend_still_refuses_a_larger_count(self, spec: RLTrainSpec, value: int) -> None:
-        problems = _num_envs_problems("fast_sac", spec, value)
-        assert any("single-env" in p for p in problems), problems
+    def test_the_single_env_backend_still_refuses_a_larger_count(self, spec: RLTrainSpec) -> None:
+        for value in [2, 4, 1024]:
+            problems = _num_envs_problems("fast_sac", spec, value)
+            assert any("single-env" in p for p in problems), problems
 
     def test_the_backends_still_disagree_about_the_same_count(self, spec: RLTrainSpec) -> None:
         """Two envs: usable for the parallel backend, refused by the single-env one."""

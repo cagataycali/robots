@@ -126,10 +126,10 @@ class TestEveryRLBackendRefusesAnUnusableInterval:
     """First half of the biconditional: a backend that checkpoints must refuse."""
 
     @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.log_interval = value
-        assert _interval_problems_of(trainer_cls(), spec) != []
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in UNUSABLE:
+            spec.log_interval = value
+            assert _interval_problems_of(trainer_cls(), spec) != [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -139,26 +139,24 @@ class TestEveryRLBackendRefusesAnUnusableInterval:
         assert problems and problems[0].startswith(f"{trainer.provider_name}: ")
 
     @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    @pytest.mark.parametrize("value", RAISED_IN_THE_CONSUMER)
     def test_an_unusable_interval_is_a_problem_not_an_exception(
-        self, spec: RLTrainSpec, trainer_cls: type[Trainer], value: Any
+        self, spec: RLTrainSpec, trainer_cls: type[Trainer]
     ) -> None:
         """``validate`` is documented to *return* problems, for every spelling.
 
         A str or a list reaches the loop's ``%`` as an operand it cannot take, so
         a preflight that compared the value itself would raise here instead.
         """
-        spec.log_interval = value
-        assert _interval_problems_of(trainer_cls(), spec) != []
+        for value in RAISED_IN_THE_CONSUMER:
+            spec.log_interval = value
+            assert _interval_problems_of(trainer_cls(), spec) != [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_interval_is_not_a_problem(
-        self, spec: RLTrainSpec, trainer_cls: type[Trainer], value: int
-    ) -> None:
+    def test_a_usable_interval_is_not_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
         """Including ``0`` and a negative: this domain has no floor."""
-        spec.log_interval = value
-        assert _interval_problems_of(trainer_cls(), spec) == []
+        for value in USABLE:
+            spec.log_interval = value
+            assert _interval_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
     def test_the_default_interval_is_not_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -175,10 +173,10 @@ class TestASupervisedBackendReportsNothingAboutIt:
     """
 
     @pytest.mark.parametrize("trainer_cls", (*CHECKPOINTING_BACKENDS, MockTrainer))
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_says_nothing(self, spec: RLTrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.log_interval = value
-        assert _interval_problems_of(trainer_cls(), spec) == []
+    def test_it_says_nothing(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in UNUSABLE:
+            spec.log_interval = value
+            assert _interval_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
 
 class TestWhatTheLoopDoesWithAnUnusableInterval:
@@ -200,17 +198,17 @@ class TestWhatTheLoopDoesWithAnUnusableInterval:
         """``True`` is a modulus of one: 20 checkpoints in a 20-iteration run."""
         assert _checkpoint_iterations(True) == list(range(1, RL_ITERS + 1))
 
-    @pytest.mark.parametrize("value", (float("nan"), 0.3, float("inf")))
-    def test_a_non_integral_interval_silently_loses_the_periodic_checkpoints(self, value: float) -> None:
+    def test_a_non_integral_interval_silently_loses_the_periodic_checkpoints(self) -> None:
         """The worst reading: only the final checkpoint survives, under success.
 
         ``nan`` never satisfies the modulus, so only the ``it == num_iters - 1``
         arm fires. For RL that is the whole point of the field - return is
         non-monotonic, so the deployable policy is often an earlier iteration.
         """
-        written = _checkpoint_iterations(value)
-        assert written[-1] == RL_ITERS
-        assert len(written) < len(THE_REQUESTED_SCHEDULE)
+        for value in (float("nan"), 0.3, float("inf")):
+            written = _checkpoint_iterations(value)
+            assert written[-1] == RL_ITERS, f"{value!r}"
+            assert len(written) < len(THE_REQUESTED_SCHEDULE), f"{value!r}"
 
     def test_a_fractional_interval_is_the_schedule_of_a_different_integer(self) -> None:
         """``2.5`` is indistinguishable from the ``5`` the caller did not write.
@@ -219,21 +217,21 @@ class TestWhatTheLoopDoesWithAnUnusableInterval:
         """
         assert _checkpoint_iterations(2.5) == _checkpoint_iterations(5) == THE_REQUESTED_SCHEDULE
 
-    @pytest.mark.parametrize("value", RAISED_IN_THE_CONSUMER)
-    def test_a_non_numeric_interval_raises_inside_the_training_loop(self, value: Any) -> None:
+    def test_a_non_numeric_interval_raises_inside_the_training_loop(self) -> None:
         """Not a ``TrainResult``: a traceback out of ``train()``, after ``setup``.
 
         The lifecycle's whole contract is to report a failed run as a terminal
         ``TrainResult``; this escaped it with the env, the networks and the
         optimizers already built.
         """
-        with pytest.raises(TypeError):
-            _checkpoint_iterations(value)
+        for value in RAISED_IN_THE_CONSUMER:
+            with pytest.raises(TypeError):
+                _checkpoint_iterations(value)
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_every_value_inside_the_domain_is_honored(self, value: int) -> None:
-        written = _checkpoint_iterations(value)
-        assert written and written[-1] == RL_ITERS
+    def test_every_value_inside_the_domain_is_honored(self) -> None:
+        for value in USABLE:
+            written = _checkpoint_iterations(value)
+            assert written and written[-1] == RL_ITERS, f"{value!r}"
 
     def test_zero_disables_the_periodic_checkpoints_and_a_negative_does_not(self) -> None:
         """Which spelling disables is the loop's business, not the domain's.
@@ -354,13 +352,13 @@ class TestOneOwnerForTheRLCheckpointInterval:
 class TestTheSharedDomainSurface:
     """The gate itself, called directly."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_refuses_what_the_supervised_gate_refuses(self, value: Any) -> None:
-        assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") != []
+    def test_it_refuses_what_the_supervised_gate_refuses(self) -> None:
+        for value in UNUSABLE:
+            assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") != [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_accepts_what_the_supervised_gate_accepts(self, value: int) -> None:
-        assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") == []
+    def test_it_accepts_what_the_supervised_gate_accepts(self) -> None:
+        for value in USABLE:
+            assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") == [], f"{value!r}"
 
     def test_it_reports_one_problem_at_a_time_naming_its_own_field(self) -> None:
         problems = rl_checkpoint_interval_problems(RLTrainSpec(log_interval=A_FRACTIONAL_CADENCE), context="acme")

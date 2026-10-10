@@ -71,9 +71,9 @@ SILENT_MISREAD = (True,)
 LOUD_BUT_LATE = (-1e-3, float("nan"))
 
 # Never reached an optimizer at all: a config field of the wrong type.
-NOT_A_NUMBER = ("1e-4", [1e-4], {"lr": 1e-4})
+NOT_A_NUMBER: tuple[Any, ...] = ("1e-4", [1e-4], {"lr": 1e-4})
 
-UNUSABLE = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
+UNUSABLE: tuple[Any, ...] = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
 
 SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
 RL_TRAINER_NAMES = ("FastSacTrainer", "FastTd3Trainer", "PpoTrainer")
@@ -124,22 +124,22 @@ class TestEveryBackendRefusesAnUnusableLearningRate:
     """One domain, seven backends, one verdict per value."""
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_a_supervised_backend_reports_it(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.learning_rate = value
-        problems = trainer_cls().validate(spec)
-        named = [p for p in problems if "learning_rate" in p]
-        assert named, f"{trainer_cls.__name__} accepted learning_rate={value!r}: {problems}"
-        assert "must be a positive finite number" in named[0], named[0]
-        assert repr(value) in named[0], named[0]
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_an_rl_backend_reports_it(self, tmp_path: pathlib.Path, value: Any) -> None:
-        for trainer in _rl_trainers():
-            problems = trainer.validate(_rl_spec(tmp_path, value))
+    def test_a_supervised_backend_reports_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in UNUSABLE:
+            spec.learning_rate = value
+            problems = trainer_cls().validate(spec)
             named = [p for p in problems if "learning_rate" in p]
-            assert named, f"{trainer.provider_name} accepted learning_rate={value!r}: {problems}"
+            assert named, f"{trainer_cls.__name__} accepted learning_rate={value!r}: {problems}"
             assert "must be a positive finite number" in named[0], named[0]
+            assert repr(value) in named[0], named[0]
+
+    def test_an_rl_backend_reports_it(self, tmp_path: pathlib.Path) -> None:
+        for value in UNUSABLE:
+            for trainer in _rl_trainers():
+                problems = trainer.validate(_rl_spec(tmp_path, value))
+                named = [p for p in problems if "learning_rate" in p]
+                assert named, f"{trainer.provider_name} accepted learning_rate={value!r}: {problems}"
+                assert "must be a positive finite number" in named[0], named[0]
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -150,27 +150,25 @@ class TestEveryBackendRefusesAnUnusableLearningRate:
         assert named and named[0].startswith(f"{trainer.provider_name}: "), named
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize("value", NOT_A_NUMBER)
     def test_a_non_numeric_rate_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any
+        self, spec: TrainSpec, trainer_cls: type[Trainer]
     ) -> None:
         """``validate`` returns problems - it must not raise on a bad type."""
-        spec.learning_rate = value
-        problems = trainer_cls().validate(spec)
-        assert isinstance(problems, list)
-        assert any("learning_rate" in p for p in problems), problems
+        for value in NOT_A_NUMBER:
+            spec.learning_rate = value
+            problems = trainer_cls().validate(spec)
+            assert isinstance(problems, list), f"{value!r}"
+            assert any("learning_rate" in p for p in problems), problems
 
 
 class TestAUsableLearningRateIsUntouched:
     """The change is additive: nothing honorable becomes a problem."""
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize("value", [1e-5, 1e-4, 3e-4, 0.1, 1.0])
-    def test_a_usable_rate_raises_no_learning_rate_problem(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], value: float
-    ) -> None:
-        spec.learning_rate = value
-        assert not [p for p in trainer_cls().validate(spec) if "learning_rate" in p]
+    def test_a_usable_rate_raises_no_learning_rate_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in [1e-5, 1e-4, 3e-4, 0.1, 1.0]:
+            spec.learning_rate = value
+            assert not [p for p in trainer_cls().validate(spec) if "learning_rate" in p], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
     def test_the_none_sentinel_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -212,12 +210,12 @@ class TestTheRefusedValuesAreOnesTheConsumerCannotHonor:
         after = model.weight.detach()
         return float((after - before).abs().max()), bool(torch.isnan(after).any())
 
-    @pytest.mark.parametrize("value", SILENT_NO_OP)
-    def test_a_zero_rate_completes_the_run_and_updates_nothing(self, value: Any) -> None:
+    def test_a_zero_rate_completes_the_run_and_updates_nothing(self) -> None:
         pytest.importorskip("torch")
-        delta, has_nan = self._run(value)
-        assert delta == 0.0, f"lr={value!r} moved the weights by {delta}"
-        assert not has_nan
+        for value in SILENT_NO_OP:
+            delta, has_nan = self._run(value)
+            assert delta == 0.0, f"lr={value!r} moved the weights by {delta}"
+            assert not has_nan, f"{value!r}"
 
     def test_a_usable_rate_does_move_the_weights(self) -> None:
         """Non-vacuity: the probe can tell learning from no learning."""
@@ -226,23 +224,23 @@ class TestTheRefusedValuesAreOnesTheConsumerCannotHonor:
         assert delta > 0.0
         assert not has_nan
 
-    @pytest.mark.parametrize("value", SILENT_DIVERGENCE)
-    def test_an_infinite_rate_completes_the_run_with_nan_weights(self, value: Any) -> None:
+    def test_an_infinite_rate_completes_the_run_with_nan_weights(self) -> None:
         pytest.importorskip("torch")
-        _, has_nan = self._run(value)
-        assert has_nan, f"lr={value!r} was expected to diverge"
+        for value in SILENT_DIVERGENCE:
+            _, has_nan = self._run(value)
+            assert has_nan, f"lr={value!r} was expected to diverge"
 
-    @pytest.mark.parametrize("value", SILENT_MISREAD)
-    def test_a_boolean_rate_is_read_as_one(self, value: Any) -> None:
+    def test_a_boolean_rate_is_read_as_one(self) -> None:
         pytest.importorskip("torch")
-        assert self._run(value)[0] == pytest.approx(self._run(1.0)[0])
+        for value in SILENT_MISREAD:
+            assert self._run(value)[0] == pytest.approx(self._run(1.0)[0]), f"{value!r}"
 
-    @pytest.mark.parametrize("value", LOUD_BUT_LATE)
-    def test_a_negative_or_nan_rate_is_refused_by_the_optimizer(self, value: Any) -> None:
+    def test_a_negative_or_nan_rate_is_refused_by_the_optimizer(self) -> None:
         """Refused, but only once a model exists to build an optimizer over."""
         torch = pytest.importorskip("torch")
-        with pytest.raises(ValueError, match="[Ll]earning rate"):
-            torch.optim.Adam(torch.nn.Linear(2, 1).parameters(), lr=value)
+        for value in LOUD_BUT_LATE:
+            with pytest.raises(ValueError, match="[Ll]earning rate"):
+                torch.optim.Adam(torch.nn.Linear(2, 1).parameters(), lr=value)
 
     def test_the_backend_config_layer_does_not_catch_it_either(self) -> None:
         """lerobot's own optimizer config accepts every unusable rate."""
