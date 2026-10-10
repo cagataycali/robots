@@ -77,6 +77,22 @@ def main(argv=None) -> int:
             rows.append({"episode_index": i, "seed": int(sd), "cube_x": round(float(xy[0]), 6),
                          "cube_y": round(float(xy[1]), 6), "arm": arm, "task": task})
             xs.append(float(xy[0])); ys.append(float(xy[1]))
+        # it16 cost an EXPERIMENT to answer "which generator wrote these goals" -- the answer was only
+        # recoverable by replaying both RNG streams against the recorded actions. It is now a lookup:
+        # the stream, this script's own md5 and the harness sha go into the shard's report.
+        import hashlib, subprocess
+        rep["goals_provenance"] = {
+            "rng_stream": "numpy default_rng(90000 + seed), S.sample_cube(embodiment, rng, task)",
+            "writer": "examples/rlenv/episodes_sidecar.py",
+            "writer_md5": hashlib.md5(open(__file__, "rb").read()).hexdigest(),
+            "harness_sha": subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(__file__)),
+                                           "rev-parse", "HEAD"], capture_output=True, text=True
+                                          ).stdout.strip() or "unknown",
+            "written_utc": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "band_transform_applied": k != 1.0,
+            "verify_with": "examples/rlenv/verify_goals.py (replans from this file and must reproduce "
+                           "the recorded first action to a float32 round-trip)"}
+        json.dump(rep, open(os.path.join(d, "GEN-REPORT.json"), "w"), indent=1)
         out = os.path.join(d, "ds", "EPISODES.jsonl")
         with open(out, "w") as f:
             for r in rows:

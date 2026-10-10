@@ -28,6 +28,22 @@ import numpy as np
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 
+def _scaled(e, k: float):
+    """Scale an embodiment's cube_box about its centre, exactly as harvest.py:143-151 does.
+
+    Without this, a variant shard harvested with --band-scale k could only ever INHERIT the canonical
+    shard's criterion cells -- i.e. be judged on a band it was not generated from (it15's table made the
+    inheritance visible, which is why this exists).
+    """
+    if k == 1.0:
+        return e
+    import dataclasses
+    (xl, xh), (yl, yh) = e.cube_box
+    cx, cy = (xl + xh) / 2.0, (yl + yh) / 2.0
+    return dataclasses.replace(e, cube_box=((cx + (xl - cx) * k, cx + (xh - cx) * k),
+                                            (cy + (yl - cy) * k, cy + (yh - cy) * k)))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--arms", default="so101,so100,koch")
@@ -35,6 +51,8 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=4242)
     p.add_argument("--svla", default=os.path.expanduser("~/rlenv-svla-pin"))
     p.add_argument("--json", default=None)
+    p.add_argument("--band-scale", type=float, default=1.0,
+                   help="price the criterion on a VARIANT shard's scaled cube box")
     a = p.parse_args(argv)
 
     sys.path.insert(0, a.svla)
@@ -48,7 +66,7 @@ def main(argv=None) -> int:
            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "arms": {}}
 
     for arm in a.arms.split(","):
-        e = EMBODIMENTS[arm]
+        e = _scaled(EMBODIMENTS[arm], float(a.band_scale))
         robot, _ = S.build(arm, cam_size=(64, 64), with_wrist=bool(e.wrist_parent))
         cells: dict[str, dict] = {}
         try:

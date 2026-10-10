@@ -79,12 +79,36 @@ def main(argv=None) -> int:
                    f"{vg.get('max_abs_delta'):.1e}" if nrows and vg.get("n_checked") else
                    (f"{nrows} rows, UNVERIFIED" if nrows else "**none**"))
         lb = (lbs.get(name) or {}).get("verdict") or "not run"
-        cell = pp.get(arm) if task == "push" else cr.get(arm)
-        floor = (cell or {}).get("verdict", "not priced")
-        floor = ("SOUND %sx" % (pp[arm].get("margin_x")) if task == "push" and (cell or {}).get("margin_x")
-                 else ("UNDETERMINED" if task == "push" and cell else floor))
-        ceil = (pp.get(arm) or {}).get("expert_would_be_scored_success") if task == "push" else None
-        if task == "push" and (pp.get(arm) or {}).get("push_min_exceeds_expert_median"):
+        # A variant shard priced on its OWN band (price_push --band-scale) gets its own file; only fall
+        # back to the canonical arm cell when that does not exist, and the `cells` column says which.
+        own = load(os.path.join(a.runs, f"price-push-{name}.json")) or load(
+              os.path.join(a.runs, f"capture-radius-{name}.json")) or {}
+        own_arm = (own.get("arms") or {}).get(arm)
+        cell = own_arm or (pp.get(arm) if task == "push" else cr.get(arm))
+        # margin_x is null in TWO opposite cases: no floor moves the cube (the criterion is maximally
+        # sound, margin is infinite) and nothing was measured. Printing both as "UNDETERMINED" would have
+        # understated venue18, whose floors displace 0.0 m -- so read the measured fields, not the ratio.
+        if not cell:
+            floor = "not priced"
+        elif task != "push":
+            floor = cell.get("verdict", "not priced")
+        elif cell.get("false_successes_on_floors"):
+            floor = "FALSE SUCCESSES %s" % cell["false_successes_on_floors"]
+        elif cell.get("margin_x"):
+            floor = "SOUND %sx" % cell["margin_x"]
+        elif cell.get("floor_max_along_m") == 0.0:
+            floor = "SOUND (floors displace 0.0 m)"
+        else:
+            floor = cell.get("verdict", "UNDETERMINED")
+        # the canonical pricing file writes this flat, a --band-scale run nests it under "expert" --
+        # reading only one spelling printed "n/a" for a shard whose ceiling HAD been measured (26/30).
+        ceil = ((cell or {}).get("expert_would_be_scored_success")
+                or ((cell or {}).get("expert") or {}).get("would_be_scored_success")) if task == "push" else None
+        ex = (cell or {}).get("expert") or {}
+        exmed = (ex.get("along_m") or {}).get("median") if ex else None
+        pmin = (cell or {}).get("push_min_m") or (cell or {}).get("push_min")
+        if task == "push" and ((cell or {}).get("push_min_exceeds_expert_median")
+                               or (exmed and pmin and pmin > exmed)):
             ceil = f"**{ceil}** (threshold > expert median)"
         # SD-58 (SIMDATA): say IN THE TABLE whether a consumer can mistake a failure for a demonstration.
         kr = r["passA"]["keep_rate"]
@@ -92,7 +116,7 @@ def main(argv=None) -> int:
         fails = f"0 (of ~{int(round(ep / kr))} attempts; {disc} discarded)" if disc is not None else "unknown"
         w("| `%s` | %s | %s | %s / %s s | %s | %s | %s | %s | %s | %s |" % (
             name, ep, kr, r.get("band_scale", 1.0), r.get("duration_s", "?"), sidecar, lb, floor,
-            ceil or "n/a", fails, "own" if name == canon else f"inherited from `{canon}`"))
+            ceil or "n/a", fails, "own" if (name == canon or own_arm) else f"inherited from `{canon}`"))
     w("")
     w("**Failures are not published.** A shard is successes-only: `keep` is the expert's own success rate on")
     w("freshly sampled poses, so the discarded-attempt count in the table is how many failures were thrown")
