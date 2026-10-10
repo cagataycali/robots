@@ -102,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--arm", required=True)
     p.add_argument("--task", default="touch", choices=("touch", "push"))
     p.add_argument("--episodes", type=int, default=200, help="episodes wanted (of the --keep class)")
+    p.add_argument("--force", action="store_true",
+                   help="overwrite a shard already recorded in --out (the recorder wipes it)")
     p.add_argument("--keep", choices=("successes", "failures"), default="successes",
                    help="which outcome class to harvest. 'failures' records the episodes this harness has "
                         "been THROWING AWAY (~50-550 per shard pass): the same scripted expert on the same "
@@ -171,6 +173,16 @@ def main(argv: list[str] | None = None) -> int:
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"phase": "config", **rec}), flush=True)
+    # it21: the LeRobot recorder WIPES --out, so re-running a harvest into the directory of an
+    # already-published shard destroys its report and card while the Hub copy keeps claiming the old episode
+    # count. It cost exactly that today (an 18-episode card over a 100-episode shard). Refuse unless forced.
+    if (a.out / "ds").exists() or (a.out / "data").exists():
+        if not a.force:
+            print(json.dumps({"REFUSED": "%s already holds a recorded shard; the recorder would WIPE it "
+                                         "(report + card included). Pass --force or choose a new --out."
+                                         % a.out}), flush=True)
+            return 2
+        print(json.dumps({"WARNING": "--force: overwriting the shard already in %s" % a.out}), flush=True)
     (a.report or (a.out / "GEN-REPORT.json")).parent.mkdir(parents=True, exist_ok=True)
     return _run(a, e, S, X, seeds, cams, repo_id, rec)
 

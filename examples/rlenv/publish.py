@@ -261,8 +261,22 @@ def main(argv=None) -> int:
         print(json.dumps({"shard": a.shard, "refused": "no GEN-REPORT with verdict OK"}))
         return 1
     arm, task = rep.get("arm"), rep.get("task")
-    nec = load(os.path.join(RUNS, f"necessity-{arm}-{task}.json"))
-    dwl = load(os.path.join(RUNS, f"dwell-{arm}-touch.json"))
+    # it20 debt, paid: these were keyed on arm+task only, so a NEGATIVE split or a band variant printed the
+    # POSITIVE shard's necessity and dwell numbers as its own. Shard-keyed first; an inherited cell is still
+    # allowed (it is an arm property, not a shard property) but it must be LABELLED, never silent.
+    nec = load(os.path.join(RUNS, f"necessity-{a.shard}.json"))
+    dwl = load(os.path.join(RUNS, f"dwell-{a.shard}.json"))
+    inherited = []
+    if nec is None:
+        nec = load(os.path.join(RUNS, f"necessity-{arm}-{task}.json"))
+        if nec is not None and a.shard != f"{arm}-{task}":
+            nec = dict(nec, inherited_from=f"{arm}-{task}")
+            inherited.append("necessity")
+    if dwl is None:
+        dwl = load(os.path.join(RUNS, f"dwell-{arm}-touch.json"))
+        if dwl is not None and a.shard != f"{arm}-{task}":
+            dwl = dict(dwl, inherited_from=f"{arm}-touch")
+            inherited.append("dwell")
     lb = load(os.path.join(RUNS, f"loadback-{a.shard}.json"))
     cr = ((load(os.path.join(RUNS, "capture-radius.json")) or {}).get("arms") or {}).get(arm)
     pp = ((load(os.path.join(RUNS, "price-push.json")) or {}).get("arms") or {}).get(arm)
