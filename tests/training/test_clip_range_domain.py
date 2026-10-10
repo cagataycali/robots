@@ -136,17 +136,19 @@ def _clip_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheTrustRegionRefusesAWidthItCannotHonor:
     """A half-width no reading makes usable is reported, not clipped with."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_an_unusable_width_is_refused(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.clip_param = value
-        assert _clip_problems(ON_POLICY, spec) != [], f"{value!r} was accepted"
+    def test_an_unusable_width_is_refused(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.clip_param = value
+            assert _clip_problems(ON_POLICY, spec) != [], f"{value!r} was accepted"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.clip_param = value
-        (problem,) = _clip_problems(ON_POLICY, spec)
-        assert problem.startswith("ppo: clip_param "), problem
-        assert "must be a positive finite number" in problem, problem
+    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.clip_param = value
+            problems = _clip_problems(ON_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem.startswith("ppo: clip_param "), problem
+            assert "must be a positive finite number" in problem, problem
 
     def test_the_message_is_the_shared_domain_verbatim(self, spec: RLTrainSpec) -> None:
         """The gate adds no wording of its own; it delegates."""
@@ -170,10 +172,10 @@ class TestTheTrustRegionRefusesAWidthItCannotHonor:
 class TestTheUsableDomainIsUntouched:
     """Every half-width the clip can honor still passes."""
 
-    @pytest.mark.parametrize("value", [*USABLE, *NO_CLIPPING])
-    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.clip_param = value
-        assert _clip_problems(ON_POLICY, spec) == []
+    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec) -> None:
+        for value in [*USABLE, *NO_CLIPPING]:
+            spec.clip_param = value
+            assert _clip_problems(ON_POLICY, spec) == [], f"{value!r}"
 
     def test_the_shipped_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
         assert spec.clip_param == 0.2
@@ -190,13 +192,13 @@ class TestTheUsableDomainIsUntouched:
 class TestTheTwoClipBoundsShareOneDomain:
     """One rule, one home - the two on-policy clip bounds cannot drift apart."""
 
-    @pytest.mark.parametrize("value", [*USABLE, *NO_CLIPPING, *UNUSABLE])
-    def test_both_bounds_give_the_same_verdict(self, value: Any) -> None:
-        width = _spec(clip_param=value)
-        norm = _spec(max_grad_norm=value)
-        assert bool(clip_range_problems(width, context="ppo")) == bool(gradient_clip_problems(norm, context="ppo")), (
-            f"the two clip bounds disagree on {value!r}"
-        )
+    def test_both_bounds_give_the_same_verdict(self) -> None:
+        for value in [*USABLE, *NO_CLIPPING, *UNUSABLE]:
+            width = _spec(clip_param=value)
+            norm = _spec(max_grad_norm=value)
+            assert bool(clip_range_problems(width, context="ppo")) == bool(
+                gradient_clip_problems(norm, context="ppo")
+            ), f"the two clip bounds disagree on {value!r}"
 
     def test_both_gates_read_the_one_shared_helper(self) -> None:
         """Structural: neither gate carries its own copy of the rule."""
@@ -209,16 +211,16 @@ class TestTheTwoClipBoundsShareOneDomain:
             }
             assert "_clip_bound_error" in called, f"{gate.__name__} does not delegate: {called}"
 
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_the_domain_is_the_shared_positive_finite_rule(self, value: Any) -> None:
-        mine = clip_range_problems(_spec(clip_param=value), context="ppo")
-        shared = positive_finite_number_error(value, "clip_param", "ppo")
-        assert mine == ([shared] if shared is not None else []), f"diverged on {value!r}"
+    def test_the_domain_is_the_shared_positive_finite_rule(self) -> None:
+        for value in [*USABLE, *UNUSABLE]:
+            mine = clip_range_problems(_spec(clip_param=value), context="ppo")
+            shared = positive_finite_number_error(value, "clip_param", "ppo")
+            assert mine == ([shared] if shared is not None else []), f"diverged on {value!r}"
 
-    @pytest.mark.parametrize("value", NO_CLIPPING)
-    def test_infinity_is_the_one_carve_out(self, value: Any) -> None:
-        assert clip_range_problems(_spec(clip_param=value), context="ppo") == []
-        assert positive_finite_number_error(value, "clip_param", "ppo") is not None
+    def test_infinity_is_the_one_carve_out(self) -> None:
+        for value in NO_CLIPPING:
+            assert clip_range_problems(_spec(clip_param=value), context="ppo") == [], f"{value!r}"
+            assert positive_finite_number_error(value, "clip_param", "ppo") is not None, f"{value!r}"
 
     def test_negative_infinity_is_not_carved_out(self) -> None:
         assert clip_range_problems(_spec(clip_param=float("-inf")), context="ppo") != []
@@ -228,12 +230,10 @@ class TestTheBackendsThatDoNotClipStaySilent:
     """A backend that never reads the field must not report on it."""
 
     @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_a_non_clipping_backend_says_nothing_about_the_width(
-        self, provider: str, spec: RLTrainSpec, value: Any
-    ) -> None:
-        spec.clip_param = value
-        assert _clip_problems(provider, spec) == []
+    def test_a_non_clipping_backend_says_nothing_about_the_width(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.clip_param = value
+            assert _clip_problems(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
     def test_the_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str) -> None:

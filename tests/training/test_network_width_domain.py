@@ -104,19 +104,21 @@ class TestEveryRlBackendRefusesAnUnusableWidth:
     """A width the expansion loop cannot honor is refused by all three."""
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE_WIDTHS, ids=repr)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.hidden_dims = (value,)  # type: ignore[assignment]
-        assert _width_reports(provider, spec), f"{provider} accepted hidden_dims=({value!r},)"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in UNUSABLE_WIDTHS:
+            spec.hidden_dims = (value,)  # type: ignore[assignment]
+            assert _width_reports(provider, spec), f"{provider} accepted hidden_dims=({value!r},)"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE_WIDTHS, ids=repr)
-    def test_the_problem_names_the_index_and_the_value(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
+    def test_the_problem_names_the_index_and_the_value(self, spec: RLTrainSpec, provider: str) -> None:
         """A sequence field must say WHICH entry was refused."""
-        spec.hidden_dims = (128, value)  # type: ignore[assignment]
-        (problem,) = _width_reports(provider, spec)
-        assert problem.startswith(f"{provider}: hidden_dims[1] "), problem
-        assert repr(value) in problem, problem
+        for value in UNUSABLE_WIDTHS:
+            spec.hidden_dims = (128, value)  # type: ignore[assignment]
+            problems = _width_reports(provider, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem.startswith(f"{provider}: hidden_dims[1] "), problem
+            assert repr(value) in problem, problem
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_every_unusable_width_is_reported_at_once(self, spec: RLTrainSpec, provider: str) -> None:
@@ -128,15 +130,15 @@ class TestEveryRlBackendRefusesAnUnusableWidth:
         assert problems[1].startswith(f"{provider}: hidden_dims[2] ")
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", NOT_A_SEQUENCE, ids=repr)
-    def test_a_field_that_is_not_a_sequence_of_widths_is_refused(
-        self, spec: RLTrainSpec, provider: str, value: Any
-    ) -> None:
-        spec.hidden_dims = value  # type: ignore[assignment]
-        (problem,) = _width_reports(provider, spec)
-        assert problem == (f"{provider}: hidden_dims must be a sequence of positive int layer widths, got {value!r}"), (
-            problem
-        )
+    def test_a_field_that_is_not_a_sequence_of_widths_is_refused(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in NOT_A_SEQUENCE:
+            spec.hidden_dims = value  # type: ignore[assignment]
+            problems = _width_reports(provider, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem == (
+                f"{provider}: hidden_dims must be a sequence of positive int layer widths, got {value!r}"
+            ), problem
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_a_one_shot_iterator_is_refused(self, spec: RLTrainSpec, provider: str) -> None:
@@ -149,10 +151,10 @@ class TestTheUsableDomainIsUntouched:
     """A width the loop honors is not newly refused."""
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("value", USABLE_WIDTHS, ids=repr)
-    def test_a_usable_width_reports_nothing(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.hidden_dims = (value, value)  # type: ignore[assignment]
-        assert _width_reports(provider, spec) == []
+    def test_a_usable_width_reports_nothing(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in USABLE_WIDTHS:
+            spec.hidden_dims = (value, value)  # type: ignore[assignment]
+            assert _width_reports(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", RL_BACKENDS)
     def test_the_shipped_default_reports_nothing(self, spec: RLTrainSpec, provider: str) -> None:
@@ -200,11 +202,11 @@ class TestABackendWithNoSpecArchitectureStaysQuiet:
 class TestTheGateAddsNothingToTheSharedDomain:
     """The per-element verdict is the shared rule's, so the two cannot drift."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_WIDTHS + USABLE_WIDTHS, ids=repr)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.hidden_dims = (value,)  # type: ignore[assignment]
-        shared = positive_count_error(value, "hidden_dims[0]", "fast_td3")
-        assert _width_reports("fast_td3", spec) == ([shared] if shared is not None else [])
+    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE_WIDTHS + USABLE_WIDTHS:
+            spec.hidden_dims = (value,)  # type: ignore[assignment]
+            shared = positive_count_error(value, "hidden_dims[0]", "fast_td3")
+            assert _width_reports("fast_td3", spec) == ([shared] if shared is not None else []), f"{value!r}"
 
 
 class TestTheSilentReadingIsReal:
