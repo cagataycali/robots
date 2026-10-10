@@ -200,6 +200,19 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
         return 1
     kept = good[: a.episodes]
     rec["kept_seeds"] = [g["seed"] for g in kept]
+    # it11: this line used to be the ONLY per-episode provenance written, while `kept` held the cube pose
+    # and the measured gap for every episode. A shard's parquet carries no cube pose and no success flag, so
+    # discarding these made every card claim depend on this one file -- and so101-push-venue18 lost its copy,
+    # taking 200 goals with it. Keep the full records, and write them INTO the dataset so the goal travels
+    # with the data instead of beside it.
+    rec["kept_episodes"] = [{"episode_index": i, "seed": g["seed"], "cube_xy": g["cube_xy"],
+                             "gap": round(float(g["gap"]), 6)} for i, g in enumerate(kept)]
+    try:
+        with open(os.path.join(a.out, "EPISODES.jsonl"), "w") as _f:
+            for r in rec["kept_episodes"]:
+                _f.write(json.dumps({**r, "arm": a.arm, "task": a.task}) + "\n")
+    except OSError as exc:
+        rec["episodes_jsonl_error"] = str(exc)
     rec["instruction_variety"] = len({g["instruction"] for g in kept})
     _write(a, rec)
 

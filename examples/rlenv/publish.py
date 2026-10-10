@@ -81,6 +81,22 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
                   "accidental push available from the best possible starting pose: this criterion requires "
                   "directed motion, not proximity. Unlike the touch cells, no embodied-radius bound applies "
                   "here, because nothing is being declared about contact.", ""]
+    import glob as _g
+    _ej = _g.glob(os.path.join(os.path.dirname(os.path.join(DATA, shard, "ds")), "ds", "EPISODES.jsonl"))
+    if _ej:
+        _n = sum(1 for _ in open(_ej[0]))
+        L += ["### Per-episode goals (EPISODES.jsonl)", "",
+              f"`EPISODES.jsonl` carries one row per episode -- `episode_index`, `seed`, `cube_x`, `cube_y`, "
+              f"`arm`, `task` ({_n} rows) -- because the parquet does NOT: it has `action`, "
+              "`observation.state`, the indices and timestamps, and no cube pose and no success flag. "
+              "Without this file nothing on this card could be recomputed from the shard itself, and a "
+              "sibling run has already lost its generation report and with it 200 goals. The rows were "
+              "rebuilt from the generator's `kept_seeds` (the cube sampler is a pure function of arm, task "
+              "and seed) and VERIFIED against the recorded actions: 6 of 9 expert keyframes per episode "
+              "match the recorded action rows BIT-EXACTLY, while the same test run with the wrong random "
+              "construction matches 0 of 9 and misses the cube-dependent poses by 0.39-0.65 rad. The one "
+              "non-exact keyframe is the cube-INDEPENDENT rest pose, off by the identical 0.0145 rad under "
+              "both constructions (start-pose jitter, not evidence either way).", ""]
     void = bool(cr and rep.get("task") == "touch"
                 and "EXCEEDS" in str(cr.get("verdict", "")))
     if rep.get("task") == "touch" and cr:
