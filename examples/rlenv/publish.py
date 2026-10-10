@@ -32,7 +32,8 @@ def load(p):
 
 
 def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | None,
-         hor: dict | None, repo: str, cr: dict | None = None) -> str:
+         hor: dict | None, repo: str, cr: dict | None = None, pp: dict | None = None,
+         sh: dict | None = None) -> str:
     b = rep.get("passB") or {}
     ts = rep.get("written_task_strings") or {}
     arm = rep.get("arm")
@@ -49,6 +50,37 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
         "but an ablation measured on it cannot distinguish a head that reads the goal from one that does not.",
         "",
     ]
+    if rep.get("task") == "push" and pp:
+        L += ["### What the success criterion requires (priced against its own floors)", "",
+              f"Success is cube displacement along the approach axis > **{pp.get('threshold_m', 0.04)} m**. A "
+              "displacement threshold is worth nothing until the displacement a NON-pushing arm produces is "
+              "measured, so it was priced with this harness's own negative controls on the same scenes, "
+              f"seeds and episode length ({pp.get('episodes_per_cell')} episodes per cell):", "",
+              "| arm policy | displacement along axis (median / max) | scored as success |",
+              "|---|---|---|",
+              f"| frozen arm (drift only) | {pp['hold']['along_m']['median']} / "
+              f"{pp['hold']['along_m']['max']} m | {pp['hold']['would_be_scored_success']}/"
+              f"{pp['hold']['n']} |",
+              f"| random walk from rest | {pp['random']['along_m']['median']} / "
+              f"{pp['random']['along_m']['max']} m | {pp['random']['would_be_scored_success']}/"
+              f"{pp['random']['n']} |"]
+        if sh:
+            L += [f"| random walk from the CONTACT-ADJACENT pose (so101) | {sh['along_m']['median']} / "
+                  f"{sh['along_m']['max']} m | {sh['false_successes']}/{sh['n']} |"]
+        L += [f"| scripted expert | {pp['expert']['along_m']['median']} / "
+              f"{pp['expert']['along_m']['max']} m | {pp['expert']['would_be_scored_success']}/"
+              f"{pp['expert']['n']} |", ""]
+        if sh:
+            L += ["The first two floors are **uninformative on their own**: they produce exactly 0.000 m "
+                  "because an arm starting at rest never reaches the cube, so they show the cube does not "
+                  "DRIFT and say nothing about ACCIDENTAL pushes. The third row is the control that bites "
+                  f"-- undirected motion from the expert's own pre-contact pose touched the cube in "
+                  f"{sh['touched_at_all']}/{sh['n']} episodes and still moved it at most "
+                  f"{sh['along_m']['max']} m. So the threshold is "
+                  f"**{round(float(sh['threshold_m']) / max(sh['along_m']['max'], 1e-9), 2)}x** the largest "
+                  "accidental push available from the best possible starting pose: this criterion requires "
+                  "directed motion, not proximity. Unlike the touch cells, no embodied-radius bound applies "
+                  "here, because nothing is being declared about contact.", ""]
     void = bool(cr and rep.get("task") == "touch"
                 and "EXCEEDS" in str(cr.get("verdict", "")))
     if rep.get("task") == "touch" and cr:
@@ -149,9 +181,11 @@ def main(argv=None) -> int:
     dwl = load(os.path.join(RUNS, f"dwell-{arm}-touch.json"))
     lb = load(os.path.join(RUNS, f"loadback-{a.shard}.json"))
     cr = ((load(os.path.join(RUNS, "capture-radius.json")) or {}).get("arms") or {}).get(arm)
+    pp = ((load(os.path.join(RUNS, "price-push.json")) or {}).get("arms") or {}).get(arm)
+    sh = load(os.path.join(RUNS, "push-sharp-so101.json"))
     hor = load(os.path.join(RUNS, f"horizon-{arm}-{task}.json"))
     repo = PREFIX + a.shard
-    text = card(a.shard, rep, nec, dwl, lb, hor, repo, cr)
+    text = card(a.shard, rep, nec, dwl, lb, hor, repo, cr, pp, sh)
     open(os.path.join(d, "README.md"), "w").write(text)
     out = {"shard": a.shard, "repo": repo, "card_lines": len(text.splitlines()),
            "has_necessity": bool(nec), "has_dwell": bool(dwl), "has_loadback": bool(lb),
