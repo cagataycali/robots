@@ -46,6 +46,13 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
         "", "```python", "from lerobot.datasets.lerobot_dataset import LeRobotDataset",
         f'ds = LeRobotDataset("{repo}")', "```", "",
         "## What this shard can and cannot support", "",
+        *(["> **Inherited measurements.** This is a VARIANT shard "
+           f"({', '.join([x for x in ((f'band_scale {rep.get(chr(98)+chr(97)+chr(110)+chr(100)+chr(95)+chr(115)+chr(99)+chr(97)+chr(108)+chr(101))}' if rep.get('band_scale') not in (None, 1.0) else ''), (f'episode {rep.get(chr(100)+chr(117)+chr(114)+chr(97)+chr(116)+chr(105)+chr(111)+chr(110)+chr(95)+chr(115))} s' if rep.get('duration_s') else '')) if x]) or 'non-default generation'}). "
+           f"The criterion pricing, goal-necessity, dwell and capture-radius cells below were measured on the "
+           f"canonical `{arm}-{rep.get('task')}` shard and are INHERITED here, not re-measured on this scene "
+           "distribution: a wider band or a longer episode changes what an accidental success costs. The "
+           "load-back, the per-episode goals and the keep rate below ARE this shard's own.", ""]
+          if shard != f"{arm}-{rep.get('task')}" else []),
         "Read this before measuring a goal ablation on it. A shard with little goal headroom is not broken,",
         "but an ablation measured on it cannot distinguish a head that reads the goal from one that does not.",
         "",
