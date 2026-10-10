@@ -121,6 +121,32 @@ def main(argv=None) -> int:
         w(json.dumps(pix, indent=1)[:1200])
         w("```")
         w("")
+    # Published repos are LISTED FROM THE HUB, not derived from shard names: a name I can spell is not
+    # evidence a repo exists, and this doc's whole purpose is to be actionable by a consumer.
+    w("## Published (private)")
+    w("")
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        repos = sorted(d.id for d in api.list_datasets(author="cagataydev",
+                                                       search="strands-vla-rlenv"))
+        if repos:
+            w("Each shard is one private dataset repo with `ds/` at the root, tagged `v3.0`")
+            w("(`LeRobotDataset` resolves `revision=CODEBASE_VERSION`, so the tag is what makes it")
+            w("loadable at all):")
+            w("")
+            w("```python")
+            w("from lerobot.datasets.lerobot_dataset import LeRobotDataset")
+            w('ds = LeRobotDataset("%s")' % repos[0])
+            w("```")
+            w("")
+            for r in repos:
+                w("- `%s`" % r)
+        else:
+            w("No published repos found under cagataydev matching strands-vla-rlenv.")
+    except Exception as exc:
+        w("Could not list published repos: %s: %s" % (type(exc).__name__, exc))
+    w("")
     w("## Limits that apply to every number above")
     w("")
     w("- These are EXPERT rollouts in MuJoCo, not policy rollouts and not a real arm. They bound what a")

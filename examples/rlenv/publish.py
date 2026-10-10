@@ -32,7 +32,7 @@ def load(p):
 
 
 def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | None,
-         hor: dict | None, repo: str) -> str:
+         hor: dict | None, repo: str, cr: dict | None = None) -> str:
     b = rep.get("passB") or {}
     ts = rep.get("written_task_strings") or {}
     arm = rep.get("arm")
@@ -49,8 +49,31 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
         "but an ablation measured on it cannot distinguish a head that reads the goal from one that does not.",
         "",
     ]
+    void = bool(cr and rep.get("task") == "touch"
+                and "EXCEEDS" in str(cr.get("verdict", "")))
+    if rep.get("task") == "touch" and cr:
+        r = cr["radius_ee_to_centre_m"]
+        L += ["### Embodied bound on the success criterion (decides whether a rate may be quoted)", "",
+              "The criterion is a SURFACE gap: `mj_geomDistance` between any arm geom and the cube "
+              f"<= {rep.get('touch_gap_m', 0.01)} m, where 0 is contact. That is not a radius around the "
+              "cube centre, so it has to be converted before it can be compared to the project's "
+              "embodied bound of 0.040 m. Measured at the instant the criterion fires, over "
+              f"{cr['fired']} successes: the controlled point (the arm's IK reference site) sits "
+              f"**{r['median']} m** from the cube centre (p95 {r['p95']}, max {r['max']}).", ""]
+        if void:
+            L += ["> **THESE SUCCESS RATES ARE VOID AND MUST NOT BE QUOTED.** The implied capture radius "
+                  f"({r['p95']} m at p95) EXCEEDS the 0.040 m bound, so a success here can be declared "
+                  "where no embodied contact occurred. A void cell is not a small result, it is no "
+                  "result. The TRAJECTORIES remain usable as demonstrations; the success LABEL does not "
+                  "support a claim. Cause: this arm's IK site sits far from its contacting geometry, so "
+                  "the same surface-gap criterion implies a larger radius here than on so101 (0.027).", ""]
+        elif r["max"] > 0.040:
+            L += ["> **MARGINAL.** p95 clears the 0.040 m bound but the worst episode "
+                  f"({r['max']} m) does not. Treat this cell as sitting ON the bound rather than "
+                  "cleared, and do not build a headline on it.", ""]
     if nec:
-        L += ["### Goal necessity (n=40/cell)", "",
+        L += ["### Goal necessity (n=40/cell, 1 seed stream, EXPLORATORY — computed after the data "
+              "were seen; simulation only, no real-robot evaluation)", "",
               "`goal-aware` is the expert planning to the true cube. `goal-blind` is the SAME code path",
               "planning to the CENTRE of the sampling band, cube left where it is. `headroom` is the part of",
               "the score only a goal-reader can earn.", "",
@@ -84,7 +107,8 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
                   f"Frames past completion are the arm HOLDING its final pose.", ""]
     L += ["## Provenance and integrity", "",
           "| | |", "|---|---|",
-          f"| expert success rate (cost of an episode) | {rep['passA']['keep_rate']} |",
+          f"| expert success rate = the CEILING for this cell (cost of an episode) | "
+          f"{'VOID (see bound above)' if void else rep['passA']['keep_rate']} |",
           f"| distinct goal-naming instructions | {ts.get('n')} |",
           f"| replay nondeterminism (re-replayed, actions not bit-exact) | "
           f"{len(b.get('replay_nondeterminism') or [])} |",
@@ -97,6 +121,7 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
                  f"keys {', '.join(lb.get('image_keys', []))}) |")
     L += ["", "`GEN-REPORT.json` in this repo carries every number above plus the per-episode seeds.", "",
           "## Limits", "",
+          "- Simulation only; no real-robot evaluation.",
           "- MuJoCo, not a real arm. A scripted expert, not a learned policy: these bound what a head",
           "  trained here could demonstrate; they do not predict what one will.",
           "- Successes only, so the distribution contains no failures to learn from.",
@@ -123,9 +148,10 @@ def main(argv=None) -> int:
     nec = load(os.path.join(RUNS, f"necessity-{arm}-{task}.json"))
     dwl = load(os.path.join(RUNS, f"dwell-{arm}-touch.json"))
     lb = load(os.path.join(RUNS, f"loadback-{a.shard}.json"))
+    cr = ((load(os.path.join(RUNS, "capture-radius.json")) or {}).get("arms") or {}).get(arm)
     hor = load(os.path.join(RUNS, f"horizon-{arm}-{task}.json"))
     repo = PREFIX + a.shard
-    text = card(a.shard, rep, nec, dwl, lb, hor, repo)
+    text = card(a.shard, rep, nec, dwl, lb, hor, repo, cr)
     open(os.path.join(d, "README.md"), "w").write(text)
     out = {"shard": a.shard, "repo": repo, "card_lines": len(text.splitlines()),
            "has_necessity": bool(nec), "has_dwell": bool(dwl), "has_loadback": bool(lb),
