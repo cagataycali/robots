@@ -122,6 +122,31 @@ def main(argv=None):
                      f"that is an extremum over the trajectory is gameable by jitter; one read at a fixed "
                      f"time is not.")
             L.append("")
+        col = load(f"{RUNS}/feature-collinearity-{rep.get('arm')}-{rep.get('task')}.json")
+        if col:
+            L.append("### Read the shortcut on the RIGHT axis (it27's own mistake, corrected)")
+            L.append("")
+            L.append(f"`radius` is not an independent axis of this band: it correlates "
+                     f"**{col['corr_radius_abs_cube_y']}** with `|cube_y|` and "
+                     f"{col['corr_radius_cube_x']} with `cube_x`. So a high `radius` AUC is a LATERAL "
+                     f"shortcut in polar clothing, not a reach-distance one. it27 read this shard family's "
+                     f"radius AUC as a 'radial' shortcut and that reading is WITHDRAWN.")
+            L.append("")
+            L.append("| feature | AUC | note |")
+            L.append("|---|---|---|")
+            for k, note in (("cube_y", "the real axis"), ("abs_cube_y", "folded version of the same axis"),
+                            ("radius", "0.96-collinear with |cube_y|, NOT independent"),
+                            ("cube_x", "forward/reach axis, the one radius does NOT carry")):
+                L.append(f"| `{k}` | {col['auc'][k]} | {note} |")
+            L.append("")
+            L.append(f"The direction is also predicted by an INDEPENDENT measurement that never touches "
+                     f"these episodes: `shortcut_axis.py` drives the expert over a 4x4 grid spanning the "
+                     f"band at the same sigma and reports where success is low. Grid lateral marginal "
+                     f"{col['grid_marginal_y']} (spread {col['grid_spread_y']} lateral vs "
+                     f"{col['grid_spread_x']} forward) predicts cube_y AUC {col['direction_predicted_from_grid']}; "
+                     f"observed {col['direction_observed']} -- "
+                     f"{'PREDICTED CORRECTLY' if col['direction_correct'] else 'WRONG, and this pair has no resolvable shortcut to predict (AUC is at chance)'}.")
+            L.append("")
         L.append("### What this pair is FOR")
         L.append("")
         L.append("A success/failure pair from one policy, so a consumer can train or probe on outcome "
