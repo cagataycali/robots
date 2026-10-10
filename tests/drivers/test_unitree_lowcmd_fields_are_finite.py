@@ -88,27 +88,27 @@ BUILDERS = (
 )
 
 #: Values outside the domain, each with the reason it is not merely unusual.
-OUTSIDE_THE_DOMAIN = (
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(float("inf"), id="inf"),
-    pytest.param(float("-inf"), id="-inf"),
-    pytest.param("nan", id="nan-as-a-string"),
-    pytest.param("0.25", id="a-numeric-string"),
-    pytest.param(True, id="bool-true-would-be-one-radian"),
-    pytest.param(None, id="none"),
-    pytest.param([0.25], id="a-list"),
-    pytest.param(10**400, id="past-the-float64-range"),
+OUTSIDE_THE_DOMAIN: tuple[Any, ...] = (
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    "nan",  # nan as a string
+    "0.25",  # a numeric string
+    True,  # a bool would be one radian
+    None,
+    [0.25],
+    10**400,  # past the float64 range
 )
 
 #: Real scalars a policy legitimately produces. NumPy is the case that matters:
 #: an action read off a policy tensor arrives as ``np.float32``, and refusing it
 #: would break every inference path. Same acceptance the battery floor has.
-INSIDE_THE_DOMAIN = (
-    pytest.param(0.25, id="float"),
-    pytest.param(0, id="int-zero"),
-    pytest.param(-1.5, id="negative"),
-    pytest.param(np.float32(0.25), id="numpy-float32"),
-    pytest.param(np.float64(-0.25), id="numpy-float64"),
+INSIDE_THE_DOMAIN: tuple[Any, ...] = (
+    0.25,
+    0,
+    -1.5,
+    np.float32(0.25),
+    np.float64(-0.25),
 )
 
 
@@ -210,9 +210,8 @@ def _stub_unitree_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(("label", "build", "joint", "slot"), BUILDERS)
 @pytest.mark.parametrize("field", _WIRE_FIELDS)
-@pytest.mark.parametrize("value", OUTSIDE_THE_DOMAIN)
 def test_a_field_outside_the_domain_refuses_the_whole_frame(
-    label: str, build: Any, joint: str, slot: int, field: str, value: Any
+    label: str, build: Any, joint: str, slot: int, field: str
 ) -> None:
     """No frame is built at all - not a frame with the bad field dropped.
 
@@ -221,38 +220,39 @@ def test_a_field_outside_the_domain_refuses_the_whole_frame(
     because the slot would then take a default the caller never chose.
     """
     del label, slot
-    cmd, reason = build({joint: {"q": 0.1, field: value}} if field != "q" else {joint: {"q": value}})
-    assert cmd is None, f"{field}={value!r} built a frame that would reach the wire"
-    assert reason is not None
-    assert f"{joint}.{field}" in reason, "the reason must name the joint and the field"
+    for value in OUTSIDE_THE_DOMAIN:
+        cmd, reason = build({joint: {"q": 0.1, field: value}} if field != "q" else {joint: {"q": value}})
+        assert cmd is None, f"{field}={value!r} built a frame that would reach the wire"
+        assert reason is not None, f"{value!r}"
+        assert f"{joint}.{field}" in reason, "the reason must name the joint and the field"
 
 
 @pytest.mark.parametrize(("label", "build", "joint", "slot"), BUILDERS)
-@pytest.mark.parametrize("value", OUTSIDE_THE_DOMAIN)
 def test_a_scalar_action_outside_the_domain_refuses_the_whole_frame(
-    label: str, build: Any, joint: str, slot: int, value: Any
+    label: str, build: Any, joint: str, slot: int
 ) -> None:
     """The scalar spelling is the position target, and takes the same domain."""
     del label, slot
-    cmd, reason = build({joint: value})
-    assert cmd is None
-    assert reason is not None and f"{joint}.q" in reason
+    for value in OUTSIDE_THE_DOMAIN:
+        cmd, reason = build({joint: value})
+        assert cmd is None, f"{value!r}"
+        assert reason is not None and f"{joint}.q" in reason, f"{value!r}"
 
 
 @pytest.mark.parametrize(("label", "build", "joint", "slot"), BUILDERS)
-@pytest.mark.parametrize("value", INSIDE_THE_DOMAIN)
-def test_a_real_scalar_still_reaches_the_slot(label: str, build: Any, joint: str, slot: int, value: Any) -> None:
+def test_a_real_scalar_still_reaches_the_slot(label: str, build: Any, joint: str, slot: int) -> None:
     """The controls. A gate that refused these would break every policy.
 
     ``np.float32`` is the row that matters: an action read off a policy tensor
     arrives as a NumPy scalar, not a Python float.
     """
     del label
-    cmd, reason = build({joint: value})
-    assert reason is None, f"{value!r} is a usable target and must not be refused"
-    assert cmd is not None
-    assert cmd.motor_cmd[slot].q == pytest.approx(float(value))
-    assert cmd.motor_cmd[slot].mode != 0, "a commanded slot must be enabled"
+    for value in INSIDE_THE_DOMAIN:
+        cmd, reason = build({joint: value})
+        assert reason is None, f"{value!r} is a usable target and must not be refused"
+        assert cmd is not None, f"{value!r}"
+        assert cmd.motor_cmd[slot].q == pytest.approx(float(value)), f"{value!r}"
+        assert cmd.motor_cmd[slot].mode != 0, "a commanded slot must be enabled"
 
 
 @pytest.mark.parametrize(("label", "build", "joint", "slot"), BUILDERS)

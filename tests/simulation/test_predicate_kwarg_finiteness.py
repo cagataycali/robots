@@ -115,14 +115,12 @@ class _StubSim:
 
 
 @pytest.mark.parametrize(("name", "param", "annotation"), _numeric_params())
-@pytest.mark.parametrize("bad", [INF, -INF, NAN], ids=["inf", "-inf", "nan"])
-def test_every_numeric_predicate_kwarg_refuses_a_non_finite_value(
-    name: str, param: str, annotation: str, bad: float
-) -> None:
-    kwargs = _kwargs_for(name)
-    kwargs[param] = [bad, 0.0, 0.0] if annotation.startswith(("list", "tuple")) else bad
-    with pytest.raises(ValueError, match=f"{param}"):
-        make_predicate(name, **kwargs)
+def test_every_numeric_predicate_kwarg_refuses_a_non_finite_value(name: str, param: str, annotation: str) -> None:
+    for bad in [INF, -INF, NAN]:
+        kwargs = _kwargs_for(name)
+        kwargs[param] = [bad, 0.0, 0.0] if annotation.startswith(("list", "tuple")) else bad
+        with pytest.raises(ValueError, match=f"{param}"):
+            make_predicate(name, **kwargs)
 
 
 @pytest.mark.parametrize(("name", "param", "annotation"), _numeric_params())

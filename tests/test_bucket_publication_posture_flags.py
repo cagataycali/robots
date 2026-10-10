@@ -51,14 +51,6 @@ FALSY_NON_BOOLEANS: list[Any] = [0, 0.0, "", None, [], {}]
 UNUSABLE: list[Any] = [*TRUTHY_NON_BOOLEANS, *FALSY_NON_BOOLEANS]
 
 
-def _label(value: Any) -> str:
-    """Stable, address-free id for a probe value."""
-    return f"{type(value).__name__}-{value!r}"
-
-
-IDS = [_label(v) for v in UNUSABLE]
-
-
 class _RecordingSubprocess:
     """Records every argv ``sync_dataset_to_bucket`` would run, and runs none."""
 
@@ -174,9 +166,9 @@ class TestTheDoubleIsARealRecorder:
 class TestTheDomainIsTheSharedOne:
     """The values below are refused by the shared posture domain, not locally."""
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=IDS)
-    def test_the_shared_domain_refuses_every_probe_value(self, value: Any) -> None:
-        assert boolean_flag_error(value, "delete", "sync_dataset_to_bucket") is not None
+    def test_the_shared_domain_refuses_every_probe_value(self) -> None:
+        for value in UNUSABLE:
+            assert boolean_flag_error(value, "delete", "sync_dataset_to_bucket") is not None, f"{value!r}"
 
     @pytest.mark.parametrize("flag", PUBLICATION_FLAGS)
     def test_the_bucket_sync_message_is_the_shared_one_verbatim(
@@ -199,34 +191,34 @@ class TestTheBucketSyncRefusesANonBooleanPosture:
     """Every flag, every unusable value, on the function that owns the rule."""
 
     @pytest.mark.parametrize("flag", PUBLICATION_FLAGS)
-    @pytest.mark.parametrize("value", UNUSABLE, ids=IDS)
     def test_an_unusable_flag_is_refused_and_runs_no_cli(
-        self, wire: _RecordingSubprocess, finalized: pathlib.Path, flag: str, value: Any
+        self, wire: _RecordingSubprocess, finalized: pathlib.Path, flag: str
     ) -> None:
-        result = _sync(finalized, **{flag: value})
-        assert result["status"] == "error"
-        assert flag in result["message"]
-        assert wire.argv == [], "the refused call reached the hf CLI"
+        for value in UNUSABLE:
+            result = _sync(finalized, **{flag: value})
+            assert result["status"] == "error", f"{value!r}"
+            assert flag in result["message"], f"{value!r}"
+            assert wire.argv == [], "the refused call reached the hf CLI"
 
 
 class TestTheTruthinessReadFailedTowardThePermissivePosture:
     """The two directions the old read inverted, pinned as the reason it changed."""
 
-    @pytest.mark.parametrize("value", ["false", "no", "off", "0"], ids=["false", "no", "off", "zero"])
     def test_a_truthy_spelling_of_off_no_longer_mirror_deletes(
-        self, wire: _RecordingSubprocess, finalized: pathlib.Path, value: str
+        self, wire: _RecordingSubprocess, finalized: pathlib.Path
     ) -> None:
-        result = _sync(finalized, delete=value)
-        assert result["status"] == "error"
-        assert not wire.mirror_deleted, "hf sync --delete ran for a spelling that reads as off"
+        for value in ["false", "no", "off", "0"]:
+            result = _sync(finalized, delete=value)
+            assert result["status"] == "error", f"{value!r}"
+            assert not wire.mirror_deleted, "hf sync --delete ran for a spelling that reads as off"
 
-    @pytest.mark.parametrize("value", [0, "", None, []], ids=["zero", "empty-str", "None", "empty-list"])
     def test_a_falsy_non_boolean_no_longer_creates_a_public_bucket(
-        self, wire: _RecordingSubprocess, finalized: pathlib.Path, value: Any
+        self, wire: _RecordingSubprocess, finalized: pathlib.Path
     ) -> None:
-        result = _sync(finalized, private=value)
-        assert result["status"] == "error"
-        assert not wire.created_bucket, "a bucket was created for a value that is not a posture"
+        for value in [0, "", None, []]:
+            result = _sync(finalized, private=value)
+            assert result["status"] == "error", f"{value!r}"
+            assert not wire.created_bucket, "a bucket was created for a value that is not a posture"
 
 
 class TestTheRefusalPrecedesEveryProbeAndSideEffect:
@@ -270,20 +262,20 @@ class TestTheRefusalPrecedesEveryProbeAndSideEffect:
 class TestThePushVisibilityFlagIsChecked:
     """``private`` decides whether a published dataset is world-readable."""
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=IDS)
-    def test_an_unusable_visibility_is_refused(self, value: Any) -> None:
-        dataset = _FakeHubDataset()
-        result = _push(_recorder(dataset), private=value)
-        assert result["status"] == "error"
-        assert "private" in result["message"]
-        assert dataset.pushed == []
+    def test_an_unusable_visibility_is_refused(self) -> None:
+        for value in UNUSABLE:
+            dataset = _FakeHubDataset()
+            result = _push(_recorder(dataset), private=value)
+            assert result["status"] == "error", f"{value!r}"
+            assert "private" in result["message"], f"{value!r}"
+            assert dataset.pushed == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", [True, False], ids=["private", "public"])
-    def test_a_boolean_visibility_is_forwarded_verbatim(self, value: bool) -> None:
-        dataset = _FakeHubDataset()
-        result = _push(_recorder(dataset), private=value)
-        assert result["status"] == "success"
-        assert dataset.pushed == [value]
+    def test_a_boolean_visibility_is_forwarded_verbatim(self) -> None:
+        for value in [True, False]:
+            dataset = _FakeHubDataset()
+            result = _push(_recorder(dataset), private=value)
+            assert result["status"] == "success", f"{value!r}"
+            assert dataset.pushed == [value], f"{value!r}"
 
 
 class TestTheDelegateInheritsTheRule:
@@ -340,15 +332,16 @@ class TestAUsablePostureIsUnchanged:
         assert not wire.created_bucket
         assert any(len(c) > 1 and c[1] == "sync" for c in wire.argv)
 
-    @pytest.mark.parametrize("value", [True, False], ids=["true", "false"])
     def test_numpy_booleans_are_honoured_like_python_ones(
-        self, wire: _RecordingSubprocess, finalized: pathlib.Path, value: bool
+        self, wire: _RecordingSubprocess, finalized: pathlib.Path
     ) -> None:
         """The shared domain accepts ``np.bool_``, so this surface must too."""
         np = pytest.importorskip("numpy")
-        result = _sync(finalized, delete=np.bool_(value))
-        assert result["status"] == "success"
-        assert wire.mirror_deleted is value
+        for value in [True, False]:
+            wire.argv.clear()
+            result = _sync(finalized, delete=np.bool_(value))
+            assert result["status"] == "success", f"{value!r}"
+            assert wire.mirror_deleted is value, f"{value!r}"
 
 
 # ---------------------------------------------------------------------------

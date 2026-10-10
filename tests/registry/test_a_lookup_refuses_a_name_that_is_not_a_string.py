@@ -38,10 +38,10 @@ LOOKUPS = [
 NOT_NAMES = [None, 42, 3.14, True, b"so100", ["so100"], {"name": "so100"}]
 
 
-@pytest.mark.parametrize("bad", NOT_NAMES, ids=lambda v: type(v).__name__)
 @pytest.mark.parametrize("lookup", LOOKUPS, ids=lambda f: f.__name__)
-def test_a_non_string_name_is_a_value_error_naming_the_remedy(lookup, bad: object) -> None:
-    with pytest.raises(ValueError, match=r"^Invalid robot name .* a robot name is a string\. ") as exc:
-        lookup(bad)
-    assert f"({type(bad).__name__})" in str(exc.value)
-    assert "list_robots()" in str(exc.value)
+def test_a_non_string_name_is_a_value_error_naming_the_remedy(lookup) -> None:
+    for bad in NOT_NAMES:
+        with pytest.raises(ValueError, match=r"^Invalid robot name .* a robot name is a string\. ") as exc:
+            lookup(bad)
+        assert f"({type(bad).__name__})" in str(exc.value), f"{bad!r}"
+        assert "list_robots()" in str(exc.value), f"{bad!r}"

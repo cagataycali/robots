@@ -132,12 +132,12 @@ def _isaac_recording_stub() -> tuple[Any, dict[str, Any]]:
 class TestTheSharedDomain:
     """``coerce_rgba`` is the single definition every call site shares."""
 
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_an_unusable_color_is_refused(self, color: Any) -> None:
-        rgba, err = coerce_rgba("add_object", "color", color)
-        assert err is not None, color
-        assert rgba is None, "a refused colour must coerce nothing"
-        assert err.startswith("add_object: 'color'")
+    def test_an_unusable_color_is_refused(self) -> None:
+        for color in UNUSABLE_COLORS:
+            rgba, err = coerce_rgba("add_object", "color", color)
+            assert err is not None, color
+            assert rgba is None, "a refused colour must coerce nothing"
+            assert err.startswith("add_object: 'color'"), f"{color!r}"
 
     @pytest.mark.parametrize(("color", "expected"), GOOD_COLORS)
     def test_a_usable_color_normalizes_to_four_plain_floats(self, color: Any, expected: list[float]) -> None:
@@ -182,23 +182,23 @@ class TestTheSharedDomain:
 # Newton                                                                      #
 # --------------------------------------------------------------------------- #
 class TestNewtonAddObject:
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_an_unusable_color_is_refused(self, color: Any) -> None:
-        result = NewtonSimEngine.add_object(_newton_stub(), "crate", color=color)
-        assert result["status"] == "error", (color, result)
-        assert "'color'" in _text(result)
+    def test_an_unusable_color_is_refused(self) -> None:
+        for color in UNUSABLE_COLORS:
+            result = NewtonSimEngine.add_object(_newton_stub(), "crate", color=color)
+            assert result["status"] == "error", (color, result)
+            assert "'color'" in _text(result), f"{color!r}"
 
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_a_refused_color_registers_no_object(self, color: Any) -> None:
+    def test_a_refused_color_registers_no_object(self) -> None:
         """No half-painted object: the registry is untouched.
 
         Pre-fix ``[]`` reported success and registered the crate with the
         default grey, and ``[0.1]`` registered a 1-component colour that
         ``_add_object_to_builder`` then handed to the solver.
         """
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", color=color)["status"] == "error"
-        assert stub._world.objects == {}
+        for color in UNUSABLE_COLORS:
+            stub = _newton_stub()
+            assert NewtonSimEngine.add_object(stub, "crate", color=color)["status"] == "error", f"{color!r}"
+            assert stub._world.objects == {}, f"{color!r}"
 
     @pytest.mark.parametrize(("color", "expected"), GOOD_COLORS)
     def test_a_usable_color_is_stored_as_four_plain_floats(self, color: Any, expected: list[float]) -> None:
@@ -229,20 +229,20 @@ class TestNewtonAddObject:
 # Isaac                                                                       #
 # --------------------------------------------------------------------------- #
 class TestIsaacAddObject:
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_an_unusable_color_is_refused(self, color: Any) -> None:
-        stub, _captured = _isaac_recording_stub()
-        result = IsaacSimulation.add_object(stub, "crate", color=color)
-        assert result["status"] == "error", (color, result)
-        assert "'color'" in _text(result)
+    def test_an_unusable_color_is_refused(self) -> None:
+        for color in UNUSABLE_COLORS:
+            stub, _captured = _isaac_recording_stub()
+            result = IsaacSimulation.add_object(stub, "crate", color=color)
+            assert result["status"] == "error", (color, result)
+            assert "'color'" in _text(result), f"{color!r}"
 
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_a_refused_color_constructs_no_prim(self, color: Any) -> None:
+    def test_a_refused_color_constructs_no_prim(self) -> None:
         """The refusal precedes the prim constructor, so nothing is written."""
-        stub, captured = _isaac_recording_stub()
-        assert IsaacSimulation.add_object(stub, "crate", color=color)["status"] == "error"
-        assert captured == {}
-        assert stub._objects == {}
+        for color in UNUSABLE_COLORS:
+            stub, captured = _isaac_recording_stub()
+            assert IsaacSimulation.add_object(stub, "crate", color=color)["status"] == "error", f"{color!r}"
+            assert captured == {}, f"{color!r}"
+            assert stub._objects == {}, f"{color!r}"
 
     @pytest.mark.parametrize(("color", "expected"), GOOD_COLORS)
     def test_a_usable_color_reaches_the_prim_as_four_plain_floats(self, color: Any, expected: list[float]) -> None:
@@ -280,14 +280,14 @@ class TestEveryBackendGivesTheSameVerdict:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("color", UNUSABLE_COLORS)
-    def test_add_object_color_verdicts_match(self, mj_sim: Any, color: Any) -> None:
-        mj = mj_sim.add_object("crate", color=color)
-        nt = NewtonSimEngine.add_object(_newton_stub(), "crate", color=color)
-        ic = IsaacSimulation.add_object(_isaac_recording_stub()[0], "crate", color=color)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (color, mj, nt, ic)
-        texts = {_text(mj), _text(nt), _text(ic)}
-        assert len(texts) == 1, texts
+    def test_add_object_color_verdicts_match(self, mj_sim: Any) -> None:
+        for color in UNUSABLE_COLORS:
+            mj = mj_sim.add_object("crate", color=color)
+            nt = NewtonSimEngine.add_object(_newton_stub(), "crate", color=color)
+            ic = IsaacSimulation.add_object(_isaac_recording_stub()[0], "crate", color=color)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (color, mj, nt, ic)
+            texts = {_text(mj), _text(nt), _text(ic)}
+            assert len(texts) == 1, texts
 
     @pytest.mark.parametrize(("color", "expected"), GOOD_COLORS)
     def test_a_usable_color_is_accepted_everywhere(self, mj_sim: Any, color: Any, expected: list[float]) -> None:

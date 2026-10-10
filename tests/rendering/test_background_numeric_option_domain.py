@@ -210,10 +210,10 @@ class TestEveryScalarNumberIsCheckedOnTheSharedDomain:
 class TestANonFiniteYawRenderedAnEntirelyBlackBackdrop:
     """The panorama consequence, measured through the shipped render."""
 
-    @pytest.mark.parametrize("value", NON_FINITE_SPELLINGS, ids=repr)
-    def test_construction_refuses_the_value_naming_the_parameter(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="PanoramaBackground: rotation_deg must be"):
-            PanoramaBackground(rotation_deg=value)
+    def test_construction_refuses_the_value_naming_the_parameter(self) -> None:
+        for value in NON_FINITE_SPELLINGS:
+            with pytest.raises(ValueError, match="PanoramaBackground: rotation_deg must be"):
+                PanoramaBackground(rotation_deg=value)
 
     def test_the_refusal_precedes_the_coercion_that_swallowed_the_value(self) -> None:
         # ``float(np.deg2rad(nan))`` is a perfectly good float, so a guard placed
@@ -228,16 +228,16 @@ class TestANonFiniteAlignmentNumberPoisonedTheFittedTransform:
     """The gsplat consequence, measured through the pure-NumPy skybox fit."""
 
     @pytest.mark.parametrize("param", ["backdrop_radius", "yaw_deg", "radius", "floor_z", "min_opacity", "floor_pct"])
-    @pytest.mark.parametrize("value", NON_FINITE_SPELLINGS, ids=repr)
-    def test_construction_refuses_the_value_naming_the_parameter(self, scene_ply, param: str, value: Any) -> None:
-        with pytest.raises(ValueError, match=f"GsplatBackground: {param} must be"):
-            _build(GsplatBackground, scene_ply, **{param: value})
+    def test_construction_refuses_the_value_naming_the_parameter(self, scene_ply, param: str) -> None:
+        for value in NON_FINITE_SPELLINGS:
+            with pytest.raises(ValueError, match=f"GsplatBackground: {param} must be"):
+                _build(GsplatBackground, scene_ply, **{param: value})
 
     @pytest.mark.parametrize("param", ["up_sign", "clip_below"])
-    @pytest.mark.parametrize("value", [v for v in NON_FINITE_SPELLINGS if v is not None], ids=repr)
-    def test_a_sentinel_bearing_number_is_refused_like_the_rest(self, scene_ply, param: str, value: Any) -> None:
-        with pytest.raises(ValueError, match=f"GsplatBackground: {param} must be"):
-            _build(GsplatBackground, scene_ply, **{param: value})
+    def test_a_sentinel_bearing_number_is_refused_like_the_rest(self, scene_ply, param: str) -> None:
+        for value in [v for v in NON_FINITE_SPELLINGS if v is not None]:
+            with pytest.raises(ValueError, match=f"GsplatBackground: {param} must be"):
+                _build(GsplatBackground, scene_ply, **{param: value})
 
 
 class TestWhatTheRefusalMustNotCost:
@@ -254,9 +254,9 @@ class TestWhatTheRefusalMustNotCost:
             assert frame.mean() > 0.0
             assert len(np.unique(frame)) > 1
 
-    @pytest.mark.parametrize("value", USABLE_NUMBERS, ids=repr)
-    def test_a_usable_yaw_is_still_accepted(self, value: Any) -> None:
-        assert PanoramaBackground(rotation_deg=value) is not None
+    def test_a_usable_yaw_is_still_accepted(self) -> None:
+        for value in USABLE_NUMBERS:
+            assert PanoramaBackground(rotation_deg=value) is not None, f"{value!r}"
 
     @pytest.mark.parametrize("param", ["backdrop_radius", "yaw_deg", "radius", "floor_z", "min_opacity", "floor_pct"])
     def test_a_usable_alignment_number_is_still_accepted(self, scene_ply, param: str) -> None:
@@ -279,13 +279,13 @@ class TestWhatTheRefusalMustNotCost:
 class TestThePremisesTheseTestsRestOn:
     """The shared domain and the sentinel set behave as the rule assumes."""
 
-    @pytest.mark.parametrize("value", NON_FINITE_SPELLINGS, ids=repr)
-    def test_the_shared_domain_refuses_every_spelling_graded_above(self, value: Any) -> None:
-        assert finite_number_error(value, "p", "C") is not None
+    def test_the_shared_domain_refuses_every_spelling_graded_above(self) -> None:
+        for value in NON_FINITE_SPELLINGS:
+            assert finite_number_error(value, "p", "C") is not None, f"{value!r}"
 
-    @pytest.mark.parametrize("value", USABLE_NUMBERS, ids=repr)
-    def test_the_shared_domain_accepts_every_number_graded_above(self, value: Any) -> None:
-        assert finite_number_error(value, "p", "C") is None
+    def test_the_shared_domain_accepts_every_number_graded_above(self) -> None:
+        for value in USABLE_NUMBERS:
+            assert finite_number_error(value, "p", "C") is None, f"{value!r}"
 
     def test_both_classes_carry_a_sentinel_free_and_a_sentinel_bearing_number(self) -> None:
         # Without both kinds present the two-loop shape in the source would be
