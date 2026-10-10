@@ -54,15 +54,15 @@ LAUNCHING_BACKENDS = (LerobotTrainer, Cosmos3Trainer)
 # Values no launcher can honor, split by how each one failed before the gate.
 
 # Read as "not more than one" by the selector -> a silent single-process run.
-SILENT_SINGLE_PROCESS = (0, -4, True, False, float("nan"))
+SILENT_SINGLE_PROCESS: tuple[Any, ...] = (0, -4, True, False, float("nan"))
 
 # Read as "more than one" -> reached elastic_launch as the worker count.
-REACHED_THE_LAUNCHER = (2.7, float("inf"))
+REACHED_THE_LAUNCHER: tuple[Any, ...] = (2.7, float("inf"))
 
 # Raised TypeError out of the comparison, from inside validate().
-RAISED_OUT_OF_VALIDATE = ("4", None, [2])
+RAISED_OUT_OF_VALIDATE: tuple[Any, ...] = ("4", None, [2])
 
-UNUSABLE = SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER + tuple(RAISED_OUT_OF_VALIDATE)
+UNUSABLE: tuple[Any, ...] = SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER + tuple(RAISED_OUT_OF_VALIDATE)
 
 
 @pytest.fixture
@@ -91,14 +91,12 @@ class TestEveryLaunchingBackendRefusesAnUnusableProcessCount:
 
     @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
     @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str, value: Any
-    ) -> None:
-        setattr(spec, field, value)
-        problems = _problems_about(trainer_cls(), spec, field)
-        assert problems, f"{trainer_cls.__name__} accepted {field}={value!r}"
-        assert any("must be a positive integer" in p for p in problems), problems
+    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer], field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            problems = _problems_about(trainer_cls(), spec, field)
+            assert problems, f"{trainer_cls.__name__} accepted {field}={value!r}"
+            assert any("must be a positive integer" in p for p in problems), problems
 
     @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
     @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
@@ -111,24 +109,24 @@ class TestEveryLaunchingBackendRefusesAnUnusableProcessCount:
 
     @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
     @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    @pytest.mark.parametrize("value", RAISED_OUT_OF_VALIDATE)
     def test_a_non_numeric_count_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str, value: Any
+        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
     ) -> None:
         """``validate`` returns problems; it must not raise out of a comparison."""
-        setattr(spec, field, value)
-        problems = trainer_cls().validate(spec)  # must not raise
-        assert any(field in p for p in problems), problems
+        for value in RAISED_OUT_OF_VALIDATE:
+            setattr(spec, field, value)
+            problems = trainer_cls().validate(spec)  # must not raise
+            assert any(field in p for p in problems), problems
 
 
 class TestAUsableTopologyIsUntouched:
     """A usable process count raises no topology problem on any backend."""
 
     @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    @pytest.mark.parametrize("value", (1, 2, 8))
-    def test_a_usable_gpu_count_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer], value: int) -> None:
-        spec.num_gpus = value
-        assert _problems_about(trainer_cls(), spec, "num_gpus") == []
+    def test_a_usable_gpu_count_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in (1, 2, 8):
+            spec.num_gpus = value
+            assert _problems_about(trainer_cls(), spec, "num_gpus") == [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
     def test_the_single_node_default_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -161,10 +159,10 @@ class TestABackendThatIgnoresTheFieldsReportsNothing:
     """
 
     @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_mock_backend_launches_from_neither_field(self, spec: TrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _problems_about(MockTrainer(), spec, field) == []
+    def test_the_mock_backend_launches_from_neither_field(self, spec: TrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            assert _problems_about(MockTrainer(), spec, field) == [], f"{value!r}"
 
     @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
     def test_an_rl_backend_launches_from_neither_field(self, tmp_path: pathlib.Path, field: str) -> None:
@@ -183,10 +181,10 @@ class TestABackendThatIgnoresTheFieldsReportsNothing:
 class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
     """Ground the domain in what the selector and the real launcher do."""
 
-    @pytest.mark.parametrize("value", SILENT_SINGLE_PROCESS)
-    def test_a_silent_value_reads_as_not_more_than_one(self, value: Any) -> None:
+    def test_a_silent_value_reads_as_not_more_than_one(self) -> None:
         """The ``> 1`` selector routes each of these to the single-process path."""
-        assert not value > 1
+        for value in SILENT_SINGLE_PROCESS:
+            assert not value > 1, f"{value!r}"
 
     def test_nan_compares_false_against_every_bound(self) -> None:
         """Why ``nan`` slipped through a comparison-based guard in both directions."""
@@ -195,12 +193,11 @@ class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
         assert not nan <= 0
         assert math.isnan(nan)
 
-    @pytest.mark.parametrize("value", REACHED_THE_LAUNCHER)
-    def test_a_launcher_bound_value_reads_as_more_than_one(self, value: Any) -> None:
-        assert value > 1
+    def test_a_launcher_bound_value_reads_as_more_than_one(self) -> None:
+        for value in REACHED_THE_LAUNCHER:
+            assert value > 1, f"{value!r}"
 
-    @pytest.mark.parametrize("value", SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER)
-    def test_the_torch_launcher_does_not_reject_it_either(self, value: Any) -> None:
+    def test_the_torch_launcher_does_not_reject_it_either(self) -> None:
         """Nothing downstream catches an unusable worker count.
 
         ``LaunchConfig`` is the value's first destination once the selector
@@ -210,16 +207,17 @@ class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
         pytest.importorskip("torch")
         from torch.distributed.launcher.api import LaunchConfig
 
-        config = LaunchConfig(min_nodes=1, max_nodes=1, nproc_per_node=value)
-        assert config.nproc_per_node == value or (
-            isinstance(value, float) and math.isnan(value) and math.isnan(config.nproc_per_node)
-        )
+        for value in SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER:
+            config = LaunchConfig(min_nodes=1, max_nodes=1, nproc_per_node=value)
+            assert config.nproc_per_node == value or (
+                isinstance(value, float) and math.isnan(value) and math.isnan(config.nproc_per_node)
+            ), f"{value!r}"
 
-    @pytest.mark.parametrize("value", RAISED_OUT_OF_VALIDATE)
-    def test_a_non_numeric_count_cannot_be_compared_at_all(self, value: Any) -> None:
+    def test_a_non_numeric_count_cannot_be_compared_at_all(self) -> None:
         """Which is why the old comparison raised rather than reporting."""
-        with pytest.raises(TypeError):
-            _ = value > 1  # type: ignore[operator]
+        for value in RAISED_OUT_OF_VALIDATE:
+            with pytest.raises(TypeError):
+                _ = value > 1  # type: ignore[operator]
 
 
 class TestTheGateIsUsableOnItsOwn:

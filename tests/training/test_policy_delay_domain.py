@@ -90,32 +90,34 @@ def _policy_delay_reports(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheDelayedBackendRefusesAModulusItCannotHonor:
     """FastTD3 refuses every value the cadence test cannot take as a delay."""
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.policy_delay = value
-        assert _policy_delay_reports(DELAYED_BACKEND, spec), f"fast_td3 accepted policy_delay={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.policy_delay = value
+            assert _policy_delay_reports(DELAYED_BACKEND, spec), f"fast_td3 accepted policy_delay={value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.policy_delay = value
-        (problem,) = _policy_delay_reports(DELAYED_BACKEND, spec)
-        assert problem.startswith("fast_td3: policy_delay must be a positive integer"), problem
-        assert repr(value) in problem, problem
+    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.policy_delay = value
+            problems = _policy_delay_reports(DELAYED_BACKEND, spec)
+            assert len(problems) == 1, (value, problems)
+            (problem,) = problems
+            assert problem.startswith("fast_td3: policy_delay must be a positive integer"), problem
+            assert repr(value) in problem, problem
 
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_validate_returns_rather_than_raising(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_validate_returns_rather_than_raising(self, spec: RLTrainSpec) -> None:
         """A ``validate`` documented to return problems must not raise one."""
-        spec.policy_delay = value
-        assert isinstance(create_trainer(DELAYED_BACKEND).validate(spec), list)
+        for value in UNUSABLE:
+            spec.policy_delay = value
+            assert isinstance(create_trainer(DELAYED_BACKEND).validate(spec), list), f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
     """A delay the modulus honors is not newly refused."""
 
-    @pytest.mark.parametrize("value", USABLE, ids=repr)
-    def test_a_usable_delay_reports_nothing(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.policy_delay = value
-        assert _policy_delay_reports(DELAYED_BACKEND, spec) == []
+    def test_a_usable_delay_reports_nothing(self, spec: RLTrainSpec) -> None:
+        for value in USABLE:
+            spec.policy_delay = value
+            assert _policy_delay_reports(DELAYED_BACKEND, spec) == [], f"{value!r}"
 
     def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
         """The shipped ``2`` default must not trip the new gate."""
@@ -132,10 +134,10 @@ class TestABackendWithNoDelayStaysQuiet:
     """A backend that never reads the field must not report on it."""
 
     @pytest.mark.parametrize("provider", NO_DELAY_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE, ids=repr)
-    def test_it_reports_nothing_about_the_delay(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
-        spec.policy_delay = value
-        assert _policy_delay_reports(provider, spec) == []
+    def test_it_reports_nothing_about_the_delay(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.policy_delay = value
+            assert _policy_delay_reports(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_DELAY_BACKENDS)
     def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
@@ -148,11 +150,13 @@ class TestABackendWithNoDelayStaysQuiet:
 class TestTheGateAddsNothingToTheSharedDomain:
     """The verdict is the shared rule's, so the two cannot drift apart."""
 
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE, ids=repr)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.policy_delay = value
-        shared = positive_count_error(value, "policy_delay", DELAYED_BACKEND)
-        assert _policy_delay_reports(DELAYED_BACKEND, spec) == ([shared] if shared is not None else [])
+    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE + USABLE:
+            spec.policy_delay = value
+            shared = positive_count_error(value, "policy_delay", DELAYED_BACKEND)
+            assert _policy_delay_reports(DELAYED_BACKEND, spec) == ([shared] if shared is not None else []), (
+                f"{value!r}"
+            )
 
 
 class TestTheModulusSilentlySkipsTheActor:

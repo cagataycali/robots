@@ -59,23 +59,23 @@ from tests.training._spec_field_reads import reads_spec_field
 # The spellings a caller reaches for when opting out (every one truthy), two
 # truthy numbers, and the falsy values that are not a declared spelling of the
 # negative posture either.
-NOT_A_BOOLEAN = [
-    pytest.param("false", id="str-false"),
-    pytest.param("no", id="str-no"),
-    pytest.param("0", id="str-zero"),
-    pytest.param(1, id="int-one"),
-    pytest.param(0, id="int-zero"),
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(None, id="none"),
-    pytest.param([], id="empty-list"),
+NOT_A_BOOLEAN: list[Any] = [
+    "false",
+    "no",
+    "0",
+    1,
+    0,
+    float("nan"),
+    None,
+    [],
 ]
 
 # Both python spellings plus the numpy booleans the shared domain also accepts.
-A_BOOLEAN = [
-    pytest.param(True, id="true"),
-    pytest.param(False, id="false"),
-    pytest.param(np.True_, id="np-true"),
-    pytest.param(np.False_, id="np-false"),
+A_BOOLEAN: list[Any] = [
+    True,
+    False,
+    np.True_,
+    np.False_,
 ]
 
 # Which backend reads which field, by provider name. The one-owner scan at the
@@ -133,9 +133,11 @@ class TestEveryReaderRefusesAPostureItCanOnlyMisread:
     """A backend that branches on a flag refuses every value it could only misread."""
 
     @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_the_flag_is_refused(self, spec: RLTrainSpec, field: str, provider: str, value: Any) -> None:
-        assert _problems_about(provider, _set(spec, **{field: value}), field), f"{provider} accepted {field}={value!r}"
+    def test_the_flag_is_refused(self, spec: RLTrainSpec, field: str, provider: str) -> None:
+        for value in NOT_A_BOOLEAN:
+            assert _problems_about(provider, _set(spec, **{field: value}), field), (
+                f"{provider} accepted {field}={value!r}"
+            )
 
     @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
     def test_the_problem_names_the_backend_the_field_and_the_value(
@@ -155,9 +157,9 @@ class TestAUsableBooleanIsUntouched:
     """The controls: every declared spelling passes, and passes unchanged."""
 
     @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    @pytest.mark.parametrize("value", A_BOOLEAN)
-    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str, value: Any) -> None:
-        assert _problems_about(provider, _set(spec, **{field: value}), field) == []
+    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str) -> None:
+        for value in A_BOOLEAN:
+            assert _problems_about(provider, _set(spec, **{field: value}), field) == [], f"{value!r}"
 
     def test_the_defaults_report_nothing(self, spec: RLTrainSpec) -> None:
         for provider in RL_PROVIDERS:
@@ -174,9 +176,9 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     """
 
     @pytest.mark.parametrize(("field", "provider"), IGNORER_CELLS)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str, value: Any) -> None:
-        assert _problems_about(provider, _set(spec, **{field: value}), field) == []
+    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str) -> None:
+        for value in NOT_A_BOOLEAN:
+            assert _problems_about(provider, _set(spec, **{field: value}), field) == [], f"{value!r}"
 
 
 class TestTheRefusalPrecedesTheCheckTheFlagGates:

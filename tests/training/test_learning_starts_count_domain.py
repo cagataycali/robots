@@ -118,31 +118,31 @@ def _about_learning_starts(value: Any) -> list[str]:
 class TestFastSacRefusesALearningStartsThatIsNotACount:
     """The regression: every unusable spelling is reported, none reaches a run."""
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_it_is_reported_as_a_problem(self, value: Any) -> None:
-        assert _about_learning_starts(value)
+    def test_it_is_reported_as_a_problem(self) -> None:
+        for value in NOT_A_COUNT:
+            assert _about_learning_starts(value), f"{value!r}"
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_validate_returns_rather_than_raising(self, value: Any) -> None:
+    def test_validate_returns_rather_than_raising(self) -> None:
         """A ``validate`` documented to return problems must not raise one."""
-        assert isinstance(_problems(value), list)
+        for value in NOT_A_COUNT:
+            assert isinstance(_problems(value), list), f"{value!r}"
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_message_names_the_field_and_the_domain(self, value: Any) -> None:
-        problem = _about_learning_starts(value)[0]
-        assert "learning_starts" in problem
-        assert "positive integer" in problem
+    def test_the_message_names_the_field_and_the_domain(self) -> None:
+        for value in NOT_A_COUNT:
+            problem = _about_learning_starts(value)[0]
+            assert "learning_starts" in problem, f"{value!r}"
+            assert "positive integer" in problem, f"{value!r}"
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_message_is_the_shared_domain_one_verbatim(self, value: Any) -> None:
+    def test_the_message_is_the_shared_domain_one_verbatim(self) -> None:
         """The wording is the shared rule's, so the two cannot drift apart."""
-        expected = positive_count_error(value, "learning_starts", "fast_sac")
-        assert expected is not None
-        assert expected in _about_learning_starts(value)
+        for value in NOT_A_COUNT:
+            expected = positive_count_error(value, "learning_starts", "fast_sac")
+            assert expected is not None, f"{value!r}"
+            assert expected in _about_learning_starts(value), f"{value!r}"
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_refusal_names_the_backend(self, value: Any) -> None:
-        assert _about_learning_starts(value)[0].startswith("fast_sac:")
+    def test_the_refusal_names_the_backend(self) -> None:
+        for value in NOT_A_COUNT:
+            assert _about_learning_starts(value)[0].startswith("fast_sac:"), f"{value!r}"
 
 
 class TestTheHarmTheRelationCouldNotSee:
@@ -153,19 +153,19 @@ class TestTheHarmTheRelationCouldNotSee:
     of these two comparisons to decide what the run does.
     """
 
-    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
-    def test_the_relation_could_not_reject_it(self, value: float) -> None:
+    def test_the_relation_could_not_reject_it(self) -> None:
         """``learning_starts < batch_size`` is False, so the relation passed."""
-        assert not value < BATCH_SIZE
+        for value in [float("nan"), float("inf")]:
+            assert not value < BATCH_SIZE, f"{value!r}"
 
     def test_a_nan_threshold_skips_the_warmup_the_field_exists_for(self) -> None:
         """``collect_rollout`` draws a random action while ``size < threshold``."""
         assert not 0 < float("nan")
 
-    @pytest.mark.parametrize("value", [float("nan"), float("inf")])
-    def test_no_buffer_ever_passes_the_threshold(self, value: float) -> None:
+    def test_no_buffer_ever_passes_the_threshold(self) -> None:
         """``train`` runs ``update()`` only while ``size >= threshold``."""
-        assert not 10**9 >= value
+        for value in [float("nan"), float("inf")]:
+            assert not 10**9 >= value, f"{value!r}"
 
     def test_the_gate_that_names_this_outcome_is_the_replay_one(self) -> None:
         """The sibling gate's docstring records the same zero-update success."""
@@ -214,14 +214,14 @@ class TestWhatStrictNewlyRefuses:
     of the two operands sharing one domain.
     """
 
-    @pytest.mark.parametrize("value", [1_000.0, np.int64(1_000)], ids=["integral-float", "numpy-int"])
-    def test_it_is_refused_although_the_comparison_accepted_it(self, value: Any) -> None:
-        assert _about_learning_starts(value)
+    def test_it_is_refused_although_the_comparison_accepted_it(self) -> None:
+        for value in list[Any]([1_000.0, np.int64(1_000)]):
+            assert _about_learning_starts(value), f"{value!r}"
 
-    @pytest.mark.parametrize("value", [1_000.0, np.int64(1_000)], ids=["integral-float", "numpy-int"])
-    def test_the_comparison_alone_would_have_admitted_it(self, value: Any) -> None:
+    def test_the_comparison_alone_would_have_admitted_it(self) -> None:
         """Non-vacuity: these are refused by the domain, not by the relation."""
-        assert not value < BATCH_SIZE
+        for value in list[Any]([1_000.0, np.int64(1_000)]):
+            assert not value < BATCH_SIZE, f"{value!r}"
 
     def test_the_field_is_annotated_as_an_integer(self) -> None:
         """Which is why strict is the honest reading of the contract."""
@@ -231,10 +231,10 @@ class TestWhatStrictNewlyRefuses:
 class TestTheGateStillReportsNothingAboutIt:
     """The field-scoped gate's own scope is unchanged by this fix."""
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_replay_gate_stays_silent(self, value: Any) -> None:
-        spec = _spec(learning_starts=value)
-        assert not [p for p in rl_replay_problems(spec, context="fast_sac") if "learning_starts" in p]
+    def test_the_replay_gate_stays_silent(self) -> None:
+        for value in NOT_A_COUNT:
+            spec = _spec(learning_starts=value)
+            assert not [p for p in rl_replay_problems(spec, context="fast_sac") if "learning_starts" in p], f"{value!r}"
 
     @pytest.mark.parametrize("provider", ["ppo", "mock"])
     def test_a_backend_that_does_not_read_it_stays_quiet(self, provider: str) -> None:
@@ -349,12 +349,14 @@ class TestOneOwnerForTheWarmupBatchRelation:
 class TestBothOffPolicyBackendsStateItIdentically:
     """One owner means one message, which is what a shared rule buys."""
 
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_a_non_count_reads_the_same_from_either_backend(self, value: Any) -> None:
-        spec = _spec(learning_starts=value)
-        sac = [p for p in create_trainer("fast_sac").validate(spec) if "learning_starts" in p]
-        td3 = [p for p in create_trainer("fast_td3").validate(spec) if "learning_starts" in p]
-        assert sac and [p.replace("fast_sac", "") for p in sac] == [p.replace("fast_td3", "") for p in td3]
+    def test_a_non_count_reads_the_same_from_either_backend(self) -> None:
+        for value in NOT_A_COUNT:
+            spec = _spec(learning_starts=value)
+            sac = [p for p in create_trainer("fast_sac").validate(spec) if "learning_starts" in p]
+            td3 = [p for p in create_trainer("fast_td3").validate(spec) if "learning_starts" in p]
+            assert sac and [p.replace("fast_sac", "") for p in sac] == [p.replace("fast_td3", "") for p in td3], (
+                f"{value!r}"
+            )
 
     def test_a_short_warmup_reads_the_same_from_either_backend(self) -> None:
         """The relation names both values, and names them once per backend."""
