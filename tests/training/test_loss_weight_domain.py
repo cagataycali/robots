@@ -90,21 +90,23 @@ class TestTheOnPolicyBackendRefusesAnUnusableLossWeight:
     """PPO refuses every weight the composed objective cannot honor."""
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, param: str, default: float, value: Any) -> None:
-        setattr(spec, param, value)
-        assert _weight_problems(ON_POLICY, spec, param), f"ppo accepted {param}={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, param: str, default: float) -> None:
+        for value in UNUSABLE:
+            setattr(spec, param, value)
+            assert _weight_problems(ON_POLICY, spec, param), f"ppo accepted {param}={value!r}"
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
-    @pytest.mark.parametrize("value", [*NON_FINITE, *BOOLEANS, *NON_NUMERIC])
     def test_the_problem_names_the_field_the_domain_and_the_value(
-        self, spec: RLTrainSpec, param: str, default: float, value: Any
+        self, spec: RLTrainSpec, param: str, default: float
     ) -> None:
-        setattr(spec, param, value)
-        (problem,) = _weight_problems(ON_POLICY, spec, param)
-        assert param in problem
-        assert "must be a finite number" in problem
-        assert repr(value) in problem, problem
+        for value in [*NON_FINITE, *BOOLEANS, *NON_NUMERIC]:
+            setattr(spec, param, value)
+            problems = _weight_problems(ON_POLICY, spec, param)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert param in problem, f"{value!r}"
+            assert "must be a finite number" in problem, f"{value!r}"
+            assert repr(value) in problem, problem
 
     def test_each_weight_is_reported_independently(self, spec: RLTrainSpec) -> None:
         """Two unusable weights produce two problems, not one."""
@@ -131,10 +133,10 @@ class TestTheUsableDomainIsUntouched:
     """Every finite real weight is still accepted, including the endpoints."""
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_reports_no_problem(self, spec: RLTrainSpec, param: str, default: float, value: Any) -> None:
-        setattr(spec, param, value)
-        assert _weight_problems(ON_POLICY, spec, param) == []
+    def test_it_reports_no_problem(self, spec: RLTrainSpec, param: str, default: float) -> None:
+        for value in USABLE:
+            setattr(spec, param, value)
+            assert _weight_problems(ON_POLICY, spec, param) == [], f"{value!r}"
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
     def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec, param: str, default: float) -> None:
@@ -153,12 +155,10 @@ class TestTheFloorIsDeliberatelyNotDecided:
     """
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
-    @pytest.mark.parametrize("value", [0.0, 0, -0.5, -1.0, -1e-8])
-    def test_zero_and_negative_stay_inside_the_domain(
-        self, spec: RLTrainSpec, param: str, default: float, value: Any
-    ) -> None:
-        setattr(spec, param, value)
-        assert _weight_problems(ON_POLICY, spec, param) == []
+    def test_zero_and_negative_stay_inside_the_domain(self, spec: RLTrainSpec, param: str, default: float) -> None:
+        for value in [0.0, 0, -0.5, -1.0, -1e-8]:
+            setattr(spec, param, value)
+            assert _weight_problems(ON_POLICY, spec, param) == [], f"{value!r}"
 
 
 class TestTheGateIsExactlyTheSharedRule:
@@ -169,14 +169,12 @@ class TestTheGateIsExactlyTheSharedRule:
     """
 
     @pytest.mark.parametrize("param,default", WEIGHTS)
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_it_agrees_with_the_shared_domain_everywhere(
-        self, spec: RLTrainSpec, param: str, default: float, value: Any
-    ) -> None:
-        setattr(spec, param, value)
-        gate_refuses = bool(loss_weight_problems(spec, context="ppo"))
-        shared_refuses = finite_number_error(value, param, "ppo") is not None
-        assert gate_refuses is shared_refuses, f"{param}={value!r}"
+    def test_it_agrees_with_the_shared_domain_everywhere(self, spec: RLTrainSpec, param: str, default: float) -> None:
+        for value in [*USABLE, *UNUSABLE]:
+            setattr(spec, param, value)
+            gate_refuses = bool(loss_weight_problems(spec, context="ppo"))
+            shared_refuses = finite_number_error(value, param, "ppo") is not None
+            assert gate_refuses is shared_refuses, f"{param}={value!r}"
 
     def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec) -> None:
         spec.value_loss_coef = math.nan
@@ -237,8 +235,8 @@ class TestTheConsumerHonorsTheDomain:
         entropy = torch.tensor(0.5)
         assert float(True * entropy) == float(1.0 * entropy)
 
-    @pytest.mark.parametrize("value", [0.0, -0.5, 1.0, 2.0])
-    def test_every_accepted_weight_composes_a_finite_loss(self, value: float) -> None:
+    def test_every_accepted_weight_composes_a_finite_loss(self) -> None:
         torch = pytest.importorskip("torch")
-        loss = torch.tensor(1.0) + value * torch.tensor(2.0) - value * torch.tensor(0.5)
-        assert bool(torch.isfinite(loss))
+        for value in [0.0, -0.5, 1.0, 2.0]:
+            loss = torch.tensor(1.0) + value * torch.tensor(2.0) - value * torch.tensor(0.5)
+            assert bool(torch.isfinite(loss)), f"{value!r}"

@@ -62,7 +62,7 @@ SILENTLY_ONE = (True,)
 # Values that render into an argv token and fail, if at all, inside the run.
 NON_NUMERIC = ("8", [8], {"r": 8})
 
-UNUSABLE = REFUSED_LATE_BY_PEFT + RAISED_IN_TORCH + SILENTLY_ONE + NON_NUMERIC + (False,)
+UNUSABLE: tuple[Any, ...] = REFUSED_LATE_BY_PEFT + RAISED_IN_TORCH + SILENTLY_ONE + NON_NUMERIC + (False,)
 
 # Ranks and alphas that name exactly what they mean.
 USABLE = (1, 8, 16, 64)
@@ -223,27 +223,27 @@ class TestAScalingOfZeroTrainsAnAdapterThatCannotBeApplied:
         assert usable_effect > 0.0, "the probe cannot detect an adapter at all"
         assert zero_effect == 0.0, "a zero-alpha adapter would have changed the output"
 
-    @pytest.mark.parametrize("value", REFUSED_LATE_BY_PEFT)
-    def test_a_non_positive_rank_is_refused_only_once_the_model_is_built(self, value: int) -> None:
+    def test_a_non_positive_rank_is_refused_only_once_the_model_is_built(self) -> None:
         """peft judges the rank, but not until the base model is already loaded."""
         torch = pytest.importorskip("torch")
         peft = pytest.importorskip("peft")
-        config = peft.LoraConfig(r=value, lora_alpha=8, target_modules=["q_proj"])
+        for value in REFUSED_LATE_BY_PEFT:
+            config = peft.LoraConfig(r=value, lora_alpha=8, target_modules=["q_proj"])
 
-        # Building the config is not where it is caught - that is the point.
-        assert config.r == value
-        with pytest.raises(ValueError, match="positive integer"):
-            peft.get_peft_model(_lora_target(torch), config)
+            # Building the config is not where it is caught - that is the point.
+            assert config.r == value, f"{value!r}"
+            with pytest.raises(ValueError, match="positive integer"):
+                peft.get_peft_model(_lora_target(torch), config)
 
 
 class TestTheBackendRefusesAnUnusableAdapterHyperparameter:
     """Every value neither path can honor is reported as a problem, never raised."""
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, field: str, value: Any) -> None:
-        setattr(spec, field, value)
-        assert _problems_of(LerobotTrainer(), spec, field), f"{field}={value!r} was accepted"
+    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, field: str) -> None:
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            assert _problems_of(LerobotTrainer(), spec, field), f"{field}={value!r} was accepted"
 
     @pytest.mark.parametrize("field", FIELDS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, field: str) -> None:
@@ -252,11 +252,11 @@ class TestTheBackendRefusesAnUnusableAdapterHyperparameter:
         assert problems and problems[0].startswith("lerobot_local: ")
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", NON_NUMERIC)
-    def test_a_non_numeric_value_is_a_problem_not_an_exception(self, spec: TrainSpec, field: str, value: Any) -> None:
+    def test_a_non_numeric_value_is_a_problem_not_an_exception(self, spec: TrainSpec, field: str) -> None:
         """``validate`` is documented to *return* problems, so it must not raise."""
-        setattr(spec, field, value)
-        assert _problems_of(LerobotTrainer(), spec, field)
+        for value in NON_NUMERIC:
+            setattr(spec, field, value)
+            assert _problems_of(LerobotTrainer(), spec, field), f"{value!r}"
 
     def test_both_unusable_values_are_reported_together(self, spec: TrainSpec) -> None:
         """One pass reports both, rather than making the caller re-run to find the second."""
@@ -271,10 +271,10 @@ class TestAUsableAdapterHyperparameterIsUntouched:
     """The guard refuses exactly the values that cannot be honored."""
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_value_is_not_a_problem(self, spec: TrainSpec, field: str, value: int) -> None:
-        setattr(spec, field, value)
-        assert _problems_of(LerobotTrainer(), spec, field) == []
+    def test_a_usable_value_is_not_a_problem(self, spec: TrainSpec, field: str) -> None:
+        for value in USABLE:
+            setattr(spec, field, value)
+            assert _problems_of(LerobotTrainer(), spec, field) == [], f"{value!r}"
 
     @pytest.mark.parametrize("field", FIELDS)
     def test_an_unset_value_is_not_a_problem(self, spec: TrainSpec, field: str) -> None:
@@ -297,18 +297,18 @@ class TestOnlyTheStrategyThatReadsThemIsChecked:
     """
 
     @pytest.mark.parametrize("method", ("full", "expert_only", "frozen_backbone"))
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_another_strategy_reports_nothing(self, spec: TrainSpec, method: str, value: Any) -> None:
-        spec.method = method
-        spec.lora_alpha = value
-        assert lora_hyperparameter_problems(spec, context="lerobot_local") == []
+    def test_another_strategy_reports_nothing(self, spec: TrainSpec, method: str) -> None:
+        for value in UNUSABLE:
+            spec.method = method
+            spec.lora_alpha = value
+            assert lora_hyperparameter_problems(spec, context="lerobot_local") == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_but_the_lora_strategy_does(self, spec: TrainSpec, value: Any) -> None:
+    def test_but_the_lora_strategy_does(self, spec: TrainSpec) -> None:
         """Non-vacuity: the scoping above is not just an always-empty gate."""
-        spec.method = "lora"
-        spec.lora_alpha = value
-        assert lora_hyperparameter_problems(spec, context="lerobot_local")
+        for value in UNUSABLE:
+            spec.method = "lora"
+            spec.lora_alpha = value
+            assert lora_hyperparameter_problems(spec, context="lerobot_local"), f"{value!r}"
 
 
 class TestBothWritersOfThePeftFlagsShareOneDomain:
@@ -320,22 +320,22 @@ class TestBothWritersOfThePeftFlagsShareOneDomain:
     """
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
     def test_the_tool_refuses_every_value_the_backend_refuses(
-        self, spec: TrainSpec, dataset: pathlib.Path, field: str, value: Any
+        self, spec: TrainSpec, dataset: pathlib.Path, field: str
     ) -> None:
-        setattr(spec, field, value)
-        assert _problems_of(LerobotTrainer(), spec, field), "fixture drift: the backend accepted it"
-        assert _tool_verdict(dataset, field, value) == "refused"
+        for value in UNUSABLE:
+            setattr(spec, field, value)
+            assert _problems_of(LerobotTrainer(), spec, field), "fixture drift: the backend accepted it"
+            assert _tool_verdict(dataset, field, value) == "refused", f"{value!r}"
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", USABLE)
     def test_the_tool_accepts_every_value_the_backend_accepts(
-        self, spec: TrainSpec, dataset: pathlib.Path, field: str, value: int
+        self, spec: TrainSpec, dataset: pathlib.Path, field: str
     ) -> None:
-        setattr(spec, field, value)
-        assert _problems_of(LerobotTrainer(), spec, field) == []
-        assert _tool_verdict(dataset, field, value) == "accepted"
+        for value in USABLE:
+            setattr(spec, field, value)
+            assert _problems_of(LerobotTrainer(), spec, field) == [], f"{value!r}"
+            assert _tool_verdict(dataset, field, value) == "accepted", f"{value!r}"
 
     @pytest.mark.parametrize("field", FIELDS)
     def test_the_tool_names_the_field_and_the_domain(self, dataset: pathlib.Path, field: str) -> None:
@@ -343,22 +343,18 @@ class TestBothWritersOfThePeftFlagsShareOneDomain:
             _build(dataset_root=str(dataset), policy_type="act", lora=True, **{field: 0})
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_an_honored_value_still_reaches_the_argv_unchanged(
-        self, dataset: pathlib.Path, field: str, value: int
-    ) -> None:
-        flag = "--peft.r" if field == "lora_r" else "--peft.lora_alpha"
-        cmd = _build(dataset_root=str(dataset), policy_type="act", lora=True, **{field: value})
-        assert f"{flag}={value}" in _peft_flags(cmd)
+    def test_an_honored_value_still_reaches_the_argv_unchanged(self, dataset: pathlib.Path, field: str) -> None:
+        for value in USABLE:
+            flag = "--peft.r" if field == "lora_r" else "--peft.lora_alpha"
+            cmd = _build(dataset_root=str(dataset), policy_type="act", lora=True, **{field: value})
+            assert f"{flag}={value}" in _peft_flags(cmd), f"{value!r}"
 
     @pytest.mark.parametrize("field", FIELDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_tool_emits_nothing_when_lora_was_not_requested(
-        self, dataset: pathlib.Path, field: str, value: Any
-    ) -> None:
+    def test_the_tool_emits_nothing_when_lora_was_not_requested(self, dataset: pathlib.Path, field: str) -> None:
         """Neither flag is written without ``lora``, so neither value is read."""
-        cmd = _build(dataset_root=str(dataset), policy_type="act", lora=False, **{field: value})
-        assert _peft_flags(cmd) == []
+        for value in UNUSABLE:
+            cmd = _build(dataset_root=str(dataset), policy_type="act", lora=False, **{field: value})
+            assert _peft_flags(cmd) == [], f"{value!r}"
 
 
 class TestTheParityClassifierCollectsFailuresWithoutSwallowingControlFlow:

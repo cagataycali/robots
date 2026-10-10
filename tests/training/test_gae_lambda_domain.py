@@ -86,39 +86,39 @@ def _lam_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOnPolicyBackendRefusesAnUnusableTraceDecay:
     """PPO refuses every value the advantage trace cannot decay by."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.lam = value
-        assert _lam_problems(ON_POLICY, spec), f"ppo accepted lam={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.lam = value
+            assert _lam_problems(ON_POLICY, spec), f"ppo accepted lam={value!r}"
 
-    @pytest.mark.parametrize("value", OUT_OF_INTERVAL)
-    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.lam = value
-        assert "must be in [0, 1]" in _lam_problems(ON_POLICY, spec)[0]
+    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec) -> None:
+        for value in OUT_OF_INTERVAL:
+            spec.lam = value
+            assert "must be in [0, 1]" in _lam_problems(ON_POLICY, spec)[0], f"{value!r}"
 
-    @pytest.mark.parametrize("value", NOT_A_FINITE_NUMBER)
-    def test_a_non_numeric_value_reads_like_every_other_numeric_field(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.lam = value
-        assert "must be a finite number" in _lam_problems(ON_POLICY, spec)[0]
+    def test_a_non_numeric_value_reads_like_every_other_numeric_field(self, spec: RLTrainSpec) -> None:
+        for value in NOT_A_FINITE_NUMBER:
+            spec.lam = value
+            assert "must be a finite number" in _lam_problems(ON_POLICY, spec)[0], f"{value!r}"
 
     def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec) -> None:
         spec.lam = 1.5
         assert _lam_problems(ON_POLICY, spec)[0].startswith("ppo: lam ")
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_an_unusable_value_is_a_problem_not_an_exception(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_an_unusable_value_is_a_problem_not_an_exception(self, spec: RLTrainSpec) -> None:
         """``validate`` is documented pure and read-only: it reports, never raises."""
-        spec.lam = value
-        assert isinstance(create_trainer(ON_POLICY).validate(spec), list)
+        for value in UNUSABLE:
+            spec.lam = value
+            assert isinstance(create_trainer(ON_POLICY).validate(spec), list), f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
     """No value the trace can actually decay by becomes a problem."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_is_accepted(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.lam = value
-        assert _lam_problems(ON_POLICY, spec) == []
+    def test_it_is_accepted(self, spec: RLTrainSpec) -> None:
+        for value in USABLE:
+            spec.lam = value
+            assert _lam_problems(ON_POLICY, spec) == [], f"{value!r}"
 
     def test_the_default_spec_still_validates_clean(self, spec: RLTrainSpec) -> None:
         assert _lam_problems(ON_POLICY, spec) == []
@@ -135,16 +135,18 @@ class TestABackendWithNoAdvantageTraceStaysQuiet:
     """
 
     @pytest.mark.parametrize("provider", NO_TRACE_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_nothing_about_lam(self, spec: RLTrainSpec, provider: str, value: Any) -> None:
-        spec.lam = value
-        assert _lam_problems(provider, spec) == []
+    def test_it_reports_nothing_about_lam(self, spec: RLTrainSpec, provider: str) -> None:
+        for value in UNUSABLE:
+            spec.lam = value
+            assert _lam_problems(provider, spec) == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", [1.5, float("nan")])
-    def test_but_the_shared_discount_factor_is_still_refused(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_but_the_shared_discount_factor_is_still_refused(self, spec: RLTrainSpec) -> None:
         """Non-vacuity: the quiet backend is not simply ignoring the whole spec."""
-        spec.gamma = value
-        assert [p for p in create_trainer("fast_sac").validate(spec) if p.startswith("fast_sac: gamma ")]
+        for value in [1.5, float("nan")]:
+            spec.gamma = value
+            assert [p for p in create_trainer("fast_sac").validate(spec) if p.startswith("fast_sac: gamma ")], (
+                f"{value!r}"
+            )
 
 
 class TestTheIntervalIsTheWholeLocalContribution:
@@ -156,20 +158,20 @@ class TestTheIntervalIsTheWholeLocalContribution:
     identical to every other numeric field\'s.
     """
 
-    @pytest.mark.parametrize("value", [*USABLE, *NOT_A_FINITE_NUMBER])
-    def test_it_agrees_with_the_shared_domain(self, value: Any) -> None:
+    def test_it_agrees_with_the_shared_domain(self) -> None:
         from strands_robots.utils import finite_number_error
 
-        local = _closed_unit_interval_error(value, "lam", "ppo")
-        shared = finite_number_error(value, "lam", "ppo")
-        assert (local is None) == (shared is None), f"diverged for lam={value!r}"
+        for value in [*USABLE, *NOT_A_FINITE_NUMBER]:
+            local = _closed_unit_interval_error(value, "lam", "ppo")
+            shared = finite_number_error(value, "lam", "ppo")
+            assert (local is None) == (shared is None), f"diverged for lam={value!r}"
 
-    @pytest.mark.parametrize("value", OUT_OF_INTERVAL)
-    def test_only_the_interval_diverges(self, value: Any) -> None:
+    def test_only_the_interval_diverges(self) -> None:
         from strands_robots.utils import finite_number_error
 
-        assert finite_number_error(value, "lam", "ppo") is None
-        assert _closed_unit_interval_error(value, "lam", "ppo") is not None
+        for value in OUT_OF_INTERVAL:
+            assert finite_number_error(value, "lam", "ppo") is None, f"{value!r}"
+            assert _closed_unit_interval_error(value, "lam", "ppo") is not None, f"{value!r}"
 
 
 class TestBoundingTheDiscountFactorAloneDoesNotBoundTheTrace:
