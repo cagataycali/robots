@@ -64,23 +64,45 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
               f"| random walk from rest | {pp['random']['along_m']['median']} / "
               f"{pp['random']['along_m']['max']} m | {pp['random']['would_be_scored_success']}/"
               f"{pp['random']['n']} |"]
-        if sh:
-            L += [f"| random walk from the CONTACT-ADJACENT pose (so101) | {sh['along_m']['median']} / "
+        if sh and sh.get("along_m"):
+            L += [f"| held at the CONTACT-ADJACENT pose, no stroke ({arm}) | {sh['along_m']['median']} / "
                   f"{sh['along_m']['max']} m | {sh['false_successes']}/{sh['n']} |"]
         L += [f"| scripted expert | {pp['expert']['along_m']['median']} / "
               f"{pp['expert']['along_m']['max']} m | {pp['expert']['would_be_scored_success']}/"
               f"{pp['expert']['n']} |", ""]
-        if sh:
-            L += ["The first two floors are **uninformative on their own**: they produce exactly 0.000 m "
-                  "because an arm starting at rest never reaches the cube, so they show the cube does not "
-                  "DRIFT and say nothing about ACCIDENTAL pushes. The third row is the control that bites "
-                  f"-- undirected motion from the expert's own pre-contact pose touched the cube in "
-                  f"{sh['touched_at_all']}/{sh['n']} episodes and still moved it at most "
-                  f"{sh['along_m']['max']} m. So the threshold is "
-                  f"**{round(float(sh['threshold_m']) / max(sh['along_m']['max'], 1e-9), 2)}x** the largest "
-                  "accidental push available from the best possible starting pose: this criterion requires "
-                  "directed motion, not proximity. Unlike the touch cells, no embodied-radius bound applies "
-                  "here, because nothing is being declared about contact.", ""]
+        L += ["The first two floors are **uninformative**: they produce exactly 0.000 m because an arm "
+              "starting at rest never reaches the cube, so they show the cube does not DRIFT and say nothing "
+              "about ACCIDENTAL pushes.", ""]
+        if sh and sh.get("informative"):
+            L += [f"The third row is the control that bites: the expert's own plan stopped BEFORE its stroke "
+                  f"(so the gripper is adjacent to the cube and never sweeps) moved the cube at most "
+                  f"{sh['along_m']['max']} m and scored {sh['false_successes']}/{sh['n']}. So the threshold is "
+                  f"**{pp.get('margin_x')}x** the largest accidental push available from the best possible "
+                  "starting pose: on this arm the criterion requires directed motion, not proximity.", "",
+                  "This margin is PER ARM and newly measured. An earlier published margin (1.78x) was "
+                  "withdrawn in it13: it came from one ad-hoc so101 cell that no committed script reproduces, "
+                  "and it had been printed on all three arms' cards, including this one.", ""]
+        elif sh:
+            L += [f"The third row is the control that WOULD bite, and on this arm it does not: the pre-stroke "
+                  f"pose moves the cube at most {sh['along_m']['max']} m, which is solver noise rather than "
+                  "contact, so it bounds nothing. **No floor available on this arm bounds a false success, so "
+                  "the soundness of this criterion here is UNDETERMINED.** A previously published margin "
+                  "(1.78x) was withdrawn in it13: it came from an ad-hoc so101 cell that no committed script "
+                  "reproduces, and it was printed on all three arms' cards.", ""]
+        if pp.get("expert_median_along_m") is not None:
+            L += ["### Validated ceiling (what the best available policy scores under this criterion)", "",
+                  f"The scripted expert -- which has the cube pose and plans directly to it -- is scored by "
+                  f"this same criterion at **{pp.get('expert_would_be_scored_success')}** episodes, with a "
+                  f"median displacement of {pp['expert_median_along_m']} m."]
+            if pp.get("push_min_exceeds_expert_median"):
+                L += ["", f"**The threshold exceeds the expert's own median on this arm** "
+                      f"({pp.get('threshold_m', 0.04)} m > {pp['expert_median_along_m']} m), so any push "
+                      f"success rate measured here is bounded by that ceiling "
+                      f"({pp.get('expert_would_be_scored_success')}), NOT by the policy under test. Compare a "
+                      "policy against the ceiling, never against 100%.", ""]
+            else:
+                L += ["", "The expert's median clears the threshold on this arm, so the ceiling is a policy "
+                      "bound rather than a criterion artefact.", ""]
     import glob as _g
     _ej = _g.glob(os.path.join(os.path.dirname(os.path.join(DATA, shard, "ds")), "ds", "EPISODES.jsonl"))
     if _ej:
@@ -198,7 +220,9 @@ def main(argv=None) -> int:
     lb = load(os.path.join(RUNS, f"loadback-{a.shard}.json"))
     cr = ((load(os.path.join(RUNS, "capture-radius.json")) or {}).get("arms") or {}).get(arm)
     pp = ((load(os.path.join(RUNS, "price-push.json")) or {}).get("arms") or {}).get(arm)
-    sh = load(os.path.join(RUNS, "push-sharp-so101.json"))
+    # it13/D212: the control is now per-arm and lives inside price-push.json. The old line loaded
+    # push-sharp-so101.json -- an ad-hoc, unreproducible so101 cell -- and printed it on EVERY arm's card.
+    sh = (pp or {}).get("behind")
     hor = load(os.path.join(RUNS, f"horizon-{arm}-{task}.json"))
     repo = PREFIX + a.shard
     text = card(a.shard, rep, nec, dwl, lb, hor, repo, cr, pp, sh)
