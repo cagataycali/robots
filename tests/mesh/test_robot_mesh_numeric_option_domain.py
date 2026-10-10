@@ -154,13 +154,13 @@ class TestTimeoutIsAPositiveFiniteBudget:
     """Every action that waits on ``timeout`` refuses a budget it cannot honor."""
 
     @pytest.mark.parametrize("action", READS_TIMEOUT)
-    @pytest.mark.parametrize("value", UNUSABLE_TIMEOUTS, ids=repr)
-    def test_an_unusable_budget_is_refused(self, mesh, action, value):
-        out = _call(action=action, timeout=value, **_args_for(action))
-        assert out["status"] == "error", f"{action} accepted timeout={value!r}"
-        text = _text(out)
-        assert "timeout" in text
-        assert "robot_mesh" in text and action in text, f"message does not name the surface: {text}"
+    def test_an_unusable_budget_is_refused(self, mesh, action):
+        for value in UNUSABLE_TIMEOUTS:
+            out = _call(action=action, timeout=value, **_args_for(action))
+            assert out["status"] == "error", f"{action} accepted timeout={value!r}"
+            text = _text(out)
+            assert "timeout" in text, f"{value!r}"
+            assert "robot_mesh" in text and action in text, f"message does not name the surface: {text}"
 
     @pytest.mark.parametrize("action", READS_TIMEOUT)
     def test_a_usable_budget_is_not_refused(self, mesh, action):
@@ -187,13 +187,13 @@ class TestTimeoutIsAPositiveFiniteBudget:
 class TestLimitIsAPositiveCount:
     """``inbox``'s cap is a count, consumed as a slice index."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_LIMITS, ids=repr)
-    def test_an_unusable_cap_is_refused(self, mesh, value):
-        mesh.inbox = {"sub-x": [("strands/peer/stream", {"step": i}) for i in range(120)]}
-        out = _call(action="inbox", name="sub-x", limit=value)
-        assert out["status"] == "error", f"inbox accepted limit={value!r}"
-        text = _text(out)
-        assert "limit" in text and "robot_mesh inbox" in text
+    def test_an_unusable_cap_is_refused(self, mesh):
+        for value in UNUSABLE_LIMITS:
+            mesh.inbox = {"sub-x": [("strands/peer/stream", {"step": i}) for i in range(120)]}
+            out = _call(action="inbox", name="sub-x", limit=value)
+            assert out["status"] == "error", f"inbox accepted limit={value!r}"
+            text = _text(out)
+            assert "limit" in text and "robot_mesh inbox" in text, f"{value!r}"
 
     def test_the_cap_bounds_what_reaches_the_agent_context(self, mesh):
         """A usable cap returns exactly that many of the buffered messages.
@@ -283,20 +283,20 @@ class TestTheStopCapIsACapNotAGuard:
 class TestTheSharedDomainsAreTheOwner:
     """The tool's verdict is the shared domain's verdict, not a local rule."""
 
-    @pytest.mark.parametrize("value", [*UNUSABLE_TIMEOUTS, 2.5, 30.0, 0.001, 1, 3600.0], ids=repr)
-    def test_a_budget_is_refused_exactly_when_the_shared_domain_refuses_it(self, mesh, value):
-        shared_refuses = positive_finite_number_error(value, "timeout", "robot_mesh send") is not None
-        out = _call(action="send", timeout=value, **_args_for("send"))
-        tool_refuses = out["status"] == "error"
-        assert tool_refuses is shared_refuses, f"verdicts differ for timeout={value!r}: {_text(out)}"
+    def test_a_budget_is_refused_exactly_when_the_shared_domain_refuses_it(self, mesh):
+        for value in [*UNUSABLE_TIMEOUTS, 2.5, 30.0, 0.001, 1, 3600.0]:
+            shared_refuses = positive_finite_number_error(value, "timeout", "robot_mesh send") is not None
+            out = _call(action="send", timeout=value, **_args_for("send"))
+            tool_refuses = out["status"] == "error"
+            assert tool_refuses is shared_refuses, f"verdicts differ for timeout={value!r}: {_text(out)}"
 
-    @pytest.mark.parametrize("value", [*UNUSABLE_LIMITS, 1, 5, 50, 1000], ids=repr)
-    def test_a_cap_is_refused_exactly_when_the_shared_domain_refuses_it(self, mesh, value):
-        mesh.inbox = {"sub-x": [("strands/peer/stream", {"step": i}) for i in range(120)]}
-        shared_refuses = positive_count_error(value, "limit", "robot_mesh inbox") is not None
-        out = _call(action="inbox", name="sub-x", limit=value)
-        tool_refuses = out["status"] == "error"
-        assert tool_refuses is shared_refuses, f"verdicts differ for limit={value!r}: {_text(out)}"
+    def test_a_cap_is_refused_exactly_when_the_shared_domain_refuses_it(self, mesh):
+        for value in [*UNUSABLE_LIMITS, 1, 5, 50, 1000]:
+            mesh.inbox = {"sub-x": [("strands/peer/stream", {"step": i}) for i in range(120)]}
+            shared_refuses = positive_count_error(value, "limit", "robot_mesh inbox") is not None
+            out = _call(action="inbox", name="sub-x", limit=value)
+            tool_refuses = out["status"] == "error"
+            assert tool_refuses is shared_refuses, f"verdicts differ for limit={value!r}: {_text(out)}"
 
 
 class TestNumericOptionScopingDoesNotDrift:

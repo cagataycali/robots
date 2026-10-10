@@ -272,32 +272,32 @@ class TestABooleanIsAnsweredBeforeTheCoercion:
     behind it, so the refusal has to stay.
     """
 
-    @pytest.mark.parametrize("value", [True, False, np.True_, np.False_])
     @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
-    def test_a_boolean_tolerance_is_refused(self, name, param, value):
-        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-        kwargs[param] = value
-        with pytest.raises(ValueError, match="finite") as excinfo:
-            make_predicate(name, **kwargs)
-        # Answered by the finiteness reason, not the sign reason: the coercion the
-        # sign check performs is never reached.
-        assert ">= 0" not in str(excinfo.value)
-        assert param in str(excinfo.value)
+    def test_a_boolean_tolerance_is_refused(self, name, param):
+        for value in [True, False, np.True_, np.False_]:
+            kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
+            kwargs[param] = value
+            with pytest.raises(ValueError, match="finite") as excinfo:
+                make_predicate(name, **kwargs)
+            # Answered by the finiteness reason, not the sign reason: the coercion the
+            # sign check performs is never reached.
+            assert ">= 0" not in str(excinfo.value), f"{value!r}"
+            assert param in str(excinfo.value), f"{value!r}"
 
-    @pytest.mark.parametrize("value", [True, np.True_])
-    def test_a_boolean_signed_param_is_refused_too(self, value):
+    def test_a_boolean_signed_param_is_refused_too(self):
         """The domain is the whole numeric kwarg set, not just the tolerances."""
-        with pytest.raises(ValueError, match="finite"):
-            make_predicate("body_below_z", body="cube", z=value)
+        for value in [True, np.True_]:
+            with pytest.raises(ValueError, match="finite"):
+                make_predicate("body_below_z", body="cube", z=value)
 
-    @pytest.mark.parametrize("value", [1, np.int64(1), 1.0, 0])
-    def test_a_value_equal_to_a_boolean_is_still_accepted(self, value):
+    def test_a_value_equal_to_a_boolean_is_still_accepted(self):
         """The gate keys on the type, not the value.
 
         ``1`` coerces to the same ``1.0`` ``True`` would have written, so this
         separates "refuses a boolean" from "refuses anything equal to one".
         """
-        assert callable(make_predicate("body_upright", body="cube", tol=value))
+        for value in [1, np.int64(1), 1.0, 0]:
+            assert callable(make_predicate("body_upright", body="cube", tol=value)), f"{value!r}"
 
 
 class TestTheRuleIsMatchedOnAWholeNameNotASubstring:

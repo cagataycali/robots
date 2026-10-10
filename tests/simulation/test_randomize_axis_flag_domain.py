@@ -131,13 +131,13 @@ def _assert_untouched(sim: Simulation, before: dict[str, np.ndarray]) -> None:
 class TestTheSharedDomainOwnsTheSpellings:
     """The refused set is the shared domain's, not a list copied into here."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_FLAGS)
-    def test_every_listed_spelling_is_refused_by_the_shared_domain(self, value):
-        assert boolean_flag_error(value, "randomize_colors", "randomize") is not None
+    def test_every_listed_spelling_is_refused_by_the_shared_domain(self):
+        for value in UNUSABLE_FLAGS:
+            assert boolean_flag_error(value, "randomize_colors", "randomize") is not None, f"{value!r}"
 
-    @pytest.mark.parametrize("value", [True, False, np.bool_(True), np.bool_(False)])
-    def test_a_real_boolean_is_accepted_by_the_shared_domain(self, value):
-        assert boolean_flag_error(value, "randomize_colors", "randomize") is None
+    def test_a_real_boolean_is_accepted_by_the_shared_domain(self):
+        for value in [True, False, np.bool_(True), np.bool_(False)]:
+            assert boolean_flag_error(value, "randomize_colors", "randomize") is None, f"{value!r}"
 
     def test_the_scan_found_the_axis_flags_it_grades(self):
         """A clean run must mean the flags were graded, not that none was found."""
@@ -154,74 +154,74 @@ class TestMujocoRefusesAnAxisFlagItCannotRead:
     """Every declared axis flag is checked before the first model write."""
 
     @pytest.mark.parametrize("param", MUJOCO_AXIS_FLAGS)
-    @pytest.mark.parametrize("value", UNUSABLE_FLAGS)
-    def test_an_unusable_axis_flag_is_refused_with_nothing_applied(self, sim, param, value):
-        before = _fingerprint(sim)
-        result = sim.randomize(**{param: value}, seed=7)
-        assert result["status"] == "error", f"{param}={value!r} was honored: {_text(result)}"
-        assert param in _text(result)
-        _assert_untouched(sim, before)
+    def test_an_unusable_axis_flag_is_refused_with_nothing_applied(self, sim, param):
+        for value in UNUSABLE_FLAGS:
+            before = _fingerprint(sim)
+            result = sim.randomize(**{param: value}, seed=7)
+            assert result["status"] == "error", f"{param}={value!r} was honored: {_text(result)}"
+            assert param in _text(result), f"{value!r}"
+            _assert_untouched(sim, before)
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_the_destructive_axes_are_not_run_by_a_spelling_of_off(self, sim, value):
+    def test_the_destructive_axes_are_not_run_by_a_spelling_of_off(self, sim):
         """Pre-fix: both axes ran and the call reported them applied.
 
         These two default to ``False`` because undoing them means recompiling
         the scene: the physics axis rewrites mass/inertia/friction and the
         position axis rewrites ``qpos0``, the pose a ``reset`` restores.
         """
-        before = _fingerprint(sim)
-        result = sim.randomize(
-            randomize_colors=False,
-            randomize_lighting=False,
-            randomize_physics=value,
-            randomize_positions=value,
-            seed=7,
-        )
-        assert result["status"] == "error"
-        _assert_untouched(sim, before)
-        assert np.array_equal(_fingerprint(sim)["body_mass"], before["body_mass"])
+        for value in TRUTHY_NON_BOOLEANS:
+            before = _fingerprint(sim)
+            result = sim.randomize(
+                randomize_colors=False,
+                randomize_lighting=False,
+                randomize_physics=value,
+                randomize_positions=value,
+                seed=7,
+            )
+            assert result["status"] == "error", f"{value!r}"
+            _assert_untouched(sim, before)
+            assert np.array_equal(_fingerprint(sim)["body_mass"], before["body_mass"]), f"{value!r}"
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_the_lighting_axis_is_checked_before_it_resolves_its_reference(self, sim, value):
+    def test_the_lighting_axis_is_checked_before_it_resolves_its_reference(self, sim):
         """The lighting refusal branches on this flag, so the flag comes first.
 
         Pre-fix a truthy non-boolean sent the call into the authored-light
         lookup, whose own refusal then advises ``randomize_lighting=False`` -
         the value the caller believes they passed.
         """
-        before = _fingerprint(sim)
-        result = sim.randomize(randomize_colors=False, randomize_lighting=value, seed=7)
-        assert result["status"] == "error"
-        assert "randomize_lighting" in _text(result)
-        assert "must be a boolean" in _text(result)
-        _assert_untouched(sim, before)
+        for value in TRUTHY_NON_BOOLEANS:
+            before = _fingerprint(sim)
+            result = sim.randomize(randomize_colors=False, randomize_lighting=value, seed=7)
+            assert result["status"] == "error", f"{value!r}"
+            assert "randomize_lighting" in _text(result), f"{value!r}"
+            assert "must be a boolean" in _text(result), f"{value!r}"
+            _assert_untouched(sim, before)
 
 
 class TestNewtonRefusesAnAxisFlagItCannotRead:
     """Newton stores its spec through ``bool()``, so a misread would persist."""
 
     @pytest.mark.parametrize("param", NEWTON_DECLARED_AXIS_FLAGS)
-    @pytest.mark.parametrize("value", UNUSABLE_FLAGS)
-    def test_an_unusable_axis_flag_is_refused_with_no_spec_stored(self, param, value):
-        engine = _newton_engine()
-        result = NewtonRandomization.randomize(engine, **{param: value})
-        assert result["status"] == "error", f"{param}={value!r} was honored: {_text(result)}"
-        assert param in _text(result)
-        assert engine._dr == {}, "a refused randomize stored a randomization spec"
+    def test_an_unusable_axis_flag_is_refused_with_no_spec_stored(self, param):
+        for value in UNUSABLE_FLAGS:
+            engine = _newton_engine()
+            result = NewtonRandomization.randomize(engine, **{param: value})
+            assert result["status"] == "error", f"{param}={value!r} was honored: {_text(result)}"
+            assert param in _text(result), f"{value!r}"
+            assert engine._dr == {}, "a refused randomize stored a randomization spec"
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_the_parity_refusal_does_not_inherit_the_misread(self, value):
+    def test_the_parity_refusal_does_not_inherit_the_misread(self):
         """Pre-fix: refused as an unsupported axis the caller had opted out of."""
-        engine = _newton_engine()
-        result = NewtonRandomization.randomize(
-            engine, randomize_colors=False, randomize_lighting=False, randomize_positions=value
-        )
-        assert result["status"] == "error"
-        text = _text(result)
-        assert "must be a boolean" in text, text
-        assert "not supported by the Newton backend" not in text, text
-        assert engine._dr == {}
+        for value in TRUTHY_NON_BOOLEANS:
+            engine = _newton_engine()
+            result = NewtonRandomization.randomize(
+                engine, randomize_colors=False, randomize_lighting=False, randomize_positions=value
+            )
+            assert result["status"] == "error", f"{value!r}"
+            text = _text(result)
+            assert "must be a boolean" in text, text
+            assert "not supported by the Newton backend" not in text, text
+            assert engine._dr == {}, f"{value!r}"
 
 
 class TestTheDocumentedSpellingsAreUnchanged:
@@ -282,14 +282,14 @@ class TestTheDocumentedSpellingsAreUnchanged:
 class TestBothBackendsReachTheSameDomain:
     """The accepted spellings must not diverge between the two backends."""
 
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS)
-    def test_a_shared_axis_flag_is_refused_identically(self, sim, value):
-        mujoco_result = sim.randomize(randomize_physics=value)
-        newton_result = NewtonRandomization.randomize(_newton_engine(), randomize_physics=value)
-        assert mujoco_result["status"] == newton_result["status"] == "error"
-        for text in (_text(mujoco_result), _text(newton_result)):
-            assert "randomize_physics" in text
-            assert "must be a boolean" in text
+    def test_a_shared_axis_flag_is_refused_identically(self, sim):
+        for value in TRUTHY_NON_BOOLEANS:
+            mujoco_result = sim.randomize(randomize_physics=value)
+            newton_result = NewtonRandomization.randomize(_newton_engine(), randomize_physics=value)
+            assert mujoco_result["status"] == newton_result["status"] == "error", f"{value!r}"
+            for text in (_text(mujoco_result), _text(newton_result)):
+                assert "randomize_physics" in text, f"{value!r}"
+                assert "must be a boolean" in text, f"{value!r}"
 
     @pytest.mark.parametrize(
         "randomize",

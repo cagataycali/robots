@@ -83,10 +83,9 @@ def _read(monkeypatch: pytest.MonkeyPatch, row: tuple[Any, ...], timeout: Any) -
     return getattr(factory(), verb)(timeout=timeout), rec
 
 
-@pytest.mark.parametrize("value", UNUSABLE_TIMEOUTS, ids=repr)
 @pytest.mark.parametrize("row", _READS, ids=lambda row: f"{row[0]}.{row[4]}")
 def test_a_read_refuses_an_unusable_timeout_and_reaches_no_transport(
-    monkeypatch: pytest.MonkeyPatch, row: tuple[Any, ...], value: Any
+    monkeypatch: pytest.MonkeyPatch, row: tuple[Any, ...]
 ) -> None:
     """The refusal names the verb the caller invoked, and nothing is read.
 
@@ -94,14 +93,15 @@ def test_a_read_refuses_an_unusable_timeout_and_reaches_no_transport(
     across the three bridges: one that happened to fail for another reason - a
     raw ``OverflowError`` out of a wait, or an empty success - still fails here.
     """
-    expected = positive_finite_number_error(value, "timeout", row[4])
-    assert expected is not None, "probe value must be outside the domain"
+    for value in UNUSABLE_TIMEOUTS:
+        expected = positive_finite_number_error(value, "timeout", row[4])
+        assert expected is not None, "probe value must be outside the domain"
 
-    result, rec = _read(monkeypatch, row, value)
+        result, rec = _read(monkeypatch, row, value)
 
-    assert result["status"] == "error", f"{row[0]}.{row[4]} accepted timeout={value!r}"
-    assert str(result["content"][0]["text"]) == expected
-    assert rec.calls == [], f"{row[0]}.{row[4]} reached the transport for timeout={value!r}"
+        assert result["status"] == "error", f"{row[0]}.{row[4]} accepted timeout={value!r}"
+        assert str(result["content"][0]["text"]) == expected, f"{value!r}"
+        assert rec.calls == [], f"{row[0]}.{row[4]} reached the transport for timeout={value!r}"
 
 
 @pytest.mark.parametrize("row", _READS, ids=lambda row: f"{row[0]}.{row[4]}")

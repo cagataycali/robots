@@ -155,16 +155,12 @@ class TestACredentialIsAStringOrItIsRefused:
     """
 
     @pytest.mark.parametrize("key", list(_DDS_SECURITY_REQUIRED_KEYS))
-    @pytest.mark.parametrize(
-        "value",
-        [None, 0, False, True, 1.5, b"file:/key.pem", ["file:/key.pem"], {}],
-        ids=["none", "zero", "false", "true", "float", "bytes", "list", "dict"],
-    )
-    def test_a_non_string_credential_is_refused(self, key: str, value: object) -> None:
-        cfg = dict(_VALID_CREDENTIALS)
-        cfg[key] = value  # type: ignore[assignment]
-        with pytest.raises(ValueError, match=key):
-            RosTelemetryBase._validate_dds_security_config(cfg)
+    def test_a_non_string_credential_is_refused(self, key: str) -> None:
+        for value in list[object]([None, 0, False, True, 1.5, b"file:/key.pem", ["file:/key.pem"], {}]):
+            cfg = dict(_VALID_CREDENTIALS)
+            cfg[key] = value  # type: ignore[assignment]
+            with pytest.raises(ValueError, match=key):
+                RosTelemetryBase._validate_dds_security_config(cfg)
 
     def test_the_refusal_names_what_arrived_so_the_operator_knows_which_key_to_fix(self) -> None:
         cfg = dict(_VALID_CREDENTIALS)

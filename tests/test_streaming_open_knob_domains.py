@@ -134,25 +134,25 @@ def _open_node() -> Any:
 class TestTheNumericKnobsAreRefusedBeforeTheImport:
     """An unusable knob is a caller mistake, so it needs no lerobot installed."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_TOLERANCES, ids=repr)
-    def test_an_unusable_tolerance_is_refused(self, value: Any, lerobot_import_is_fatal: None) -> None:
-        with pytest.raises(ValueError, match="tolerance_s"):
-            _open(tolerance_s=value)
+    def test_an_unusable_tolerance_is_refused(self, lerobot_import_is_fatal: None) -> None:
+        for value in UNUSABLE_TOLERANCES:
+            with pytest.raises(ValueError, match="tolerance_s"):
+                _open(tolerance_s=value)
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=repr)
-    def test_an_unusable_buffer_size_is_refused(self, value: Any, lerobot_import_is_fatal: None) -> None:
-        with pytest.raises(ValueError, match="buffer_size"):
-            _open(buffer_size=value)
+    def test_an_unusable_buffer_size_is_refused(self, lerobot_import_is_fatal: None) -> None:
+        for value in UNUSABLE_COUNTS:
+            with pytest.raises(ValueError, match="buffer_size"):
+                _open(buffer_size=value)
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=repr)
-    def test_an_unusable_shard_count_is_refused(self, value: Any, lerobot_import_is_fatal: None) -> None:
-        with pytest.raises(ValueError, match="max_num_shards"):
-            _open(max_num_shards=value)
+    def test_an_unusable_shard_count_is_refused(self, lerobot_import_is_fatal: None) -> None:
+        for value in UNUSABLE_COUNTS:
+            with pytest.raises(ValueError, match="max_num_shards"):
+                _open(max_num_shards=value)
 
-    @pytest.mark.parametrize("value", UNUSABLE_SEEDS, ids=repr)
-    def test_an_unusable_seed_is_refused(self, value: Any, lerobot_import_is_fatal: None) -> None:
-        with pytest.raises(ValueError, match="seed"):
-            _open(seed=value)
+    def test_an_unusable_seed_is_refused(self, lerobot_import_is_fatal: None) -> None:
+        for value in UNUSABLE_SEEDS:
+            with pytest.raises(ValueError, match="seed"):
+                _open(seed=value)
 
     def test_the_message_names_the_surface_the_parameter_and_the_value(self, lerobot_import_is_fatal: None) -> None:
         with pytest.raises(ValueError) as excinfo:
@@ -307,12 +307,10 @@ class TestAFlagIsRefusedUnlessItIsABoolean:
     """A posture is checked, not parsed - so no spelling of it can invert."""
 
     @pytest.mark.parametrize("flag", sorted(FLAG_CALLS), ids=str)
-    @pytest.mark.parametrize("value", UNUSABLE_FLAGS, ids=repr)
-    def test_a_non_boolean_flag_is_refused_before_the_import(
-        self, flag: str, value: Any, lerobot_import_is_fatal: None
-    ) -> None:
-        with pytest.raises(ValueError, match=flag):
-            _open(**{flag: value, **FLAG_CALLS[flag]})
+    def test_a_non_boolean_flag_is_refused_before_the_import(self, flag: str, lerobot_import_is_fatal: None) -> None:
+        for value in UNUSABLE_FLAGS:
+            with pytest.raises(ValueError, match=flag):
+                _open(**{flag: value, **FLAG_CALLS[flag]})
 
     def test_the_message_names_the_surface_the_flag_and_the_value_supplied(self, lerobot_import_is_fatal: None) -> None:
         """``drop_videos="false"`` used to be reported as ``drop_videos=True``.
@@ -365,10 +363,10 @@ class TestTheTwoFlagsThatSteerOpenItself:
 class TestAUsableFlagStillReachesTheConstructor:
     """The guard is additive: a real boolean is forwarded unchanged."""
 
-    @pytest.mark.parametrize("value", [True, False, np.bool_(True), np.bool_(False)], ids=repr)
     @pytest.mark.parametrize("flag", ["streaming", "shuffle", "return_uint8"], ids=str)
-    def test_a_boolean_is_forwarded_verbatim(self, flag: str, value: Any, fake_lerobot: type[_FakeStreaming]) -> None:
-        assert _open(**{flag: value}).dataset.kw[flag] == value
+    def test_a_boolean_is_forwarded_verbatim(self, flag: str, fake_lerobot: type[_FakeStreaming]) -> None:
+        for value in [True, False, np.bool_(True), np.bool_(False)]:
+            assert _open(**{flag: value}).dataset.kw[flag] == value, f"{value!r}"
 
     def test_the_flag_defaults_are_all_booleans(self) -> None:
         """A call passing none of the five must not be refused by its own defaults."""
@@ -461,15 +459,15 @@ class TestWhyEachValueCannotBeHonored:
         with pytest.raises(ValueError):
             feature_utils.check_delta_timestamps(on_grid, 30, float("nan"), raise_value_error=True)
 
-    @pytest.mark.parametrize("value", [0, -5])
-    def test_a_non_positive_shard_count_iterates_no_shards(self, value: int) -> None:
+    def test_a_non_positive_shard_count_iterates_no_shards(self) -> None:
         """``min(hf_shards, v)`` then ``range(num_shards)`` - so nothing streams."""
-        assert list(range(min(16, value))) == []
+        for value in [0, -5]:
+            assert list(range(min(16, value))) == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", [0, -5])
-    def test_a_non_positive_buffer_size_has_no_reservoir_index(self, value: int) -> None:
-        with pytest.raises(ValueError, match="high <= 0"):
-            np.random.default_rng(0).integers(0, value, size=1)
+    def test_a_non_positive_buffer_size_has_no_reservoir_index(self) -> None:
+        for value in [0, -5]:
+            with pytest.raises(ValueError, match="high <= 0"):
+                np.random.default_rng(0).integers(0, value, size=1)
 
     def test_a_fractional_shard_count_is_not_a_range_bound(self) -> None:
         # Bound through Any: the point is what the runtime does with the value the
@@ -478,10 +476,10 @@ class TestWhyEachValueCannotBeHonored:
         with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
             range(bound)
 
-    @pytest.mark.parametrize("value", [-1, 2.7, float("nan")])
-    def test_an_unusable_seed_has_no_generator(self, value: Any) -> None:
-        with pytest.raises((ValueError, TypeError)):
-            np.random.default_rng(value)
+    def test_an_unusable_seed_has_no_generator(self) -> None:
+        for value in list[Any]([-1, 2.7, float("nan")]):
+            with pytest.raises((ValueError, TypeError)):
+                np.random.default_rng(value)
 
     def test_a_non_finite_shard_count_is_discarded_by_the_clamp(self) -> None:
         """``min`` keeps the left operand, so nan/inf silently mean "the default"."""
