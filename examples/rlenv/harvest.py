@@ -110,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
                         "bands, kept only when the success test FAILS. The pass-B gate stays symmetric -- a "
                         "SUCCESS inside a failure shard is exactly as false a label as the reverse.")
     p.add_argument("--max-tries", type=int, default=0, help="pass-A seed budget (default 4x episodes)")
+    p.add_argument("--action-noise", type=float, default=0.0,
+                   help="rad of zero-mean Gaussian noise added to every absolute joint target, making "
+                        "the EXPERT the cause of failure instead of the goal. it23 measured that a "
+                        "seed-matched FAIL shard's label is 85-94%% readable from the cube pose at frame "
+                        "0, and that post-hoc goal matching cannot repair it (no goal-matched success "
+                        "exists: under one deterministic expert the outcome IS a function of the goal). "
+                        "Degrading the expert at the SUCCESS shard's own seeds breaks that function.")
     p.add_argument("--jitter", type=float, default=0.10, help="rung-1 start jitter, rad (D62)")
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--repo-id", default=None, help="LeRobot repo id (default local/rlenv-<arm>-<task>)")
@@ -166,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rec: dict = {
         "arm": a.arm, "task": a.task, "want": a.episodes, "jitter_rad": a.jitter,
+        "action_noise_rad": float(a.action_noise),
         "svla_pin_sha": sha, "cams": list(cams), "cam_px": a.cam, "seed": a.seed,
         "tries_budget": tries, "repo_id": repo_id, "out": str(a.out),
         "band_scale": a.band_scale, "cube_box": e.cube_box,
@@ -357,6 +365,17 @@ def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
     pol = X.ScriptedReplayPolicy(hz=e.control_hz)
     pol.set_robot_state_keys(list(e.action_keys))
     pol.load_plan(kf, a.task)
+    if a.action_noise > 0:
+        # perturb the TARGET, not the plan: the keyframes (and so the goal the expert aims at) are
+        # untouched, which is what keeps the cube pose uninformative about the label.
+        nrng = np.random.default_rng(700000 + seed)
+        sigma = float(a.action_noise)
+        _target_at = pol.target_at
+
+        def target_at(step, _t=_target_at):
+            return np.asarray(_t(step), dtype=float) + nrng.normal(0.0, sigma, size=len(e.action_keys))
+
+        pol.target_at = target_at
     st = {"gap": 1e9, "c0": None}
 
     def obs(ev, st=st):
@@ -375,7 +394,7 @@ def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
     c0 = st["c0"] if st["c0"] is not None else c1
     disp = float(np.dot(c1 - c0, np.array([e.approach[0], e.approach[1], 0.0])))
     ok = bool(X.success(a.task, st["gap"] <= X.TOUCH_GAP, disp))
-    return {"ok": ok, "gap": float(st["gap"]), "disp": disp,
+    return {"ok": ok, "gap": float(st["gap"]), "disp": disp, "action_noise": float(a.action_noise),
             "cube_xy": [round(float(x), 5) for x in cube_xy], "instruction": instr,
             "q0": [round(float(v), 4) for v in q0], "ik": kf.get("_ik_ok", {})}
 
