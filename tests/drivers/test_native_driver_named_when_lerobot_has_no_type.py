@@ -15,7 +15,7 @@ mentioned that this package ships the driver that builds them: an answer to the
 wrong question, and a dead end for a caller who had no reason to guess at
 ``driver="strands"``. The refusal still
 has to name the native driver for that caller, so every cell below pins the
-explicit spelling and :class:`TestThePremise` records the new default.
+explicit spelling and records the new default beside it.
 
 The site already had this shape for the other wrong entry point. A leader arm is
 a lerobot *teleoperator*, and
@@ -151,66 +151,40 @@ def _refusal_for(name: str) -> str:
     return str(excinfo.value)
 
 
-class TestThePremise:
-    """The facts the regression rests on, so a passing cell cannot be vacuous."""
+class TestANativelyDrivenRobotIsNamed:
+    """The regression, one cell per robot: lerobot by name refuses it by naming its driver.
+
+    The premises ride in the same cell so a passing one cannot be vacuous:
+    lerobot structurally cannot build the robot, a native driver is registered
+    for it, and the bare call routes there (flipped on 2026-10-01 with the
+    native-default change - an undeclared robot used to fall back to lerobot,
+    which is why the refusal is reached with an explicit ``driver="lerobot"``).
+    The refusal is built once and read for every facet of it.
+    """
 
     @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_lerobot_has_no_robot_type_for_it(self, name: str) -> None:
-        """lerobot structurally cannot build these, so there is no choice to make."""
-        assert _type_handed_to_lerobot(name) not in _lerobot_robot_types()
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_a_native_driver_is_registered_for_it(self, name: str) -> None:
-        """The better answer exists in this package, which is the whole point."""
-        assert get_native_driver_class(name) is not None
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_default_now_routes_it_to_its_native_driver(self, name: str) -> None:
-        """The bare call builds the arm; only ``driver="lerobot"`` meets the refusal.
-
-        Flipped on 2026-10-01 with the native-default change: this cell used to
-        assert ``"lerobot"`` because an undeclared robot fell back to it. Now
-        :func:`~strands_robots.drivers.resolve_driver` prefers a registered
-        native driver, which is why the refusal cells build with an explicit
-        ``driver="lerobot"``.
-        """
+    def test_the_refusal_names_the_driver_and_the_call_that_builds_it(self, name: str) -> None:
+        assert _type_handed_to_lerobot(name) not in _lerobot_robot_types(), "premise: lerobot cannot build it"
+        driver_cls = get_native_driver_class(name)
+        assert driver_cls is not None, "premise: this robot has a native driver"
         assert resolve_driver(name, None) == "strands"
         assert resolve_driver(name, "lerobot") == "lerobot"
 
-    @pytest.mark.parametrize("name", NO_DRIVER_OF_EITHER_KIND)
-    def test_the_control_robots_have_no_native_driver(self, name: str) -> None:
-        """Otherwise the over-reach controls would be graded on the wrong robots."""
-        assert get_native_driver_class(name) is None
+        refusal = _refusal_for(name)
+        assert driver_cls.__name__ in refusal
+        # The whole call, not the keyword alone: the message names that keyword a
+        # second time as the registry declaration a maintainer could add, and a
+        # caller cannot copy that one.
+        assert f"Robot({name!r}, mode='real', driver='strands'" in refusal
+        assert repr(name) in refusal
+        # Sixteen robot types, none of them this one, is the wrong question answered.
+        assert _LEROBOT_LISTING not in refusal
 
-
-class TestANativelyDrivenRobotIsNamed:
-    """The regression: the refusal names the driver that builds it."""
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_refusal_names_the_driver_class(self, name: str) -> None:
-        driver_cls = get_native_driver_class(name)
-        assert driver_cls is not None, "premise: this robot has a native driver"
-        assert driver_cls.__name__ in _refusal_for(name)
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_refusal_spells_out_the_call_that_builds_it(self, name: str) -> None:
-        """A caller cannot guess ``driver='strands'``, so the retry is written out.
-
-        The whole call, not the keyword alone: the message names that keyword a
-        second time as the registry declaration a maintainer could add, and a
-        caller cannot copy that one.
-        """
-        retry = f"Robot({name!r}, mode='real', driver='strands'"
-        assert retry in _refusal_for(name)
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_refusal_names_the_robot_that_was_asked_for(self, name: str) -> None:
-        assert repr(name) in _refusal_for(name)
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_the_refusal_does_not_answer_with_lerobots_vocabulary(self, name: str) -> None:
-        """Sixteen robot types, none of them this one, is the wrong question answered."""
-        assert _LEROBOT_LISTING not in _refusal_for(name)
+        # Over-reach: an explicit choice of this package's driver still builds it.
+        # The Yahboom speaks rosbridge and refuses a device path; the rest accept one.
+        port = "localhost:9090" if name == "yahboom_m3pro" else "/dev/ttyUSB0"
+        robot: Any = Robot(name, mode="real", driver="strands", port=port)
+        assert type(robot) is driver_cls
 
 
 class TestTheDerivedPopulationIsExactlyThese:
@@ -241,12 +215,12 @@ class TestTheGenericListingSurvivesWhereItIsTheRightAnswer:
 
     @pytest.mark.parametrize("name", NO_DRIVER_OF_EITHER_KIND)
     def test_lerobots_vocabulary_is_still_reported(self, name: str) -> None:
-        assert _LEROBOT_LISTING in _refusal_for(name)
-
-    @pytest.mark.parametrize("name", NO_DRIVER_OF_EITHER_KIND)
-    def test_no_native_driver_is_claimed_for_it(self, name: str) -> None:
-        """Naming a driver that does not exist would send a caller to a dead end."""
-        assert "native driver" not in _refusal_for(name)
+        # Otherwise the over-reach control would be graded on the wrong robot.
+        assert get_native_driver_class(name) is None, "premise: no native driver"
+        refusal = _refusal_for(name)
+        assert _LEROBOT_LISTING in refusal
+        # Naming a driver that does not exist would send a caller to a dead end.
+        assert "native driver" not in refusal
 
 
 class TestTheTeleoperatorRefusalIsUnchanged:
@@ -383,13 +357,6 @@ class TestTheOrderIsStated:
 
 class TestNothingElseChanged:
     """Over-reach: an explicit choice, and every other refusal, are untouched."""
-
-    @pytest.mark.parametrize("name", NATIVELY_DRIVEN_WITHOUT_A_LEROBOT_TYPE)
-    def test_an_explicit_strands_choice_still_builds_the_driver(self, name: str) -> None:
-        # The Yahboom speaks rosbridge and refuses a device path; the rest accept one.
-        port = "localhost:9090" if name == "yahboom_m3pro" else "/dev/ttyUSB0"
-        robot: Any = Robot(name, mode="real", driver="strands", port=port)
-        assert type(robot) is get_native_driver_class(name)
 
     @pytest.mark.parametrize("name", ["koch"])
     def test_a_robot_lerobot_can_resolve_is_not_diverted(self, name: str) -> None:

@@ -86,29 +86,29 @@ _GOOD_NAMES = ("wrist", "front", "defaults", "freely", "free_cam", "Free", "DEFA
 # The shared domain                                                           #
 # --------------------------------------------------------------------------- #
 class TestTheDomain:
-    @pytest.mark.parametrize("name", FREE_CAMERA_TOKENS)
-    def test_every_routing_token_is_refused(self, name: Any) -> None:
+    def test_every_routing_token_is_refused(self) -> None:
         """A non-``str`` token is not this guard's business, so ``None`` passes through."""
-        err = reserved_camera_name_error("add_camera", "name", name)
-        if name is None:
-            assert err is None, "an unaddressable name is entity_name_error's domain"
-        else:
-            assert err is not None, name
-            assert "reserved" in err
+        for name in FREE_CAMERA_TOKENS:
+            err = reserved_camera_name_error("add_camera", "name", name)
+            if name is None:
+                assert err is None, "an unaddressable name is entity_name_error's domain"
+            else:
+                assert err is not None, name
+                assert "reserved" in err, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _GOOD_NAMES)
-    def test_a_name_that_merely_resembles_a_token_is_accepted(self, name: str) -> None:
+    def test_a_name_that_merely_resembles_a_token_is_accepted(self) -> None:
         """Membership, not a prefix or a case-insensitive match.
 
         ``"Free"`` and ``"defaults"`` are not routing tokens, so the render
         entry points look them up like any other name and they must register.
         """
-        assert reserved_camera_name_error("add_camera", "name", name) is None
+        for name in _GOOD_NAMES:
+            assert reserved_camera_name_error("add_camera", "name", name) is None, f"{name!r}"
 
-    @pytest.mark.parametrize("name", (7, 0, None, ["free"], {"default": 1}, b"free"))
-    def test_a_non_string_is_left_to_the_addressability_domain(self, name: Any) -> None:
+    def test_a_non_string_is_left_to_the_addressability_domain(self) -> None:
         """Two guards, two questions - this one must not also answer the first."""
-        assert reserved_camera_name_error("add_camera", "name", name) is None
+        for name in (7, 0, None, ["free"], {"default": 1}, b"free"):
+            assert reserved_camera_name_error("add_camera", "name", name) is None, f"{name!r}"
 
     def test_the_message_names_the_method_the_value_and_the_reason(self) -> None:
         err = reserved_camera_name_error("add_camera", "name", "free")
@@ -148,19 +148,19 @@ def _compiled_camera_names(sim) -> list[str]:
 
 
 class TestMujocoAddCamera:
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_a_routing_token_is_refused(self, sim, name: str) -> None:
+    def test_a_routing_token_is_refused(self, sim) -> None:
         """Pre-fix: ``"free"`` returned success, ``"default"`` said "already exists"."""
-        result = sim.add_camera(name, position=[8.0, 8.0, 8.0], target=[0.0, 0.0, 0.0])
-        assert result["status"] == "error", (name, result)
-        assert "reserved" in result["content"][0]["text"]
+        for name in _ADDRESSABLE_TOKENS:
+            result = sim.add_camera(name, position=[8.0, 8.0, 8.0], target=[0.0, 0.0, 0.0])
+            assert result["status"] == "error", (name, result)
+            assert "reserved" in result["content"][0]["text"], f"{name!r}"
 
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_the_refusal_names_the_routing_as_the_reason(self, sim, name: str) -> None:
+    def test_the_refusal_names_the_routing_as_the_reason(self, sim) -> None:
         """Not a bare "invalid name": the caller is told why this name cannot work."""
-        text = sim.add_camera(name, position=[8.0, 8.0, 8.0], target=[0.0, 0.0, 0.0])["content"][0]["text"]
-        assert "free camera" in text
-        assert "pick a distinct camera name" in text
+        for name in _ADDRESSABLE_TOKENS:
+            text = sim.add_camera(name, position=[8.0, 8.0, 8.0], target=[0.0, 0.0, 0.0])["content"][0]["text"]
+            assert "free camera" in text, f"{name!r}"
+            assert "pick a distinct camera name" in text, f"{name!r}"
 
     def test_the_refusal_compiles_no_camera(self, sim) -> None:
         """The model is untouched - the pre-fix path really did inject a ``<camera>``."""
@@ -210,12 +210,14 @@ class TestMujocoAddCamera:
         assert "reserved" in text
         assert "already exists" not in text
 
-    @pytest.mark.parametrize("name", _GOOD_NAMES)
-    def test_an_addressable_camera_still_registers(self, sim, name: str) -> None:
+    def test_an_addressable_camera_still_registers(self, sim) -> None:
         """The rule is membership - a name that merely resembles a token works."""
-        assert sim.add_camera(name, position=[0.5, 0.0, 0.4], target=[0.0, 0.0, 0.0])["status"] == "success"
-        assert name in sim._world.cameras
-        assert name in _compiled_camera_names(sim)
+        for name in _GOOD_NAMES:
+            assert sim.add_camera(name, position=[0.5, 0.0, 0.4], target=[0.0, 0.0, 0.0])["status"] == "success", (
+                f"{name!r}"
+            )
+            assert name in sim._world.cameras, f"{name!r}"
+            assert name in _compiled_camera_names(sim), f"{name!r}"
 
     def test_a_registered_camera_is_reachable_by_the_name_it_was_given(self, sim) -> None:
         """The invariant behind the rule, stated positively and GL-free.
@@ -278,28 +280,28 @@ class TestSameVerdictAsTheNewtonSibling:
     load-bearing: a second copy of the rule would drift in wording first.
     """
 
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_newton_refuses_it(self, name: str) -> None:
-        stub = _newton_stub()
-        result = _newton_add_camera(stub, name)
-        assert result["status"] == "error", (name, result)
-        assert "reserved" in result["content"][0]["text"]
-        assert stub._world.cameras == {}
+    def test_newton_refuses_it(self) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            stub = _newton_stub()
+            result = _newton_add_camera(stub, name)
+            assert result["status"] == "error", (name, result)
+            assert "reserved" in result["content"][0]["text"], f"{name!r}"
+            assert stub._world.cameras == {}, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_the_two_refusals_are_the_same_sentence(self, sim, name: str) -> None:
-        stub = _newton_stub()
-        newton = _newton_add_camera(stub, name)
-        mujoco_result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
-        assert newton["status"] == mujoco_result["status"] == "error"
-        assert newton["content"][0]["text"] == mujoco_result["content"][0]["text"]
+    def test_the_two_refusals_are_the_same_sentence(self, sim) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            stub = _newton_stub()
+            newton = _newton_add_camera(stub, name)
+            mujoco_result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
+            assert newton["status"] == mujoco_result["status"] == "error", f"{name!r}"
+            assert newton["content"][0]["text"] == mujoco_result["content"][0]["text"], f"{name!r}"
 
-    @pytest.mark.parametrize("name", _GOOD_NAMES)
-    def test_both_accept_the_same_good_names(self, sim, name: str) -> None:
-        stub = _newton_stub()
-        newton = _newton_add_camera(stub, name)
-        mujoco_result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
-        assert newton["status"] == mujoco_result["status"] == "success", (name, newton, mujoco_result)
+    def test_both_accept_the_same_good_names(self, sim) -> None:
+        for name in _GOOD_NAMES:
+            stub = _newton_stub()
+            newton = _newton_add_camera(stub, name)
+            mujoco_result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
+            assert newton["status"] == mujoco_result["status"] == "success", (name, newton, mujoco_result)
 
 
 # --------------------------------------------------------------------------- #
@@ -350,12 +352,12 @@ class TestIsaacDoesNotRouteAndSoDoesNotRefuse:
                 rendered = ast.get_source_segment(source, node) or ""
                 assert "free" not in rendered, f"Isaac get_frame now routes: {rendered}"
 
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_isaac_still_accepts_the_name(self, name: str) -> None:
-        engine = _isaac_engine()
-        result = engine.add_camera(name, position=[2.0, 2.0, 2.0], target=[0.0, 0.0, 0.0])
-        assert result["status"] == "success", (name, result)
-        assert name in engine._cameras
+    def test_isaac_still_accepts_the_name(self) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            engine = _isaac_engine()
+            result = engine.add_camera(name, position=[2.0, 2.0, 2.0], target=[0.0, 0.0, 0.0])
+            assert result["status"] == "success", (name, result)
+            assert name in engine._cameras, f"{name!r}"
 
     def test_isaacs_documented_signature_default_still_works(self) -> None:
         """``add_camera()`` with no name is a documented call on this backend."""
@@ -483,29 +485,29 @@ class TestTheNameRuleIsJudgedBeforeAnyValue:
     """
 
     @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_mujoco_names_the_reserved_name(self, sim, name: str, second: tuple[str, dict[str, Any]]) -> None:
-        result = sim.add_camera(name, **_request(**second[1]))
-        assert result["status"] == "error"
-        assert "reserved" in result["content"][0]["text"], result
+    def test_mujoco_names_the_reserved_name(self, sim, second: tuple[str, dict[str, Any]]) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            result = sim.add_camera(name, **_request(**second[1]))
+            assert result["status"] == "error", f"{name!r}"
+            assert "reserved" in result["content"][0]["text"], result
 
     @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_newton_names_the_reserved_name_too(self, name: str, second: tuple[str, dict[str, Any]]) -> None:
-        stub = _newton_stub()
-        result = _newton_add_camera(stub, name, **second[1])
-        assert result["status"] == "error"
-        assert "reserved" in result["content"][0]["text"], result
-        assert stub._world.cameras == {}
+    def test_newton_names_the_reserved_name_too(self, second: tuple[str, dict[str, Any]]) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            stub = _newton_stub()
+            result = _newton_add_camera(stub, name, **second[1])
+            assert result["status"] == "error", f"{name!r}"
+            assert "reserved" in result["content"][0]["text"], result
+            assert stub._world.cameras == {}, f"{name!r}"
 
     @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_the_two_backends_name_the_same_cause(self, sim, name: str, second: tuple[str, dict[str, Any]]) -> None:
+    def test_the_two_backends_name_the_same_cause(self, sim, second: tuple[str, dict[str, Any]]) -> None:
         """The whole point: one request, one diagnosis, whichever engine is held."""
-        newton = _newton_add_camera(_newton_stub(), name, **second[1])
-        mujoco_result = sim.add_camera(name, **_request(**second[1]))
-        assert newton["status"] == mujoco_result["status"] == "error"
-        assert newton["content"][0]["text"] == mujoco_result["content"][0]["text"]
+        for name in _ADDRESSABLE_TOKENS:
+            newton = _newton_add_camera(_newton_stub(), name, **second[1])
+            mujoco_result = sim.add_camera(name, **_request(**second[1]))
+            assert newton["status"] == mujoco_result["status"] == "error", f"{name!r}"
+            assert newton["content"][0]["text"] == mujoco_result["content"][0]["text"], f"{name!r}"
 
     @pytest.mark.parametrize("second", _SECOND_FAULTS, ids=[i for i, _ in _SECOND_FAULTS])
     def test_a_value_fault_under_a_good_name_still_names_the_value(
@@ -538,10 +540,12 @@ class TestTheComposedRuleIsTheOnlyNameGuard:
         assert message is not None
         assert "reserved" not in message
 
-    @pytest.mark.parametrize("name", _ADDRESSABLE_TOKENS)
-    def test_a_backend_that_does_not_route_does_not_refuse(self, name: str) -> None:
-        assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=False) is None
-        assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True) is not None
+    def test_a_backend_that_does_not_route_does_not_refuse(self) -> None:
+        for name in _ADDRESSABLE_TOKENS:
+            assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=False) is None, f"{name!r}"
+            assert camera_name_error("add_camera", "name", name, routes_free_camera_tokens=True) is not None, (
+                f"{name!r}"
+            )
 
     def test_every_add_camera_reads_the_composed_rule_and_none_re_spells_it(self) -> None:
         """Structural pin: the three halves are not applied separately any more.

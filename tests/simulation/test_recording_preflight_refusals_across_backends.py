@@ -143,141 +143,66 @@ def _text(result: dict[str, Any]) -> str:
 class TestTheProbeValuesAreOutsideTheSharedDomains:
     """Non-vacuity: every probe value really is one its shared domain refuses."""
 
-    @pytest.mark.parametrize("fps", UNUSABLE_FPS, ids=repr)
-    def test_every_fps_probe_is_refused_by_the_shared_domain(self, fps: Any) -> None:
-        assert dataset_recording_option_error("start_recording", fps) is not None
-
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS, ids=repr)
-    @pytest.mark.parametrize("flag", POSTURE_FLAGS)
-    def test_every_posture_probe_is_refused_by_the_shared_domain(self, flag: str, value: Any) -> None:
-        assert dataset_recording_posture_error("start_recording", flag, value) is not None
-
-    @pytest.mark.parametrize("cameras", UNUSABLE_CAMERA_LISTS, ids=repr)
-    def test_every_camera_probe_is_refused_by_the_shared_domain(self, cameras: Any) -> None:
-        assert name_list_error(cameras, "cameras", "start_recording") is not None
-
-    def test_a_usable_value_is_accepted_by_each_shared_domain(self) -> None:
-        """Over-reach control: the domains do not refuse everything."""
+    def test_every_probe_is_refused_and_a_usable_value_accepted(self) -> None:
+        for fps in UNUSABLE_FPS:
+            assert dataset_recording_option_error("start_recording", fps) is not None, repr(fps)
+        for flag in POSTURE_FLAGS:
+            for value in TRUTHY_NON_BOOLEANS:
+                assert dataset_recording_posture_error("start_recording", flag, value) is not None, (flag, value)
+        for cameras in UNUSABLE_CAMERA_LISTS:
+            assert name_list_error(cameras, "cameras", "start_recording") is not None, repr(cameras)
+        # Over-reach control: the domains do not refuse everything.
         assert dataset_recording_option_error("start_recording", 30) is None
         assert dataset_recording_posture_error("start_recording", "overwrite", True) is None
         assert name_list_error(["front", "wrist"], "cameras", "start_recording") is None
 
 
-class TestEveryBackendReturnsTheFpsRefusal:
-    """A rate no dataset can be written at is refused, not reported as started."""
+@pytest.mark.parametrize("factory", BACKENDS)
+class TestEveryBackendReturnsTheSharedRefusal:
+    """Each refusal is returned, names its parameter, and is the shared verdict verbatim.
 
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("fps", UNUSABLE_FPS, ids=repr)
-    def test_the_call_is_refused_and_names_the_parameter(self, factory: Any, fps: Any) -> None:
-        result = _start(factory, fps=fps)
-        assert result["status"] == "error"
-        assert "fps" in _text(result)
+    One cell per backend and refusal: the probe values loop inside it, since
+    each is a fact about the shared domain (pinned above), not about the backend.
+    """
 
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("fps", UNUSABLE_FPS, ids=repr)
-    def test_the_refusal_is_the_shared_verdict_verbatim(self, factory: Any, fps: Any) -> None:
-        """The backend returns the shared domain's answer, not a local re-wording."""
-        assert _start(factory, fps=fps) == dataset_recording_option_error("start_recording", fps)
+    def test_an_unusable_fps_is_refused(self, factory: Any) -> None:
+        """A rate no dataset can be written at is refused, not reported as started."""
+        for fps in UNUSABLE_FPS:
+            result = _start(factory, fps=fps)
+            assert result["status"] == "error", repr(fps)
+            assert "fps" in _text(result), repr(fps)
+            assert result == dataset_recording_option_error("start_recording", fps), repr(fps)
 
+    def test_a_truthy_posture_opt_out_is_refused(self, factory: Any) -> None:
+        """A posture flag is checked, not parsed - a truthy opt-out is refused."""
+        for flag in POSTURE_FLAGS:
+            for value in TRUTHY_NON_BOOLEANS:
+                posture: dict[str, Any] = {flag: value}
+                result = _start(factory, **posture)
+                assert result["status"] == "error", (flag, value)
+                assert flag in _text(result), (flag, value)
+                assert result == dataset_recording_posture_error("start_recording", flag, value), (flag, value)
 
-class TestEveryBackendReturnsThePostureRefusal:
-    """A posture flag is checked, not parsed - a truthy opt-out is refused."""
+    def test_an_unusable_camera_list_is_refused(self, factory: Any) -> None:
+        """``cameras`` is an ordered list of distinct names on every backend."""
+        for cameras in UNUSABLE_CAMERA_LISTS:
+            result = _start(factory, cameras=cameras)
+            assert result["status"] == "error", repr(cameras)
+            assert _text(result) == name_list_error(cameras, "cameras", "start_recording"), repr(cameras)
 
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("value", TRUTHY_NON_BOOLEANS, ids=repr)
-    @pytest.mark.parametrize("flag", POSTURE_FLAGS)
-    def test_the_call_is_refused_and_names_the_flag(self, factory: Any, flag: str, value: Any) -> None:
-        posture: dict[str, Any] = {flag: value}
-        result = _start(factory, **posture)
-        assert result["status"] == "error"
-        assert flag in _text(result)
+    def test_a_non_string_task_is_refused(self, factory: Any) -> None:
+        """``task`` labels the recorded ``task`` column, so it is a string - as ``instruction`` is."""
+        for task in NON_STRING_TASKS:
+            result = _start(factory, task=task)
+            assert result["status"] == "error", repr(task)
+            assert _text(result) == f"start_recording: 'task' must be a string, got {type(task).__name__}."
 
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("flag", POSTURE_FLAGS)
-    def test_the_refusal_is_the_shared_verdict_verbatim(self, factory: Any, flag: str) -> None:
-        posture: dict[str, Any] = {flag: "false"}
-        assert _start(factory, **posture) == dataset_recording_posture_error("start_recording", flag, "false")
-
-
-class TestEveryBackendReturnsTheCameraListRefusal:
-    """``cameras`` is an ordered list of distinct names on every backend."""
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("cameras", UNUSABLE_CAMERA_LISTS, ids=repr)
-    def test_the_call_is_refused_and_names_the_parameter(self, factory: Any, cameras: Any) -> None:
-        result = _start(factory, cameras=cameras)
-        assert result["status"] == "error"
-        assert "cameras" in _text(result)
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("cameras", UNUSABLE_CAMERA_LISTS, ids=repr)
-    def test_the_refusal_is_the_shared_verdict_verbatim(self, factory: Any, cameras: Any) -> None:
-        assert _text(_start(factory, cameras=cameras)) == name_list_error(cameras, "cameras", "start_recording")
-
-
-class TestEveryBackendReturnsTheTaskRefusal:
-    """``task`` labels the recorded ``task`` column, so it is a string - as ``instruction`` is."""
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize("task", NON_STRING_TASKS, ids=repr)
-    def test_the_call_is_refused_and_names_the_parameter(self, factory: Any, task: Any) -> None:
-        result = _start(factory, task=task)
-        assert result["status"] == "error"
-        assert _text(result) == f"start_recording: 'task' must be a string, got {type(task).__name__}."
-
-
-class TestARefusedStartTouchesNoDataset:
-    """Each refusal is returned before anything on disk or in state moves."""
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            pytest.param({"fps": 2.7}, id="fps"),
-            pytest.param({"overwrite": "false"}, id="overwrite"),
-            pytest.param({"push_to_hub": "no"}, id="push_to_hub"),
-            pytest.param({"cameras": "wrist"}, id="cameras"),
-            pytest.param({"task": None}, id="task"),
-        ],
-    )
-    def test_no_dataset_directory_is_created(self, factory: Any, kwargs: Any, tmp_path: Path) -> None:
-        target = tmp_path / "never"
-        assert _start(factory, root=target, **kwargs)["status"] == "error"
-        assert not target.exists()
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            pytest.param({"fps": 2.7}, id="fps"),
-            pytest.param({"overwrite": "false"}, id="overwrite"),
-            pytest.param({"cameras": "wrist"}, id="cameras"),
-            pytest.param({"task": None}, id="task"),
-        ],
-    )
-    def test_recording_is_not_marked_active(self, factory: Any, kwargs: Any, tmp_path: Path) -> None:
-        engine = factory()
-        target = tmp_path / "never"
-        assert engine.start_recording(repo_id="local/p", root=str(target), **kwargs)["status"] == "error"
-        state = engine._recording_state()
-        assert state is not None
-        assert not state.get("recording")
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    @pytest.mark.parametrize(
-        "kwargs",
-        [
-            pytest.param({"fps": 2.7}, id="fps"),
-            pytest.param({"overwrite": "false"}, id="overwrite"),
-            pytest.param({"cameras": "wrist"}, id="cameras"),
-            pytest.param({"task": None}, id="task"),
-        ],
-    )
-    def test_the_refusal_precedes_the_lerobot_extra_probe(
-        self, factory: Any, kwargs: Any, monkeypatch: pytest.MonkeyPatch
+    def test_a_refused_start_touches_no_dataset(
+        self, factory: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Placement, in the guards' own words: "before the lerobot-extra probe".
+        """Each refusal is returned before anything on disk or in state moves.
 
+        Placement, in the guards' own words: "before the lerobot-extra probe".
         The probe is made fatal with an ``AssertionError`` - the enclosing
         ``except ImportError`` cannot swallow it - so reaching it fails loudly
         instead of degrading into the extra-missing report.
@@ -288,37 +213,45 @@ class TestARefusedStartTouchesNoDataset:
             raise AssertionError("the refusal must precede the lerobot-extra probe")
 
         monkeypatch.setattr(dataset_recorder, "lerobot_dataset_import_error", _fatal)
-        assert _start(factory, **kwargs)["status"] == "error"
+        refusals: list[dict[str, Any]] = [
+            {"fps": 2.7},
+            {"overwrite": "false"},
+            {"push_to_hub": "no"},
+            {"cameras": "wrist"},
+            {"task": None},
+        ]
+        for kwargs in refusals:
+            engine = factory()
+            target = tmp_path / "never"
+            assert engine.start_recording(repo_id="local/p", root=str(target), **kwargs)["status"] == "error", kwargs
+            assert not target.exists(), kwargs
+            state = engine._recording_state()
+            assert state is not None
+            assert not state.get("recording"), kwargs
 
-
-class TestTheRollingRateRefusalIsUnreachableOnTheseBackends:
-    """The fourth refusal is provably dead here, so its structural pin is right."""
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    def test_neither_backend_reports_an_in_flight_rollout_rate(self, factory: Any) -> None:
-        assert factory()._active_rollout_rates() == {}
-
-    @pytest.mark.parametrize("factory", BACKENDS)
-    def test_the_guard_returns_none_for_every_probe_rate(self, factory: Any) -> None:
+    def test_the_rolling_rate_refusal_is_unreachable(self, factory: Any) -> None:
+        """The fourth refusal is provably dead here, so its structural pin is right."""
         engine = factory()
+        assert engine._active_rollout_rates() == {}
         for fps in (30, 50, 1):
             assert engine._validate_recording_start_rate(fps, "start_recording") is None
 
-    def test_mujoco_is_the_backend_that_overrides_the_rate_source(self) -> None:
-        """Non-vacuity: the empty mapping above is inherited, not universal.
 
-        Read from the source so the assertion holds without a MuJoCo install.
-        """
-        import strands_robots.simulation as simulation_pkg
+def test_mujoco_is_the_backend_that_overrides_the_rate_source() -> None:
+    """Non-vacuity: the empty rollout-rate mapping above is inherited, not universal.
 
-        root = Path(simulation_pkg.__file__).parent
-        overriding = {
-            backend
-            for backend in ("mujoco", "newton", "isaac")
-            for module in sorted((root / backend).glob("*.py"))
-            if "def _active_rollout_rates(" in module.read_text(encoding="utf-8")
-        }
-        assert overriding == {"mujoco"}, overriding
+    Read from the source so the assertion holds without a MuJoCo install.
+    """
+    import strands_robots.simulation as simulation_pkg
+
+    root = Path(simulation_pkg.__file__).parent
+    overriding = {
+        backend
+        for backend in ("mujoco", "newton", "isaac")
+        for module in sorted((root / backend).glob("*.py"))
+        if "def _active_rollout_rates(" in module.read_text(encoding="utf-8")
+    }
+    assert overriding == {"mujoco"}, overriding
 
 
 class TestTheRefusalsNeedNoOptionalDependency:

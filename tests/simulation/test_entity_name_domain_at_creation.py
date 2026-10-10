@@ -114,27 +114,27 @@ class _StrSubclass(str):
 class TestTheDomain:
     """``entity_name_error`` is the single definition the six call sites share."""
 
-    @pytest.mark.parametrize("name", _NON_STRING_NAMES)
-    def test_non_string_is_refused(self, name):
-        err = entity_name_error("add_object", "name", name)
-        assert err is not None, name
-        assert "non-empty string" in err
-        assert type(name).__name__ in err
+    def test_non_string_is_refused(self):
+        for name in _NON_STRING_NAMES:
+            err = entity_name_error("add_object", "name", name)
+            assert err is not None, name
+            assert "non-empty string" in err, f"{name!r}"
+            assert type(name).__name__ in err, f"{name!r}"
 
     def test_empty_string_is_refused(self):
         err = entity_name_error("add_object", "name", "")
         assert err is not None
         assert "non-empty string" in err
 
-    @pytest.mark.parametrize("name", _NUL_NAMES)
-    def test_nul_is_refused_in_any_position(self, name):
-        err = entity_name_error("add_object", "name", name)
-        assert err is not None, name
-        assert "NUL" in err
+    def test_nul_is_refused_in_any_position(self):
+        for name in _NUL_NAMES:
+            err = entity_name_error("add_object", "name", name)
+            assert err is not None, name
+            assert "NUL" in err, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _GOOD_NAMES)
-    def test_addressable_name_is_accepted(self, name):
-        assert entity_name_error("add_object", "name", name) is None
+    def test_addressable_name_is_accepted(self):
+        for name in _GOOD_NAMES:
+            assert entity_name_error("add_object", "name", name) is None, f"{name!r}"
 
     def test_str_subclass_is_accepted(self):
         """A ``str`` subclass keys the registry and compiles like any other string."""
@@ -162,9 +162,9 @@ class TestTheDomainIsNotAnAllowlist:
     narrowing is a separate decision, not a side effect of this one.
     """
 
-    @pytest.mark.parametrize("name", ["so101/gripper", "table.top", "obj 2", "küche", "cube\ttab", "a\nb"])
-    def test_unusual_but_addressable_name_is_accepted(self, name):
-        assert entity_name_error("add_object", "name", name) is None
+    def test_unusual_but_addressable_name_is_accepted(self):
+        for name in ["so101/gripper", "table.top", "obj 2", "küche", "cube\ttab", "a\nb"]:
+            assert entity_name_error("add_object", "name", name) is None, f"{name!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -216,8 +216,7 @@ def _body_names(sim) -> list[str]:
 
 
 class TestMujocoAddObject:
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_unaddressable_name_is_refused(self, sim, name):
+    def test_unaddressable_name_is_refused(self, sim):
         """An error dict, not a raise and not a success - and no registry entry.
 
         Pre-fix: ``""`` and a NUL name returned success, ``7`` and ``["x"]``
@@ -225,21 +224,22 @@ class TestMujocoAddObject:
         ``add_object(7, ...)`` left ``7`` in ``world.objects`` with no body in
         the model - a world holding an entry for something that does not exist.
         """
-        result = sim.add_object(name, shape="box", size=[0.06, 0.06, 0.06], position=[0.0, 0.0, 0.5])
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert list(sim._world.objects) == []
+        for name in _SURFACE_PROBES:
+            result = sim.add_object(name, shape="box", size=[0.06, 0.06, 0.06], position=[0.0, 0.0, 0.5])
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert list(sim._world.objects) == [], f"{name!r}"
 
-    @pytest.mark.parametrize("name", ("", "a\x00b"))
-    def test_refusal_compiles_no_body(self, sim, name):
+    def test_refusal_compiles_no_body(self, sim):
         """The model is untouched, so nothing unaddressable is left in it.
 
         Pre-fix the compiled body list was ``['world', '', 'a']`` - one body
         named with MuJoCo's unnamed sentinel and one under a truncated name.
         """
-        before = _body_names(sim)
-        sim.add_object(name, shape="box", size=[0.06, 0.06, 0.06])
-        assert _body_names(sim) == before
+        for name in ("", "a\x00b"):
+            before = _body_names(sim)
+            sim.add_object(name, shape="box", size=[0.06, 0.06, 0.06])
+            assert _body_names(sim) == before, f"{name!r}"
 
     def test_an_addressable_object_still_round_trips(self, sim):
         """The happy path is unchanged: create it, then address it by that name."""
@@ -252,13 +252,13 @@ class TestMujocoAddObject:
 
 
 class TestMujocoAddCamera:
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_unaddressable_name_is_refused(self, sim, name):
-        before = dict(sim._world.cameras)
-        result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert sim._world.cameras == before
+    def test_unaddressable_name_is_refused(self, sim):
+        for name in _SURFACE_PROBES:
+            before = dict(sim._world.cameras)
+            result = sim.add_camera(name, position=[1.0, 1.0, 1.0], target=[0.0, 0.0, 0.0])
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert sim._world.cameras == before, f"{name!r}"
 
     def test_the_empty_name_collides_with_a_render_routing_token(self, sim):
         """Pin the premise for refusing ``""`` on a camera specifically.
@@ -291,8 +291,7 @@ class TestMujocoAddCamera:
 
 
 class TestMujocoAddRobot:
-    @pytest.mark.parametrize("name", [probe for probe in _SURFACE_PROBES if probe != ""])
-    def test_unaddressable_name_is_refused(self, sim, arm_path, name):
+    def test_unaddressable_name_is_refused(self, sim, arm_path):
         """Includes the falsy non-strings the derive branch used to swallow.
 
         Pre-fix: ``7`` compiled bodies under the ``7/`` namespace but keyed the
@@ -301,10 +300,11 @@ class TestMujocoAddRobot:
         ``"a\\x00b"`` compiled ``'abase'``/``'alink'``, losing the namespace
         separator to the NUL.
         """
-        result = sim.add_robot(name, urdf_path=arm_path)
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert list(sim._world.robots) == []
+        for name in [probe for probe in _SURFACE_PROBES if probe != ""]:
+            result = sim.add_robot(name, urdf_path=arm_path)
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert list(sim._world.robots) == [], f"{name!r}"
 
     @pytest.mark.parametrize("name", (None, ""))
     def test_the_documented_derive_short_form_still_derives(self, sim, arm_path, name):
@@ -354,29 +354,29 @@ class TestNewtonRefusesTheSameNames:
     Newton.
     """
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_object(self, name):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_object(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._world.objects == {}
+    def test_add_object(self):
+        for name in _SURFACE_PROBES:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_object(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._world.objects == {}, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_camera(self, name):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_camera(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._world.cameras == {}
+    def test_add_camera(self):
+        for name in _SURFACE_PROBES:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_camera(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._world.cameras == {}, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_robot(self, name):
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_robot(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._world.robots == {}
+    def test_add_robot(self):
+        for name in _SURFACE_PROBES:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_robot(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._world.robots == {}, f"{name!r}"
 
     def test_an_addressable_name_gets_past_the_guard(self):
         """The guard is not a blanket refusal: a usable name reaches the next check.
@@ -422,33 +422,33 @@ class TestIsaacRefusesTheSameNames:
     unchecked.
     """
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_object(self, name):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_object(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._objects == {}
+    def test_add_object(self):
+        for name in _SURFACE_PROBES:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_object(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._objects == {}, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_camera(self, name):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_camera(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._cameras == {}
+    def test_add_camera(self):
+        for name in _SURFACE_PROBES:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_camera(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._cameras == {}, f"{name!r}"
 
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_add_robot(self, name):
-        stub = _isaac_stub()
-        result = IsaacSimulation.add_robot(stub, name)  # type: ignore[arg-type]
-        assert result["status"] == "error", (name, result)
-        assert "'name'" in result["content"][0]["text"]
-        assert stub._robots == {}
-        # The refusal precedes the stage: the prim path is interpolated from the
-        # name, so a refusal that landed after the append would leave a path in
-        # the teardown registry for a prim that was never created.
-        assert stub._prim_registry == []
+    def test_add_robot(self):
+        for name in _SURFACE_PROBES:
+            stub = _isaac_stub()
+            result = IsaacSimulation.add_robot(stub, name)  # type: ignore[arg-type]
+            assert result["status"] == "error", (name, result)
+            assert "'name'" in result["content"][0]["text"], f"{name!r}"
+            assert stub._robots == {}, f"{name!r}"
+            # The refusal precedes the stage: the prim path is interpolated from the
+            # name, so a refusal that landed after the append would leave a path in
+            # the teardown registry for a prim that was never created.
+            assert stub._prim_registry == [], f"{name!r}"
 
     def test_an_addressable_name_gets_past_the_guard(self):
         """The guard is not a blanket refusal: a usable name reaches the next check.
@@ -524,21 +524,21 @@ class TestEveryBackendGivesTheSameVerdict:
         yield s
         s.cleanup()
 
-    @pytest.mark.parametrize("name", (7, ["x"], "", "a\x00b"))
-    def test_add_object_verdicts_match(self, mj_sim, name):
-        mj = mj_sim.add_object(name, shape="box")
-        nt = NewtonSimEngine.add_object(_newton_stub(), name)  # type: ignore[arg-type]
-        ic = IsaacSimulation.add_object(_isaac_stub(), name)  # type: ignore[arg-type]
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
-        assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"]
+    def test_add_object_verdicts_match(self, mj_sim):
+        for name in (7, ["x"], "", "a\x00b"):
+            mj = mj_sim.add_object(name, shape="box")
+            nt = NewtonSimEngine.add_object(_newton_stub(), name)  # type: ignore[arg-type]
+            ic = IsaacSimulation.add_object(_isaac_stub(), name)  # type: ignore[arg-type]
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
+            assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"], f"{name!r}"
 
-    @pytest.mark.parametrize("name", (7, ["x"], "", "a\x00b"))
-    def test_add_camera_verdicts_match(self, mj_sim, name):
-        mj = mj_sim.add_camera(name, position=[1.0, 1.0, 1.0])
-        nt = NewtonSimEngine.add_camera(_newton_stub(), name)  # type: ignore[arg-type]
-        ic = IsaacSimulation.add_camera(_isaac_stub(), name)  # type: ignore[arg-type]
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
-        assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"]
+    def test_add_camera_verdicts_match(self, mj_sim):
+        for name in (7, ["x"], "", "a\x00b"):
+            mj = mj_sim.add_camera(name, position=[1.0, 1.0, 1.0])
+            nt = NewtonSimEngine.add_camera(_newton_stub(), name)  # type: ignore[arg-type]
+            ic = IsaacSimulation.add_camera(_isaac_stub(), name)  # type: ignore[arg-type]
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
+            assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"], f"{name!r}"
 
 
 # --------------------------------------------------------------------------- #
@@ -616,22 +616,22 @@ class TestMujocoPatchSceneMjcf:
     """
 
     @pytest.mark.parametrize("kind", _CLAIMING_OPS)
-    @pytest.mark.parametrize("name", _SURFACE_PROBES)
-    def test_unaddressable_name_is_refused(self, sim, kind, name):
-        result = sim.patch_scene_mjcf(_claim_ops(name)[kind])
-        assert result["status"] == "error", (kind, name, result)
-        text = result["content"][0]["text"]
-        assert "'name'" in text, (kind, name, text)
-        assert kind in text, (kind, name, text)
+    def test_unaddressable_name_is_refused(self, sim, kind):
+        for name in _SURFACE_PROBES:
+            result = sim.patch_scene_mjcf(_claim_ops(name)[kind])
+            assert result["status"] == "error", (kind, name, result)
+            text = result["content"][0]["text"]
+            assert "'name'" in text, (kind, name, text)
+            assert kind in text, (kind, name, text)
 
     @pytest.mark.parametrize("kind", _CLAIMING_OPS)
-    @pytest.mark.parametrize("name", ("", "a\x00b"))
-    def test_a_refused_batch_compiles_nothing(self, sim, kind, name):
+    def test_a_refused_batch_compiles_nothing(self, sim, kind):
         """The rejected batch leaves no entity behind under any spelling."""
-        before_bodies, before_geoms = _body_names(sim), _geom_names(sim)
-        sim.patch_scene_mjcf(_claim_ops(name)[kind])
-        assert _body_names(sim) == before_bodies, (kind, name)
-        assert _geom_names(sim) == before_geoms, (kind, name)
+        for name in ("", "a\x00b"):
+            before_bodies, before_geoms = _body_names(sim), _geom_names(sim)
+            sim.patch_scene_mjcf(_claim_ops(name)[kind])
+            assert _body_names(sim) == before_bodies, (kind, name)
+            assert _geom_names(sim) == before_geoms, (kind, name)
 
     def test_a_nul_name_does_not_reserve_its_truncation(self, sim):
         """The collision half: the requested name and the compiled one differed.
@@ -651,13 +651,13 @@ class TestMujocoPatchSceneMjcf:
         sim.patch_scene_mjcf(_claim_ops("")["add_geom"])
         assert None not in _geom_names(sim)
 
-    @pytest.mark.parametrize("name", (7, ["x"], "", "a\x00b"))
-    def test_the_patch_door_and_add_object_agree(self, sim, name):
+    def test_the_patch_door_and_add_object_agree(self, sim):
         """One backend, one domain: both doors refuse with the same sentence."""
-        patched = sim.patch_scene_mjcf(_claim_ops(name)["add_body"])
-        method = sim.add_object(name, shape="box")
-        assert patched["status"] == method["status"] == "error", (patched, method)
-        assert entity_name_error("add_body", "name", name) in patched["content"][0]["text"]
+        for name in (7, ["x"], "", "a\x00b"):
+            patched = sim.patch_scene_mjcf(_claim_ops(name)["add_body"])
+            method = sim.add_object(name, shape="box")
+            assert patched["status"] == method["status"] == "error", (patched, method)
+            assert entity_name_error("add_body", "name", name) in patched["content"][0]["text"], f"{name!r}"
 
     # ---- controls: these pass before the fix too -------------------------- #
 
@@ -682,18 +682,18 @@ class TestMujocoPatchSceneMjcf:
         assert result["status"] == "error"
         assert f"{kind} requires 'name'" in result["content"][0]["text"]
 
-    @pytest.mark.parametrize("name", _GOOD_NAMES)
-    def test_addressable_names_still_round_trip(self, sim, name):
-        result = sim.patch_scene_mjcf(
-            [
-                {"op": "add_body", "parent": "world", "name": name, "pos": [0.0, 0.0, 0.5]},
-                {"op": "add_geom", "body": name, "type": "sphere", "size": [0.08], "name": f"{name}_g"},
-                {"op": "add_site", "body": name, "name": f"{name}_s"},
-            ]
-        )
-        assert result["status"] == "success", (name, result)
-        assert name in _body_names(sim)
-        assert sim.get_body_state(body_name=name)["status"] == "success"
+    def test_addressable_names_still_round_trip(self, sim):
+        for name in _GOOD_NAMES:
+            result = sim.patch_scene_mjcf(
+                [
+                    {"op": "add_body", "parent": "world", "name": name, "pos": [0.0, 0.0, 0.5]},
+                    {"op": "add_geom", "body": name, "type": "sphere", "size": [0.08], "name": f"{name}_g"},
+                    {"op": "add_site", "body": name, "name": f"{name}_s"},
+                ]
+            )
+            assert result["status"] == "success", (name, result)
+            assert name in _body_names(sim), f"{name!r}"
+            assert sim.get_body_state(body_name=name)["status"] == "success", f"{name!r}"
 
     @pytest.mark.parametrize("kind", _LOOKUP_OPS)
     def test_a_lookup_op_still_reports_absence(self, sim, kind):

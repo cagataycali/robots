@@ -107,12 +107,12 @@ class TestTheBindingIsGenuinelyUnsafe:
 
 
 class TestTheWrapperResolvesToNotFound:
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_a_non_string_name_resolves_to_minus_one(self, name: Any) -> None:
+    def test_a_non_string_name_resolves_to_minus_one(self) -> None:
         model = mujoco.MjModel.from_xml_string(
             '<mujoco><worldbody><body name="a"><geom size="0.1"/></body></worldbody></mujoco>'
         )
-        assert mj_name_to_id(model, mujoco.mjtObj.mjOBJ_BODY, name) == -1
+        for name in NON_STRING_NAMES:
+            assert mj_name_to_id(model, mujoco.mjtObj.mjOBJ_BODY, name) == -1, repr(name)
 
     def test_a_string_name_still_resolves(self) -> None:
         """The wrapper is transparent for the names that do identify an entity."""
@@ -123,69 +123,37 @@ class TestTheWrapperResolvesToNotFound:
         assert mj_name_to_id(model, mujoco.mjtObj.mjOBJ_BODY, "nosuch") == -1
 
 
-class TestTheCrashSitesReportInstead:
-    """Each of these terminated the process with SIGSEGV before the guard."""
+#: Every agent-callable surface that reached the binding or the reporter with a
+#: caller-supplied name, as ``(label, call, the words its refusal reports)``. The
+#: first five terminated the process with SIGSEGV before the guard; the last three
+#: reached the shared "did you mean" block and raised a bare ``TypeError`` there.
+#: ``set_joint_positions`` takes the name as a mapping KEY rather than a value.
+_SURFACES: list[tuple[str, Any, str]] = [
+    ("get_body_state", lambda sim, name: sim.get_body_state(body_name=name), "not found"),
+    ("set_body_properties", lambda sim, name: sim.set_body_properties(body_name=name, mass=1.0), "not found"),
+    ("apply_force", lambda sim, name: sim.apply_force(body_name=name, force=[1.0, 0.0, 0.0]), "not found"),
+    ("attach_bodies", lambda sim, name: sim.attach_bodies(parent=name, child="crate"), "not found"),
+    ("set_joint_positions", lambda sim, name: sim.set_joint_positions({name: 0.1}), "not joints in this model"),
+    ("move_object", lambda sim, name: sim.move_object(name=name, position=[0.2, 0.0, 0.3]), "not found"),
+    ("remove_object", lambda sim, name: sim.remove_object(name=name), "not found"),
+    ("remove_camera", lambda sim, name: sim.remove_camera(name=name), "not found"),
+]
 
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_get_body_state(self, sim, name: Any) -> None:
+
+class TestEverySurfaceReportsInsteadOfCrashing:
+    """A non-string name is reported through the envelope on every surface.
+
+    One cell per surface over one seeded world: a refused lookup changes
+    nothing, so each name in the probe table meets the same world.
+    """
+
+    @pytest.mark.parametrize(("label", "call", "reported"), _SURFACES, ids=[s[0] for s in _SURFACES])
+    def test_a_non_string_name_is_reported(self, sim, label: str, call: Any, reported: str) -> None:
         _seeded_world(sim)
-        result = sim.get_body_state(body_name=name)
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_set_body_properties(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.set_body_properties(body_name=name, mass=1.0)
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_apply_force(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.apply_force(body_name=name, force=[1.0, 0.0, 0.0])
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_attach_bodies(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.attach_bodies(parent=name, child="crate")
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_set_joint_positions_dict_key(self, sim, name: Any) -> None:
-        """The name arrives as a mapping KEY on this method rather than a value."""
-        _seeded_world(sim)
-        result = sim.set_joint_positions({name: 0.1})
-        assert result["status"] == "error"
-        assert "not joints in this model" in _text(result)
-
-
-class TestTheReporterCanRenderANonStringName:
-    """These three reached the shared "did you mean" block and raised there."""
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_move_object(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.move_object(name=name, position=[0.2, 0.0, 0.3])
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_remove_object(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.remove_object(name=name)
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
-
-    @pytest.mark.parametrize("name", NON_STRING_NAMES, ids=repr)
-    def test_remove_camera(self, sim, name: Any) -> None:
-        _seeded_world(sim)
-        result = sim.remove_camera(name=name)
-        assert result["status"] == "error"
-        assert "not found" in _text(result)
+        for name in NON_STRING_NAMES:
+            result = call(sim, name)
+            assert result["status"] == "error", (label, name)
+            assert reported in _text(result), (label, name)
 
     def test_the_suggestion_is_still_offered_for_a_string_typo(self, sim) -> None:
         """Guarding the reporter must not cost the close-match it exists for."""
