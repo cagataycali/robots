@@ -51,6 +51,16 @@ def main(argv=None) -> int:
         seeds = rep.get("kept_seeds") or []
         arm, task = rep["arm"], rep["task"]
         e = EMBODIMENTS[arm]
+        # The band lever works by REPLACING the embodiment's cube_box in the registry (harvest.py:143-151),
+        # so a shard generated with --band-scale k samples from a different box. Rebuilding its goals without
+        # the same transform would repeat it11's failure in a new place: right shape, wrong positions.
+        k = float(rep.get("band_scale") or 1.0)
+        if k != 1.0:
+            import dataclasses
+            (xlo, xhi), (ylo, yhi) = e.cube_box
+            cx, cy = (xlo + xhi) / 2.0, (ylo + yhi) / 2.0
+            e = dataclasses.replace(e, cube_box=((cx + (xlo - cx) * k, cx + (xhi - cx) * k),
+                                                 (cy + (ylo - cy) * k, cy + (yhi - cy) * k)))
         n_eps = (rep.get("passB") or {}).get("parquet_episode_count")
         if not seeds or (n_eps and len(seeds) != n_eps):
             summary[shard] = {"status": f"REFUSED: {len(seeds)} seeds vs {n_eps} episodes — "
@@ -74,7 +84,7 @@ def main(argv=None) -> int:
         summary[shard] = {"status": "written", "episodes": len(rows), "file": out,
                           "x_range": [round(min(xs), 4), round(max(xs), 4)],
                           "y_range": [round(min(ys), 4), round(max(ys), 4)],
-                          "report_band_scale": rep.get("band_scale", 1.0)}
+                          "report_band_scale": k, "band_transform_applied": k != 1.0}
         # No upload path here on purpose: GEN-REPORT's repo_id is a local placeholder
         # ("local/rlenv-<shard>"), not the published repo, and publish.py already uploads the whole ds/
         # folder -- so writing into ds/ means republishing carries the sidecar, with one upload route

@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"phase": "config", **rec}), flush=True)
-    (a.report or (a.out.parent / f"GEN-REPORT-{a.arm}-{a.task}.json")).parent.mkdir(parents=True, exist_ok=True)
+    (a.report or (a.out / "GEN-REPORT.json")).parent.mkdir(parents=True, exist_ok=True)
     return _run(a, e, S, X, seeds, cams, repo_id, rec)
 
 
@@ -420,7 +420,7 @@ def _as_array(content) -> "np.ndarray | None":
 
 
 def _write(a, rec) -> None:
-    out = a.report or (a.out.parent / f"GEN-REPORT-{a.arm}-{a.task}.json")
+    out = a.report or (a.out / "GEN-REPORT.json")
     out.write_text(json.dumps(rec, indent=1), encoding="utf-8")
     print(json.dumps({"phase": "report", "path": str(out), "verdict": rec.get("verdict")}), flush=True)
 
