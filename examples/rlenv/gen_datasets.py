@@ -25,6 +25,17 @@ def load(p):
         return None
 
 
+def _emb():
+    # this script runs from the harness repo, not from the pinned strands_vla worktree, so the import that
+    # every other script gets via --svla has to be made explicitly here (it failed exactly once, loudly).
+    import sys
+    for p in (os.path.expanduser("~/rlenv-svla-pin"), os.path.expanduser("~/svla-lonely-electron")):
+        if p not in sys.path and os.path.isdir(p):
+            sys.path.insert(0, p)
+    from strands_vla.embodiments import EMBODIMENTS as EMB
+    return EMB
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--data", default=os.path.expanduser("~/svla-rlenv-data"))
@@ -63,13 +74,29 @@ def main(argv=None) -> int:
     w("")
     w("## Shards")
     w("")
-    w("| shard | episodes | keep | band / episode | goals sidecar | load-back | criterion floor | "
+    w("| shard | episodes | keep | band / horizon | goals sidecar | load-back | criterion floor | "
       "validated ceiling | failures published | cells |")
     w("|---|---|---|---|---|---|---|---|---|---|")
     for name, r in shards:
         b = r.get("passB") or {}
         ts = r.get("written_task_strings") or {}
         arm, task = r.get("arm"), r.get("task")
+        # duration_s was only recorded from it12 on, so earlier shards printed "? s" for a quantity that is
+        # sitting in their own parquet. MEASURE it instead of reading a field: frames per episode / control_hz,
+        # and say out loud whether the horizon is FIXED (it is -- uniq == 1 on all seven shards), because a
+        # variable horizon would make episode length carry outcome information.
+        EMB = _emb()
+        import pandas as _pd, glob as _g
+        try:
+            _df = _pd.concat([_pd.read_parquet(f, columns=["episode_index"]) for f in
+                              sorted(_g.glob(os.path.join(a.data, name, "ds", "data", "**", "*.parquet"),
+                                             recursive=True))], ignore_index=True)
+            _n = _df.groupby("episode_index").size()
+            _hz = float(EMB[arm].control_hz) if arm in EMB else 0.0
+            horizon = ("%.1f s (%d frames, FIXED)" % (_n.iloc[0] / _hz, _n.iloc[0]) if _n.nunique() == 1 and _hz
+                       else "VARIES %d-%d frames" % (_n.min(), _n.max()))
+        except Exception as _e:
+            horizon = "unmeasured (%s)" % type(_e).__name__
         canon = f"{arm}-{task}"
         ep = b.get("parquet_episode_count")
         sc = os.path.join(a.data, name, "ds", "EPISODES.jsonl")
@@ -114,9 +141,23 @@ def main(argv=None) -> int:
         kr = r["passA"]["keep_rate"]
         disc = int(round(ep / kr)) - ep if (ep and kr) else None
         fails = f"0 (of ~{int(round(ep / kr))} attempts; {disc} discarded)" if disc is not None else "unknown"
-        w("| `%s` | %s | %s | %s / %s s | %s | %s | %s | %s | %s | %s |" % (
-            name, ep, kr, r.get("band_scale", 1.0), r.get("duration_s", "?"), sidecar, lb, floor,
+        w("| `%s` | %s | %s | %s / %s | %s | %s | %s | %s | %s | %s |" % (
+            name, ep, kr, r.get("band_scale", 1.0), horizon, sidecar, lb, floor,
             ceil or "n/a", fails, "own" if (name == canon or own_arm) else f"inherited from `{canon}`"))
+    w("")
+    w("**Every shard is FIXED-HORIZON**, measured from the parquet rather than taken from a field: 60 frames")
+    w("at 10 Hz (6.0 s) on the six canonical shards, 180 frames (18.0 s) on the band-2.0 variant, with exactly")
+    w("one distinct length per shard. Two consequences, and the second is the one that bites.")
+    w("")
+    w("GOOD: episode length here carries ZERO information about outcome, so nothing in these shards lets a")
+    w("head learn the shortcut SIMDATA measured in its own corpus (SD-64: failures run 2.3x longer than")
+    w("successes, 120.6 vs 52.3 frames, because a timeout runs to the wall). Our episodes cannot leak that.")
+    w("")
+    w("HAZARD WHEN MIXED: if these shards are trained alongside a VARIABLE-length corpus, episode length")
+    w("becomes a near-perfect source label (60 or 180 frames = us, anything else = them). Combined with a")
+    w("corpus where length correlates with outcome, length-to-outcome becomes learnable ACROSS the mixture")
+    w("even though neither corpus teaches it alone. Any lane mixing corpora should either truncate every")
+    w("source to a common horizon or report the per-source length histogram next to its result.")
     w("")
     w("**Failures are not published.** A shard is successes-only: `keep` is the expert's own success rate on")
     w("freshly sampled poses, so the discarded-attempt count in the table is how many failures were thrown")
