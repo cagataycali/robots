@@ -61,9 +61,14 @@ def card(shard: str, rep: dict, nec: dict | None, dwl: dict | None, lb: dict | N
         "but an ablation measured on it cannot distinguish a head that reads the goal from one that does not.",
         "",
     ]
+    # A negative split's own warnings are NOT task-specific, and nesting them under the push branch meant
+    # the touch FAIL card shipped without the one line that matters most about it ("every failure here is a
+    # near miss, so this split teaches the tolerance") -- the branch that writes it was unreachable for
+    # touch. Emit them for ANY negative shard, before any task-specific section.
+    if _cls(rep) != "successes":
+        L += _failure_modes(rep)
+        L += _start_sep(shard)
     if rep.get("task") == "push" and pp:
-        if _cls(rep) != "successes":
-            L += _failure_modes(rep)
         L += ["### What the success criterion requires (priced against its own floors)", "",
               f"Success is cube displacement along the approach axis > **{pp.get('threshold_m', 0.04)} m**. A "
               "displacement threshold is worth nothing until the displacement a NON-pushing arm produces is "
@@ -246,6 +251,35 @@ def _failure_modes(rep) -> list:
               f"failed the displacement threshold, so the policy's error is in the push, not in reaching. "
               f"This is the split to use for a failure-aware objective.", ""]
     return L
+
+
+def _start_sep(shard: str) -> list:
+    """How much of this split's label is decided at frame 0 (runs/start-sep.json, it22).
+
+    A consumer who pulls this repo from the Hub never reads the lane's NEGATIVES.md, and the number they
+    most need is the goal-only baseline: if the cube pose alone separates failure from success, a
+    failure-aware objective can score well by learning the sampler instead of the behaviour.
+    """
+    ss = load(os.path.join(RUNS, "start-sep.json")) or {}
+    pos = shard[:-len("-FAIL")] if shard.endswith("-FAIL") else shard
+    row = next((r for r in ss.get("pairs", []) if r.get("shard") == pos), None)
+    if not row:
+        return []
+    box = row["fail_window"]["joint_box_success_fraction_inside"]
+    return ["### How much of this label is decided before the arm moves", "",
+            f"Logistic regression on frame-0 information only, 5-fold CV scored on held-out folds, "
+            f"n={row['n_success']} successes vs {row['n_fail']} failures from the same seed stream "
+            f"(seed overlap {row['seed_overlap']}, so no seed is in both shards):", "",
+            "| frame-0 features | AUC | label-permuted control (mean / max) |", "|---|---|---|",
+            f"| cube pose (where the sampler put the goal) | **{row['auc']['goal']:.3f}** | "
+            f"{row['auc_permuted_mean']['goal']:.3f} / {row['auc_permuted_max']['goal']:.3f} |",
+            f"| the arm's jittered reset pose | {row['auc']['state']:.3f} | "
+            f"{row['auc_permuted_mean']['state']:.3f} / {row['auc_permuted_max']['state']:.3f} |", "",
+            f"The arm's own start pose is at chance (the measurement's negative control). The cube pose is "
+            f"not: every failure in this split was sampled inside a box that holds {100.0 * box:.1f}% of the "
+            f"success shard's episodes. **Report a goal-only baseline** next to any failure classifier "
+            f"trained on this split, or resample it to match the positives' goal distribution -- otherwise "
+            f"most of the score is the sampler, not the policy.", ""]
 
 
 def main(argv=None) -> int:
