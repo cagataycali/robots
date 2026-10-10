@@ -311,6 +311,18 @@ def main(argv=None) -> int:
         if dwl is not None and a.shard != f"{arm}-{task}":
             dwl = dict(dwl, inherited_from=f"{arm}-touch")
             inherited.append("dwell")
+    # it25: a shard generated WITH action noise may not inherit a sigma=0 criterion cell, even labelled.
+    # Measured that iteration: jitter moves so101 touch from 0.98 to 0.17 under dwell>=10 and a goal-BLIND
+    # expert from 0.14 to 0.47 under min-gap, so a sigma=0 necessity/dwell cell is not a weaker description
+    # of a noisy shard -- it is a different experiment. Inheritance is refused and the card says so.
+    refused_inherit = []
+    if float(rep.get("action_noise_rad") or 0) > 0 and inherited:
+        for _k in list(inherited):
+            if _k == "necessity":
+                nec = None
+            if _k == "dwell":
+                dwl = None
+        refused_inherit, inherited = inherited, []
     lb = load(os.path.join(RUNS, f"loadback-{a.shard}.json"))
     cr = ((load(os.path.join(RUNS, "capture-radius.json")) or {}).get("arms") or {}).get(arm)
     pp = ((load(os.path.join(RUNS, "price-push.json")) or {}).get("arms") or {}).get(arm)
@@ -332,10 +344,17 @@ def main(argv=None) -> int:
             lb = None  # refuse to print another shard's load-back as this one's
     repo = PREFIX + a.shard
     text = card(a.shard, rep, nec, dwl, lb, hor, repo, cr, pp, sh)
+    # A shard may carry a CARD-EXTRA.md generated from its own gate JSONs (gen_pair_extra.py). It is
+    # appended, never substituted, so the standard card's provenance block always stays on top.
+    _x = os.path.join(d, "CARD-EXTRA.md")
+    if os.path.exists(_x):
+        text = text.rstrip() + "\n" + open(_x).read()
     open(os.path.join(d, "README.md"), "w").write(text)
     out = {"shard": a.shard, "repo": repo, "card_lines": len(text.splitlines()),
            "has_necessity": bool(nec), "has_dwell": bool(dwl), "has_loadback": bool(lb),
-           "has_horizon": bool(hor), "private": bool(a.private)}
+           "has_horizon": bool(hor), "private": bool(a.private),
+           "refused_inherited_cells": refused_inherit,
+           "action_noise_rad": rep.get("action_noise_rad")}
     if a.dry_run:
         print(json.dumps(out | {"dry_run": True}))
         return 0
