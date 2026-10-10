@@ -52,23 +52,23 @@ from tests.training._spec_field_reads import reads_spec_field
 # The spellings a caller reaches for when opting out (every one truthy), two
 # truthy numbers, and the falsy values that are not a declared spelling of the
 # negative posture either.
-NOT_A_BOOLEAN = [
-    pytest.param("false", id="str-false"),
-    pytest.param("no", id="str-no"),
-    pytest.param("0", id="str-zero"),
-    pytest.param(1, id="int-one"),
-    pytest.param(0, id="int-zero"),
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(None, id="none"),
-    pytest.param([], id="empty-list"),
+NOT_A_BOOLEAN: list[Any] = [
+    "false",
+    "no",
+    "0",
+    1,
+    0,
+    float("nan"),
+    None,
+    [],
 ]
 
 # Both python spellings plus the numpy booleans the shared domain also accepts.
-A_BOOLEAN = [
-    pytest.param(True, id="true"),
-    pytest.param(False, id="false"),
-    pytest.param(np.True_, id="np-true"),
-    pytest.param(np.False_, id="np-false"),
+A_BOOLEAN: list[Any] = [
+    True,
+    False,
+    np.True_,
+    np.False_,
 ]
 
 # Which backend reads which field, by name or through a forwarding table. The
@@ -131,20 +131,20 @@ class TestEveryReaderRefusesAPostureItCanOnlyMisread:
     """Each backend that reads a field refuses every non-boolean, by name."""
 
     @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_resume_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.resume = value
-        problems = _problems_about(trainer_cls(), spec, "resume")
-        assert problems, f"{trainer_cls.__name__} accepted resume={value!r}"
-        assert any("resume must be a boolean" in p for p in problems), problems
+    def test_resume_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in NOT_A_BOOLEAN:
+            spec.resume = value
+            problems = _problems_about(trainer_cls(), spec, "resume")
+            assert problems, f"{trainer_cls.__name__} accepted resume={value!r}"
+            assert any("resume must be a boolean" in p for p in problems), problems
 
     @pytest.mark.parametrize("trainer_cls", READS_STREAMING)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_streaming_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.streaming = value
-        problems = _problems_about(trainer_cls(), spec, "streaming")
-        assert problems, f"{trainer_cls.__name__} accepted streaming={value!r}"
-        assert any("streaming must be a boolean" in p for p in problems), problems
+    def test_streaming_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in NOT_A_BOOLEAN:
+            spec.streaming = value
+            problems = _problems_about(trainer_cls(), spec, "streaming")
+            assert problems, f"{trainer_cls.__name__} accepted streaming={value!r}"
+            assert any("streaming must be a boolean" in p for p in problems), problems
 
     @pytest.mark.parametrize("trainer_cls", READS_RESUME)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -164,16 +164,16 @@ class TestAUsableBooleanIsUntouched:
     """Both python spellings and the numpy booleans pass every reader."""
 
     @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    @pytest.mark.parametrize("value", A_BOOLEAN)
-    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.resume = value
-        assert _problems_about(trainer_cls(), spec, "resume") == []
+    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in A_BOOLEAN:
+            spec.resume = value
+            assert _problems_about(trainer_cls(), spec, "resume") == [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", READS_STREAMING)
-    @pytest.mark.parametrize("value", A_BOOLEAN)
-    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.streaming = value
-        assert _problems_about(trainer_cls(), spec, "streaming") == []
+    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in A_BOOLEAN:
+            spec.streaming = value
+            assert _problems_about(trainer_cls(), spec, "streaming") == [], f"{value!r}"
 
 
 class TestABackendThatIgnoresTheFieldReportsNothing:
@@ -184,16 +184,16 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     """
 
     @pytest.mark.parametrize("trainer_cls", IGNORES_RESUME)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.resume = value
-        assert _problems_about(trainer_cls(), spec, "resume") == []
+    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in NOT_A_BOOLEAN:
+            spec.resume = value
+            assert _problems_about(trainer_cls(), spec, "resume") == [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", IGNORES_STREAMING)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.streaming = value
-        assert _problems_about(trainer_cls(), spec, "streaming") == []
+    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in NOT_A_BOOLEAN:
+            spec.streaming = value
+            assert _problems_about(trainer_cls(), spec, "streaming") == [], f"{value!r}"
 
 
 class TestTheRefusalPrecedesTheCheckTheFlagGates:

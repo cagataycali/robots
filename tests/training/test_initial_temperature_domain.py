@@ -96,17 +96,19 @@ def _init_alpha_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOffPolicyBackendRefusesATemperatureWithNoLogarithm:
     """FastSAC refuses every value ``torch.log`` cannot turn into a temperature."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.init_alpha = value
-        assert _init_alpha_problems(OFF_POLICY, spec), f"fast_sac accepted init_alpha={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.init_alpha = value
+            assert _init_alpha_problems(OFF_POLICY, spec), f"fast_sac accepted init_alpha={value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.init_alpha = value
-        (problem,) = _init_alpha_problems(OFF_POLICY, spec)
-        assert problem.startswith("fast_sac: init_alpha must be a positive finite number"), problem
-        assert repr(value) in problem, problem
+    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.init_alpha = value
+            problems = _init_alpha_problems(OFF_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            problem = problems[0]
+            assert problem.startswith("fast_sac: init_alpha must be a positive finite number"), problem
+            assert repr(value) in problem, problem
 
     def test_a_refusal_does_not_hide_the_rate_that_moves_it(self, spec: RLTrainSpec) -> None:
         """The temperature and its rate are reported at once, not one round at a time."""
@@ -120,10 +122,10 @@ class TestTheOffPolicyBackendRefusesATemperatureWithNoLogarithm:
 class TestTheUsableDomainIsUntouched:
     """A temperature with a finite logarithm is not newly refused."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_temperature_reports_nothing(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.init_alpha = value
-        assert _init_alpha_problems(OFF_POLICY, spec) == []
+    def test_a_usable_temperature_reports_nothing(self, spec: RLTrainSpec) -> None:
+        for value in USABLE:
+            spec.init_alpha = value
+            assert _init_alpha_problems(OFF_POLICY, spec) == [], f"{value!r}"
 
     def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
         """The shipped ``1.0`` default must not trip the new gate."""
@@ -142,11 +144,13 @@ class TestBothTemperatureBranchesAreCovered:
     """
 
     @pytest.mark.parametrize("autotune", [True, False])
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_on_either_branch(self, spec: RLTrainSpec, value: Any, autotune: bool) -> None:
-        spec.autotune_alpha = autotune
-        spec.init_alpha = value
-        assert _init_alpha_problems(OFF_POLICY, spec), f"fast_sac accepted init_alpha={value!r} (autotune={autotune})"
+    def test_it_is_reported_on_either_branch(self, spec: RLTrainSpec, autotune: bool) -> None:
+        for value in UNUSABLE:
+            spec.autotune_alpha = autotune
+            spec.init_alpha = value
+            assert _init_alpha_problems(OFF_POLICY, spec), (
+                f"fast_sac accepted init_alpha={value!r} (autotune={autotune})"
+            )
 
     def test_both_branches_read_the_field(self) -> None:
         """Executable premise: the un-tuned branch is not a path that ignores it."""
@@ -160,10 +164,10 @@ class TestABackendWithNoTemperatureStaysQuiet:
     """A backend that never reads the field must not report on it."""
 
     @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_nothing_about_the_temperature(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
-        spec.init_alpha = value
-        assert _init_alpha_problems(provider, spec) == []
+    def test_it_reports_nothing_about_the_temperature(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.init_alpha = value
+            assert _init_alpha_problems(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
     def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
@@ -195,11 +199,11 @@ class TestNoneIsAValueRatherThanASentinel:
 class TestTheGateAddsNothingToTheSharedDomain:
     """The verdict is the shared rule's, so the two cannot drift apart."""
 
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.init_alpha = value
-        shared = positive_finite_number_error(value, "init_alpha", OFF_POLICY)
-        assert _init_alpha_problems(OFF_POLICY, spec) == ([shared] if shared is not None else [])
+    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE + USABLE:
+            spec.init_alpha = value
+            shared = positive_finite_number_error(value, "init_alpha", OFF_POLICY)
+            assert _init_alpha_problems(OFF_POLICY, spec) == ([shared] if shared is not None else []), f"{value!r}"
 
 
 class TestGuardingTheRateDoesNotGuardTheTemperature:

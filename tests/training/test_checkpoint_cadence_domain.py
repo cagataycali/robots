@@ -59,9 +59,9 @@ CHECKPOINTING_BACKENDS = (LerobotTrainer, Cosmos3Trainer, SagemakerTrainer)
 SILENTLY_WRONG = (True, 2.7, 5000.0, float("nan"), float("inf"))
 
 # Raised out of the consumer: the comparison itself refuses a non-number.
-RAISED_IN_THE_CONSUMER = ("5000", [7])
+RAISED_IN_THE_CONSUMER: tuple[Any, ...] = ("5000", [7])
 
-UNUSABLE = SILENTLY_WRONG + RAISED_IN_THE_CONSUMER
+UNUSABLE: tuple[Any, ...] = SILENTLY_WRONG + RAISED_IN_THE_CONSUMER
 
 # Cadences every consumer honors as themselves. ``0`` and a negative are the
 # documented "disable periodic saving" mode, which is why this domain has no
