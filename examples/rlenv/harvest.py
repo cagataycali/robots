@@ -108,6 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo-id", default=None, help="LeRobot repo id (default local/rlenv-<arm>-<task>)")
     p.add_argument("--seed", type=int, default=20261010)
     p.add_argument("--cam", type=int, default=128)
+    p.add_argument("--duration-s", type=float, default=None,
+                   help="rollout horizon in seconds, default the expert's EPISODE_S. This changes ONLY "
+                        "how long the episode runs, NOT the plan: the scripted expert keeps its natural "
+                        "speed and holds its last target afterwards. it7 MEASURED that so101 push is "
+                        "complete at 6 s and perfectly stable to 18 s (180 steps verified, displacement "
+                        "74.9 mm at both, 0/20 episodes disturbed afterwards), so a longer horizon buys "
+                        "no task content -- it buys the DWELL that LE it37's 18 s venue will evaluate and "
+                        "that 6 s demos never show, at 3x the frames")
     p.add_argument("--band-scale", type=float, default=1.0,
                    help="scale the arm's cube sampling box about its centre. it4 MEASURED that this "
                         "is the lever that makes the task goal-NECESSARY: on so101 touch a goal-blind "
@@ -154,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         "svla_pin_sha": sha, "cams": list(cams), "cam_px": a.cam, "seed": a.seed,
         "tries_budget": tries, "repo_id": repo_id, "out": str(a.out),
         "band_scale": a.band_scale, "cube_box": e.cube_box,
+        "duration_s": float(a.duration_s or X.EPISODE_S), "expert_episode_s": float(X.EPISODE_S),
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"phase": "config", **rec}), flush=True)
@@ -315,7 +324,8 @@ def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
 
     instr = goal_instruction(e, a.task, cube_xy, cams)
     robot.run_policy(robot_name=e.name, policy_object=pol, instruction=instr,
-                     duration=X.EPISODE_S, control_frequency=e.control_hz, n_episodes=1,
+                     duration=(a.duration_s or X.EPISODE_S), control_frequency=e.control_hz,
+                     n_episodes=1,
                      reset_between=(a.jitter <= 0), seed=seed, observer=obs, fast_mode=True)
     c1 = S.cube_pos(robot)
     c0 = st["c0"] if st["c0"] is not None else c1
