@@ -21,9 +21,19 @@ def load(p):
 
 
 def main(argv=None):
-    pos, neg = "so100-push-NOISE", "so100-push-NOISE-FAIL"
-    sep = load(f"{RUNS}/start-sep-NOISE-PAIR.json")
-    cross = load(f"{RUNS}/start-sep-so100-push-NOISE-FAIL.json")
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--pos", default="so100-push-NOISE")
+    p.add_argument("--neg", default="so100-push-NOISE-FAIL")
+    p.add_argument("--sep", default=None, help="start-sep JSON for the WITHIN-condition pair")
+    a = p.parse_args(argv)
+    pos, neg = a.pos, a.neg
+    sep = load(a.sep) if a.sep else load(f"{RUNS}/start-sep-NOISE-PAIR.json")
+    # the cross-condition number may live inside the within-condition JSON (so101) or in its own file
+    # from the iteration that failed the gate (so100). Both are read; neither is invented.
+    cross = load(f"{RUNS}/start-sep-{neg}.json")
+    if cross is None and sep and sep.get("cross_condition_goal_auc") is not None:
+        cross = {"goal": {"auc": sep["cross_condition_goal_auc"]}}
     if not sep:
         print(json.dumps({"refused": "no start-sep-NOISE-PAIR.json"}))
         return 1
@@ -65,12 +75,12 @@ def main(argv=None):
                  f"is NOT goal-balanced: where the cube starts still predicts the outcome, mostly through "
                  f"lateral position. What the perturbation bought is the drop from "
                  f"{(cross or {}).get('goal',{}).get('auc')} -- the AUC between these failures and the "
-                 f"sigma=0 success shard `{PREFIX}so100-push` -- to {sep.get('goal',{}).get('auc')} here, "
+                 f"sigma=0 success shard `{PREFIX}" + pos.replace("-NOISE", "") + "` -- to {sep.get('goal',{}).get('auc')} here, "
                  f"and the pre-registered bar for publishing was 0.75.")
         L.append("")
         L.append("### Do not re-pair it")
         L.append("")
-        L.append(f"Pairing these failures with `{PREFIX}so100-push` (the sigma=0 successes) puts the "
+        L.append(f"Pairing these failures with `{PREFIX}{pos.replace('-NOISE','')}` (the sigma=0 successes) puts the "
                  f"shortcut back: goal AUC **{(cross or {}).get('goal',{}).get('auc')}**, because that "
                  f"success set is itself goal-selected -- the hard goals are exactly the ones that failed at "
                  f"sigma=0. A negative split's shortcut is a property of the PAIR, not of the negatives. "
@@ -118,7 +128,7 @@ def main(argv=None):
                  "without the outcome being a restatement of the goal. It is NOT a demonstration set: the "
                  "failures are failures, and the successes were produced with noise on the actions, so they "
                  "are less clean than the sigma=0 shard. For imitation data use "
-                 f"`{PREFIX}so100-push`.")
+                 f"`{PREFIX}{pos.replace('-NOISE','')}`.")
         p = f"{DATA}/{shard}/CARD-EXTRA.md"
         open(p, "w").write("\n".join(L) + "\n")
         out[shard] = {"file": p, "lines": len(L)}
