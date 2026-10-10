@@ -101,7 +101,12 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--arm", required=True)
     p.add_argument("--task", default="touch", choices=("touch", "push"))
-    p.add_argument("--episodes", type=int, default=200, help="successful episodes wanted")
+    p.add_argument("--episodes", type=int, default=200, help="episodes wanted (of the --keep class)")
+    p.add_argument("--keep", choices=("successes", "failures"), default="successes",
+                   help="which outcome class to harvest. 'failures' records the episodes this harness has "
+                        "been THROWING AWAY (~50-550 per shard pass): the same scripted expert on the same "
+                        "bands, kept only when the success test FAILS. The pass-B gate stays symmetric -- a "
+                        "SUCCESS inside a failure shard is exactly as false a label as the reverse.")
     p.add_argument("--max-tries", type=int, default=0, help="pass-A seed budget (default 4x episodes)")
     p.add_argument("--jitter", type=float, default=0.10, help="rung-1 start jitter, rad (D62)")
     p.add_argument("--out", required=True, type=Path)
@@ -184,14 +189,18 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
         if len(good) >= a.episodes:
             break
         r = _episode(robot, emb, S, X, a, sd, cams, record=False)
-        if r["ok"]:
+        want = bool(r["ok"]) == (a.keep == "successes")
+        if want:
             good.append({"seed": sd, "cube_xy": r["cube_xy"], "gap": r["gap"],
-                         "instruction": r["instruction"]})
-        if i % 20 == 0 or r["ok"]:
+                         "ok": bool(r["ok"]), "instruction": r["instruction"]})
+        if i % 20 == 0 or want:
             print(json.dumps({"phase": "A", "i": i, "seed": sd, "ok": r["ok"],
                               "gap": round(r["gap"], 4), "good": len(good)}), flush=True)
     rec["passA"] = {"tried": min(len(seeds), i + 1), "good": len(good),
+                    # NOTE: in --keep failures this is the FAILURE rate, not the success rate. Same field,
+                    # inverted meaning -- so the class is written next to it and readers must check it.
                     "keep_rate": round(len(good) / max(1, i + 1), 4),
+                    "keep_rate_is_for": a.keep,
                     "seconds": round(time.perf_counter() - t0, 1)}
     print(json.dumps({"phase": "A-done", **rec["passA"]}), flush=True)
     if not good:
@@ -235,7 +244,7 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
             # A replayed seed that no longer succeeds means the harvest is not reproducible, and
             # "successes only" would be a false label on the shard. LE measured this failing
             # (koch kept 3, parquet said 5), so it is asserted here rather than assumed.
-            if not rb["ok"] or abs(rb["gap"] - g["gap"]) > 1e-6:
+            if bool(rb["ok"]) != (a.keep == "successes") or abs(rb["gap"] - g["gap"]) > 1e-6:
                 bad.append({"seed": g["seed"], "passA_gap": round(g["gap"], 6),
                             "passB_gap": round(rb["gap"], 6), "passB_ok": rb["ok"]})
             print(json.dumps({"phase": "B", "seed": g["seed"], "ok": rb["ok"],
@@ -249,12 +258,15 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
         "recorded": len(kept), "parquet_episode_count": js.get("parquet_episode_count"),
         "frames": js.get("frame_count"), "seconds": round(time.perf_counter() - t1, 1),
         "replay_nondeterminism": bad,
-        "successes_only": bool(js.get("parquet_episode_count") == len(kept) and not bad),
+        "outcome_class": a.keep,
+        "single_class": bool(js.get("parquet_episode_count") == len(kept) and not bad),
+        "successes_only": bool(js.get("parquet_episode_count") == len(kept) and not bad
+                               and a.keep == "successes"),
     }
     print(json.dumps({"phase": "B-done", **{k: v for k, v in rec["passB"].items()
                                             if k != "replay_nondeterminism"}}), flush=True)
     rec["written_task_strings"] = _task_strings(a.out, repo_id)
-    rec["verdict"] = ("OK" if rec["passB"]["successes_only"]
+    rec["verdict"] = ("OK" if rec["passB"]["single_class"]
                       and len(rec["written_task_strings"].get("distinct", [])) > 1
                       else "CHECK-REPORT")
     rec["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
