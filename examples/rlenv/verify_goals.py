@@ -26,6 +26,12 @@ def main(argv=None) -> int:
                    help="max abs action delta allowed (default: float32 round-trip)")
     p.add_argument("--svla", default=os.path.expanduser("~/rlenv-svla-pin"))
     p.add_argument("--json", default=None)
+    p.add_argument("--action-noise", type=float, default=0.0,
+                   help="sigma the shard was generated with (harvest --action-noise). The recorded "
+                        "action is then plan+noise, so a plan-only replan CANNOT match it -- and the "
+                        "honest fix is not a looser tolerance but reproducing the noise, which is "
+                        "seeded per episode (default_rng(700000+seed)), so the check stays bit-exact "
+                        "and additionally PROVES the noise's provenance.")
     a = p.parse_args(argv)
     sys.path.insert(0, a.svla)
     import pandas as pd
@@ -67,6 +73,12 @@ def main(argv=None) -> int:
             pol = X.ScriptedReplayPolicy(hz=e.control_hz)
             pol.set_robot_state_keys(list(e.action_keys)); pol.load_plan(kf, task)
             pred = np.asarray(pol.target_at(0), dtype=float)
+            if a.action_noise > 0:
+                # harvest.py draws one vector per control step from this stream; the first action
+                # therefore carries the FIRST draw. Reproducing it is a provenance check on the
+                # seed, the sigma AND the joint order.
+                pred = pred + np.random.default_rng(700000 + int(r["seed"])).normal(
+                    0.0, a.action_noise, size=len(e.action_keys))
             # tol must SCALE: the parquet stores float32, so a round-trip costs eps32*|value| per side,
             # and an absolute 1.5e-07 silently fails a correct goal whose action is ~1 rad (seen on
             # so100-push: 1.61e-07, a float32 artefact read as a wrong label).
@@ -80,7 +92,10 @@ def main(argv=None) -> int:
         except Exception: pass
     out = {"root": a.root, "arm": arm, "task": task, "band_scale": k, "n_checked": len(checked),
            "bit_exact": exact, "max_abs_delta": worst, "tol": a.tol, "tol_rule": "max(tol, 4*eps32*max|recorded action|) per episode", "failures": bad,
-           "criterion": "max |replanned first action - recorded first action| <= tol (float32 round-trip)",
+           "action_noise_rad": a.action_noise,
+           "criterion": ("max |replanned first action + seeded noise draw - recorded first action| <= tol"
+                         if a.action_noise > 0 else
+                         "max |replanned first action - recorded first action| <= tol (float32 round-trip)"),
            "verdict": ("GOALS VERIFIED - the recorded first action is reproduced from the sidecar goal to float32"
                        if checked and not bad else
                        "GOALS NOT VERIFIED - the sidecar goal does not reproduce the recorded action")}

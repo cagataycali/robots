@@ -40,6 +40,11 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=4242)
     p.add_argument("--svla", default=os.path.expanduser("~/rlenv-svla-pin"))
     p.add_argument("--json", default=None)
+    p.add_argument("--action-noise", type=float, default=0.0,
+                   help="rad of Gaussian noise on the commanded joint targets. it23 measured that a "
+                        "noisy expert FAILS LESS on this task (5.5%% -> 0%%), which is only possible "
+                        "because success is a minimum over the episode. This flag exists to ask the "
+                        "follow-up the shard producer owes: does the noise buy DWELL, or only grazes?")
     a = p.parse_args(argv)
 
     sys.path.insert(0, a.svla)
@@ -49,6 +54,7 @@ def main(argv=None) -> int:
 
     e = EMBODIMENTS[a.arm]
     out = {"arm": a.arm, "task": "touch", "episodes": a.episodes, "touch_gap_m": float(X.TOUCH_GAP),
+           "action_noise_rad": float(a.action_noise),
            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "cells": {}}
     robot, _ = S.build(a.arm, cam_size=(64, 64), with_wrist=bool(e.wrist_parent))
     try:
@@ -69,6 +75,11 @@ def main(argv=None) -> int:
                 pol = X.ScriptedReplayPolicy(hz=e.control_hz)
                 pol.set_robot_state_keys(list(e.action_keys))
                 pol.load_plan(kf, "touch")
+                if a.action_noise > 0:
+                    nrng = np.random.default_rng(700000 + a.seed + i)
+                    _t = pol.target_at
+                    pol.target_at = (lambda step, _t=_t, _n=nrng: np.asarray(_t(step), dtype=float)
+                                     + _n.normal(0.0, a.action_noise, size=len(e.action_keys)))
                 trace = []
 
                 def obs(ev, trace=trace):
@@ -96,6 +107,13 @@ def main(argv=None) -> int:
                 "terminal_within_gap": sum(x["terminal"] <= X.TOUCH_GAP for x in lab),
                 "graze_only_dwell_1": sum(x["dwell"] <= 1 for x in lab),
                 "median_steps": float(np.median([x["steps"] for x in eps])),
+                # the three criteria side by side, each over ALL episodes, so "which criterion does
+                # noise win under" is answerable without dividing by a different denominator
+                "rate_min_gap": round(n / a.episodes, 4),
+                "rate_dwell_ge_3": round(sum(x["dwell"] >= 3 for x in eps) / a.episodes, 4),
+                "rate_dwell_ge_10": round(sum(x["dwell"] >= 10 for x in eps) / a.episodes, 4),
+                "rate_terminal": round(sum(x["terminal"] <= X.TOUCH_GAP for x in eps) / a.episodes, 4),
+                "median_min_gap_mm": round(float(np.median([x["min_gap"] for x in eps])) * 1000, 3),
             }
             print(json.dumps({"blind": blind, **out["cells"]["goal_blind" if blind else "goal_aware"]}),
                   flush=True)
