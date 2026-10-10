@@ -44,6 +44,12 @@ def main(argv=None) -> int:
     dwl = {os.path.basename(f).replace("dwell-", "").replace(".json", ""): load(f)
            for f in glob.glob(os.path.join(a.runs, "dwell-*.json"))}
     pix = load(os.path.join(a.runs, "contrast.json")) or {}
+    pp = (load(os.path.join(a.runs, "price-push.json")) or {}).get("arms") or {}
+    cr = (load(os.path.join(a.runs, "capture-radius.json")) or {}).get("arms") or {}
+    lbs = {os.path.basename(f).replace("loadback-", "").replace(".json", ""): load(f)
+           for f in glob.glob(os.path.join(a.runs, "loadback-*.json"))}
+    vgs = {os.path.basename(f).replace("verify-goals-", "").replace(".json", ""): load(f)
+           for f in glob.glob(os.path.join(a.runs, "verify-goals-*.json"))}
 
     L = []
     w = L.append
@@ -57,15 +63,51 @@ def main(argv=None) -> int:
     w("")
     w("## Shards")
     w("")
-    w("| shard | episodes | frames | pass-A keep | distinct instructions | replay nondeterminism | band | verdict |")
-    w("|---|---|---|---|---|---|---|---|")
+    w("| shard | episodes | keep | band / episode | goals sidecar | load-back | criterion floor | "
+      "validated ceiling | failures published | cells |")
+    w("|---|---|---|---|---|---|---|---|---|---|")
     for name, r in shards:
         b = r.get("passB") or {}
         ts = r.get("written_task_strings") or {}
-        w("| `%s` | %s | %s | %s | %s | %s | %s | %s |" % (
-            name, b.get("parquet_episode_count"), b.get("frames"), r["passA"]["keep_rate"],
-            ts.get("n"), len(b.get("replay_nondeterminism") or []), r.get("band_scale", 1.0),
-            r.get("verdict")))
+        arm, task = r.get("arm"), r.get("task")
+        canon = f"{arm}-{task}"
+        ep = b.get("parquet_episode_count")
+        sc = os.path.join(a.data, name, "ds", "EPISODES.jsonl")
+        nrows = sum(1 for _ in open(sc)) if os.path.exists(sc) else 0
+        vg = vgs.get(name) or {}
+        sidecar = (f"{nrows} rows, goals verified {vg.get('n_checked')}/{vg.get('n_checked')} to "
+                   f"{vg.get('max_abs_delta'):.1e}" if nrows and vg.get("n_checked") else
+                   (f"{nrows} rows, UNVERIFIED" if nrows else "**none**"))
+        lb = (lbs.get(name) or {}).get("verdict") or "not run"
+        cell = pp.get(arm) if task == "push" else cr.get(arm)
+        floor = (cell or {}).get("verdict", "not priced")
+        floor = ("SOUND %sx" % (pp[arm].get("margin_x")) if task == "push" and (cell or {}).get("margin_x")
+                 else ("UNDETERMINED" if task == "push" and cell else floor))
+        ceil = (pp.get(arm) or {}).get("expert_would_be_scored_success") if task == "push" else None
+        if task == "push" and (pp.get(arm) or {}).get("push_min_exceeds_expert_median"):
+            ceil = f"**{ceil}** (threshold > expert median)"
+        # SD-58 (SIMDATA): say IN THE TABLE whether a consumer can mistake a failure for a demonstration.
+        kr = r["passA"]["keep_rate"]
+        disc = int(round(ep / kr)) - ep if (ep and kr) else None
+        fails = f"0 (of ~{int(round(ep / kr))} attempts; {disc} discarded)" if disc is not None else "unknown"
+        w("| `%s` | %s | %s | %s / %s s | %s | %s | %s | %s | %s | %s |" % (
+            name, ep, kr, r.get("band_scale", 1.0), r.get("duration_s", "?"), sidecar, lb, floor,
+            ceil or "n/a", fails, "own" if name == canon else f"inherited from `{canon}`"))
+    w("")
+    w("**Failures are not published.** A shard is successes-only: `keep` is the expert's own success rate on")
+    w("freshly sampled poses, so the discarded-attempt count in the table is how many failures were thrown")
+    w("away, and ZERO failed episodes are in any shard. This is the question SIMDATA's SD-58 asks of a")
+    w("corpus (604 of 3,109 episodes were failures with nothing marking which); our answer is a column")
+    w("rather than an assumption. A consumer therefore cannot train on a failure here -- but note the")
+    w("flip side: these shards carry NO negative examples at all, so nothing in them teaches a head what")
+    w("failure looks like.")
+    w("")
+    w("`criterion floor` is the arm's OWN negative control (`push_sharp.py` for push, capture radius for")
+    w("touch). UNDETERMINED means no floor on that arm moves the cube, so nothing bounds a false success")
+    w("there. `validated ceiling` is the scripted expert's score under the same criterion; where the")
+    w("threshold exceeds the expert's median, a rate on that arm is bounded by the ceiling, not the policy.")
+    w("`cells` says whether the measurement cells shown later were measured on THIS shard or inherited from")
+    w("the canonical one (a variant with a different band or episode length inherits them).")
     w("")
     w("`pass-A keep` is the expert's own success rate on freshly sampled cube poses: the shards are")
     w("successes-only, so it is the cost of a published episode, not a quality score. Replay")
