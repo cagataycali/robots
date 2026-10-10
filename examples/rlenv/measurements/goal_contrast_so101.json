@@ -1,0 +1,20 @@
+{
+ "what": "GOAL-ONLY pixel contrast: arm held at the reset pose, only the cube moves in the arm's own reachable box, 6 poses, 15 pairs, mean pairwise absolute pixel difference on a 0-255 scale. A property of the SCENE (object size, camera pose, resolution), not of any policy.",
+ "arm": "so101", "scene_code": "strands_vla/scene.py @ 109c976c4f91518c054b48a9cc3680dd1805479b",
+ "command": "examples/rlenv/harvest.py --arm so101 (goal_pixel_contrast) and the inline sweep in RLENV it2",
+ "rows": [
+  {"cam_px": 128, "cube_half_m": 0.02, "scene": 0.2635, "wrist": 0.0, "note": "the shipped training config"},
+  {"cam_px": 128, "cube_half_m": 0.04, "scene": 0.8955, "wrist": 0.0},
+  {"cam_px": 256, "cube_half_m": 0.02, "scene": 0.2675, "wrist": 0.0},
+  {"cam_px": 224, "cube_half_m": 0.03, "scene": 0.5480, "wrist": 0.0}
+ ],
+ "findings": {
+  "wrist_carries_zero_goal_signal": "wrist mean pairwise absolute difference is EXACTLY 0.0 in all four configs: at the reset pose the wrist view does not contain the cube at all, so one of the two camera slots the heads train on holds no goal information at episode start.",
+  "resolution_does_not_help": "128 -> 256 px moves scene contrast 0.2635 -> 0.2675 (+1.5%) because the cube occupies the same FRACTION of the frame; per-pixel mean difference is scale-invariant by construction.",
+  "object_size_does": "cube half-size 0.02 -> 0.04 m (4x area) moves 0.2635 -> 0.8955 (3.4x), consistent with area scaling. Object size and camera framing are the levers, resolution is not."
+ },
+ "limits": [
+  "mean absolute difference over the WHOLE frame measures the fraction of the image the goal controls; it is NOT a claim about what a ViT can extract, since a higher-resolution encoder places more tokens on the same object. It does kill the simplest form of 'the goal is too small to see at 128 px'.",
+  "one arm, one task, reset pose only; the contrast at mid-episode (arm near the cube, wrist looking at it) is not measured here and is certainly larger."
+ ]
+}
