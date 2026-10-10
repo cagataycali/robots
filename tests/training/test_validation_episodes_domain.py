@@ -53,20 +53,20 @@ TOTAL_EPISODES = 10
 
 # Values that were silently dropped: the split fraction is only computed for a
 # count in ``(0, total)``, so the run held nothing out and said nothing.
-SILENTLY_DROPPED = (0, -1, -5, float("nan"))
+SILENTLY_DROPPED: tuple[Any, ...] = (0, -1, -5, float("nan"))
 
 # Values that compared as positive and were silently rewritten by the ceiling
 # lerobot applies to the fraction, mapped to the count each one really reserved.
-REWRITTEN_TO = ((True, 1), (2.7, 3), (0.5, 0))
-SILENTLY_REWRITTEN = tuple(supplied for supplied, _ in REWRITTEN_TO)
+REWRITTEN_TO: tuple[Any, ...] = ((True, 1), (2.7, 3), (0.5, 0))
+SILENTLY_REWRITTEN: tuple[Any, ...] = tuple(supplied for supplied, _ in REWRITTEN_TO)
 
 # Values that raised out of the comparison, from a method documented to return.
-RAISED_IN_THE_COMPARISON = ("5", [5], {"n": 5})
+RAISED_IN_THE_COMPARISON: tuple[Any, ...] = ("5", [5], {"n": 5})
 
-UNUSABLE = SILENTLY_DROPPED + SILENTLY_REWRITTEN + RAISED_IN_THE_COMPARISON
+UNUSABLE: tuple[Any, ...] = SILENTLY_DROPPED + SILENTLY_REWRITTEN + RAISED_IN_THE_COMPARISON
 
 # Counts that reserve exactly what they name on a 10-episode single-task dataset.
-USABLE = (1, 2, 3, 9)
+USABLE: tuple[Any, ...] = (1, 2, 3, 9)
 
 
 def _write_dataset(root: pathlib.Path, total_episodes: int = TOTAL_EPISODES, total_tasks: int = 1) -> pathlib.Path:
@@ -163,36 +163,36 @@ def _tool_verdict(dataset_root: pathlib.Path, value: Any) -> str:
 class TestTheBackendRefusesAnUnusableValidationCount:
     """Every value no split can honor is reported as a problem, never raised."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, value: Any) -> None:
-        spec.val_episodes = value
-        problems = _count_problems_of(LerobotTrainer(), spec)
-        assert problems, f"LerobotTrainer accepted val_episodes={value!r}"
-        assert any("must be a positive integer" in p for p in problems), problems
+    def test_it_is_reported_as_a_problem(self, spec: TrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.val_episodes = value
+            problems = _count_problems_of(LerobotTrainer(), spec)
+            assert problems, f"LerobotTrainer accepted val_episodes={value!r}"
+            assert any("must be a positive integer" in p for p in problems), problems
 
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec) -> None:
         trainer = LerobotTrainer()
         spec.val_episodes = 0
         assert any(p.startswith(f"{trainer.provider_name}: val_episodes ") for p in _count_problems_of(trainer, spec))
 
-    @pytest.mark.parametrize("value", RAISED_IN_THE_COMPARISON)
-    def test_a_non_numeric_count_is_a_problem_not_an_exception(self, spec: TrainSpec, value: Any) -> None:
+    def test_a_non_numeric_count_is_a_problem_not_an_exception(self, spec: TrainSpec) -> None:
         """The comparison the gate replaced raised ``TypeError`` for these."""
-        spec.val_episodes = value
-        problems = LerobotTrainer().validate(spec)  # must not raise
-        assert any(_NAMES_THE_COUNT in p for p in problems), problems
+        for value in RAISED_IN_THE_COMPARISON:
+            spec.val_episodes = value
+            problems = LerobotTrainer().validate(spec)  # must not raise
+            assert any(_NAMES_THE_COUNT in p for p in problems), problems
 
-    @pytest.mark.parametrize("value", RAISED_IN_THE_COMPARISON)
-    def test_the_dataset_dependent_comparison_is_not_reached(self, spec: TrainSpec, value: Any) -> None:
+    def test_the_dataset_dependent_comparison_is_not_reached(self, spec: TrainSpec) -> None:
         """Guard order: the domain gate runs before anything compares the value.
 
         The ``>= total_episodes`` refusal below it is only a meaningful comparison
         once the value IS a count, so a non-numeric must be reported by the gate
         and stop there rather than reaching - and raising out of - the bound.
         """
-        spec.val_episodes = value
-        problems = LerobotTrainer().validate(spec)
-        assert not [p for p in problems if "total_episodes=" in p], problems
+        for value in RAISED_IN_THE_COMPARISON:
+            spec.val_episodes = value
+            problems = LerobotTrainer().validate(spec)
+            assert not [p for p in problems if "total_episodes=" in p], problems
 
 
 class TestANonPositiveCountWasSilentlyDropped:
@@ -203,15 +203,15 @@ class TestANonPositiveCountWasSilentlyDropped:
     episode and recorded no validation loss, and nothing reported it.
     """
 
-    @pytest.mark.parametrize("value", SILENTLY_DROPPED)
-    def test_no_split_and_no_evaluation_cadence_is_produced(self, spec: TrainSpec, value: Any) -> None:
-        spec.val_episodes = value
-        assert _eval_flags(LerobotTrainer().build_command(spec)) == []
+    def test_no_split_and_no_evaluation_cadence_is_produced(self, spec: TrainSpec) -> None:
+        for value in SILENTLY_DROPPED:
+            spec.val_episodes = value
+            assert _eval_flags(LerobotTrainer().build_command(spec)) == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", SILENTLY_DROPPED)
-    def test_so_the_request_is_refused_instead(self, spec: TrainSpec, value: Any) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(LerobotTrainer(), spec)
+    def test_so_the_request_is_refused_instead(self, spec: TrainSpec) -> None:
+        for value in SILENTLY_DROPPED:
+            spec.val_episodes = value
+            assert _count_problems_of(LerobotTrainer(), spec), f"{value!r}"
 
 
 class TestACountThatComparesAsPositiveWasSilentlyRewritten:
@@ -248,32 +248,32 @@ class TestACountThatComparesAsPositiveWasSilentlyRewritten:
         spec.val_episodes = fractional
         assert _count_problems_of(LerobotTrainer(), spec)
 
-    @pytest.mark.parametrize("value", SILENTLY_REWRITTEN)
-    def test_so_the_request_is_refused_instead(self, spec: TrainSpec, value: Any) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(LerobotTrainer(), spec)
+    def test_so_the_request_is_refused_instead(self, spec: TrainSpec) -> None:
+        for value in SILENTLY_REWRITTEN:
+            spec.val_episodes = value
+            assert _count_problems_of(LerobotTrainer(), spec), f"{value!r}"
 
 
 class TestAUsableCountIsUntouched:
     """A count the split reproduces exactly still produces the split."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_count_is_not_a_problem(self, spec: TrainSpec, value: int) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(LerobotTrainer(), spec) == []
+    def test_a_usable_count_is_not_a_problem(self, spec: TrainSpec) -> None:
+        for value in USABLE:
+            spec.val_episodes = value
+            assert _count_problems_of(LerobotTrainer(), spec) == [], f"{value!r}"
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_still_produces_the_split_and_the_evaluation_cadence(self, spec: TrainSpec, value: int) -> None:
-        spec.val_episodes = value
-        flags = _eval_flags(LerobotTrainer().build_command(spec))
-        expected = validation_split_fraction(value, TOTAL_EPISODES)
-        assert f"--dataset.eval_split={expected}" in flags
-        assert any(f.startswith("--eval_steps=") for f in flags), flags
+    def test_it_still_produces_the_split_and_the_evaluation_cadence(self, spec: TrainSpec) -> None:
+        for value in USABLE:
+            spec.val_episodes = value
+            flags = _eval_flags(LerobotTrainer().build_command(spec))
+            expected = validation_split_fraction(value, TOTAL_EPISODES)
+            assert f"--dataset.eval_split={expected}" in flags, f"{value!r}"
+            assert any(f.startswith("--eval_steps=") for f in flags), flags
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_the_split_reserves_exactly_what_was_asked_for(self, value: int) -> None:
-        fraction = validation_split_fraction(value, TOTAL_EPISODES)
-        assert math.ceil(TOTAL_EPISODES * fraction) == value
+    def test_the_split_reserves_exactly_what_was_asked_for(self) -> None:
+        for value in USABLE:
+            fraction = validation_split_fraction(value, TOTAL_EPISODES)
+            assert math.ceil(TOTAL_EPISODES * fraction) == value, f"{value!r}"
 
     def test_an_unset_count_is_not_a_problem(self, spec: TrainSpec) -> None:
         """``None`` is the documented "train on every episode" sentinel."""
@@ -318,32 +318,28 @@ class TestBothWritersOfTheSplitShareOneDomain:
     property is that nothing the backend refuses is accepted by the tool.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_tool_refuses_every_value_the_backend_refuses(
-        self, spec: TrainSpec, dataset: pathlib.Path, value: Any
-    ) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(LerobotTrainer(), spec), f"backend accepted {value!r}"
-        assert _tool_verdict(dataset, value) == "refused", f"tool accepted {value!r}"
+    def test_the_tool_refuses_every_value_the_backend_refuses(self, spec: TrainSpec, dataset: pathlib.Path) -> None:
+        for value in UNUSABLE:
+            spec.val_episodes = value
+            assert _count_problems_of(LerobotTrainer(), spec), f"backend accepted {value!r}"
+            assert _tool_verdict(dataset, value) == "refused", f"tool accepted {value!r}"
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_the_tool_accepts_every_value_the_backend_accepts(
-        self, spec: TrainSpec, dataset: pathlib.Path, value: int
-    ) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(LerobotTrainer(), spec) == []
-        assert _tool_verdict(dataset, value) == "accepted"
+    def test_the_tool_accepts_every_value_the_backend_accepts(self, spec: TrainSpec, dataset: pathlib.Path) -> None:
+        for value in USABLE:
+            spec.val_episodes = value
+            assert _count_problems_of(LerobotTrainer(), spec) == [], f"{value!r}"
+            assert _tool_verdict(dataset, value) == "accepted", f"{value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_tool_names_the_field_and_the_domain(self, dataset: pathlib.Path, value: Any) -> None:
-        with pytest.raises(ValueError, match="val_episodes must be a positive integer"):
-            build_train_command(dataset_root=str(dataset), policy_type="act", val_episodes=value)
+    def test_the_tool_names_the_field_and_the_domain(self, dataset: pathlib.Path) -> None:
+        for value in UNUSABLE:
+            with pytest.raises(ValueError, match="val_episodes must be a positive integer"):
+                build_train_command(dataset_root=str(dataset), policy_type="act", val_episodes=value)
 
-    @pytest.mark.parametrize("value", SILENTLY_REWRITTEN + RAISED_IN_THE_COMPARISON)
-    def test_the_tool_refuses_before_it_reads_the_dataset(self, tmp_path: pathlib.Path, value: Any) -> None:
+    def test_the_tool_refuses_before_it_reads_the_dataset(self, tmp_path: pathlib.Path) -> None:
         """The domain does not depend on the metadata, so it is checked first."""
-        with pytest.raises(ValueError, match="val_episodes must be a positive integer"):
-            build_train_command(dataset_root=str(tmp_path / "absent"), policy_type="act", val_episodes=value)
+        for value in SILENTLY_REWRITTEN + RAISED_IN_THE_COMPARISON:
+            with pytest.raises(ValueError, match="val_episodes must be a positive integer"):
+                build_train_command(dataset_root=str(tmp_path / "absent"), policy_type="act", val_episodes=value)
 
 
 class TestTheParityClassifierCollectsFailuresWithoutSwallowingControlFlow:
@@ -405,12 +401,10 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     """
 
     @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_validates_nothing_about_the_count(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any
-    ) -> None:
-        spec.val_episodes = value
-        assert _count_problems_of(trainer_cls(), spec) == []
+    def test_it_validates_nothing_about_the_count(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in UNUSABLE:
+            spec.val_episodes = value
+            assert _count_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
 
 class TestTheGateIsUsableOnItsOwn:
@@ -421,15 +415,15 @@ class TestTheGateIsUsableOnItsOwn:
         (problem,) = validation_episodes_problems(spec, context="anything")
         assert problem.startswith("anything: val_episodes ")
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_exactly_one_problem_per_unusable_value(self, spec: TrainSpec, value: Any) -> None:
-        spec.val_episodes = value
-        assert len(validation_episodes_problems(spec, context="ctx")) == 1
+    def test_it_reports_exactly_one_problem_per_unusable_value(self, spec: TrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.val_episodes = value
+            assert len(validation_episodes_problems(spec, context="ctx")) == 1, f"{value!r}"
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_it_reports_nothing_for_a_usable_count(self, spec: TrainSpec, value: int) -> None:
-        spec.val_episodes = value
-        assert validation_episodes_problems(spec, context="ctx") == []
+    def test_it_reports_nothing_for_a_usable_count(self, spec: TrainSpec) -> None:
+        for value in USABLE:
+            spec.val_episodes = value
+            assert validation_episodes_problems(spec, context="ctx") == [], f"{value!r}"
 
     def test_an_unset_count_is_not_a_problem(self, spec: TrainSpec) -> None:
         assert spec.val_episodes is None

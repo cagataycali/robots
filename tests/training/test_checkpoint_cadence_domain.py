@@ -148,10 +148,10 @@ class TestEveryCheckpointingBackendRefusesAnUnusableCadence:
     """The first half of the biconditional: a reader must route through the gate."""
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any) -> None:
-        spec.save_freq = value
-        assert _cadence_problems_of(trainer_cls(), spec) != []
+    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in UNUSABLE:
+            spec.save_freq = value
+            assert _cadence_problems_of(trainer_cls(), spec) != [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -161,17 +161,17 @@ class TestEveryCheckpointingBackendRefusesAnUnusableCadence:
         assert problems and problems[0].startswith(f"{trainer.provider_name}: ")
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
     def test_an_unusable_cadence_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], value: Any
+        self, spec: TrainSpec, trainer_cls: type[Trainer]
     ) -> None:
         """``validate`` is documented to *return* problems, so it must not raise.
 
         The in-process consumer raises ``TypeError`` from a bare comparison on a
         non-number, and the gate runs before any such comparison in ``validate``.
         """
-        spec.save_freq = value
-        assert isinstance(trainer_cls().validate(spec), list)
+        for value in UNUSABLE:
+            spec.save_freq = value
+            assert isinstance(trainer_cls().validate(spec), list), f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
     def test_the_message_says_how_to_disable_periodic_saving(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -188,10 +188,10 @@ class TestAUsableCadenceIsUntouched:
     """The controls: nothing the consumers honor may be refused."""
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_cadence_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer], value: int) -> None:
-        spec.save_freq = value
-        assert _cadence_problems_of(trainer_cls(), spec) == []
+    def test_a_usable_cadence_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
+        for value in USABLE:
+            spec.save_freq = value
+            assert _cadence_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
     def test_the_default_cadence_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
@@ -207,10 +207,10 @@ class TestABackendThatIgnoresTheFieldReportsNothing:
     rather than made universal like the learning-rate one.
     """
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_checkpoints_from_nothing(self, spec: TrainSpec, value: Any) -> None:
-        spec.save_freq = value
-        assert _cadence_problems_of(MockTrainer(), spec) == []
+    def test_it_checkpoints_from_nothing(self, spec: TrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.save_freq = value
+            assert _cadence_problems_of(MockTrainer(), spec) == [], f"{value!r}"
 
 
 class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
@@ -225,16 +225,16 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
         assert _periodic_saves(True) == STEPS - 1
         assert _periodic_saves(1_000) == 9, "the cadence a caller would have written"
 
-    @pytest.mark.parametrize("value", (2.7, float("nan"), float("inf")))
-    def test_a_non_integral_cadence_silently_becomes_the_disabled_mode(self, value: Any) -> None:
+    def test_a_non_integral_cadence_silently_becomes_the_disabled_mode(self) -> None:
         """Indistinguishable from the documented ``0``, with nothing reported."""
-        assert _periodic_saves(value) == 0 == _periodic_saves(0)
+        for value in (2.7, float("nan"), float("inf")):
+            assert _periodic_saves(value) == 0 == _periodic_saves(0), f"{value!r}"
 
-    @pytest.mark.parametrize("value", RAISED_IN_THE_CONSUMER)
-    def test_a_non_numeric_cadence_raises_inside_the_training_loop(self, value: Any) -> None:
+    def test_a_non_numeric_cadence_raises_inside_the_training_loop(self) -> None:
         """Not at submission: from the ``save_freq > 0`` comparison at step 1."""
-        with pytest.raises(TypeError):
-            _periodic_saves(value)
+        for value in RAISED_IN_THE_CONSUMER:
+            with pytest.raises(TypeError):
+                _periodic_saves(value)
 
     def test_no_value_outside_the_domain_is_honored_by_both_lerobot_routes(self) -> None:
         """The parity failure the shared gate exists to close.
@@ -247,11 +247,11 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
         honored_by_both = [value for value in UNUSABLE if _decodes_as_the_argv_token(value) and _runs_in_process(value)]
         assert honored_by_both == [], f"unusable values both routes accept: {honored_by_both}"
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_every_value_inside_the_domain_is_honored_by_both_routes(self, value: int) -> None:
+    def test_every_value_inside_the_domain_is_honored_by_both_routes(self) -> None:
         """The other direction: the domain admits nothing either route refuses."""
-        assert _decodes_as_the_argv_token(value)
-        assert _runs_in_process(value)
+        for value in USABLE:
+            assert _decodes_as_the_argv_token(value), f"{value!r}"
+            assert _runs_in_process(value), f"{value!r}"
 
     def test_the_two_routes_disagree_in_both_directions(self) -> None:
         """Non-vacuity for the parity test: neither route is simply the stricter.
@@ -265,28 +265,28 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
         assert argv_only, "expected values the in-process path obeys and the decoder refuses"
         assert inproc_only, "expected values the decoder accepts and the in-process path refuses"
 
-    @pytest.mark.parametrize("value", DISABLING)
-    def test_a_non_positive_cadence_really_disables_periodic_saving(self, value: int) -> None:
+    def test_a_non_positive_cadence_really_disables_periodic_saving(self) -> None:
         """Why the domain has no floor: the mode is real and is documented.
 
         Only the periodic saves stop; lerobot still writes the final checkpoint,
         which is what makes this a mode rather than a loss of the run's output.
         """
-        assert _periodic_saves(value) == 0
-        assert _should_save_checkpoint()(STEPS, value, STEPS) is True
+        for value in DISABLING:
+            assert _periodic_saves(value) == 0, f"{value!r}"
+            assert _should_save_checkpoint()(STEPS, value, STEPS) is True, f"{value!r}"
 
-    @pytest.mark.parametrize("value", (float("nan"), float("inf")))
-    def test_sagemaker_would_forward_it_as_invalid_json(self, value: float) -> None:
+    def test_sagemaker_would_forward_it_as_invalid_json(self) -> None:
         """The fourth consumer, whose route fails differently again.
 
         ``json.dumps`` renders these as ``NaN`` / ``Infinity``, which are not
         JSON - only a permissive decoder reads them back, so the container may
         reject the hyperparameter rather than the submission.
         """
-        rendered = json.dumps(value)
-        with pytest.raises(ValueError):
-            json.loads(rendered, parse_constant=_reject)
-        assert math.isnan(value) or math.isinf(value)
+        for value in (float("nan"), float("inf")):
+            rendered = json.dumps(value)
+            with pytest.raises(ValueError):
+                json.loads(rendered, parse_constant=_reject)
+            assert math.isnan(value) or math.isinf(value), f"{value!r}"
 
 
 def _reject(constant: str) -> Any:
@@ -303,10 +303,10 @@ class TestTheGateIsUsableOnItsOwn:
         assert len(problems) == 1
         assert problems[0].startswith("acme: save_freq must be an integer number of steps, got 2.7.")
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_cadence_reports_nothing(self, spec: TrainSpec, value: int) -> None:
-        spec.save_freq = value
-        assert checkpoint_cadence_problems(spec, context="acme") == []
+    def test_a_usable_cadence_reports_nothing(self, spec: TrainSpec) -> None:
+        for value in USABLE:
+            spec.save_freq = value
+            assert checkpoint_cadence_problems(spec, context="acme") == [], f"{value!r}"
 
     def test_it_reports_one_problem_at_a_time(self, spec: TrainSpec) -> None:
         """One field, one problem - so a caller fixes one thing per message."""

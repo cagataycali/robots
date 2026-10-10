@@ -99,43 +99,44 @@ def _epoch_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOnPolicyBackendRefusesAnUnusableEpochCount:
     """PPO refuses every value its epoch loop cannot honor."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.num_learning_epochs = value
-        assert _epoch_problems(ON_POLICY, spec), f"ppo accepted num_learning_epochs={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.num_learning_epochs = value
+            assert _epoch_problems(ON_POLICY, spec), f"ppo accepted num_learning_epochs={value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.num_learning_epochs = value
-        (problem,) = _epoch_problems(ON_POLICY, spec)
-        assert "num_learning_epochs" in problem
-        assert "positive integer" in problem
-        assert repr(value) in problem, problem
+    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.num_learning_epochs = value
+            problems = _epoch_problems(ON_POLICY, spec)
+            assert len(problems) == 1, (value, problems)
+            (problem,) = problems
+            assert "num_learning_epochs" in problem, f"{value!r}"
+            assert "positive integer" in problem, f"{value!r}"
+            assert repr(value) in problem, problem
 
-    @pytest.mark.parametrize("value", NO_OPTIMIZATION)
-    def test_a_non_positive_count_never_reaches_a_run(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_a_non_positive_count_never_reaches_a_run(self, spec: RLTrainSpec) -> None:
         """``train`` is fail-closed on ``validate``, so no rollout is collected."""
-        spec.num_learning_epochs = value
-        result = create_trainer(ON_POLICY).train(spec)
-        assert result.status == "error"
-        assert "num_learning_epochs" in result.message
+        for value in NO_OPTIMIZATION:
+            spec.num_learning_epochs = value
+            result = create_trainer(ON_POLICY).train(spec)
+            assert result.status == "error", f"{value!r}"
+            assert "num_learning_epochs" in result.message, f"{value!r}"
 
 
 class TestTheUsableDomainIsUntouched:
     """Every count the epoch loop can honor still passes."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.num_learning_epochs = value
-        assert _epoch_problems(ON_POLICY, spec) == []
+    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec) -> None:
+        for value in USABLE:
+            spec.num_learning_epochs = value
+            assert _epoch_problems(ON_POLICY, spec) == [], f"{value!r}"
 
     def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec) -> None:
         """Non-vacuity: the fixture is not refused before the field is set."""
         assert spec.num_learning_epochs == 5
         assert _epoch_problems(ON_POLICY, spec) == []
 
-    @pytest.mark.parametrize("value", REFUSED_BY_THE_SHARED_COUNT_RULE)
-    def test_a_numpy_integer_is_refused_although_range_would_accept_it(self, spec: RLTrainSpec, value: Any) -> None:
+    def test_a_numpy_integer_is_refused_although_range_would_accept_it(self, spec: RLTrainSpec) -> None:
         """The measured cost of using the strict shared count rule.
 
         These spellings do bound a loop, so refusing them is a narrowing rather
@@ -145,19 +146,20 @@ class TestTheUsableDomainIsUntouched:
         the repository passes one - the examples, docs and tests all write a
         plain ``int`` literal.
         """
-        assert len(range(value)) == int(value)
-        spec.num_learning_epochs = value
-        assert _epoch_problems(ON_POLICY, spec)
+        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
+            assert len(range(value)) == int(value), f"{value!r}"
+            spec.num_learning_epochs = value
+            assert _epoch_problems(ON_POLICY, spec), f"{value!r}"
 
 
 class TestABackendWithNoEpochLoopStaysQuiet:
     """A backend that never reads the field must not report on it."""
 
     @pytest.mark.parametrize("provider", NO_EPOCH_LOOP_BACKENDS)
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
-        spec.num_learning_epochs = value
-        assert _epoch_problems(provider, spec) == []
+    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.num_learning_epochs = value
+            assert _epoch_problems(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_EPOCH_LOOP_BACKENDS)
     def test_but_it_still_refuses_a_field_it_does_read(self, provider: str, spec: RLTrainSpec) -> None:
@@ -175,11 +177,11 @@ class TestABackendWithNoEpochLoopStaysQuiet:
 class TestTheDomainIsTheSharedCountRule:
     """The gate contributes no rule of its own beyond reading the field."""
 
-    @pytest.mark.parametrize("value", [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE])
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.num_learning_epochs = value
-        shared = positive_count_error(value, "num_learning_epochs", "ppo")
-        assert (optimization_epochs_problems(spec, context="ppo") == []) is (shared is None)
+    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec) -> None:
+        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
+            spec.num_learning_epochs = value
+            shared = positive_count_error(value, "num_learning_epochs", "ppo")
+            assert (optimization_epochs_problems(spec, context="ppo") == []) is (shared is None), f"{value!r}"
 
     def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec) -> None:
         spec.num_learning_epochs = 0
