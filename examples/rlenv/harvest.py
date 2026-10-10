@@ -108,6 +108,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo-id", default=None, help="LeRobot repo id (default local/rlenv-<arm>-<task>)")
     p.add_argument("--seed", type=int, default=20261010)
     p.add_argument("--cam", type=int, default=128)
+    p.add_argument("--band-scale", type=float, default=1.0,
+                   help="scale the arm's cube sampling box about its centre. it4 MEASURED that this "
+                        "is the lever that makes the task goal-NECESSARY: on so101 touch a goal-blind "
+                        "expert (aims at the box centre, reads nothing) succeeds 0.175 at 1.0 but only "
+                        "0.025 at 2.0, while the real expert stays at 0.95 -- so 2.0 costs nothing and "
+                        "raises the headroom a learner can earn by reading the goal from 0.775 to 0.925")
     p.add_argument("--svla", type=Path, default=Path.home() / "rlenv-svla-pin",
                    help="PINNED strands_vla worktree (provenance; its sha goes in the report)")
     p.add_argument("--report", type=Path, default=None)
@@ -126,6 +132,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no embodiment '{a.arm}'. known: {sorted(EMBODIMENTS)}", file=sys.stderr)
         return 2
     e = EMBODIMENTS[a.arm]
+    if a.band_scale != 1.0:
+        import dataclasses
+
+        (xlo, xhi), (ylo, yhi) = e.cube_box
+        cx, cy = (xlo + xhi) / 2.0, (ylo + yhi) / 2.0
+        k = a.band_scale
+        e = dataclasses.replace(e, cube_box=((cx + (xlo - cx) * k, cx + (xhi - cx) * k),
+                                             (cy + (ylo - cy) * k, cy + (yhi - cy) * k)))
+        EMBODIMENTS[a.arm] = e  # scene.build and the expert both read the registry
     tries = a.max_tries or max(8, 4 * a.episodes)
     repo_id = a.repo_id or f"local/rlenv-{a.arm}-{a.task}"
     rng = np.random.default_rng(a.seed)
@@ -138,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         "arm": a.arm, "task": a.task, "want": a.episodes, "jitter_rad": a.jitter,
         "svla_pin_sha": sha, "cams": list(cams), "cam_px": a.cam, "seed": a.seed,
         "tries_budget": tries, "repo_id": repo_id, "out": str(a.out),
+        "band_scale": a.band_scale, "cube_box": e.cube_box,
         "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     print(json.dumps({"phase": "config", **rec}), flush=True)
