@@ -92,27 +92,11 @@ def _rollout_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
 # reaches for when opting out, and each is truthy; ``nan`` and ``0.7`` are truthy
 # numbers; ``None`` and ``[]`` are falsy values that are not a declared spelling
 # of the negative posture either.
-NOT_A_BOOLEAN = [
-    pytest.param("false", id="str-false"),
-    pytest.param("no", id="str-no"),
-    pytest.param("off", id="str-off"),
-    pytest.param("0", id="str-zero"),
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(0.7, id="fractional"),
-    pytest.param(1, id="int-one"),
-    pytest.param(0, id="int-zero"),
-    pytest.param(None, id="none"),
-    pytest.param([], id="empty-list"),
-]
+NOT_A_BOOLEAN: tuple[Any, ...] = ("false", "no", "off", "0", float("nan"), 0.7, 1, 0, None, [])
 
 # Both python spellings plus the numpy booleans ``boolean_flag_error`` accepts,
 # which arrive from an array-shaped config or a NumPy comparison.
-A_BOOLEAN = [
-    pytest.param(True, True, id="true"),
-    pytest.param(False, False, id="false"),
-    pytest.param(np.True_, True, id="np-true"),
-    pytest.param(np.False_, False, id="np-false"),
-]
+A_BOOLEAN: tuple[tuple[Any, bool], ...] = ((True, True), (False, False), (np.True_, True), (np.False_, False))
 
 
 def _record(**overrides: Any) -> list[str]:
@@ -236,26 +220,26 @@ class TestAnUnattendedRecordingCannotBeTalkedIntoUploading:
     already returned ``status="success"``.
     """
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_record_refuses_a_non_boolean_push_to_hub(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="dataset_push_to_hub"):
-            _record(dataset_push_to_hub=value)
+    def test_record_refuses_a_non_boolean_push_to_hub(self) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="dataset_push_to_hub"):
+                _record(dataset_push_to_hub=value)
 
     def test_the_opt_out_spelling_no_longer_selects_the_upload(self) -> None:
         """Pre-fix this emitted ``--dataset.push_to_hub true``."""
         with pytest.raises(ValueError, match="dataset_push_to_hub"):
             _record(dataset_push_to_hub="false")
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_dagger_refuses_a_non_boolean_push_to_hub(self, value: Any, _rollout_entry_point: None) -> None:
+    def test_dagger_refuses_a_non_boolean_push_to_hub(self, _rollout_entry_point: None) -> None:
         """DAgger appends corrections to a dataset and pushes the same way."""
-        with pytest.raises(ValueError, match="dataset_push_to_hub"):
-            _dagger(dataset_push_to_hub=value)
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="dataset_push_to_hub"):
+                _dagger(dataset_push_to_hub=value)
 
-    @pytest.mark.parametrize(("value", "expected"), A_BOOLEAN)
-    def test_a_boolean_still_selects_the_posture_it_names(self, value: Any, expected: bool) -> None:
-        token = _token(_record(dataset_push_to_hub=value), "--dataset.push_to_hub")
-        assert token == ("true" if expected else "false")
+    def test_a_boolean_still_selects_the_posture_it_names(self) -> None:
+        for value, expected in A_BOOLEAN:
+            token = _token(_record(dataset_push_to_hub=value), "--dataset.push_to_hub")
+            assert token == ("true" if expected else "false")
 
 
 class TestAFreshRecordingCannotBeTurnedIntoAnAppend:
@@ -266,10 +250,10 @@ class TestAFreshRecordingCannotBeTurnedIntoAnAppend:
     of off silently merged one operator's episodes into another's dataset.
     """
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_record_refuses_a_non_boolean_resume(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="record_resume"):
-            _record(record_resume=value)
+    def test_record_refuses_a_non_boolean_resume(self) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="record_resume"):
+                _record(record_resume=value)
 
     def test_the_opt_out_spelling_no_longer_selects_the_append(self) -> None:
         """Pre-fix this emitted ``--resume true``."""
@@ -291,24 +275,24 @@ class TestAFreshRecordingCannotBeTurnedIntoAnAppend:
 class TestTheRemainingFlagsShareTheSameDomain:
     """``dataset_video``, ``display_data`` and ``dagger_record_autonomous``."""
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_record_refuses_a_non_boolean_video_setting(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="dataset_video"):
-            _record(dataset_video=value)
+    def test_record_refuses_a_non_boolean_video_setting(self) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="dataset_video"):
+                _record(dataset_video=value)
 
-    @pytest.mark.parametrize(("value", "expected"), A_BOOLEAN)
-    def test_a_boolean_video_setting_reaches_the_argv(self, value: Any, expected: bool) -> None:
-        assert _token(_record(dataset_video=value), "--dataset.video") == ("true" if expected else "false")
+    def test_a_boolean_video_setting_reaches_the_argv(self) -> None:
+        for value, expected in A_BOOLEAN:
+            assert _token(_record(dataset_video=value), "--dataset.video") == ("true" if expected else "false")
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_record_refuses_a_non_boolean_display_data(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="display_data"):
-            _record(display_data=value)
+    def test_record_refuses_a_non_boolean_display_data(self) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="display_data"):
+                _record(display_data=value)
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_teleoperate_refuses_a_non_boolean_display_data(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="display_data"):
-            _teleop(display_data=value)
+    def test_teleoperate_refuses_a_non_boolean_display_data(self) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="display_data"):
+                _teleop(display_data=value)
 
     def test_a_true_display_data_still_emits_the_flag(self) -> None:
         assert _token(_teleop(display_data=True), "--display_data") == "true"
@@ -316,10 +300,10 @@ class TestTheRemainingFlagsShareTheSameDomain:
     def test_a_false_display_data_still_omits_the_flag(self) -> None:
         assert "--display_data" not in _teleop(display_data=False)
 
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_dagger_refuses_a_non_boolean_record_autonomous(self, value: Any, _rollout_entry_point: None) -> None:
-        with pytest.raises(ValueError, match="dagger_record_autonomous"):
-            _dagger(dagger_record_autonomous=value)
+    def test_dagger_refuses_a_non_boolean_record_autonomous(self, _rollout_entry_point: None) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match="dagger_record_autonomous"):
+                _dagger(dagger_record_autonomous=value)
 
     def test_a_true_record_autonomous_still_emits_the_flag(self, _rollout_entry_point: None) -> None:
         argv = _dagger(dagger_record_autonomous=True)
@@ -416,19 +400,18 @@ class TestPlaySoundsReachesTheArgv:
         emitting = {name for name, tuple_ in tele_mod._MODE_FLAG_OPTIONS.items() if "play_sounds" in tuple_}
         assert emitting == {"record", "replay", "dagger"}
 
-    @pytest.mark.parametrize("value", ["false", "off", None, [], 0, 1])
-    def test_a_non_boolean_is_now_refused(self, value: Any) -> None:
+    def test_a_non_boolean_is_now_refused(self) -> None:
         """The domain follows the emission: a flag that reaches an argv is checked."""
-        with pytest.raises(ValueError, match="play_sounds must be a boolean"):
-            _record(play_sounds=value)
+        for value in list[Any](["false", "off", None, [], 0, 1]):
+            with pytest.raises(ValueError, match="play_sounds must be a boolean"):
+                _record(play_sounds=value)
 
     def test_the_refusal_names_the_shared_domain(self) -> None:
         with pytest.raises(ValueError) as excinfo:
             _replay(play_sounds="false")
         assert str(excinfo.value) == boolean_flag_error("false", "play_sounds", "build_lerobot_command")
 
-    @pytest.mark.parametrize(("supplied", "expected"), A_BOOLEAN)
-    def test_a_numpy_boolean_is_honored_like_a_python_one(self, supplied: Any, expected: bool) -> None:
+    def test_a_numpy_boolean_is_honored_like_a_python_one(self) -> None:
         """The shared domain accepts a numpy boolean, so the emitter must render one.
 
         ``boolean_flag_error`` admits ``np.True_`` and ``np.False_`` because a
@@ -436,13 +419,11 @@ class TestPlaySoundsReachesTheArgv:
         way. A value the check accepts has to reach the argv as one of the two
         literals the CLI parses, not as ``np.False_``'s ``repr``.
         """
-        assert _token(_record(play_sounds=supplied), "--play_sounds") == ("true" if expected else "false")
+        for supplied, expected in A_BOOLEAN:
+            assert _token(_record(play_sounds=supplied), "--play_sounds") == ("true" if expected else "false")
 
     @pytest.mark.parametrize(("builder", "config"), [(_record, "RecordConfig"), (_replay, "ReplayConfig")])
-    @pytest.mark.parametrize("supplied", [True, False])
-    def test_lerobot_parses_the_emitted_argv_back_to_the_requested_value(
-        self, builder: Any, config: str, supplied: bool
-    ) -> None:
+    def test_lerobot_parses_the_emitted_argv_back_to_the_requested_value(self, builder: Any, config: str) -> None:
         """The round trip, through the real CLI parser rather than a stub.
 
         Every other test here asserts what this module *emits*. This one asserts
@@ -458,10 +439,11 @@ class TestPlaySoundsReachesTheArgv:
         importlib.import_module("lerobot.policies")  # registers the policy choices
         module = "lerobot.scripts." + ("lerobot_record" if config == "RecordConfig" else "lerobot_replay")
         config_class = getattr(importlib.import_module(module), config)
-        argv = builder(play_sounds=supplied)[3:]  # drop [sys.executable, "-m", <module>]
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            parsed = draccus.parse(config_class=config_class, args=argv)
-        assert parsed.play_sounds is supplied
+        for supplied in [True, False]:
+            argv = builder(play_sounds=supplied)[3:]  # drop [sys.executable, "-m", <module>]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                parsed = draccus.parse(config_class=config_class, args=argv)
+            assert parsed.play_sounds is supplied
 
 
 class TestTheToolForwardsPlaySoundsOnEveryModeThatEmitsIt:
@@ -568,9 +550,9 @@ class TestPlainTeleoperationIsUnaffected:
     def test_its_argv_is_identical_either_way(self) -> None:
         assert _teleop(play_sounds=True) == _teleop(play_sounds=False)
 
-    @pytest.mark.parametrize("value", ["false", None, []])
-    def test_it_refuses_no_value_for_a_flag_it_ignores(self, value: Any) -> None:
-        assert _teleop(play_sounds=value) == _teleop()
+    def test_it_refuses_no_value_for_a_flag_it_ignores(self) -> None:
+        for value in list[Any](["false", None, []]):
+            assert _teleop(play_sounds=value) == _teleop()
 
 
 class TestTheRefusalPrecedesEverythingItWouldOtherwiseReach:
@@ -739,10 +721,7 @@ class TestTheToolsOwnExecutionFlagsAreRefusedByTheToolInstead:
     # -- the refusal ------------------------------------------------------
 
     @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_an_unusable_execution_flag_is_refused(
-        self, flag: str, value: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_an_unusable_execution_flag_is_refused(self, flag: str, monkeypatch: pytest.MonkeyPatch) -> None:
         """Nothing may be launched or persisted for a refused call.
 
         Both branches are barred, not just the detaching one: ``background=0`` is
@@ -751,12 +730,12 @@ class TestTheToolsOwnExecutionFlagsAreRefusedByTheToolInstead:
         """
         monkeypatch.setattr(tele_mod.subprocess, "Popen", _never("subprocess.Popen"))
         monkeypatch.setattr(tele_mod.subprocess, "run", _never("subprocess.run"))
+        for value in NOT_A_BOOLEAN:
+            result = self._start(**{flag: value})
 
-        result = self._start(**{flag: value})
-
-        assert result["status"] == "error"
-        assert flag in _text(result)
-        assert tele_mod.SessionManager().get_session("exec-flag") is None
+            assert result["status"] == "error", f"{flag}={value!r} was accepted"
+            assert flag in _text(result)
+            assert tele_mod.SessionManager().get_session("exec-flag") is None
 
     @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
     def test_dagger_refuses_it_without_the_rollout_entry_point(
@@ -821,31 +800,27 @@ class TestTheToolsOwnExecutionFlagsAreRefusedByTheToolInstead:
 
     # -- the postures a usable flag still selects -------------------------
 
-    @pytest.mark.parametrize("value, expected", A_BOOLEAN)
-    def test_a_usable_background_still_selects_its_posture(
-        self, value: Any, expected: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_usable_background_still_selects_its_posture(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``np.False_`` must still reach the foreground run, not be refused."""
-        calls: list[str] = []
-        monkeypatch.setattr(tele_mod.subprocess, "Popen", _record_popen(calls))
-        monkeypatch.setattr(tele_mod.subprocess, "run", _record_run(calls))
+        for i, (value, expected) in enumerate(A_BOOLEAN):
+            calls: list[str] = []
+            monkeypatch.setattr(tele_mod.subprocess, "Popen", _record_popen(calls))
+            monkeypatch.setattr(tele_mod.subprocess, "run", _record_run(calls))
 
-        result = self._start(background=value)
+            result = self._start(background=value, session_name=f"exec-flag-{i}")
 
-        assert result["status"] == "success"
-        assert calls == ["Popen" if expected else "run"]
+            assert result["status"] == "success"
+            assert calls == ["Popen" if expected else "run"], f"background={value!r}"
 
-    @pytest.mark.parametrize("value, expected", A_BOOLEAN)
-    def test_a_usable_auto_accept_still_selects_its_posture(
-        self, value: Any, expected: bool, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_usable_auto_accept_still_selects_its_posture(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The stdin pipe is the decision; ``np.False_`` must withhold it."""
-        calls: list[str] = []
-        popen = _record_popen(calls)
-        monkeypatch.setattr(tele_mod.subprocess, "Popen", popen)
+        for i, (value, expected) in enumerate(A_BOOLEAN):
+            calls: list[str] = []
+            popen = _record_popen(calls)
+            monkeypatch.setattr(tele_mod.subprocess, "Popen", popen)
 
-        assert self._start(auto_accept_calibration=value)["status"] == "success"
-        assert ("stdin" in popen.kwargs) is expected
+            assert self._start(auto_accept_calibration=value, session_name=f"exec-flag-{i}")["status"] == "success"
+            assert ("stdin" in popen.kwargs) is expected, f"auto_accept_calibration={value!r}"
 
     # -- scope ------------------------------------------------------------
 

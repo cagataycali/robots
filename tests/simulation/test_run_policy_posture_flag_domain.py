@@ -193,29 +193,29 @@ class TestAnUndeclaredSpellingIsRefusedNamingTheFlag:
     """Neither half is read as a posture, and the refusal is the shared domain's."""
 
     @pytest.mark.parametrize("flag", RUN_POLICY_FLAGS)
-    @pytest.mark.parametrize("value", UNDECLARED, ids=repr)
-    def test_run_policy_refuses_it(self, pacers: list[float], flag: str, value: Any) -> None:
-        sim = _Sim()
-        result = _run(sim, **{flag: value})
-        assert result["status"] == "error"
-        assert _text(result) == boolean_flag_error(value, flag, "run_policy")
+    def test_run_policy_refuses_it(self, pacers: list[float], flag: str) -> None:
+        for value in UNDECLARED:
+            sim = _Sim()
+            result = _run(sim, **{flag: value})
+            assert result["status"] == "error", f"{flag}={value!r} was accepted"
+            assert _text(result) == boolean_flag_error(value, flag, "run_policy")
 
     @pytest.mark.parametrize("flag", RUN_POLICY_FLAGS)
-    @pytest.mark.parametrize("value", UNDECLARED, ids=repr)
-    def test_the_refusal_precedes_every_side_effect(self, pacers: list[float], flag: str, value: Any) -> None:
+    def test_the_refusal_precedes_every_side_effect(self, pacers: list[float], flag: str) -> None:
         """No pacer, no shim, no reset, no action: nothing the flag selects ran."""
-        sim = _Sim()
-        _run(sim, n_episodes=2, **{flag: value})
-        assert (pacers, sim.shim_installs, sim.resets, sim.sends) == ([], 0, 0, 0)
+        for value in UNDECLARED:
+            sim = _Sim()
+            _run(sim, n_episodes=2, **{flag: value})
+            assert (pacers, sim.shim_installs, sim.resets, sim.sends) == ([], 0, 0, 0), f"{flag}={value!r}"
 
-    @pytest.mark.parametrize("value", (*UNDECLARED, None), ids=repr)
-    def test_eval_policy_refuses_a_non_boolean_async_rtc(self, value: Any) -> None:
+    def test_eval_policy_refuses_a_non_boolean_async_rtc(self) -> None:
         """``eval_policy`` declares ``async_rtc: bool``, so ``None`` is refused there too."""
-        sim = _Sim()
-        result = sim.eval_policy("arm", policy_provider="mock", n_episodes=1, max_steps=3, async_rtc=value)
-        assert result["status"] == "error"
-        assert _text(result) == boolean_flag_error(value, "async_rtc", "eval_policy")
-        assert sim.sends == 0
+        for value in (*UNDECLARED, None):
+            sim = _Sim()
+            result = sim.eval_policy("arm", policy_provider="mock", n_episodes=1, max_steps=3, async_rtc=value)
+            assert result["status"] == "error", f"async_rtc={value!r} was accepted"
+            assert _text(result) == boolean_flag_error(value, "async_rtc", "eval_policy")
+            assert sim.sends == 0
 
     def test_two_mistyped_flags_report_the_first_in_signature_order(self, pacers: list[float]) -> None:
         result = _run(_Sim(), fast_mode="false", reset_between="false")
@@ -264,26 +264,24 @@ class TestWhyEachHalfIsRefused:
         assert result["status"] == "success", _text(result)
         assert sim.shim_installs == 1
 
-    @pytest.mark.parametrize(("value", "enabled"), [(True, True), (False, False), (None, False)], ids=repr)
-    def test_async_rtc_declared_spellings_select_the_pipeline_they_name(
-        self, pacers: list[float], value: Any, enabled: bool
-    ) -> None:
+    def test_async_rtc_declared_spellings_select_the_pipeline_they_name(self, pacers: list[float]) -> None:
         """``None`` resolves from the mock policy, which is single-step, so synchronous."""
-        result = _run(_Sim(), async_rtc=value)
-        assert result["status"] == "success", _text(result)
-        assert _json(result)["rtc_async_enabled"] is enabled
+        for value, enabled in [(True, True), (False, False), (None, False)]:
+            result = _run(_Sim(), async_rtc=value)
+            assert result["status"] == "success", _text(result)
+            assert _json(result)["rtc_async_enabled"] is enabled, f"async_rtc={value!r}"
 
 
 class TestTheDeclaredSpellingsStillRun:
     """Over-reach control: a boolean of either type is honoured, whatever the flag."""
 
     @pytest.mark.parametrize("flag", RUN_POLICY_FLAGS)
-    @pytest.mark.parametrize("value", (True, False, np.True_, np.False_), ids=repr)
-    def test_a_python_or_numpy_boolean_is_accepted(self, pacers: list[float], flag: str, value: Any) -> None:
-        sim = _Sim()
-        result = _run(sim, **{flag: value})
-        assert result["status"] == "success", _text(result)
-        assert sim.sends == 3
+    def test_a_python_or_numpy_boolean_is_accepted(self, pacers: list[float], flag: str) -> None:
+        for value in (True, False, np.True_, np.False_):
+            sim = _Sim()
+            result = _run(sim, **{flag: value})
+            assert result["status"] == "success", f"{flag}={value!r}: {_text(result)}"
+            assert sim.sends == 3, f"{flag}={value!r}"
 
     def test_omitting_every_flag_keeps_the_defaults(self, pacers: list[float]) -> None:
         sim = _Sim()
@@ -322,27 +320,27 @@ class TestTheToolRefusesBeforeItStartsTheRecording:
     tool already checks the seed, the rates and the keyword bags up front.
     """
 
-    @pytest.mark.parametrize("value", (*UNDECLARED, None), ids=repr)
-    def test_a_non_boolean_fast_mode_is_refused_with_the_facades_words(self, value: Any, tmp_path: Path) -> None:
+    def test_a_non_boolean_fast_mode_is_refused_with_the_facades_words(self, tmp_path: Path) -> None:
         from tests.tools.test_run_policy import _FakeSim
 
-        sim = _FakeSim()
-        result = dict(
-            rp_mod.run_policy(sim, n_episodes=1, n_steps=4, fast_mode=value, dataset_root=str(tmp_path / "ds"))
-        )
-        assert result["status"] == "error"
-        assert _text(result) == boolean_flag_error(value, "fast_mode", "run_policy")
-        assert sim.start_recording_calls == [], "the refused call reached start_recording(overwrite=True)"
-        assert sim.run_policy_calls == []
+        for value in (*UNDECLARED, None):
+            sim = _FakeSim()
+            result = dict(
+                rp_mod.run_policy(sim, n_episodes=1, n_steps=4, fast_mode=value, dataset_root=str(tmp_path / "ds"))
+            )
+            assert result["status"] == "error", f"fast_mode={value!r} was accepted"
+            assert _text(result) == boolean_flag_error(value, "fast_mode", "run_policy")
+            assert sim.start_recording_calls == [], "the refused call reached start_recording(overwrite=True)"
+            assert sim.run_policy_calls == []
 
-    @pytest.mark.parametrize("value", (True, False, np.False_), ids=repr)
-    def test_a_boolean_fast_mode_is_forwarded_verbatim(self, value: Any) -> None:
+    def test_a_boolean_fast_mode_is_forwarded_verbatim(self) -> None:
         from tests.tools.test_run_policy import _FakeSim
 
-        sim = _FakeSim()
-        result = dict(rp_mod.run_policy(sim, n_episodes=1, n_steps=4, fast_mode=value))
-        assert result["status"] == "success", _text(result)
-        assert [call["fast_mode"] for call in sim.run_policy_calls] == [value]
+        for value in (True, False, np.False_):
+            sim = _FakeSim()
+            result = dict(rp_mod.run_policy(sim, n_episodes=1, n_steps=4, fast_mode=value))
+            assert result["status"] == "success", _text(result)
+            assert [call["fast_mode"] for call in sim.run_policy_calls] == [value]
 
     def test_every_boolean_parameter_of_the_tool_is_checked(self) -> None:
         flags = {
@@ -392,15 +390,15 @@ class TestStartPolicyRefusesBeforeTheSubmit:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("value", (*UNDECLARED, None), ids=repr)
-    def test_a_non_boolean_fast_mode_is_refused_without_reporting_started(self, sim: Any, value: Any) -> None:
-        result = sim.start_policy(
-            robot_name="arm", policy_provider="mock", n_steps=4, control_frequency=30.0, fast_mode=value
-        )
-        assert result["status"] == "error"
-        assert _text(result) == boolean_flag_error(value, "fast_mode", "start_policy")
-        assert "started" not in _text(result).lower()
-        assert "No policies running" in _text(sim.list_policies_running()), "the refused call claimed the robot"
+    def test_a_non_boolean_fast_mode_is_refused_without_reporting_started(self, sim: Any) -> None:
+        for value in (*UNDECLARED, None):
+            result = sim.start_policy(
+                robot_name="arm", policy_provider="mock", n_steps=4, control_frequency=30.0, fast_mode=value
+            )
+            assert result["status"] == "error", f"fast_mode={value!r} was accepted"
+            assert _text(result) == boolean_flag_error(value, "fast_mode", "start_policy")
+            assert "started" not in _text(result).lower()
+            assert "No policies running" in _text(sim.list_policies_running()), "the refused call claimed the robot"
 
     def test_a_boolean_fast_mode_is_still_submitted(self, sim: Any) -> None:
         result = sim.start_policy(
