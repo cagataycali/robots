@@ -1,0 +1,64 @@
+{
+ "root": "/home/cagatay/.tiny/mjlab-extreme-20260929/results/factory/onnx_ds",
+ "episodes": 23552,
+ "frames": 3532800,
+ "state_dim": [
+  6
+ ],
+ "camera_keys": [],
+ "goal_state_columns": [],
+ "goal_features": [],
+ "distinct_tasks": 1,
+ "task_sample": [
+  "reach (onnx)"
+ ],
+ "goal_routes": {
+  "pixels": false,
+  "state": false,
+  "text": false
+ },
+ "n_goal_routes": 0,
+ "frame0": {
+  "file": "file-000.parquet",
+  "episodes_sampled": 8586,
+  "state_std": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "state_range": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "action_std": [
+   0.094169,
+   0.112002,
+   0.187672,
+   0.153095,
+   0.163295,
+   0.024329
+  ],
+  "action_range": [
+   0.46617,
+   0.588885,
+   0.95218,
+   0.893425,
+   0.76418,
+   0.129232
+  ],
+  "max_state_range": 0.0,
+  "max_action_range": 0.95218
+ },
+ "verdict": "DO-NOT-TRAIN",
+ "reasons": [
+  "NO GOAL ROUTE: no camera keys, no goal/target state column, and 1 distinct task string(s) -> the goal is recorded nowhere, so the BC optimum is the conditional action mean.",
+  "RUNG-1 FAIL: frame-0 observation.state spread is 0.0 (<= --min-jitter 1e-09) across 8586 episodes while frame-0 action spreads 0.95218 -> identical input, moving label."
+ ]
+}

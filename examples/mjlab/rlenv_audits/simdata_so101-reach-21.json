@@ -1,0 +1,64 @@
+{
+ "root": "/home/cagatay/svla-sim-data/so101-reach-21",
+ "episodes": 246,
+ "frames": 7596,
+ "state_dim": [
+  6
+ ],
+ "camera_keys": [
+  "observation.images.front",
+  "observation.images.wrist"
+ ],
+ "goal_state_columns": [],
+ "goal_features": [],
+ "distinct_tasks": 1,
+ "task_sample": [
+  "Move the gripper to the green ball."
+ ],
+ "goal_routes": {
+  "pixels": true,
+  "state": false,
+  "text": false
+ },
+ "n_goal_routes": 1,
+ "frame0": {
+  "file": "file-000.parquet",
+  "episodes_sampled": 246,
+  "state_std": [
+   0.098205,
+   0.106475,
+   0.110461,
+   0.096638,
+   0.094928,
+   0.0
+  ],
+  "state_range": [
+   0.48901,
+   0.700456,
+   0.711668,
+   0.583914,
+   0.511551,
+   2e-06
+  ],
+  "action_std": [
+   0.096944,
+   0.134439,
+   0.127544,
+   0.111813,
+   0.094691,
+   1e-06
+  ],
+  "action_range": [
+   0.466381,
+   0.822048,
+   0.726334,
+   0.636732,
+   0.510733,
+   0.0
+  ],
+  "max_state_range": 0.711668,
+  "max_action_range": 0.822048
+ },
+ "verdict": "OK",
+ "reasons": []
+}
