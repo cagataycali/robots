@@ -134,11 +134,11 @@ def _isaac_recording() -> tuple[Any, dict[str, Any]]:
 class TestTheSharedDomain:
     """``coerce_size_vector`` is the single definition the backends share."""
 
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_an_unusable_size_is_refused(self, size: Any) -> None:
-        value, err = coerce_size_vector("add_object", "size", size)
-        assert value is None, size
-        assert err is not None and "'size'" in err
+    def test_an_unusable_size_is_refused(self) -> None:
+        for size in UNUSABLE_SIZES:
+            value, err = coerce_size_vector("add_object", "size", size)
+            assert value is None, size
+            assert err is not None and "'size'" in err, f"{size!r}"
 
     @pytest.mark.parametrize(("size", "expected"), GOOD_SIZES)
     def test_a_usable_size_normalizes_to_plain_floats(self, size: Any, expected: list[float]) -> None:
@@ -169,20 +169,20 @@ class TestTheSharedDomain:
 # Newton                                                                      #
 # --------------------------------------------------------------------------- #
 class TestNewtonAddObject:
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_an_unusable_size_is_refused(self, size: Any) -> None:
-        stub = _newton_stub()
-        result = NewtonSimEngine.add_object(stub, "crate", size=size)
-        assert result["status"] == "error", (size, result)
-        assert "'size'" in _text(result)
+    def test_an_unusable_size_is_refused(self) -> None:
+        for size in UNUSABLE_SIZES:
+            stub = _newton_stub()
+            result = NewtonSimEngine.add_object(stub, "crate", size=size)
+            assert result["status"] == "error", (size, result)
+            assert "'size'" in _text(result), f"{size!r}"
 
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_a_refused_size_registers_no_object(self, size: Any) -> None:
+    def test_a_refused_size_registers_no_object(self) -> None:
         """The name must stay reusable, so the obvious retry is not a duplicate."""
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", size=size)["status"] == "error"
-        assert stub._world.objects == {}
-        assert NewtonSimEngine.add_object(stub, "crate", size=[0.1, 0.1, 0.1])["status"] == "success"
+        for size in UNUSABLE_SIZES:
+            stub = _newton_stub()
+            assert NewtonSimEngine.add_object(stub, "crate", size=size)["status"] == "error", f"{size!r}"
+            assert stub._world.objects == {}, f"{size!r}"
+            assert NewtonSimEngine.add_object(stub, "crate", size=[0.1, 0.1, 0.1])["status"] == "success", f"{size!r}"
 
     @pytest.mark.parametrize(("size", "expected"), GOOD_SIZES)
     def test_a_usable_size_is_stored_as_plain_floats(self, size: Any, expected: list[float]) -> None:
@@ -241,32 +241,32 @@ class TestNewtonAddObject:
 # Isaac                                                                       #
 # --------------------------------------------------------------------------- #
 class TestIsaacAddObject:
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_an_unusable_size_is_refused(self, size: Any) -> None:
-        stub, _ = _isaac_recording()
-        result = IsaacSimulation.add_object(stub, "crate", size=size)
-        assert result["status"] == "error", (size, result)
-        assert "'size'" in _text(result)
+    def test_an_unusable_size_is_refused(self) -> None:
+        for size in UNUSABLE_SIZES:
+            stub, _ = _isaac_recording()
+            result = IsaacSimulation.add_object(stub, "crate", size=size)
+            assert result["status"] == "error", (size, result)
+            assert "'size'" in _text(result), f"{size!r}"
 
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_a_refused_size_constructs_no_prim_and_registers_nothing(self, size: Any) -> None:
+    def test_a_refused_size_constructs_no_prim_and_registers_nothing(self) -> None:
         """Same invariant the mass fix established: no half-placed object."""
-        stub, seen = _isaac_recording()
-        assert IsaacSimulation.add_object(stub, "crate", size=size)["status"] == "error"
-        assert seen["construct"] == 0
-        assert seen["scene_add"] == 0
-        assert stub._objects == {}
-        assert stub._prim_registry == []
-        assert IsaacSimulation.add_object(stub, "crate", size=[0.1, 0.1, 0.1])["status"] == "success"
+        for size in UNUSABLE_SIZES:
+            stub, seen = _isaac_recording()
+            assert IsaacSimulation.add_object(stub, "crate", size=size)["status"] == "error", f"{size!r}"
+            assert seen["construct"] == 0, f"{size!r}"
+            assert seen["scene_add"] == 0, f"{size!r}"
+            assert stub._objects == {}, f"{size!r}"
+            assert stub._prim_registry == [], f"{size!r}"
+            assert IsaacSimulation.add_object(stub, "crate", size=[0.1, 0.1, 0.1])["status"] == "success", f"{size!r}"
 
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_the_scale_alias_goes_through_the_same_domain(self, size: Any) -> None:
+    def test_the_scale_alias_goes_through_the_same_domain(self) -> None:
         """``scale`` and ``size`` name one parameter, so one domain covers both."""
-        stub, seen = _isaac_recording()
-        result = IsaacSimulation.add_object(stub, "crate", scale=size)
-        assert result["status"] == "error", (size, result)
-        assert "'size'" in _text(result)
-        assert seen["construct"] == 0
+        for size in UNUSABLE_SIZES:
+            stub, seen = _isaac_recording()
+            result = IsaacSimulation.add_object(stub, "crate", scale=size)
+            assert result["status"] == "error", (size, result)
+            assert "'size'" in _text(result), f"{size!r}"
+            assert seen["construct"] == 0, f"{size!r}"
 
     @pytest.mark.parametrize(("size", "expected"), GOOD_SIZES)
     def test_a_usable_size_reaches_the_prim_as_plain_floats(self, size: Any, expected: list[float]) -> None:
@@ -310,13 +310,13 @@ class TestEveryBackendGivesTheSameVerdict:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("size", UNUSABLE_SIZES)
-    def test_an_unusable_size_is_refused_everywhere(self, mj_sim: Any, size: Any) -> None:
-        mj = mj_sim.add_object("crate", size=size)
-        nt = NewtonSimEngine.add_object(_newton_stub(), "crate", size=size)
-        ic = IsaacSimulation.add_object(_isaac_recording()[0], "crate", size=size)
-        assert mj["status"] == nt["status"] == ic["status"] == "error", (size, mj, nt, ic)
-        assert "'size'" in _text(mj) and "'size'" in _text(nt) and "'size'" in _text(ic)
+    def test_an_unusable_size_is_refused_everywhere(self, mj_sim: Any) -> None:
+        for size in UNUSABLE_SIZES:
+            mj = mj_sim.add_object("crate", size=size)
+            nt = NewtonSimEngine.add_object(_newton_stub(), "crate", size=size)
+            ic = IsaacSimulation.add_object(_isaac_recording()[0], "crate", size=size)
+            assert mj["status"] == nt["status"] == ic["status"] == "error", (size, mj, nt, ic)
+            assert "'size'" in _text(mj) and "'size'" in _text(nt) and "'size'" in _text(ic), f"{size!r}"
 
     @pytest.mark.parametrize(("size", "expected"), GOOD_SIZES)
     def test_a_usable_size_is_accepted_everywhere(self, mj_sim: Any, size: Any, expected: list[float]) -> None:
@@ -332,13 +332,13 @@ class TestEveryBackendGivesTheSameVerdict:
     #: shape-dependent axis this change leaves alone.
     IDENTICALLY_WORDED = tuple(s for s in UNUSABLE_SIZES if not (isinstance(s, list) and not s))
 
-    @pytest.mark.parametrize("size", IDENTICALLY_WORDED)
-    def test_the_shared_refusal_has_one_wording(self, mj_sim: Any, size: Any) -> None:
+    def test_the_shared_refusal_has_one_wording(self, mj_sim: Any) -> None:
         """Two spellings of one verdict is how backend domains start to drift."""
-        mj = mj_sim.add_object("crate", size=size)
-        nt = NewtonSimEngine.add_object(_newton_stub(), "crate", size=size)
-        ic = IsaacSimulation.add_object(_isaac_recording()[0], "crate", size=size)
-        assert {_text(mj), _text(nt), _text(ic)} == {_text(mj)}, (size, _text(mj), _text(nt), _text(ic))
+        for size in self.IDENTICALLY_WORDED:
+            mj = mj_sim.add_object("crate", size=size)
+            nt = NewtonSimEngine.add_object(_newton_stub(), "crate", size=size)
+            ic = IsaacSimulation.add_object(_isaac_recording()[0], "crate", size=size)
+            assert {_text(mj), _text(nt), _text(ic)} == {_text(mj)}, (size, _text(mj), _text(nt), _text(ic))
 
     @pytest.mark.parametrize("size", UNUSABLE_SIZES)
     def test_a_refused_size_leaves_the_name_reusable_everywhere(self, mj_sim: Any, size: Any) -> None:
@@ -611,18 +611,18 @@ class TestOneSizeBuildsOneObject:
         )
         assert seen["radius"] == pytest.approx(0.035) and resolved == pytest.approx([0.07])
 
-    @pytest.mark.parametrize("size", [[0.1], [0.0, 0.0, 0.0], [0.1, -0.1, 0.1]])
     @pytest.mark.parametrize("backend", ["newton", "mjlab"])
-    def test_a_size_mujoco_refuses_is_refused(self, backend: str, size: list[float]) -> None:
+    def test_a_size_mujoco_refuses_is_refused(self, backend: str) -> None:
         """A short vector or a non-positive extent is refused, not padded."""
-        if backend == "newton":
-            stub = _newton_stub()
-            result = NewtonSimEngine.add_object(stub, "crate", shape="box", size=size)
-            assert stub._world.objects == {}
-        else:
-            from strands_robots.simulation.mjlab.simulation import MjlabEngine
+        for size in [[0.1], [0.0, 0.0, 0.0], [0.1, -0.1, 0.1]]:
+            if backend == "newton":
+                stub = _newton_stub()
+                result = NewtonSimEngine.add_object(stub, "crate", shape="box", size=size)
+                assert stub._world.objects == {}, f"{size!r}"
+            else:
+                from strands_robots.simulation.mjlab.simulation import MjlabEngine
 
-            stub = _mjlab_stub()
-            result = MjlabEngine.add_object(stub, "crate", shape="box", size=size)
-            assert stub._objects == {}
-        assert result["status"] == "error" and "full extent" in _text(result)
+                stub = _mjlab_stub()
+                result = MjlabEngine.add_object(stub, "crate", shape="box", size=size)
+                assert stub._objects == {}, f"{size!r}"
+            assert result["status"] == "error" and "full extent" in _text(result), f"{size!r}"

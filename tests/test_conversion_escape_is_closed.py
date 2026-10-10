@@ -267,20 +267,30 @@ CONVERTING_IDS = tuple(guard.name for guard in CONVERTING)
 class TestTheSharedPredicate:
     """``_beyond_float_range`` answers one question and does not widen it."""
 
-    @pytest.mark.parametrize("value", OVERFLOWING_VALUES[:4], ids=OVERFLOWING_IDS[:4])
-    def test_it_is_true_for_a_magnitude_past_the_float_range(self, value: Any) -> None:
-        assert _beyond_float_range(value) is True
+    def test_it_is_true_for_a_magnitude_past_the_float_range(self) -> None:
+        for value in OVERFLOWING_VALUES[:4]:
+            assert _beyond_float_range(value) is True, f"{value!r}"
 
     def test_it_is_true_for_a_non_int_real_that_overflows(self) -> None:
         """Keyed on the conversion, not on the type - see the module docstring."""
         assert _beyond_float_range(Fraction(BEYOND_FLOAT_RANGE, 3)) is True
 
-    @pytest.mark.parametrize(
-        "value",
-        [0, 1, -1, 2.5, FLOAT_MAX, -FLOAT_MAX, LARGE_BUT_CONVERTIBLE, NAN, INF, -INF, np.float32(1.0), np.int64(3)],
-    )
-    def test_it_is_false_for_everything_a_float_can_hold(self, value: Any) -> None:
-        assert _beyond_float_range(value) is False
+    def test_it_is_false_for_everything_a_float_can_hold(self) -> None:
+        for value in [
+            0,
+            1,
+            -1,
+            2.5,
+            FLOAT_MAX,
+            -FLOAT_MAX,
+            LARGE_BUT_CONVERTIBLE,
+            NAN,
+            INF,
+            -INF,
+            np.float32(1.0),
+            np.int64(3),
+        ]:
+            assert _beyond_float_range(value) is False, f"{value!r}"
 
     def test_it_is_false_when_the_conversion_fails_some_other_way(self) -> None:
         """A ``TypeError`` is not a magnitude complaint, so it is not this one.
@@ -324,11 +334,11 @@ class TestEveryConvertingGuardAnswersAValueItCannotConvert:
     """The invariant, over all four guards and every probe that used to raise."""
 
     @pytest.mark.parametrize("guard", CONVERTING, ids=CONVERTING_IDS)
-    @pytest.mark.parametrize("value", OVERFLOWING_VALUES, ids=OVERFLOWING_IDS)
-    def test_it_returns_a_message_instead_of_raising(self, guard: Converting, value: Any) -> None:
-        result = guard.call(value)
-        assert isinstance(result, str)
-        assert result
+    def test_it_returns_a_message_instead_of_raising(self, guard: Converting) -> None:
+        for value in OVERFLOWING_VALUES:
+            result = guard.call(value)
+            assert isinstance(result, str), f"{value!r}"
+            assert result, f"{value!r}"
 
     @pytest.mark.parametrize("guard", CONVERTING, ids=CONVERTING_IDS)
     def test_the_message_names_the_parameter_and_the_surface(self, guard: Converting) -> None:
@@ -404,18 +414,18 @@ class TestTheRangeIsTheBoundTheGuardAlreadyHad:
 class TestTheFovGuardNeededNoNewText:
     """The one member with a bounded domain, so it already owned a true reason."""
 
-    @pytest.mark.parametrize("value", OVERFLOWING_VALUES, ids=OVERFLOWING_IDS)
-    def test_an_outsized_angle_is_refused_as_outside_the_interval(self, value: Any) -> None:
-        result = camera_fov_error("add_camera", "fov", value)
-        assert result is not None
-        assert "open interval (0, 180) degrees" in result
+    def test_an_outsized_angle_is_refused_as_outside_the_interval(self) -> None:
+        for value in OVERFLOWING_VALUES:
+            result = camera_fov_error("add_camera", "fov", value)
+            assert result is not None, f"{value!r}"
+            assert "open interval (0, 180) degrees" in result, f"{value!r}"
 
-    @pytest.mark.parametrize("value", OVERFLOWING_VALUES, ids=OVERFLOWING_IDS)
-    def test_it_never_mentions_the_float_range(self, value: Any) -> None:
+    def test_it_never_mentions_the_float_range(self) -> None:
         """New text here would have been a worse message, not a better one."""
-        result = camera_fov_error("add_camera", "fov", value)
-        assert result is not None
-        assert "64-bit float" not in result
+        for value in OVERFLOWING_VALUES:
+            result = camera_fov_error("add_camera", "fov", value)
+            assert result is not None, f"{value!r}"
+            assert "64-bit float" not in result, f"{value!r}"
 
     def test_it_is_the_same_message_an_ordinary_out_of_range_angle_gets(self) -> None:
         """Byte-identical but for the value, so the two are one reason not two."""
