@@ -81,23 +81,23 @@ POLICIES_DIR = pathlib.Path(__file__).resolve().parents[2] / "strands_robots" / 
 
 
 @pytest.mark.parametrize(("context", "param", "factory", "_attr"), SITES, ids=[f"{s[0]}-{s[1]}" for s in SITES])
-@pytest.mark.parametrize("spelling", TRUTHY_OFF)
 def test_a_truthy_spelling_of_off_is_refused(
-    context: str, param: str, factory: Callable[[Any], Any], _attr: str, spelling: str
+    context: str, param: str, factory: Callable[[Any], Any], _attr: str
 ) -> None:
     """The spellings ``bool()`` inverted are refused, naming the parameter."""
-    with pytest.raises(ValueError, match=param):
-        factory(spelling)
+    for spelling in TRUTHY_OFF:
+        with pytest.raises(ValueError, match=param):
+            factory(spelling)
 
 
 @pytest.mark.parametrize(("context", "param", "factory", "_attr"), SITES, ids=[f"{s[0]}-{s[1]}" for s in SITES])
-@pytest.mark.parametrize("value", OTHER_NON_BOOLEAN, ids=[repr(v) for v in OTHER_NON_BOOLEAN])
 def test_a_value_that_is_not_a_posture_is_refused(
-    context: str, param: str, factory: Callable[[Any], Any], _attr: str, value: Any
+    context: str, param: str, factory: Callable[[Any], Any], _attr: str
 ) -> None:
     """Neither branch is taken for a value that spells neither posture."""
-    with pytest.raises(ValueError, match=param):
-        factory(value)
+    for value in OTHER_NON_BOOLEAN:
+        with pytest.raises(ValueError, match=param):
+            factory(value)
 
 
 @pytest.mark.parametrize(("context", "param", "factory", "_attr"), SITES, ids=[f"{s[0]}-{s[1]}" for s in SITES])

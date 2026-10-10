@@ -114,21 +114,21 @@ class TestAPostureTheToolCannotReadIsRefused:
     """Every flag an action consumes is held to the shared boolean domain."""
 
     @pytest.mark.parametrize(("action", "flag"), ACTION_FLAGS)
-    @pytest.mark.parametrize("value", BAD_POSTURES)
     def test_a_non_boolean_posture_is_refused_before_the_camera_opens(
-        self, camera: Camera, tmp_path: Any, action: str, flag: str, value: Any
+        self, camera: Camera, tmp_path: Any, action: str, flag: str
     ) -> None:
-        result = _call(**_action_kwargs(action, tmp_path) | {flag: value})
+        for value in BAD_POSTURES:
+            result = _call(**_action_kwargs(action, tmp_path) | {flag: value})
 
-        assert result["status"] == "error"
-        assert _text(result).startswith(f"{action}: {flag} must be a boolean")
-        assert camera.warmups == [], "the camera was opened on a posture the tool cannot read"
+            assert result["status"] == "error", f"{value!r}"
+            assert _text(result).startswith(f"{action}: {flag} must be a boolean"), f"{value!r}"
+            assert camera.warmups == [], "the camera was opened on a posture the tool cannot read"
 
-    @pytest.mark.parametrize("value", BAD_POSTURES + (True, False, np.True_, np.False_))
-    def test_the_posture_domain_matches_the_shared_helper(self, camera: Camera, tmp_path: Any, value: Any) -> None:
-        refused = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": value})["status"] == "error"
+    def test_the_posture_domain_matches_the_shared_helper(self, camera: Camera, tmp_path: Any) -> None:
+        for value in BAD_POSTURES + (True, False, np.True_, np.False_):
+            refused = _call(**_action_kwargs("capture", tmp_path) | {"async_mode": value})["status"] == "error"
 
-        assert refused == (boolean_flag_error(value, "async_mode", "capture") is not None)
+            assert refused == (boolean_flag_error(value, "async_mode", "capture") is not None), f"{value!r}"
 
     def test_an_action_that_consumes_no_posture_refuses_none_of_them(self, camera: Camera, tmp_path: Any) -> None:
         """``discover`` reads none of the three, so a value it never consults stands.

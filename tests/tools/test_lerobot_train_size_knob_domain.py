@@ -84,10 +84,10 @@ class TestARunSizeThatCannotBeHonoredIsRefused:
     """Each size knob is checked against the shared positive-count domain."""
 
     @pytest.mark.parametrize("param", SIZE_PARAMS)
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_an_unusable_size_never_reaches_the_argv(self, param: str, value: Any) -> None:
-        with pytest.raises(ValueError, match=f"{param} must be a positive integer"):
-            _build(**{param: value})
+    def test_an_unusable_size_never_reaches_the_argv(self, param: str) -> None:
+        for value in UNUSABLE_COUNTS:
+            with pytest.raises(ValueError, match=f"{param} must be a positive integer"):
+                _build(**{param: value})
 
     @pytest.mark.parametrize("param", SIZE_PARAMS)
     def test_the_refusal_names_the_parameter_and_quotes_the_value(self, param: str) -> None:
@@ -148,12 +148,12 @@ class TestTheBuilderNowMeetsTheTrainerSurfaceContract:
             return False
         return True
 
-    @pytest.mark.parametrize("value", [*UNUSABLE_COUNTS, 20000, 1])
-    def test_the_builder_accepts_no_step_budget_the_trainer_would_reject(self, value: Any) -> None:
-        if not self._trainer_accepts_steps(value):
-            assert not self._builder_accepts_steps(value), (
-                f"steps={value!r} is refused by the trainer surface but built into the argv"
-            )
+    def test_the_builder_accepts_no_step_budget_the_trainer_would_reject(self) -> None:
+        for value in [*UNUSABLE_COUNTS, 20000, 1]:
+            if not self._trainer_accepts_steps(value):
+                assert not self._builder_accepts_steps(value), (
+                    f"steps={value!r} is refused by the trainer surface but built into the argv"
+                )
 
     def test_the_trainer_surface_really_does_refuse_a_non_positive_step_budget(self) -> None:
         """Non-vacuity: the contract being matched is actually enforced there."""

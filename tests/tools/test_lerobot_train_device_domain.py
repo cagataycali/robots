@@ -98,12 +98,12 @@ def _write_resumable_checkpoint(output_dir: Path) -> Path:
 class TestADeviceTorchCannotParseIsRefused:
     """The spelling is graded against torch's own parser before the argv is built."""
 
-    @pytest.mark.parametrize("device", UNUSABLE_DEVICES)
-    def test_an_unusable_device_never_reaches_the_argv(self, device: Any) -> None:
+    def test_an_unusable_device_never_reaches_the_argv(self) -> None:
         pytest.importorskip("torch")
-        with pytest.raises(ValueError) as excinfo:
-            _build(device=device)
-        assert "device" in str(excinfo.value)
+        for device in UNUSABLE_DEVICES:
+            with pytest.raises(ValueError) as excinfo:
+                _build(device=device)
+            assert "device" in str(excinfo.value), f"{device!r}"
 
     def test_the_refusal_names_the_parameter_the_tool_and_the_value(self) -> None:
         pytest.importorskip("torch")
@@ -138,9 +138,9 @@ class TestADeviceTorchCannotParseIsRefused:
 class TestOnlyTheSpellingIsGradedNeverAvailability:
     """A run may name a device the dispatching machine does not have."""
 
-    @pytest.mark.parametrize("device", USABLE_DEVICES)
-    def test_a_parseable_device_still_reaches_the_argv(self, device: str) -> None:
-        assert f"--policy.device={device}" in _build(device=device)
+    def test_a_parseable_device_still_reaches_the_argv(self) -> None:
+        for device in USABLE_DEVICES:
+            assert f"--policy.device={device}" in _build(device=device), f"{device!r}"
 
     def test_cuda_builds_on_a_machine_without_cuda(self) -> None:
         """The premise the whole guard rests on, asserted where it is false."""
@@ -157,18 +157,18 @@ class TestOnlyTheSpellingIsGradedNeverAvailability:
 class TestTheDomainIsSourcedLiveRatherThanCopied:
     """Executable premises, so the reasoning cannot silently become wrong."""
 
-    @pytest.mark.parametrize("device", [value for value in UNUSABLE_DEVICES if isinstance(value, str)])
-    def test_torch_really_rejects_every_unusable_spelling(self, device: str) -> None:
+    def test_torch_really_rejects_every_unusable_spelling(self) -> None:
         """Non-vacuity: the probe set is refused by torch, not by a local list."""
         torch = pytest.importorskip("torch")
-        with pytest.raises((RuntimeError, ValueError)):
-            torch.device(device)
+        for device in [value for value in UNUSABLE_DEVICES if isinstance(value, str)]:
+            with pytest.raises((RuntimeError, ValueError)):
+                torch.device(device)
 
-    @pytest.mark.parametrize("device", USABLE_DEVICES)
-    def test_torch_really_accepts_every_usable_spelling(self, device: str) -> None:
+    def test_torch_really_accepts_every_usable_spelling(self) -> None:
         """So the admitted half is torch's verdict too, not a copied allow-list."""
         torch = pytest.importorskip("torch")
-        assert torch.device(device) is not None
+        for device in USABLE_DEVICES:
+            assert torch.device(device) is not None, f"{device!r}"
 
     def test_torchs_own_message_enumerates_the_admitted_device_types(self) -> None:
         """Which is why the refusal quotes it instead of restating the set."""

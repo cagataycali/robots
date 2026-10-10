@@ -48,19 +48,19 @@ _DIMENSIONS = ("num_actions", "obs_history_len", "single_obs_dim", "command_dim"
 
 # Spellings a bare ``< 1`` comparison cannot refuse, plus the ones it could.
 _REFUSED = [
-    pytest.param(True, id="bool-true"),
-    pytest.param(False, id="bool-false"),
-    pytest.param(2.5, id="fractional-float"),
-    pytest.param(86.0, id="integral-float"),
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(float("inf"), id="inf"),
-    pytest.param("86", id="numeric-string"),
-    pytest.param(None, id="none"),
-    pytest.param([86], id="list"),
-    pytest.param(np.int64(86), id="numpy-int"),
-    pytest.param(np.float64(86), id="numpy-float"),
-    pytest.param(0, id="zero"),
-    pytest.param(-1, id="negative"),
+    True,
+    False,
+    2.5,
+    86.0,
+    float("nan"),
+    float("inf"),
+    "86",
+    None,
+    [86],
+    np.int64(86),
+    np.float64(86),
+    0,
+    -1,
 ]
 
 
@@ -108,11 +108,11 @@ class TestEveryDimensionIsHeldToTheDomain:
     """Regression: each of the five dimensions refuses each unusable spelling."""
 
     @pytest.mark.parametrize("dimension_name", _DIMENSIONS)
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_dimension_is_refused_at_construction(self, dimension_name: str, value: Any) -> None:
-        with pytest.raises(ValueError) as caught:
-            _config(**{dimension_name: value})
-        assert dimension_name in str(caught.value)
+    def test_the_dimension_is_refused_at_construction(self, dimension_name: str) -> None:
+        for value in _REFUSED:
+            with pytest.raises(ValueError) as caught:
+                _config(**{dimension_name: value})
+            assert dimension_name in str(caught.value), f"{value!r}"
 
     @pytest.mark.parametrize("dimension_name", _DIMENSIONS)
     def test_the_refusal_names_the_field_and_the_domain(self, dimension_name: str) -> None:
@@ -170,11 +170,11 @@ class TestTheDomainIsWiredForEveryDiscreteField:
             f"the config's int-annotated fields are {derived}, which does not cover {_DIMENSIONS}"
         )
 
-    @pytest.mark.parametrize("value", [True, float("nan"), 2.5])
-    def test_every_derived_field_refuses_the_spellings_a_floor_cannot(self, value: Any) -> None:
-        for dimension_name in self._integer_fields():
-            with pytest.raises(ValueError, match=rf"{dimension_name} must be a positive integer"):
-                _config(**{dimension_name: value})
+    def test_every_derived_field_refuses_the_spellings_a_floor_cannot(self) -> None:
+        for value in [True, float("nan"), 2.5]:
+            for dimension_name in self._integer_fields():
+                with pytest.raises(ValueError, match=rf"{dimension_name} must be a positive integer"):
+                    _config(**{dimension_name: value})
 
     def test_the_shared_domain_agrees_with_these_cells(self) -> None:
         """The refusals come from the shared domain, not a local restatement."""

@@ -86,28 +86,28 @@ class TestASelectorThatSilentlyChoseAnotherIsRefused:
     """The headline: an unrecognised spelling used to pick a plausible neighbour."""
 
     @pytest.mark.parametrize("action", CAMERA_ACTIONS)
-    @pytest.mark.parametrize("value", BAD_COLOR_MODES)
     def test_an_unrecognised_color_mode_is_refused_on_every_camera_action(
-        self, recorder: Camera, tmp_path: Any, action: str, value: Any
+        self, recorder: Camera, tmp_path: Any, action: str
     ) -> None:
-        result = _call(action=action, camera_id=0, save_path=str(tmp_path), color_mode=value)
+        for value in BAD_COLOR_MODES:
+            result = _call(action=action, camera_id=0, save_path=str(tmp_path), color_mode=value)
 
-        assert result["status"] == "error", result
-        assert "color_mode" in _text(result)
-        # The refusal precedes the device, so no camera is opened with a channel
-        # order the caller did not ask for.
-        assert recorder.opened == []
+            assert result["status"] == "error", result
+            assert "color_mode" in _text(result), f"{value!r}"
+            # The refusal precedes the device, so no camera is opened with a channel
+            # order the caller did not ask for.
+            assert recorder.opened == [], f"{value!r}"
 
     @pytest.mark.parametrize("action", CAMERA_ACTIONS)
-    @pytest.mark.parametrize("value", BAD_ROTATIONS)
     def test_an_unrecognised_rotation_is_refused_on_every_camera_action(
-        self, recorder: Camera, tmp_path: Any, action: str, value: Any
+        self, recorder: Camera, tmp_path: Any, action: str
     ) -> None:
-        result = _call(action=action, camera_id=0, save_path=str(tmp_path), rotation=value)
+        for value in BAD_ROTATIONS:
+            result = _call(action=action, camera_id=0, save_path=str(tmp_path), rotation=value)
 
-        assert result["status"] == "error", result
-        assert "rotation" in _text(result)
-        assert recorder.opened == []
+            assert result["status"] == "error", result
+            assert "rotation" in _text(result), f"{value!r}"
+            assert recorder.opened == [], f"{value!r}"
 
     def test_the_refusal_names_the_action_the_option_and_the_vocabulary(self, recorder: Camera, tmp_path: Any) -> None:
         text = _text(_call(action="capture", camera_id=0, save_path=str(tmp_path), color_mode="RBG"))
@@ -174,19 +174,21 @@ class TestTheChannelOrderThatWasSilentlyTransposed:
 class TestEveryDeclaredSpellingStillWorks:
     """The fix refuses only the spellings that used to be silently replaced."""
 
-    @pytest.mark.parametrize("value", ["RGB", "BGR", "rgb", "bgr", "Rgb"])
-    def test_a_declared_color_mode_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any, value: str) -> None:
-        result = _call(action="capture", camera_id=0, save_path=str(tmp_path), color_mode=value)
+    def test_a_declared_color_mode_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any) -> None:
+        for value in ["RGB", "BGR", "rgb", "bgr", "Rgb"]:
+            recorder.opened.clear()
+            result = _call(action="capture", camera_id=0, save_path=str(tmp_path), color_mode=value)
 
-        assert result["status"] == "success", result
-        assert _selectors(recorder) == [(value, "NO_ROTATION")]
+            assert result["status"] == "success", result
+            assert _selectors(recorder) == [(value, "NO_ROTATION")], f"{value!r}"
 
-    @pytest.mark.parametrize("value", ["NO_ROTATION", "ROTATE_90", "ROTATE_180", "ROTATE_270", "rotate_90"])
-    def test_a_declared_rotation_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any, value: str) -> None:
-        result = _call(action="capture", camera_id=0, save_path=str(tmp_path), rotation=value)
+    def test_a_declared_rotation_is_accepted_in_any_case(self, recorder: Camera, tmp_path: Any) -> None:
+        for value in ["NO_ROTATION", "ROTATE_90", "ROTATE_180", "ROTATE_270", "rotate_90"]:
+            recorder.opened.clear()
+            result = _call(action="capture", camera_id=0, save_path=str(tmp_path), rotation=value)
 
-        assert result["status"] == "success", result
-        assert _selectors(recorder) == [("RGB", value)]
+            assert result["status"] == "success", result
+            assert _selectors(recorder) == [("RGB", value)], f"{value!r}"
 
     def test_the_default_selectors_are_themselves_declared(self, recorder: Camera, tmp_path: Any) -> None:
         """A caller who names neither selector is never refused for the defaults."""

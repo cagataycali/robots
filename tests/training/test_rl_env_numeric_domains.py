@@ -90,32 +90,28 @@ def _env(engine: EngineStandIn, **kwargs: Any) -> SimEnv:
 class TestEveryUnusableNumericIsRefused:
     """A value no numeric can honor is refused, naming the class and the parameter."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_SCALES, ids=[repr(v) for v in UNUSABLE_SCALES])
-    def test_action_scale(self, value: Any) -> None:
-        with pytest.raises(ValueError, match=r"SimEnv: action_scale"):
-            _env(EngineStandIn(joints=("A", "B")), action_scale=value)
+    def test_action_scale(self) -> None:
+        for value in UNUSABLE_SCALES:
+            with pytest.raises(ValueError, match=r"SimEnv: action_scale"):
+                _env(EngineStandIn(joints=("A", "B")), action_scale=value)
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=[repr(v) for v in UNUSABLE_COUNTS])
-    def test_max_episode_steps(self, value: Any) -> None:
-        with pytest.raises(ValueError, match=r"SimEnv: max_episode_steps"):
-            _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
+    def test_max_episode_steps(self) -> None:
+        for value in UNUSABLE_COUNTS:
+            with pytest.raises(ValueError, match=r"SimEnv: max_episode_steps"):
+                _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS, ids=[repr(v) for v in UNUSABLE_COUNTS])
-    def test_n_substeps(self, value: Any) -> None:
-        with pytest.raises(ValueError, match=r"SimEnv: n_substeps"):
-            _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
+    def test_n_substeps(self) -> None:
+        for value in UNUSABLE_COUNTS:
+            with pytest.raises(ValueError, match=r"SimEnv: n_substeps"):
+                _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
 
     # ``None`` is excluded deliberately: for ``action_dim`` alone it is the
     # documented "size the head from the robot's action keys" spelling, so it is a
     # sentinel rather than a value with a domain (pinned as accepted below).
-    @pytest.mark.parametrize(
-        "value",
-        [v for v in UNUSABLE_COUNTS if v is not None],
-        ids=[repr(v) for v in UNUSABLE_COUNTS if v is not None],
-    )
-    def test_action_dim(self, value: Any) -> None:
-        with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
-            _env(EngineStandIn(joints=("A", "B")), action_dim=value)
+    def test_action_dim(self) -> None:
+        for value in [v for v in UNUSABLE_COUNTS if v is not None]:
+            with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
+                _env(EngineStandIn(joints=("A", "B")), action_dim=value)
 
     def test_the_message_names_the_reason_not_only_the_parameter(self) -> None:
         with pytest.raises(ValueError, match=r"action_scale must be a positive finite number, got 0\.0"):
@@ -157,28 +153,28 @@ class TestUsableValuesAreUntouched:
     def test_an_explicit_action_dim_is_honored(self) -> None:
         assert _env(EngineStandIn(joints=("A", "B")), action_dim=3).num_actions == 3
 
-    @pytest.mark.parametrize("value", [3.0, np.int64(3), np.float64(4.0)], ids=["3.0", "np.int64", "np.float64"])
-    def test_an_integral_real_substep_count_is_honored(self, value: Any) -> None:
+    def test_an_integral_real_substep_count_is_honored(self) -> None:
         # ``send_action`` honors these spellings, so this constructor must too;
         # the stored value is normalized to a plain ``int``.
-        env = _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
-        assert env.n_substeps == 3 or env.n_substeps == 4
-        assert isinstance(env.n_substeps, int)
+        for value in [3.0, np.int64(3), np.float64(4.0)]:
+            env = _env(EngineStandIn(joints=("A", "B")), n_substeps=value)
+            assert env.n_substeps == 3 or env.n_substeps == 4, f"{value!r}"
+            assert isinstance(env.n_substeps, int), f"{value!r}"
 
-    @pytest.mark.parametrize("value", [50.0, np.int64(50)], ids=["50.0", "np.int64"])
-    def test_an_integral_real_episode_ceiling_is_honored(self, value: Any) -> None:
+    def test_an_integral_real_episode_ceiling_is_honored(self) -> None:
         # Only ever compared against the step counter, so an integral real is
         # equally usable; normalized to a plain ``int``.
-        env = _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
-        assert env.max_episode_steps == 50
-        assert isinstance(env.max_episode_steps, int)
+        for value in [50.0, np.int64(50)]:
+            env = _env(EngineStandIn(joints=("A", "B")), max_episode_steps=value)
+            assert env.max_episode_steps == 50, f"{value!r}"
+            assert isinstance(env.max_episode_steps, int), f"{value!r}"
 
-    @pytest.mark.parametrize("value", [3.0, np.int64(3)], ids=["3.0", "np.int64"])
-    def test_an_integral_real_action_dim_is_refused(self, value: Any) -> None:
+    def test_an_integral_real_action_dim_is_refused(self) -> None:
         # The one knob that is deliberately narrower: it sizes the trainers'
         # action head, where an integral float raises rather than being coerced.
-        with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
-            _env(EngineStandIn(joints=("A", "B")), action_dim=value)
+        for value in [3.0, np.int64(3)]:
+            with pytest.raises(ValueError, match=r"SimEnv: action_dim"):
+                _env(EngineStandIn(joints=("A", "B")), action_dim=value)
 
     def test_a_usable_env_still_steps(self) -> None:
         engine = EngineStandIn(joints=("A", "B"))

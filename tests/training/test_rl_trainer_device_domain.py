@@ -92,17 +92,17 @@ class TestAnUnusableDeviceIsReportedByThePreflight:
     """The headline: ``validate`` no longer calls an unlaunchable spec launchable."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("device", UNUSABLE)
     def test_a_device_no_torch_build_can_parse_is_reported(
-        self, tmp_path: pathlib.Path, backend: type[Trainer], device: Any
+        self, tmp_path: pathlib.Path, backend: type[Trainer]
     ) -> None:
         pytest.importorskip("torch")
-        problems = _device_problems(backend(), _spec(tmp_path, device=device))
-        assert problems, (
-            f"{backend.__name__}.validate() returned no device problem for device={device!r}, "
-            "which torch cannot parse; setup() hands it straight to torch.device, so the run "
-            "aborts after the preflight called the spec launchable"
-        )
+        for device in UNUSABLE:
+            problems = _device_problems(backend(), _spec(tmp_path, device=device))
+            assert problems, (
+                f"{backend.__name__}.validate() returned no device problem for device={device!r}, "
+                "which torch cannot parse; setup() hands it straight to torch.device, so the run "
+                "aborts after the preflight called the spec launchable"
+            )
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_the_report_names_the_backend_the_value_and_the_admitted_shape(
@@ -142,10 +142,7 @@ class TestTheDomainHasOneOwner:
     """The tool, the supervised trainer and the RL preflight admit the same set."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("device", UNUSABLE + USABLE)
-    def test_every_surface_that_spends_the_value_agrees(
-        self, tmp_path: pathlib.Path, backend: type[Trainer], device: Any
-    ) -> None:
+    def test_every_surface_that_spends_the_value_agrees(self, tmp_path: pathlib.Path, backend: type[Trainer]) -> None:
         """One quantity reaching torch from three layers must have one admitted set.
 
         ``lerobot_train`` builds a detached argv from it, ``LerobotTrainer``
@@ -156,12 +153,13 @@ class TestTheDomainHasOneOwner:
         pytest.importorskip("torch")
         from strands_robots.tools.lerobot_train import _torch_device_error
 
-        tool_refuses = _torch_device_error(device) is not None
-        rl_refuses = bool(_device_problems(backend(), _spec(tmp_path, device=device)))
-        assert rl_refuses == tool_refuses, (
-            f"device={device!r}: the lerobot_train tool {'refuses' if tool_refuses else 'admits'} it "
-            f"and {backend.__name__} {'refuses' if rl_refuses else 'admits'} it"
-        )
+        for device in UNUSABLE + USABLE:
+            tool_refuses = _torch_device_error(device) is not None
+            rl_refuses = bool(_device_problems(backend(), _spec(tmp_path, device=device)))
+            assert rl_refuses == tool_refuses, (
+                f"device={device!r}: the lerobot_train tool {'refuses' if tool_refuses else 'admits'} it "
+                f"and {backend.__name__} {'refuses' if rl_refuses else 'admits'} it"
+            )
 
     @staticmethod
     def _calls(source: str) -> set[str]:
@@ -223,12 +221,10 @@ class TestWhatThisDeliberatelyDoesNotGrade:
     """Controls: each fails for a specific over-tight fix."""
 
     @pytest.mark.parametrize("backend", BACKENDS)
-    @pytest.mark.parametrize("device", USABLE)
-    def test_a_usable_spelling_still_validates_clean(
-        self, tmp_path: pathlib.Path, backend: type[Trainer], device: str
-    ) -> None:
+    def test_a_usable_spelling_still_validates_clean(self, tmp_path: pathlib.Path, backend: type[Trainer]) -> None:
         pytest.importorskip("torch")
-        assert backend().validate(_spec(tmp_path, device=device)) == []
+        for device in USABLE:
+            assert backend().validate(_spec(tmp_path, device=device)) == [], f"{device!r}"
 
     @pytest.mark.parametrize("backend", BACKENDS)
     def test_availability_is_not_graded(
