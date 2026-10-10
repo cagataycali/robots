@@ -140,16 +140,16 @@ class TestAPostureThatIsNotABooleanIsRefused:
     """Neither half is read as a trajectory, and the port stays closed."""
 
     @pytest.mark.parametrize("action", _READS_THE_FLAG)
-    @pytest.mark.parametrize("smooth", (*_TRUTHY_NON_BOOLEANS, *_FALSY_NON_BOOLEANS))
     def test_an_undeclared_spelling_is_refused_naming_the_flag(
-        self, action: str, smooth: Any, stored_pose: None, fake_serial: list[FakeSerial]
+        self, action: str, stored_pose: None, fake_serial: list[FakeSerial]
     ) -> None:
-        result = _drive(action, smooth=smooth)
-        text = _texts(result)
-        assert result["status"] == "error", text
-        assert "smooth" in text and action in text, text
-        assert text.isascii(), text
-        assert fake_serial == [], "the refused call opened the serial port"
+        for smooth in (*_TRUTHY_NON_BOOLEANS, *_FALSY_NON_BOOLEANS):
+            result = _drive(action, smooth=smooth)
+            text = _texts(result)
+            assert result["status"] == "error", text
+            assert "smooth" in text and action in text, text
+            assert text.isascii(), text
+            assert fake_serial == [], "the refused call opened the serial port"
 
     def test_the_refusal_precedes_reading_the_pose_file(self, cwd_tmp: Any, fake_serial: list[FakeSerial]) -> None:
         """The flag is checked before the action's own arguments are resolved."""
@@ -188,25 +188,33 @@ class TestWhyEachHalfIsRefused:
         assert connected, error
         return controller
 
-    @pytest.mark.parametrize("smooth", _FALSY_NON_BOOLEANS)
     def test_a_falsy_spelling_is_a_single_full_travel_write(
-        self, smooth: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
+        self, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         """One goal position per motor, straight to the target, and no pause."""
-        controller = self._connected(reading_serial)
-        assert controller.move_multiple_motors(dict(_MOTORS), smooth, steps=20, step_delay=0.05) is True
-        assert len(pacing["moves"]) == len(_MOTORS), pacing["moves"]
-        assert pacing["sleeps"] == []
+        for smooth in _FALSY_NON_BOOLEANS:
+            pacing["moves"].clear()
+            pacing["sleeps"].clear()
+            controller = self._connected(reading_serial)
+            assert controller.move_multiple_motors(dict(_MOTORS), smooth, steps=20, step_delay=0.05) is True, (
+                f"{smooth!r}"
+            )
+            assert len(pacing["moves"]) == len(_MOTORS), pacing["moves"]
+            assert pacing["sleeps"] == [], f"{smooth!r}"
 
-    @pytest.mark.parametrize("smooth", _TRUTHY_NON_BOOLEANS)
     def test_a_truthy_opt_out_spelling_interpolates_anyway(
-        self, smooth: Any, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
+        self, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
     ) -> None:
         """The word asks to go straight to the target; 21 increments are written."""
-        controller = self._connected(reading_serial)
-        assert controller.move_multiple_motors(dict(_MOTORS), smooth, steps=20, step_delay=0.05) is True
-        assert len(pacing["moves"]) == 21 * len(_MOTORS), len(pacing["moves"])
-        assert pacing["sleeps"].count(0.05) == 21
+        for smooth in _TRUTHY_NON_BOOLEANS:
+            pacing["moves"].clear()
+            pacing["sleeps"].clear()
+            controller = self._connected(reading_serial)
+            assert controller.move_multiple_motors(dict(_MOTORS), smooth, steps=20, step_delay=0.05) is True, (
+                f"{smooth!r}"
+            )
+            assert len(pacing["moves"]) == 21 * len(_MOTORS), len(pacing["moves"])
+            assert pacing["sleeps"].count(0.05) == 21, f"{smooth!r}"
 
 
 class TestTheDeclaredSpellingsStillSelectBothBranches:
@@ -243,11 +251,11 @@ class TestOnlyTheActionsThatReadTheFlagAreRefused:
     """A caller is never refused for a value the requested action ignores."""
 
     @pytest.mark.parametrize("action", _IGNORES_THE_FLAG)
-    @pytest.mark.parametrize("smooth", ("false", 0))
     def test_an_action_that_ignores_the_flag_is_not_refused_for_it(
-        self, action: str, smooth: Any, stored_pose: None, reading_serial: list[ReadingSerial]
+        self, action: str, stored_pose: None, reading_serial: list[ReadingSerial]
     ) -> None:
-        assert "smooth" not in _texts(_drive(action, smooth=smooth)), action
+        for smooth in ("false", 0):
+            assert "smooth" not in _texts(_drive(action, smooth=smooth)), action
 
     def test_reset_to_home_still_interpolates_whatever_the_flag_says(
         self, stored_pose: None, reading_serial: list[ReadingSerial], pacing: dict[str, list[Any]]
@@ -262,9 +270,11 @@ class TestOnlyTheActionsThatReadTheFlagAreRefused:
 class TestTheDomainIsTheSharedOne:
     """The accepted spellings cannot drift from the library-wide flag domain."""
 
-    @pytest.mark.parametrize("value", (*_TRUTHY_NON_BOOLEANS, *_FALSY_NON_BOOLEANS, True, False, np.True_))
-    def test_the_message_is_the_shared_flag_domain_verbatim(self, value: Any) -> None:
-        assert _smooth_posture_error("move_multiple", value) == boolean_flag_error(value, "smooth", "move_multiple")
+    def test_the_message_is_the_shared_flag_domain_verbatim(self) -> None:
+        for value in (*_TRUTHY_NON_BOOLEANS, *_FALSY_NON_BOOLEANS, True, False, np.True_):
+            assert _smooth_posture_error("move_multiple", value) == boolean_flag_error(
+                value, "smooth", "move_multiple"
+            ), f"{value!r}"
 
     @pytest.mark.parametrize("action", _IGNORES_THE_FLAG)
     def test_an_action_that_ignores_the_flag_yields_no_error(self, action: str) -> None:

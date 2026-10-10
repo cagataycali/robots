@@ -63,22 +63,22 @@ lerobot_train = train_mod.lerobot_train
 # truthy numbers, and the falsy values that are not a declared spelling of the
 # negative posture either.
 NOT_A_BOOLEAN = [
-    pytest.param("false", id="str-false"),
-    pytest.param("no", id="str-no"),
-    pytest.param("0", id="str-zero"),
-    pytest.param(float("nan"), id="nan"),
-    pytest.param(1, id="int-one"),
-    pytest.param(None, id="none"),
-    pytest.param([], id="empty-list"),
+    "false",
+    "no",
+    "0",
+    float("nan"),
+    1,
+    None,
+    [],
 ]
 
 # Both python spellings plus the numpy booleans the shared domain also accepts,
 # which arrive from an array-shaped config or a NumPy comparison.
 A_BOOLEAN = [
-    pytest.param(True, id="true"),
-    pytest.param(False, id="false"),
-    pytest.param(np.True_, id="np-true"),
-    pytest.param(np.False_, id="np-false"),
+    True,
+    False,
+    np.True_,
+    np.False_,
 ]
 
 FLAGS = ("resume", "lora", "train_expert_only", "gradient_checkpointing", "push_to_hub")
@@ -121,15 +121,15 @@ class TestTheBuilderRefusesAPostureItCanOnlyMisread:
     """Each flag is held to the shared boolean domain, and named when refused."""
 
     @pytest.mark.parametrize("flag", FLAGS)
-    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
-    def test_a_non_boolean_flag_is_refused_by_name(self, flag: str, value: Any, checkpoint_tree: str) -> None:
-        with pytest.raises(ValueError, match=rf"\b{flag} must be a boolean"):
-            _build(output_dir=checkpoint_tree, policy_type="pi0", **{flag: value})
+    def test_a_non_boolean_flag_is_refused_by_name(self, flag: str, checkpoint_tree: str) -> None:
+        for value in NOT_A_BOOLEAN:
+            with pytest.raises(ValueError, match=rf"\b{flag} must be a boolean"):
+                _build(output_dir=checkpoint_tree, policy_type="pi0", **{flag: value})
 
-    @pytest.mark.parametrize("value", A_BOOLEAN)
     @pytest.mark.parametrize("flag", FLAGS)
-    def test_a_usable_boolean_is_not_refused(self, flag: str, value: Any, checkpoint_tree: str) -> None:
-        assert _build(output_dir=checkpoint_tree, policy_type="pi0", **{flag: value})
+    def test_a_usable_boolean_is_not_refused(self, flag: str, checkpoint_tree: str) -> None:
+        for value in A_BOOLEAN:
+            assert _build(output_dir=checkpoint_tree, policy_type="pi0", **{flag: value}), f"{value!r}"
 
 
 class TestTheRefusalNamesTheFlagRatherThanTheEffectItHad:

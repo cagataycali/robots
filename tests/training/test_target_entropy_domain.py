@@ -105,17 +105,17 @@ def _target_entropy_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOffPolicyBackendRefusesATargetWithNoReading:
     """FastSAC refuses every value that is not a finite real target entropy."""
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.target_entropy = value
-        assert _target_entropy_problems(OFF_POLICY, spec), f"fast_sac accepted target_entropy={value!r}"
+    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.target_entropy = value
+            assert _target_entropy_problems(OFF_POLICY, spec), f"fast_sac accepted target_entropy={value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.target_entropy = value
-        (problem,) = _target_entropy_problems(OFF_POLICY, spec)
-        assert problem.startswith("fast_sac: target_entropy must be"), problem
-        assert repr(value) in problem or str(value) in problem, problem
+    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE:
+            spec.target_entropy = value
+            (problem,) = _target_entropy_problems(OFF_POLICY, spec)
+            assert problem.startswith("fast_sac: target_entropy must be"), problem
+            assert repr(value) in problem or str(value) in problem, problem
 
     def test_a_refusal_does_not_hide_the_rest_of_the_temperature_block(self, spec: RLTrainSpec) -> None:
         """All three temperature fields are reported at once, not one round at a time."""
@@ -130,10 +130,10 @@ class TestTheOffPolicyBackendRefusesATargetWithNoReading:
 class TestTheUsableDomainIsUntouched:
     """A finite real target entropy of either sign is not newly refused."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_target_reports_nothing(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.target_entropy = value
-        assert _target_entropy_problems(OFF_POLICY, spec) == []
+    def test_a_usable_target_reports_nothing(self, spec: RLTrainSpec) -> None:
+        for value in USABLE:
+            spec.target_entropy = value
+            assert _target_entropy_problems(OFF_POLICY, spec) == [], f"{value!r}"
 
     def test_the_negative_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
         """The substituted ``-num_actions`` is the reading a positive domain would refuse."""
@@ -173,11 +173,11 @@ class TestBothTemperatureBranchesAreCovered:
     """
 
     @pytest.mark.parametrize("autotune", [True, False])
-    @pytest.mark.parametrize("value", [[-6.0], {}, "-6"])
-    def test_a_non_real_value_is_reported_on_either_branch(self, spec: RLTrainSpec, value: Any, autotune: bool) -> None:
-        spec.autotune_alpha = autotune
-        spec.target_entropy = value
-        assert _target_entropy_problems(OFF_POLICY, spec), (autotune, value)
+    def test_a_non_real_value_is_reported_on_either_branch(self, spec: RLTrainSpec, autotune: bool) -> None:
+        for value in list[Any]([[-6.0], {}, "-6"]):
+            spec.autotune_alpha = autotune
+            spec.target_entropy = value
+            assert _target_entropy_problems(OFF_POLICY, spec), (autotune, value)
 
     def test_the_coercion_is_not_under_the_tuning_branch(self) -> None:
         """Executable premise: the read precedes ``if self.autotune_alpha``."""
@@ -191,10 +191,10 @@ class TestABackendThatIgnoresTheFieldStaysSilent:
     """Per ``TrainSpec`` a backend ignores the fields it does not support."""
 
     @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
-    @pytest.mark.parametrize("value", [float("nan"), True, [-6.0]])
-    def test_it_reports_nothing_about_the_target(self, provider: str, spec: RLTrainSpec, value: Any) -> None:
-        spec.target_entropy = value
-        assert _target_entropy_problems(provider, spec) == []
+    def test_it_reports_nothing_about_the_target(self, provider: str, spec: RLTrainSpec) -> None:
+        for value in list[Any]([float("nan"), True, [-6.0]]):
+            spec.target_entropy = value
+            assert _target_entropy_problems(provider, spec) == [], f"{value!r}"
 
     @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
     def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
@@ -208,11 +208,11 @@ class TestABackendThatIgnoresTheFieldStaysSilent:
 class TestTheDomainIsTheSharedSignedOne:
     """The verdict is the shared helper's, not a local re-derivation."""
 
-    @pytest.mark.parametrize("value", UNUSABLE + USABLE)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, value: Any) -> None:
-        spec.target_entropy = value
-        expected = finite_number_error(value, "target_entropy", OFF_POLICY)
-        assert _target_entropy_problems(OFF_POLICY, spec) == ([expected] if expected else [])
+    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
+        for value in UNUSABLE + USABLE:
+            spec.target_entropy = value
+            expected = finite_number_error(value, "target_entropy", OFF_POLICY)
+            assert _target_entropy_problems(OFF_POLICY, spec) == ([expected] if expected else []), f"{value!r}"
 
     def test_the_domain_is_signed_rather_than_positive(self) -> None:
         """The premise the two neighbouring gates could not express."""

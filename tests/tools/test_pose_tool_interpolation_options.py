@@ -187,30 +187,26 @@ class TestAnUnusableOptionIsRefusedBeforeThePortOpens:
     """A value the loop cannot honor is reported, not carried onto the bus."""
 
     @pytest.mark.parametrize("action", _INTERPOLATING)
-    @pytest.mark.parametrize("steps", _UNUSABLE_STEPS)
-    def test_an_unusable_step_count_is_refused(
-        self, action: str, steps: Any, cwd_tmp: Any, fake_serial: list[FakeSerial]
-    ) -> None:
-        _stored_pose(cwd_tmp)
-        result = _drive(action, steps=steps)
-        text = _texts(result)
-        assert result["status"] == "error", text
-        assert "steps" in text and action in text, text
-        assert text.isascii(), text
-        assert fake_serial == [], "the refused call opened the serial port"
+    def test_an_unusable_step_count_is_refused(self, action: str, cwd_tmp: Any, fake_serial: list[FakeSerial]) -> None:
+        for steps in _UNUSABLE_STEPS:
+            _stored_pose(cwd_tmp)
+            result = _drive(action, steps=steps)
+            text = _texts(result)
+            assert result["status"] == "error", text
+            assert "steps" in text and action in text, text
+            assert text.isascii(), text
+            assert fake_serial == [], "the refused call opened the serial port"
 
     @pytest.mark.parametrize("action", _INTERPOLATING)
-    @pytest.mark.parametrize("step_delay", _UNUSABLE_DELAYS)
-    def test_an_unusable_delay_is_refused(
-        self, action: str, step_delay: Any, cwd_tmp: Any, fake_serial: list[FakeSerial]
-    ) -> None:
-        _stored_pose(cwd_tmp)
-        result = _drive(action, step_delay=step_delay)
-        text = _texts(result)
-        assert result["status"] == "error", text
-        assert "step_delay" in text and action in text, text
-        assert text.isascii(), text
-        assert fake_serial == [], "the refused call opened the serial port"
+    def test_an_unusable_delay_is_refused(self, action: str, cwd_tmp: Any, fake_serial: list[FakeSerial]) -> None:
+        for step_delay in _UNUSABLE_DELAYS:
+            _stored_pose(cwd_tmp)
+            result = _drive(action, step_delay=step_delay)
+            text = _texts(result)
+            assert result["status"] == "error", text
+            assert "step_delay" in text and action in text, text
+            assert text.isascii(), text
+            assert fake_serial == [], "the refused call opened the serial port"
 
     def test_the_refusal_precedes_reading_the_pose_file(self, cwd_tmp: Any, fake_serial: list[FakeSerial]) -> None:
         """The option is checked before the action's own arguments are resolved."""
@@ -308,17 +304,17 @@ class TestWhyTheValuesAreRefused:
 class TestTheDomainsAreTheSharedOnes:
     """Both options are held to a library-wide domain, not a local rule."""
 
-    @pytest.mark.parametrize("value", (*_UNUSABLE_STEPS, 1, 20, 500))
-    def test_steps_is_the_shared_positive_count_domain(self, value: Any) -> None:
-        assert _smooth_move_option_error(
-            "move_multiple", smooth=True, steps=value, step_delay=0.05
-        ) == positive_count_error(value, "steps", "move_multiple")
+    def test_steps_is_the_shared_positive_count_domain(self) -> None:
+        for value in (*_UNUSABLE_STEPS, 1, 20, 500):
+            assert _smooth_move_option_error(
+                "move_multiple", smooth=True, steps=value, step_delay=0.05
+            ) == positive_count_error(value, "steps", "move_multiple"), f"{value!r}"
 
-    @pytest.mark.parametrize("value", (*_UNUSABLE_DELAYS, 1e-6, 0.05, 2.5))
-    def test_step_delay_is_the_shared_positive_finite_domain(self, value: Any) -> None:
-        assert _smooth_move_option_error(
-            "move_multiple", smooth=True, steps=20, step_delay=value
-        ) == positive_finite_number_error(value, "step_delay", "move_multiple")
+    def test_step_delay_is_the_shared_positive_finite_domain(self) -> None:
+        for value in (*_UNUSABLE_DELAYS, 1e-6, 0.05, 2.5):
+            assert _smooth_move_option_error(
+                "move_multiple", smooth=True, steps=20, step_delay=value
+            ) == positive_finite_number_error(value, "step_delay", "move_multiple"), f"{value!r}"
 
     def test_the_step_count_is_reported_before_the_delay(self) -> None:
         """Both unusable: the caller is told about the count first, deterministically."""
