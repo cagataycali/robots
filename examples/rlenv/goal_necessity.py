@@ -51,7 +51,7 @@ def scaled(e, k: float):
     return dataclasses.replace(e, cube_box=box)
 
 
-def run_cell(robot, e, S, X, task: str, n: int, blind: bool, seed0: int) -> dict:
+def run_cell(robot, e, S, X, task: str, n: int, blind: bool, seed0: int, noise: float = 0.0) -> dict:
     """n episodes; when blind, the expert plans to the box CENTRE but the cube stays where it is."""
     ok = 0
     gaps = []
@@ -70,6 +70,12 @@ def run_cell(robot, e, S, X, task: str, n: int, blind: bool, seed0: int) -> dict
         pol = X.ScriptedReplayPolicy(hz=e.control_hz)
         pol.set_robot_state_keys(list(e.action_keys))
         pol.load_plan(kf, task)
+        if noise > 0:
+            # same stream convention as harvest.py: one draw per control step, seeded per episode
+            _n = np.random.default_rng(700000 + seed0 + i)
+            _t = pol.target_at
+            pol.target_at = (lambda step, _t=_t, _n=_n: np.asarray(_t(step), dtype=float)
+                             + _n.normal(0.0, noise, size=len(e.action_keys)))
         st = {"gap": 1e9, "c0": None}
 
         def obs(ev, st=st):
@@ -100,6 +106,11 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=4242)
     p.add_argument("--svla", default=os.path.expanduser("~/rlenv-svla-pin"))
     p.add_argument("--json", default=None)
+    p.add_argument("--action-noise", type=float, default=0.0,
+                   help="sigma of Gaussian noise on commanded joint targets, matching harvest.py. A cell "
+                        "measured at sigma=0 does NOT describe a shard generated with noise (it25: jitter "
+                        "moves so101 touch 0.98 -> 0.17 under a dwell criterion and a goal-BLIND expert "
+                        "0.14 -> 0.47 under min-gap), which is why publish.py now refuses to inherit one.")
     a = p.parse_args(argv)
 
     sys.path.insert(0, a.svla)
@@ -108,7 +119,7 @@ def main(argv=None) -> int:
     from strands_vla.embodiments import EMBODIMENTS
 
     base = EMBODIMENTS[a.arm]
-    out = {"arm": a.arm, "task": a.task, "episodes_per_cell": a.episodes,
+    out = {"arm": a.arm, "task": a.task, "action_noise_rad": float(a.action_noise), "episodes_per_cell": a.episodes,
            "touch_gap_m": float(X.TOUCH_GAP), "base_cube_box": base.cube_box,
            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rows": []}
     for k in [float(x) for x in a.scales.split(",")]:
@@ -116,8 +127,8 @@ def main(argv=None) -> int:
         robot, _ = S.build(a.arm, cam_size=(64, 64), with_wrist=bool(base.wrist_parent))
         try:
             # rebuild the scene per scale so the cube object is created inside the scaled band
-            aware = run_cell(robot, e, S, X, a.task, a.episodes, False, a.seed)
-            blind = run_cell(robot, e, S, X, a.task, a.episodes, True, a.seed)
+            aware = run_cell(robot, e, S, X, a.task, a.episodes, False, a.seed, a.action_noise)
+            blind = run_cell(robot, e, S, X, a.task, a.episodes, True, a.seed, a.action_noise)
         finally:
             robot.destroy()
         row = {"band_scale": k, "cube_box": e.cube_box, "goal_aware": aware, "goal_blind": blind,

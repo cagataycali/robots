@@ -86,6 +86,32 @@ def main(argv=None):
                  f"noise is not an unlabelled corruption: it is reproducible from the seed, which also "
                  f"checks the sigma and the joint order.")
         L.append("")
+        cmp_ = load(f"{RUNS}/necessity-noise-compare-{rep.get('arm')}-{rep.get('task')}.json")
+        if cmp_:
+            L.append("### Is the goal still NECESSARY under the noise (matched control)")
+            L.append("")
+            L.append(f"`goal_necessity.py --action-noise` runs the goal-aware expert and a goal-BLIND one "
+                     f"(plans to the box centre, cube left where it is) at {cmp_.get('episodes_per_cell')} "
+                     f"episodes per cell, band scale 1.0:")
+            L.append("")
+            L.append("| sigma | goal-aware | goal-blind | headroom |")
+            L.append("|---|---|---|---|")
+            for k in ("sigma0", "sigma0.05"):
+                c = cmp_.get(k, {})
+                L.append(f"| {k.replace('sigma','')} | {c.get('aware')} | {c.get('blind')} | "
+                         f"**{c.get('headroom')}** |")
+            L.append("")
+            L.append(f"Neither difference is resolvable at this n (Fisher two-sided: aware "
+                     f"{cmp_.get('aware_sigma0_vs_sigma005_fisher')}, blind "
+                     f"{cmp_.get('blind_sigma0_vs_sigma005_fisher')}), so the honest reading is that the "
+                     f"noise leaves push's goal-necessity UNCHANGED, not that it improves it. That is the "
+                     f"expected behaviour for this criterion: push success is a TERMINAL displacement "
+                     f"(cube_final - cube_start, projected on the approach axis), so jitter cannot buy "
+                     f"extra chances. The touch criterion in this project is a MINIMUM over the episode, "
+                     f"and there the same noise lifts a goal-blind expert from 0.14 to 0.47. A criterion "
+                     f"that is an extremum over the trajectory is gameable by jitter; one read at a fixed "
+                     f"time is not.")
+            L.append("")
         L.append("### What this pair is FOR")
         L.append("")
         L.append("A success/failure pair from one policy, so a consumer can train or probe on outcome "
