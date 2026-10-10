@@ -18,7 +18,11 @@ Three routes, all three populated (``goal_route_audit.py`` scores a shard on exa
           left"), from a 3x3 zone grid over the arm's own reachable box. LE's own generator
           passes `e.prompt() + TASKS[task]`, constant per (arm, task); varying it is this
           script's addition and it is what makes a wrong-INSTRUCTION probe possible at all.
-  state   the cube's xy in the recorded state, as an explicit ablation handle.
+  state   NOT POPULATED, and this is stated rather than claimed: `observation.state` is written by
+          the recorder from the arm's joints, so the cube pose does not reach the parquet without a
+          recorder change. it3 MEASURED the first shard and found the state carrying no goal, so the
+          instruction above is corrected here instead of left standing. What the start jitter does
+          buy is that the state is not CONSTANT at frame 0, which is rung-1, not a goal route.
 A shard with only the pixel route is learnable but forces every blind ablation to collapse by
 construction -- that is a property of the data, not a discovered property of the head.
 
@@ -169,11 +173,83 @@ def _run(a, e, S, X, seeds, cams, repo_id, rec) -> int:
         rec["verdict"] = "NO-SUCCESSES"
         _write(a, rec)
         return 1
-    rec["verdict"] = "pass-A-only (pass B wired in it3)"
-    rec["kept_seeds"] = good[: a.episodes]
-    rec["instruction_variety"] = len({g["instruction"] for g in good})
+    kept = good[: a.episodes]
+    rec["kept_seeds"] = [g["seed"] for g in kept]
+    rec["instruction_variety"] = len({g["instruction"] for g in kept})
     _write(a, rec)
-    return 0
+
+    # ---- pass B: record EXACTLY those seeds, on a fresh scene, and re-check every one ----
+    robot.destroy()
+    robot, emb = S.build(a.arm, cam_size=(a.cam, a.cam), with_wrist=bool(e.wrist_parent))
+    t1 = time.perf_counter()
+    r = robot.start_recording(repo_id=repo_id, task=kept[0]["instruction"], fps=e.control_hz,
+                              root=str(a.out), overwrite=True, cameras=list(cams))
+    if r.get("status") != "success":
+        rec["verdict"] = "START-RECORDING-FAILED"
+        rec["passB"] = {"error": str(r.get("content"))[:400]}
+        robot.destroy()
+        _write(a, rec)
+        return 1
+    bad: list[dict] = []
+    try:
+        for g in kept:
+            rb = _episode(robot, emb, S, X, a, g["seed"], cams, record=True)
+            # A replayed seed that no longer succeeds means the harvest is not reproducible, and
+            # "successes only" would be a false label on the shard. LE measured this failing
+            # (koch kept 3, parquet said 5), so it is asserted here rather than assumed.
+            if not rb["ok"] or abs(rb["gap"] - g["gap"]) > 1e-6:
+                bad.append({"seed": g["seed"], "passA_gap": round(g["gap"], 6),
+                            "passB_gap": round(rb["gap"], 6), "passB_ok": rb["ok"]})
+            print(json.dumps({"phase": "B", "seed": g["seed"], "ok": rb["ok"],
+                              "gap": round(rb["gap"], 4)}), flush=True)
+    finally:
+        srep = robot.stop_recording()
+        robot.destroy()
+    js = next((b["json"] for b in (srep.get("content") or [])
+               if isinstance(b, dict) and "json" in b), {})
+    rec["passB"] = {
+        "recorded": len(kept), "parquet_episode_count": js.get("parquet_episode_count"),
+        "frames": js.get("frame_count"), "seconds": round(time.perf_counter() - t1, 1),
+        "replay_nondeterminism": bad,
+        "successes_only": bool(js.get("parquet_episode_count") == len(kept) and not bad),
+    }
+    print(json.dumps({"phase": "B-done", **{k: v for k, v in rec["passB"].items()
+                                            if k != "replay_nondeterminism"}}), flush=True)
+    rec["written_task_strings"] = _task_strings(a.out, repo_id)
+    rec["verdict"] = ("OK" if rec["passB"]["successes_only"]
+                      and len(rec["written_task_strings"].get("distinct", [])) > 1
+                      else "CHECK-REPORT")
+    rec["finished_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _write(a, rec)
+    return 0 if rec["verdict"] == "OK" else 1
+
+
+def _task_strings(out: Path, repo_id: str) -> dict:
+    """Read the task strings BACK OFF THE WRITTEN SHARD.
+
+    The text route only exists if the per-episode ``instruction`` actually reaches the parquet.
+    ``start_recording`` also takes a single ``task``, and the recorder's own docstring leaves the
+    precedence between the two ambiguous, so this is MEASURED rather than trusted: a shard whose
+    tasks.parquet holds one string has no text route no matter what was passed in.
+    """
+    import pandas as pd
+
+    root = out if (out / "meta").exists() else out / repo_id.replace("/", os.sep)
+    hits = sorted(root.rglob("tasks.parquet")) if root.exists() else []
+    if not hits:
+        return {"error": f"no tasks.parquet under {root}"}
+    df = pd.concat([pd.read_parquet(h) for h in hits])
+    # LeRobot v3 writes meta/tasks.parquet with the task STRING as the INDEX and `task_index` as
+    # the only column. Reading columns[0] therefore yields 0,1,2... and would report "2 distinct
+    # tasks" for any shard with two episodes -- a check that passes on data it should fail. it3
+    # hit exactly that and this is the fix; the index is tried first and named explicitly.
+    if df.index.name == "task":
+        vals = sorted({str(v) for v in df.index.dropna()})
+    elif "task" in df.columns:
+        vals = sorted({str(v) for v in df["task"].dropna()})
+    else:
+        return {"error": f"no task strings; index={df.index.name} cols={list(df.columns)}"}
+    return {"n": len(vals), "distinct": vals[:12], "root": str(root)}
 
 
 def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
@@ -194,6 +270,20 @@ def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
     place()
     kf = X.solve_keyframes(robot, e, cube_xy, a.task)
     place()
+    # RUNG-1 start jitter, applied AFTER the final reset and with reset_between=False below,
+    # because run_policy(reset_between=True) resets the arm and silently wipes it -- measured in
+    # it3: the first shard came out with frame-0 observation.state spread exactly 0.0.
+    if a.jitter > 0:
+        import mujoco
+
+        m, d = robot.mj_model, robot.mj_data
+        adr = S._qadr(robot, e)
+        sign = rng.choice([-1.0, 1.0], size=len(adr))
+        mag = a.jitter * (1.0 + 0.5 * rng.random(len(adr)))
+        for k, ad in enumerate(adr):
+            if ad >= 0:
+                d.qpos[ad] = float(d.qpos[ad] + sign[k] * mag[k])
+        mujoco.mj_forward(m, d)
     q0 = S.joints(robot, e).copy()
     pol = X.ScriptedReplayPolicy(hz=e.control_hz)
     pol.set_robot_state_keys(list(e.action_keys))
@@ -210,7 +300,7 @@ def _episode(robot, e, S, X, a, seed: int, cams, record: bool) -> dict:
     instr = goal_instruction(e, a.task, cube_xy, cams)
     robot.run_policy(robot_name=e.name, policy_object=pol, instruction=instr,
                      duration=X.EPISODE_S, control_frequency=e.control_hz, n_episodes=1,
-                     reset_between=True, seed=seed, observer=obs, fast_mode=True)
+                     reset_between=(a.jitter <= 0), seed=seed, observer=obs, fast_mode=True)
     c1 = S.cube_pos(robot)
     c0 = st["c0"] if st["c0"] is not None else c1
     disp = float(np.dot(c1 - c0, np.array([e.approach[0], e.approach[1], 0.0])))
