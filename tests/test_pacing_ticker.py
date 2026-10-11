@@ -263,26 +263,18 @@ class TestThePeriodIsHeldToTheSharedDomain:
     """
 
     @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
-    def test_a_period_that_names_no_cadence_is_refused(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="period"):
-            Ticker(value)
-
-    @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
-    def test_a_slice_that_names_no_cadence_is_refused(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="slice_s"):
-            Ticker(0.1, slice_s=value)
-
-    @pytest.mark.parametrize("value", NOT_A_CADENCE, ids=repr)
-    def test_the_verdict_is_the_shared_domains_verdict(self, value: Any) -> None:
-        """Parity, so the two cannot come to disagree about one quantity.
+    def test_a_value_that_names_no_cadence_is_refused_as_period_and_as_slice(self, value: Any) -> None:
+        """Parity, so the constructor and the domain cannot disagree about one quantity.
 
         Asserted as an equivalence rather than as two lists: a value this
         constructor refuses and the domain accepts would be just as much a
         divergence as the one that was here.
         """
         assert positive_finite_number_error(value, "period", "Ticker") is not None
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="period"):
             Ticker(value)
+        with pytest.raises(ValueError, match="slice_s"):
+            Ticker(0.1, slice_s=value)
 
     @pytest.mark.parametrize("value", A_CADENCE, ids=repr)
     def test_a_period_that_paces_a_loop_is_still_accepted(self, value: float) -> None:

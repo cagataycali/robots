@@ -131,12 +131,34 @@ def recorded_signals(monkeypatch: pytest.MonkeyPatch) -> _RecordingOs:
 
 
 # --------------------------------------------------------------------------- #
-# the domain                                                                  #
+# every unusable spelling, through every reader                               #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_a_spelling_outside_the_domain_names_no_pid(_label: str, pid: Any, _why: str) -> None:
-    """Every unusable spelling answers "no pid", never a nearby number."""
+def test_an_unusable_pid_names_no_process_kept_and_unsignalled(
+    _isolate_both_stores: Path, recorded_signals: _RecordingOs, _label: str, pid: Any, _why: str
+) -> None:
+    """Every unusable spelling answers "no pid", never a nearby number - in every reader.
+
+    Before the fix four of these raised out of ``session_is_running``
+    (``ValueError``, ``OverflowError``, ``TypeError``) and three answered
+    ``True`` on the strength of a converted number. ``psutil.pid_exists`` was
+    handed the raw value and raised ``TypeError`` for a ``str``, a ``float`` and
+    a ``list``, aborting the store read. The record is kept - it is the only place
+    a detached run's pid is written down - and read the same way by both tools,
+    which share one manager. And ``true`` reached ``os.kill(1, SIGTERM)`` before
+    the fix: measured with the signal recorded rather than sent, which is also
+    why this test records it.
+    """
     assert _process_stop.recorded_pid(_record(pid)) is None
+    assert session_is_running(_record(pid)) is False
+
+    _write_store(_isolate_both_stores, "arm", pid)
+    assert list(tele_mod.SessionManager().list_sessions()) == ["arm"]
+    assert list(train_mod.SessionManager().list_sessions()) == ["arm"]
+
+    result = tele_mod.lerobot_teleoperate(action="stop", session_name="arm")
+    assert result["status"] == "error"
+    assert recorded_signals.sent == [], f"a record spelling its pid as {_label} was signalled"
 
 
 def test_the_spelling_a_writer_produces_is_the_pid() -> None:
@@ -148,44 +170,9 @@ def test_the_spelling_a_writer_produces_is_the_pid() -> None:
     assert _process_stop.recorded_pid(_record(LIVE_PID)) == LIVE_PID
 
 
-# --------------------------------------------------------------------------- #
-# no spelling raises, and none of them reads as running                       #
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_an_unusable_pid_is_not_running_rather_than_an_exception(_label: str, pid: Any, _why: str) -> None:
-    """The running question has an answer for every spelling a store can hold.
-
-    Before the fix four of these raised out of ``session_is_running``
-    (``ValueError``, ``OverflowError``, ``TypeError``) and three answered
-    ``True`` on the strength of a converted number.
-    """
-    assert session_is_running(_record(pid)) is False
-
-
 def test_a_live_integer_pid_still_reads_as_running() -> None:
     """The one spelling that names a process is still answered from the process."""
     assert session_is_running(_record(LIVE_PID)) is True
-
-
-# --------------------------------------------------------------------------- #
-# both stores degrade rather than aborting the action that asked              #
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_the_store_keeps_an_unusable_record_without_raising(
-    _isolate_both_stores: Path, _label: str, pid: Any, _why: str
-) -> None:
-    """A record naming no process is kept, and read the same way by both tools.
-
-    Retention is the point: the record is the only place a detached run's pid is
-    written down. Before the fix ``psutil.pid_exists`` was handed the raw value
-    and raised ``TypeError`` for a ``str``, a ``float`` and a ``list``. Both
-    tools read one store through one manager, so a spelling cannot read as a
-    live session in one and as an aborted read in the other.
-    """
-    _write_store(_isolate_both_stores, "run", pid)
-
-    assert list(tele_mod.SessionManager().list_sessions()) == ["run"]
-    assert list(train_mod.SessionManager().list_sessions()) == ["run"]
 
 
 def test_a_store_whose_pid_field_is_undecodable_still_names_the_record(_isolate_both_stores: Path) -> None:
@@ -207,31 +194,14 @@ def test_a_store_whose_pid_field_is_undecodable_still_names_the_record(_isolate_
 
 
 # --------------------------------------------------------------------------- #
-# nothing outside the domain is signalled                                     #
+# the controls the refusals are measured against                              #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize(("_label", "pid", "_why"), UNUSABLE, ids=UNUSABLE_IDS)
-def test_stop_signals_nothing_for_a_record_that_names_no_pid(
-    _isolate_both_stores: Path, recorded_signals: _RecordingOs, _label: str, pid: Any, _why: str
-) -> None:
-    """No spelling outside the domain reaches a signal.
-
-    ``true`` reached ``os.kill(1, SIGTERM)`` before the fix - measured, with the
-    signal recorded rather than sent, which is also why this test records it.
-    """
-    _write_store(_isolate_both_stores, "arm", pid)
-
-    result = tele_mod.lerobot_teleoperate(action="stop", session_name="arm")
-
-    assert result["status"] == "error"
-    assert recorded_signals.sent == [], f"a record spelling its pid as {_label} was signalled"
-
-
 def test_stop_still_signals_a_session_whose_pid_is_an_integer(
     _isolate_both_stores: Path, recorded_signals: _RecordingOs
 ) -> None:
     """The control the refusals are measured against: a real pid is still stopped.
 
-    Without this the assertion above passes on a verb that signals nothing at
+    Without this the no-signal assertion above passes on a verb that signals nothing at
     all.
     """
     _write_store(_isolate_both_stores, "arm", LIVE_PID)

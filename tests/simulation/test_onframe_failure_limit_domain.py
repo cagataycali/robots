@@ -88,17 +88,25 @@ class TestTheFacadeRefusesALimitTheWatchdogCannotCountAgainst:
     """``SimEngine.run_policy`` reports the refusal through its documented envelope."""
 
     @pytest.mark.parametrize("value", UNUSABLE)
-    def test_an_unusable_limit_is_refused(self, sim, value):
+    def test_an_unusable_limit_is_refused_by_both_layers(self, sim, value):
+        """The facade answers in the shared domain's own words; the runner raises.
+
+        Neither layer may accept what the other refuses: ``PolicyRunner`` is
+        drivable directly, so it raises rather than returning an envelope.
+        """
+        expected = positive_count_error(value, "max_onframe_failures", "run_policy")
+        assert expected is not None
         result = sim.run_policy("alice", policy_provider="mock", n_steps=2, fast_mode=True, max_onframe_failures=value)
         assert result["status"] == "error", result
-        assert "max_onframe_failures" in _text(result)
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_names_the_parameter_the_domain_and_the_value(self, sim, value):
-        result = sim.run_policy("alice", policy_provider="mock", n_steps=2, fast_mode=True, max_onframe_failures=value)
         text = _text(result)
+        assert text == expected
         assert "run_policy: max_onframe_failures must be a positive integer" in text, text
         assert repr(value) in text, text
+
+        with pytest.raises(ValueError, match="max_onframe_failures must be a positive integer"):
+            PolicyRunner(sim).run(
+                "alice", _policy(sim), duration=0.1, control_frequency=50, fast_mode=True, max_onframe_failures=value
+            )
 
     def test_the_refusal_costs_no_inference(self, sim):
         # Guard placement: a refused limit must not query the policy, so it costs
@@ -122,14 +130,6 @@ class TestTheFacadeRefusesALimitTheWatchdogCannotCountAgainst:
 
 class TestTheRunnerRefusesTheSameDomain:
     """``PolicyRunner`` is drivable directly, so it raises rather than returning."""
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_an_unusable_limit_raises(self, sim, value):
-        policy = _policy(sim)
-        with pytest.raises(ValueError, match="max_onframe_failures must be a positive integer"):
-            PolicyRunner(sim).run(
-                "alice", policy, duration=0.1, control_frequency=50, fast_mode=True, max_onframe_failures=value
-            )
 
     def test_the_raise_names_the_layer_the_caller_called(self, sim):
         policy = _policy(sim)
@@ -158,10 +158,13 @@ class TestTheRunnerRefusesTheSameDomain:
 class TestUsableLimitsStillWork:
     """The change is additive: every limit the counter can honor is unaffected."""
 
-    @pytest.mark.parametrize("value", USABLE)
-    def test_a_usable_limit_is_accepted(self, sim, value):
+    @pytest.mark.parametrize("value", [*USABLE, None])
+    def test_a_usable_limit_is_accepted_by_both_layers(self, sim, value):
         result = sim.run_policy("alice", policy_provider="mock", n_steps=2, fast_mode=True, max_onframe_failures=value)
         assert result["status"] == "success", result
+        PolicyRunner(sim).run(
+            "alice", _policy(sim), duration=0.05, control_frequency=50, fast_mode=True, max_onframe_failures=value
+        )
 
     def test_none_is_accepted_and_uses_the_runners_own_limit(self, sim):
         hook = _AlwaysFails()
@@ -300,33 +303,6 @@ class TestWhyANonFiniteLimitSilencedTheWatchdogEntirely:
             logger.removeHandler(handler)
             logger.propagate = True
         assert records == ["on_frame hook failed (1/5 consecutive): boom"]
-
-
-class TestTheTwoSurfacesAgree:
-    """Neither layer may accept what the other refuses."""
-
-    @pytest.mark.parametrize("value", [*UNUSABLE, *USABLE, None])
-    def test_the_facade_and_the_runner_reach_the_same_verdict(self, sim, value):
-        facade = sim.run_policy("alice", policy_provider="mock", n_steps=2, fast_mode=True, max_onframe_failures=value)
-        facade_refused = facade["status"] == "error" and "max_onframe_failures" in _text(facade)
-
-        policy = _policy(sim)
-        try:
-            PolicyRunner(sim).run(
-                "alice", policy, duration=0.05, control_frequency=50, fast_mode=True, max_onframe_failures=value
-            )
-            runner_refused = False
-        except ValueError as e:
-            runner_refused = "max_onframe_failures" in str(e)
-
-        assert facade_refused == runner_refused, f"verdicts differ for max_onframe_failures={value!r}"
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_both_report_the_shared_domain_message(self, sim, value):
-        assert positive_count_error(value, "max_onframe_failures", "run_policy") is not None
-        assert _text(
-            sim.run_policy("alice", policy_provider="mock", n_steps=2, fast_mode=True, max_onframe_failures=value)
-        ) == positive_count_error(value, "max_onframe_failures", "run_policy")
 
 
 # --------------------------------------------------------------------------- #

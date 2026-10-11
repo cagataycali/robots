@@ -96,118 +96,39 @@ def _joined_with(budget: Any, *, supplied: bool = True) -> tuple[list[Any], Any]
     return fut.timeouts, sim
 
 
-class TestTheResolverAcceptsExactlyWhatTheSharedRuleDoes:
-    """The domain is the shared positive-finite rule, not a second opinion."""
+class TestAnUnmeasurableBudgetIsReportedAndResolved:
+    """Every facet of one unmeasurable budget, from the resolver to teardown.
+
+    The domain is the shared positive-finite rule, not a second opinion. A
+    budget that is not used must say so, naming the parameter and the default
+    it fell back to. The worker is still awaited - the budget is resolved, not
+    dropped - and ``cleanup`` still releases the world and the executor: it is
+    the release path (``__exit__`` and the finalizer both call it), so raising
+    on a bad budget would leak them for a value error. The join logs ``"...did
+    not stop within %.1fs..."`` with the budget, and Python's logging drops a
+    record it cannot format, so the resolver hands that ``%.1f`` a plain float.
+    """
 
     @pytest.mark.parametrize("budget", UNUSABLE)
-    def test_a_budget_the_shared_rule_refuses_resolves_to_the_default(self, budget: Any) -> None:
-        assert positive_finite_number_error(budget, "policy_stop_timeout", "cleanup") is not None
-        assert _resolve_policy_stop_timeout(budget, DEFAULT) == DEFAULT
-
-    @pytest.mark.parametrize("budget", USABLE)
-    def test_a_budget_the_shared_rule_accepts_is_used_as_given(self, budget: Any) -> None:
-        assert positive_finite_number_error(budget, "policy_stop_timeout", "cleanup") is None
-        assert _resolve_policy_stop_timeout(budget, DEFAULT) == pytest.approx(float(budget))
-
-    def test_none_is_the_documented_no_preference_spelling(self) -> None:
-        assert _resolve_policy_stop_timeout(None, DEFAULT) == DEFAULT
-
-    @pytest.mark.parametrize("budget", [*USABLE, *UNUSABLE, None])
-    def test_the_resolved_budget_is_always_a_plain_positive_finite_float(self, budget: Any) -> None:
-        resolved = _resolve_policy_stop_timeout(budget, DEFAULT)
-        assert type(resolved) is float
-        assert resolved > 0.0 and math.isfinite(resolved)
-
-
-class TestAnUnmeasurableBudgetIsReported:
-    """A budget that is not used must say so, naming the parameter and the value."""
-
-    @pytest.mark.parametrize("budget", UNUSABLE)
-    def test_the_warning_names_the_parameter_and_the_default_it_fell_back_to(
+    def test_it_is_reported_resolved_to_the_default_and_teardown_completes(
         self, budget: Any, caplog: pytest.LogCaptureFixture
     ) -> None:
+        assert positive_finite_number_error(budget, "policy_stop_timeout", "cleanup") is not None
         with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.simulation"):
-            _resolve_policy_stop_timeout(budget, DEFAULT)
+            resolved = _resolve_policy_stop_timeout(budget, DEFAULT)
+        assert type(resolved) is float
+        assert resolved == DEFAULT
         assert "policy_stop_timeout" in caplog.text
         assert f"{DEFAULT:.1f}s" in caplog.text
 
-    @pytest.mark.parametrize("budget", [*USABLE, None])
-    def test_a_usable_budget_is_not_reported(self, budget: Any, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.simulation"):
-            _resolve_policy_stop_timeout(budget, DEFAULT)
-        assert "policy_stop_timeout" not in caplog.text
-
-
-class TestTheJoinIsAwaitedWithTheResolvedBudget:
-    """End to end: what ``cleanup`` hands ``Future.result`` for a live worker."""
-
-    @pytest.mark.parametrize("budget", UNUSABLE)
-    def test_an_unmeasurable_budget_does_not_reach_the_join(self, budget: Any) -> None:
-        joined, _sim_ = _joined_with(budget)
+        joined, sim = _joined_with(budget)  # must not raise
         assert joined == [DEFAULT]
-
-    @pytest.mark.parametrize("budget", [0.001, 0.5, 2.0, np.float64(1.5)])
-    def test_a_usable_budget_reaches_the_join_unchanged(self, budget: Any) -> None:
-        joined, _sim_ = _joined_with(budget)
-        assert joined == [pytest.approx(float(budget))]
-
-    def test_omitting_the_budget_joins_with_the_documented_default(self) -> None:
-        joined, _sim_ = _joined_with(None, supplied=False)
-        assert joined == [DEFAULT]
-
-    def test_the_join_is_reached_rather_than_skipped(self) -> None:
-        """The worker is still awaited - the budget is resolved, not dropped."""
-        joined, _sim_ = _joined_with(math.inf)
-        assert len(joined) == 1
-
-
-class TestTeardownStillCompletesAfterAnUnmeasurableBudget:
-    """The half a refusal would break: ``cleanup`` releases everything regardless.
-
-    ``cleanup`` is the release path - ``__exit__`` and the finalizer both call
-    it - so raising on a bad budget would leak the world, the executor and the
-    renderers for a value error. Resolving to the safe default keeps the
-    contract its docstring states.
-    """
-
-    @pytest.mark.parametrize("budget", [math.inf, math.nan, 0.0, -1.0, "5", True])
-    def test_the_world_and_the_executor_are_released(self, budget: Any) -> None:
-        joined, sim = _joined_with(budget)
         assert sim._world is None
         with pytest.raises(RuntimeError):
             sim._executor.submit(lambda: None)
 
-    @pytest.mark.parametrize("budget", [math.inf, "5"])
-    def test_cleanup_does_not_raise(self, budget: Any) -> None:
-        sim = _sim()
-        sim.cleanup(policy_stop_timeout=budget)  # must not raise
-
-
-class TestTheJoinWarningCanNoLongerBeDropped:
-    """A non-real budget used to silence the very record that reported it.
-
-    The join logs ``"...did not stop within %.1fs..."`` with the budget. Python's
-    logging calls ``handleError`` when a record cannot be formatted, so with a
-    ``str`` budget the operator got neither the wait nor the warning about it.
-    The resolver hands that ``%.1f`` a ``float``, so the record always renders.
-    """
-
-    @pytest.mark.parametrize("budget", UNUSABLE)
-    def test_the_resolved_budget_always_renders_in_the_join_warning(self, budget: Any) -> None:
-        resolved = _resolve_policy_stop_timeout(budget, DEFAULT)
-        record = logging.LogRecord(
-            name="strands_robots.simulation.mujoco.simulation",
-            level=logging.WARNING,
-            pathname=__file__,
-            lineno=0,
-            msg="cleanup: policy on '%s' did not stop within %.1fs: %s",
-            args=("arm", resolved, "reason"),
-            exc_info=None,
-        )
-        assert f"{DEFAULT:.1f}s" in record.getMessage()
-
     @pytest.mark.parametrize("budget", ["5", [5]])
-    def test_the_raw_budget_would_have_broken_that_same_format(self, budget: Any) -> None:
+    def test_the_raw_budget_would_have_broken_the_join_warning(self, budget: Any) -> None:
         record = logging.LogRecord(
             name="strands_robots.simulation.mujoco.simulation",
             level=logging.WARNING,
@@ -219,6 +140,31 @@ class TestTheJoinWarningCanNoLongerBeDropped:
         )
         with pytest.raises(TypeError, match="must be real number"):
             record.getMessage()
+
+
+class TestAUsableBudgetIsUsedAsGiven:
+    """The shared rule's accepted values, and ``None`` as "no preference"."""
+
+    @pytest.mark.parametrize("budget", [*USABLE, None])
+    def test_it_resolves_to_a_plain_float_without_a_report(self, budget: Any, caplog: pytest.LogCaptureFixture) -> None:
+        with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.mujoco.simulation"):
+            resolved = _resolve_policy_stop_timeout(budget, DEFAULT)
+        assert type(resolved) is float
+        assert "policy_stop_timeout" not in caplog.text
+        if budget is None:
+            assert resolved == DEFAULT
+        else:
+            assert positive_finite_number_error(budget, "policy_stop_timeout", "cleanup") is None
+            assert resolved == pytest.approx(float(budget))
+
+    @pytest.mark.parametrize("budget", [0.001, 0.5, 2.0, np.float64(1.5)])
+    def test_a_usable_budget_reaches_the_join_unchanged(self, budget: Any) -> None:
+        joined, _sim_ = _joined_with(budget)
+        assert joined == [pytest.approx(float(budget))]
+
+    def test_omitting_the_budget_joins_with_the_documented_default(self) -> None:
+        joined, _sim_ = _joined_with(None, supplied=False)
+        assert joined == [DEFAULT]
 
 
 class TestNormalizingToFloatIsLoadBearing:

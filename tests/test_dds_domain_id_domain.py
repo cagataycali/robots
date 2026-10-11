@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import os
 import pathlib
 from typing import Any
 
@@ -165,73 +166,68 @@ class TestTheRtpsPortMapFixesTheCeiling:
 
 
 class TestTheSharedDomain:
-    """``dds_domain_id_error`` decides which values name a domain."""
+    """Every facet of one unusable domain id, read in the order the harm lands.
+
+    ``dds_domain_id_error`` decides which values name a domain. The refusal must
+    precede the process-wide ``ROS_DOMAIN_ID`` write - that write is global to
+    the process and lands before ``rclpy`` is imported, so an accepted
+    out-of-range value would steer every later participant (and every subprocess
+    inheriting the environment) at a domain nothing is reachable on. Each guard
+    runs before its surface probes for an optional transport, so the same caller
+    mistake reports identically with and without the ``[ros2]`` extra. And no
+    surface may accept a domain another refuses: the two transports advertise
+    the same topics, and the ``Robot`` / simulation layers hand ``ros2_domain``
+    straight to one of them.
+    """
 
     @pytest.mark.parametrize("value", UNUSABLE_DOMAINS, ids=repr)
-    def test_a_value_that_cannot_name_a_domain_is_refused(self, value: Any) -> None:
+    def test_a_value_that_cannot_name_a_domain_is_refused_everywhere_first(
+        self, value: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         error = dds_domain_id_error(value, "domain_id", "Surface")
         assert error is not None
         assert error.startswith("Surface: invalid domain_id:")
         assert f"expected 0-{MAX_DDS_DOMAIN_ID}" in error
 
-    @pytest.mark.parametrize("value", USABLE_DOMAINS, ids=repr)
-    def test_a_domain_id_in_range_is_accepted(self, value: int) -> None:
-        assert dds_domain_id_error(value, "domain_id", "Surface") is None
-
-    def test_the_message_names_the_parameter_it_came_from(self) -> None:
-        assert "invalid ros2_domain" in str(dds_domain_id_error(-1, "ros2_domain", "Robot"))
-
-
-class TestARefusedDomainLeavesTheProcessEnvironmentAlone:
-    """The refusal precedes the process-wide ``ROS_DOMAIN_ID`` write.
-
-    That write is the reason the range cannot be left to the transport: it is
-    global to the process and lands before ``rclpy`` is imported, so an accepted
-    out-of-range value would steer every later participant - and every
-    subprocess that inherits the environment - at a domain nothing is reachable
-    on, long after the call that set it returned.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DOMAINS, ids=repr)
-    def test_a_refused_domain_does_not_touch_ros_domain_id(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        import os
-
         with pytest.raises(ValueError, match="invalid domain_id"):
             RosTelemetryBridge(domain_id=value)
         assert os.environ["ROS_DOMAIN_ID"] == "7"
 
-    def test_a_usable_domain_is_still_pinned_into_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        import os
+        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("the cyclonedds probe must not be reached")
 
+        with monkeypatch.context() as patched:
+            patched.setattr(rtps_mod, "require_optional", _unreachable)
+            with pytest.raises(ValueError, match="invalid domain_id"):
+                HardwareRtpsBridge(domain_id=value)
+
+        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
+        assert all(refused.values()), f"accepted by {[n for n, r in refused.items() if not r]}"
+
+    @pytest.mark.parametrize("value", USABLE_DOMAINS, ids=repr)
+    def test_a_domain_id_in_range_is_accepted_by_every_surface(
+        self, value: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Accepted, and kept: the guard replaced an ``int()`` coercion at each
+        surface (where a ``True`` became domain 1 and ``2.7`` became domain 2),
+        and both ends of the range are in the table."""
+        assert dds_domain_id_error(value, "domain_id", "Surface") is None
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
+        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
+
+    def test_the_message_names_the_parameter_it_came_from(self) -> None:
+        assert "invalid ros2_domain" in str(dds_domain_id_error(-1, "ros2_domain", "Robot"))
+
+    def test_a_usable_domain_is_pinned_then_reaches_the_transport_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
         # rclpy is optional; the pin lands before it is imported, which is
         # exactly why the guard has to run first.
         with blocked("rclpy"), pytest.raises(ImportError):
             RosTelemetryBridge(domain_id=11)
         assert os.environ["ROS_DOMAIN_ID"] == "11"
 
-
-class TestARefusedDomainReachesNoTransport:
-    """Each guard runs before its surface probes for an optional transport.
-
-    Placing it there is what lets the same caller mistake report identically on
-    an install with the ``[ros2]`` extra and one without it, and it means no DDS
-    state is built for a domain that was never usable.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DOMAINS, ids=repr)
-    def test_the_rtps_bridge_refuses_before_probing_for_cyclonedds(
-        self, value: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
-            raise AssertionError("the cyclonedds probe must not be reached")
-
-        monkeypatch.setattr(rtps_mod, "require_optional", _unreachable)
-        with pytest.raises(ValueError, match="invalid domain_id"):
-            HardwareRtpsBridge(domain_id=value)
-
-    def test_a_usable_domain_still_reaches_the_cyclonedds_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
         probed: list[str] = []
 
         def _record(module: str, **_kwargs: Any) -> Any:
@@ -242,41 +238,6 @@ class TestARefusedDomainReachesNoTransport:
         with pytest.raises(ImportError):
             HardwareRtpsBridge(domain_id=11)
         assert probed == ["cyclonedds"]
-
-
-class TestEverySurfaceRefusesTheSameDomains:
-    """No surface may accept a domain id another one refuses.
-
-    The two transports advertise the same topics, so a domain the RTPS bridge
-    cannot bind is one the rclpy bridge must not publish on either - and the
-    ``Robot`` / simulation layers hand their ``ros2_domain`` straight to one of
-    them.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DOMAINS, ids=repr)
-    def test_an_unusable_domain_is_refused_by_every_surface(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
-        assert all(refused.values()), f"accepted by {[n for n, r in refused.items() if not r]}"
-
-    @pytest.mark.parametrize("value", USABLE_DOMAINS, ids=repr)
-    def test_a_usable_domain_is_refused_by_no_surface(self, value: int, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
-        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
-
-    @pytest.mark.parametrize("name,fn", SURFACES, ids=SURFACE_IDS)
-    def test_each_surface_stores_a_usable_domain_verbatim(
-        self, name: str, fn: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A surface that accepts the value must keep the value it accepted.
-
-        The guard replaced an ``int()`` coercion at each of these surfaces, and
-        that coercion is where a ``True`` became domain 1 and a ``2.7`` became
-        domain 2. Nothing may re-introduce one.
-        """
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        assert not _refuses(fn, MAX_DDS_DOMAIN_ID)
 
 
 class TestEverySurfaceRoutesThroughTheSharedDomain:

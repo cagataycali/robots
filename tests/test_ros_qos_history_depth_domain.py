@@ -183,17 +183,49 @@ def fake_rclpy(monkeypatch: pytest.MonkeyPatch) -> list[_RecordingNode]:
 
 
 class TestTheDepthDomain:
-    """``_qos_history_depth_error`` decides which values name a history depth."""
+    """Every facet of one unusable depth, read in the order the harm lands.
+
+    ``_qos_history_depth_error`` decides which values name a history depth. The
+    refusal precedes the process-wide ``ROS_DOMAIN_ID`` write (global to the
+    process, landing before ``rclpy`` is imported), and precedes the bridge's
+    probe for its optional transport - which is what lets the same mistake report
+    identically with and without the ``[ros2]`` extra, with no rclpy context or
+    node built for publishers that could never exist. The subclass forwards the
+    value to the base constructor, so one guard covers both bridges; both are
+    driven so that forwarding cannot be dropped silently.
+    """
 
     @pytest.mark.parametrize("value", UNUSABLE_DEPTHS, ids=repr)
-    def test_a_value_that_cannot_name_a_depth_is_refused(self, value: Any) -> None:
+    def test_a_value_that_cannot_name_a_depth_is_refused_everywhere_first(
+        self, value: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import strands_robots.ros_telemetry as telemetry_mod
+
         error = _qos_history_depth_error(value, "qos_depth", "Bridge")
         assert error is not None
         assert error.startswith("Bridge: qos_depth ")
 
+        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("the rclpy probe must not be reached")
+
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+        with monkeypatch.context() as patched:
+            patched.setattr(telemetry_mod, "require_optional", _unreachable)
+            with pytest.raises(ValueError, match="qos_depth"):
+                RosTelemetryBridge(domain_id=11, qos_depth=value)
+        assert os.environ["ROS_DOMAIN_ID"] == "7"
+
+        refused = {name: _refuses(build, value) for name, build in SURFACES}
+        assert all(refused.values()), f"accepted by {[n for n, r in refused.items() if not r]}"
+
     @pytest.mark.parametrize("value", USABLE_DEPTHS, ids=repr)
-    def test_a_depth_the_transport_can_carry_is_accepted(self, value: int) -> None:
+    def test_a_depth_the_transport_can_carry_is_accepted_by_every_surface(
+        self, value: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         assert _qos_history_depth_error(value, "qos_depth", "Bridge") is None
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+        refused = {name: _refuses(build, value) for name, build in SURFACES}
+        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
 
     def test_the_message_names_the_parameter_it_came_from(self) -> None:
         assert "some_depth" in str(_qos_history_depth_error(0, "some_depth", "Bridge"))
@@ -224,34 +256,11 @@ class TestTheCeilingIsTheTransportsNotAPolicyChoice:
     def test_the_ceiling_is_the_largest_signed_32_bit_value(self) -> None:
         assert MAX_QOS_HISTORY_DEPTH == 2**31 - 1
         assert MAX_QOS_HISTORY_DEPTH.bit_length() == 31
-
-    def test_one_more_needs_a_wider_field_than_the_profile_has(self) -> None:
         assert (MAX_QOS_HISTORY_DEPTH + 1).bit_length() == 32
 
 
-class TestARefusedDepthLeavesTheProcessEnvironmentAlone:
-    """The refusal precedes the process-wide ``ROS_DOMAIN_ID`` write.
-
-    That write is global to the process and lands before ``rclpy`` is imported,
-    so a bridge refused for its depth must not have steered every later
-    participant - and every subprocess inheriting the environment - on its way
-    to the refusal.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DEPTHS, ids=repr)
-    def test_a_refused_depth_does_not_touch_ros_domain_id(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        with pytest.raises(ValueError, match="qos_depth"):
-            RosTelemetryBridge(domain_id=11, qos_depth=value)
-        assert os.environ["ROS_DOMAIN_ID"] == "7"
-
-    def test_a_usable_depth_still_pins_the_domain_into_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        # rclpy is optional; the pin lands before it is imported, which is
-        # exactly why the guard has to run first.
-        with blocked("rclpy"), pytest.raises(ImportError):
-            RosTelemetryBridge(domain_id=11, qos_depth=10)
-        assert os.environ["ROS_DOMAIN_ID"] == "11"
+class TestAUsableDepthStillReachesTheTransport:
+    """The domain is answered first; a usable depth pins the domain and probes rclpy."""
 
     def test_the_domain_is_still_answered_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Both wrong: the domain is reported, because its write is the earlier harm."""
@@ -260,29 +269,15 @@ class TestARefusedDepthLeavesTheProcessEnvironmentAlone:
             RosTelemetryBridge(domain_id=-1, qos_depth=0)
         assert os.environ["ROS_DOMAIN_ID"] == "7"
 
-
-class TestARefusedDepthReachesNoTransport:
-    """The guard runs before the bridge probes for its optional transport.
-
-    Placing it there is what lets the same caller mistake report identically on
-    an install with the ``[ros2]`` extra and one without it, and it means no
-    rclpy context is initialised and no node created for a bridge whose
-    publishers could never have been built.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DEPTHS, ids=repr)
-    def test_the_bridge_refuses_before_probing_for_rclpy(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_usable_depth_pins_the_domain_then_reaches_the_rclpy_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import strands_robots.ros_telemetry as telemetry_mod
 
-        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
-            raise AssertionError("the rclpy probe must not be reached")
-
-        monkeypatch.setattr(telemetry_mod, "require_optional", _unreachable)
-        with pytest.raises(ValueError, match="qos_depth"):
-            RosTelemetryBridge(qos_depth=value)
-
-    def test_a_usable_depth_still_reaches_the_rclpy_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import strands_robots.ros_telemetry as telemetry_mod
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+        # rclpy is optional; the pin lands before it is imported, which is
+        # exactly why the guard has to run first.
+        with blocked("rclpy"), pytest.raises(ImportError):
+            RosTelemetryBridge(domain_id=11, qos_depth=10)
+        assert os.environ["ROS_DOMAIN_ID"] == "11"
 
         probed: list[str] = []
 
@@ -294,27 +289,6 @@ class TestARefusedDepthReachesNoTransport:
         with pytest.raises(ImportError):
             RosTelemetryBridge(qos_depth=10)
         assert probed == ["rclpy"]
-
-
-class TestBothBridgesRefuseTheSameDepths:
-    """Neither bridge may accept a depth the other refuses.
-
-    The subclass forwards the value to the base constructor, so one guard covers
-    both - and both are checked here so that forwarding cannot be dropped
-    silently.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_DEPTHS, ids=repr)
-    def test_an_unusable_depth_is_refused_by_every_surface(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        refused = {name: _refuses(build, value) for name, build in SURFACES}
-        assert all(refused.values()), f"accepted by {[n for n, r in refused.items() if not r]}"
-
-    @pytest.mark.parametrize("value", USABLE_DEPTHS, ids=repr)
-    def test_a_usable_depth_is_refused_by_no_surface(self, value: int, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        refused = {name: _refuses(build, value) for name, build in SURFACES}
-        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
 
 
 class TestAnAcceptedDepthReachesTheTransportVerbatim:

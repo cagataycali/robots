@@ -80,17 +80,38 @@ class _FakeMesh:
         self.unsubscribed.append(name)
 
 
-class TestValidatorContract:
-    """The shared validator's accepted domain and message shape."""
+class TestEverySurfaceHoldsTheSameDomain:
+    """Whatever the wire rejects, every API it delegates to rejects too.
 
-    @pytest.mark.parametrize("good", GOOD_IDENTIFIERS)
-    def test_clean_identifier_returned_unchanged(self, good: str) -> None:
-        assert validate_mesh_identifier(good, "p") == good
+    A receiver cannot be built with an identifier that widens its subscription,
+    and a publisher cannot advertise actuator data on a wildcard key either. Each
+    refusal names the parameter it came from and happens before construction, so
+    no wildcard key is ever declared.
+    """
 
     @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
-    def test_bad_identifier_rejected_and_names_the_parameter(self, bad: str) -> None:
+    def test_a_bad_identifier_is_refused_by_every_surface_naming_its_parameter(self, bad: str) -> None:
         with pytest.raises(ValidationError, match="InputReceiver.source_peer_id"):
             validate_mesh_identifier(bad, "InputReceiver.source_peer_id")
+        with pytest.raises(ValidationError):
+            validate_command({"action": "teleop_receive", "source_peer_id": bad})
+        mesh = _FakeMesh()
+        with pytest.raises(ValidationError, match="InputReceiver.source_peer_id"):
+            InputReceiver(mesh, object(), source_peer_id=bad)  # type: ignore[arg-type]
+        with pytest.raises(ValidationError, match="InputReceiver.device_name"):
+            InputReceiver(mesh, object(), source_peer_id="leader-1", device_name=bad)  # type: ignore[arg-type]
+        with pytest.raises(ValidationError, match="InputPublisher.device_name"):
+            InputPublisher(mesh, _PollableTeleop(), device_name=bad)  # type: ignore[arg-type]
+        assert mesh.subscribed == []
+
+    @pytest.mark.parametrize("good", GOOD_IDENTIFIERS)
+    def test_a_clean_identifier_is_accepted_unchanged_by_every_surface(self, good: str) -> None:
+        assert validate_mesh_identifier(good, "p") == good
+        out = validate_command({"action": "teleop_receive", "source_peer_id": good, "device_name": good})
+        assert out["source_peer_id"] == good
+        recv = InputReceiver(_FakeMesh(), object(), source_peer_id=good, device_name=good)  # type: ignore[arg-type]
+        assert recv.source_peer_id == good
+        assert recv.device_name == good
 
     def test_wildcard_rejection_message_names_wildcards(self) -> None:
         """The message tells the caller why a wildcard is refused."""
@@ -108,23 +129,6 @@ class TestValidatorContract:
 
 class TestReceiverSourceScoping:
     """A receiver cannot be built with an identifier that widens its subscription."""
-
-    @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
-    def test_bad_source_peer_id_rejected(self, bad: str) -> None:
-        with pytest.raises(ValidationError, match="InputReceiver.source_peer_id"):
-            InputReceiver(_FakeMesh(), object(), source_peer_id=bad)  # type: ignore[arg-type]
-
-    @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
-    def test_bad_device_name_rejected(self, bad: str) -> None:
-        with pytest.raises(ValidationError, match="InputReceiver.device_name"):
-            InputReceiver(_FakeMesh(), object(), source_peer_id="leader-1", device_name=bad)  # type: ignore[arg-type]
-
-    def test_wildcard_source_never_subscribes(self) -> None:
-        """Rejection happens before construction, so no wildcard key is declared."""
-        mesh = _FakeMesh()
-        with pytest.raises(ValidationError):
-            InputReceiver(mesh, object(), source_peer_id="**")  # type: ignore[arg-type]
-        assert mesh.subscribed == []
 
     def test_clean_source_subscribes_to_the_exact_leader_key(self) -> None:
         """The point-to-point key expression is unchanged by the guard."""
@@ -146,33 +150,9 @@ class _PollableTeleop:
 class TestPublisherDeviceName:
     """A publisher cannot advertise actuator data on a wildcard key either."""
 
-    @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
-    def test_bad_device_name_rejected(self, bad: str) -> None:
-        with pytest.raises(ValidationError, match="InputPublisher.device_name"):
-            InputPublisher(_FakeMesh(), _PollableTeleop(), device_name=bad)  # type: ignore[arg-type]
-
     def test_clean_device_name_keeps_canonical_topic(self) -> None:
         pub = InputPublisher(_FakeMesh(peer_id="leader-1"), _PollableTeleop(), device_name="gamepad")  # type: ignore[arg-type]
         assert pub.topic == "strands/leader-1/input/gamepad"
-
-
-class TestWireAndDirectApiAgree:
-    """Whatever the wire rejects, the API it delegates to rejects too."""
-
-    @pytest.mark.parametrize("bad", BAD_IDENTIFIERS)
-    def test_source_peer_id_domains_match(self, bad: str) -> None:
-        with pytest.raises(ValidationError):
-            validate_command({"action": "teleop_receive", "source_peer_id": bad})
-        with pytest.raises(ValidationError):
-            InputReceiver(_FakeMesh(), object(), source_peer_id=bad)  # type: ignore[arg-type]
-
-    @pytest.mark.parametrize("good", GOOD_IDENTIFIERS)
-    def test_accepted_shapes_match(self, good: str) -> None:
-        out = validate_command({"action": "teleop_receive", "source_peer_id": good, "device_name": good})
-        assert out["source_peer_id"] == good
-        recv = InputReceiver(_FakeMesh(), object(), source_peer_id=good, device_name=good)  # type: ignore[arg-type]
-        assert recv.source_peer_id == good
-        assert recv.device_name == good
 
 
 class _LiveStream:

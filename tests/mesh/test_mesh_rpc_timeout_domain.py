@@ -115,26 +115,25 @@ class TestTheToolAlreadyHeldThisParameterToTheSameDomain:
             assert "timeout" in _tool._ACTION_NUMERIC_OPTIONS[action]
 
 
-class TestSendRefusesTheBudgetBeforeTheCommandGoesOut:
-    """Regression: the refusal precedes ``publish``, not the wait."""
+class TestBothPublishersRefuseTheBudgetBeforeTheCommandGoesOut:
+    """Regression: the refusal precedes ``publish``, not the wait.
+
+    Previously every one of these published the command and only then failed.
+    ``send`` reports the refusal in its envelope; ``broadcast`` returns no
+    responses, the way it reports any client-side rejection.
+    """
 
     @pytest.mark.parametrize("budget", _UNUSABLE)
-    def test_an_unusable_budget_is_refused(self, budget: Any) -> None:
+    def test_an_unusable_budget_is_refused_and_nothing_reaches_the_wire(self, budget: Any) -> None:
         result, reached = _drive("send", budget)
         assert result["status"] == "error"
-
-    @pytest.mark.parametrize("budget", _UNUSABLE)
-    def test_nothing_reaches_the_wire(self, budget: Any) -> None:
-        # The whole point of refusing here: previously every one of these
-        # published the command and only then failed.
-        _result, reached = _drive("send", budget)
-        assert reached == []
-
-    @pytest.mark.parametrize("budget", _UNUSABLE)
-    def test_the_refusal_names_the_method_and_the_parameter(self, budget: Any) -> None:
-        result, _reached = _drive("send", budget)
         assert "Mesh.send" in result["error"]
         assert "timeout" in result["error"]
+        assert reached == []
+
+        responses, reached = _drive("broadcast", budget)
+        assert responses == []
+        assert reached == []
 
     def test_the_refusal_is_the_shared_domains_own_text(
         self,
@@ -143,21 +142,7 @@ class TestSendRefusesTheBudgetBeforeTheCommandGoesOut:
         expected = positive_finite_number_error(math.nan, "timeout", "Mesh.send")
         assert result["error"] == expected
 
-
-class TestBroadcastRefusesTheSameBudget:
-    """Regression: reported the way this method reports a client-side rejection."""
-
-    @pytest.mark.parametrize("budget", _UNUSABLE)
-    def test_an_unusable_budget_yields_no_responses(self, budget: Any) -> None:
-        result, _reached = _drive("broadcast", budget)
-        assert result == []
-
-    @pytest.mark.parametrize("budget", _UNUSABLE)
-    def test_nothing_reaches_the_wire(self, budget: Any) -> None:
-        _result, reached = _drive("broadcast", budget)
-        assert reached == []
-
-    def test_the_reason_is_logged_since_the_return_type_has_no_error_slot(
+    def test_the_broadcast_reason_is_logged_since_the_return_type_has_no_error_slot(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         # ``broadcast`` returns ``list[dict]``, so an empty list is also what a
@@ -198,21 +183,12 @@ class TestBothPublishersConsultTheSharedDomain:
     """Structural: one domain, so the two methods cannot come to disagree."""
 
     @pytest.mark.parametrize("method", ["send", "broadcast"])
-    def test_the_method_calls_the_shared_domain(self, method: str) -> None:
-        fn = getattr(core.Mesh, method)
-        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-        called = {ast.unparse(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
-        assert "positive_finite_number_error" in called
-
-    @pytest.mark.parametrize("method", ["send", "broadcast"])
-    def test_the_guard_precedes_the_wait_it_bounds(self, method: str) -> None:
+    def test_the_guard_precedes_the_wait_and_the_publish_it_protects(self, method: str) -> None:
         source = textwrap.dedent(inspect.getsource(getattr(core.Mesh, method)))
-        assert "positive_finite_number_error" in source, f"{method} consults no shared budget domain"
+        called = {ast.unparse(node.func) for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)}
+        assert "positive_finite_number_error" in called, f"{method} consults no shared budget domain"
         assert ".wait(timeout=timeout)" in source, f"{method} no longer waits on the budget"
-        assert source.index("positive_finite_number_error") < source.index(".wait(timeout=timeout)")
-
-    @pytest.mark.parametrize("method", ["send", "broadcast"])
-    def test_the_guard_precedes_the_publish_it_protects(self, method: str) -> None:
-        source = textwrap.dedent(inspect.getsource(getattr(core.Mesh, method)))
         assert "self.publish(" in source, f"{method} no longer publishes"
-        assert source.index("positive_finite_number_error") < source.index("self.publish(")
+        guard = source.index("positive_finite_number_error")
+        assert guard < source.index(".wait(timeout=timeout)")
+        assert guard < source.index("self.publish(")

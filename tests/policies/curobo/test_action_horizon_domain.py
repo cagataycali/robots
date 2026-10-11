@@ -118,18 +118,16 @@ class TestAnUnusableHorizonIsRefused:
     """Every value outside the shared chunk-count domain is refused as ``ValueError``."""
 
     @pytest.mark.parametrize("horizon", _REFUSED)
-    def test_it_is_refused(self, horizon: Any) -> None:
-        with pytest.raises(ValueError):
-            CuroboPolicy(motion_gen=_StubPlanner(), action_horizon=horizon)
-
-    @pytest.mark.parametrize("horizon", _REFUSED)
-    def test_the_refusal_names_the_provider_and_the_parameter(self, horizon: Any) -> None:
+    def test_the_refusal_is_a_valueerror_naming_the_provider_and_the_parameter(self, horizon: Any) -> None:
         """A caller cannot act on a refusal that does not say what to change.
 
         Pinned for every value, not only the two the old comparison answered,
         because the three that escaped as ``TypeError`` / ``OverflowError`` named
         neither - and one of them, ``nan``, named only the ``int()`` conversion
-        that happened to be reading it.
+        that happened to be reading it. ``ValueError`` is the ``Raises`` contract
+        a caller writes ``except`` against: ``TypeError`` and ``OverflowError``
+        are not subclasses of it, so a caller validating its own configuration
+        through the documented exception caught none of the values that escaped.
         """
         with pytest.raises(ValueError) as excinfo:
             CuroboPolicy(motion_gen=_StubPlanner(), action_horizon=horizon)
@@ -138,17 +136,6 @@ class TestAnUnusableHorizonIsRefused:
         assert "action_horizon" in message
         assert "must be a positive integer" in message
         assert "Omit it to use the provider default." in message
-
-    @pytest.mark.parametrize("horizon", _REFUSED)
-    def test_it_is_a_valueerror_as_the_class_docstring_promises(self, horizon: Any) -> None:
-        """The ``Raises`` section is the contract a caller writes ``except`` against.
-
-        ``TypeError`` and ``OverflowError`` are not ``ValueError`` subclasses, so
-        a caller validating its own configuration through the documented
-        exception caught none of the four values that escaped as one of those.
-        """
-        with pytest.raises(ValueError):
-            CuroboPolicy(motion_gen=_StubPlanner(), action_horizon=horizon)
 
 
 class TestTheBoolAsymmetryIsGone:

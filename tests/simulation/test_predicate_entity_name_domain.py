@@ -141,31 +141,22 @@ class TestEveryDeclaredEntityNameCarriesTheDomain:
         assert [c for c in cases if _names_a_prefix(c[1])] == [("grasped", "gripper_prefix")]
 
     @pytest.mark.parametrize(("name", "param"), _name_cases())
-    def test_a_blank_name_is_refused_naming_the_predicate_and_the_param(self, name, param):
-        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-        kwargs[param] = ""
-        with pytest.raises(ValueError) as excinfo:
-            make_predicate(name, **kwargs)
-        message = str(excinfo.value)
-        assert name in message, message
-        assert param in message, message
-        assert "non-empty string" in message, message
+    def test_only_a_usable_name_compiles(self, name, param):
+        """A blank or non-string name is refused naming the predicate and the param.
 
-    @pytest.mark.parametrize(("name", "param"), _name_cases())
-    def test_a_non_string_name_is_refused_before_the_evaluation_loop(self, name, param):
+        The essence: the domain refuses what cannot name, not what can - a
+        non-string is refused before the evaluation loop could read it.
+        """
         kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-        kwargs[param] = 42
-        with pytest.raises(ValueError) as excinfo:
-            make_predicate(name, **kwargs)
-        message = str(excinfo.value)
-        assert name in message, message
-        assert param in message, message
-        assert "must be a string" in message, message
+        for value, reason in (("", "non-empty string"), (42, "must be a string")):
+            kwargs[param] = value
+            with pytest.raises(ValueError) as excinfo:
+                make_predicate(name, **kwargs)
+            message = str(excinfo.value)
+            assert name in message, message
+            assert param in message, message
+            assert reason in message, message
 
-    @pytest.mark.parametrize(("name", "param"), _name_cases())
-    def test_a_usable_name_still_compiles(self, name, param):
-        """The essence: the domain refuses what cannot name, not what can."""
-        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
         kwargs[param] = "so101/gripper" if _names_a_prefix(param) else "cube"
         assert callable(make_predicate(name, **kwargs))
 

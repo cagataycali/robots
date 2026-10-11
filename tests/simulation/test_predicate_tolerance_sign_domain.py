@@ -141,35 +141,36 @@ class TestEveryDeclaredToleranceIsHeldNonNegative:
         assert ("body_on", "xy_tol") in cases
 
     @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
-    def test_a_negative_tolerance_is_refused(self, name, param):
-        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-        kwargs[param] = -0.25
-        with pytest.raises(ValueError, match=param):
-            make_predicate(name, **kwargs)
+    def test_a_negative_tolerance_is_refused_and_zero_is_not(self, name, param):
+        """Refused naming the predicate, the domain and the value; ``0`` admitted.
 
-    @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
-    def test_the_refusal_names_the_domain_and_the_value(self, name, param):
-        kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-        kwargs[param] = -0.25
-        with pytest.raises(ValueError) as excinfo:
-            make_predicate(name, **kwargs)
-        message = str(excinfo.value)
-        assert name in message
-        assert ">= 0" in message
-        assert "-0.25" in message
-
-    @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
-    def test_zero_stays_accepted(self, name, param):
-        """``0`` is the boundary the two shipped factory guards already admit.
-
+        ``0`` is the boundary the two shipped factory guards already admit:
         ``body_upright``/``base_tipped`` have refused ``tol < 0`` - not ``<= 0`` -
         since they were written, so admitting ``0`` keeps the whole family on one
         domain. Whether a zero-width tolerance is itself worth refusing is a
         separate question about those two shipped guards, not this one.
         """
         kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
+        kwargs[param] = -0.25
+        with pytest.raises(ValueError, match=param) as excinfo:
+            make_predicate(name, **kwargs)
+        message = str(excinfo.value)
+        assert name in message
+        assert ">= 0" in message
+        assert "-0.25" in message
+
         kwargs[param] = 0.0
         assert callable(make_predicate(name, **kwargs))
+
+        # A boolean is answered by the finiteness reason, not the sign reason
+        # (see TestABooleanIsAnsweredBeforeTheCoercion): the coercion the sign
+        # check performs is never reached.
+        for value in [True, False, np.True_, np.False_]:
+            kwargs[param] = value
+            with pytest.raises(ValueError, match="finite") as excinfo:
+                make_predicate(name, **kwargs)
+            assert ">= 0" not in str(excinfo.value), f"{value!r}"
+            assert param in str(excinfo.value), f"{value!r}"
 
 
 class TestSignedParamsKeepBothSigns:
@@ -256,9 +257,9 @@ class TestABooleanIsAnsweredBeforeTheCoercion:
     ``tests/simulation/test_input_validators_refuse_a_boolean.py`` states in
     prose, and nothing there checks it. It is pinned here instead, so the
     exemption rests on a measurement: deleting the ``finite_number_error`` call
-    makes every refusal case below report ``DID NOT RAISE`` - ``tol=True``
-    accepted as a tolerance of ``1.0`` - while the ``still accepted`` cases keep
-    passing. Stated without counts on purpose, since the registry-derived sweep
+    makes every boolean probe in ``test_a_negative_tolerance_is_refused_and_zero_is_not``
+    report ``DID NOT RAISE`` - ``tol=True`` accepted as a tolerance of ``1.0`` -
+    while the ``still accepted`` cases keep passing. Stated without counts on purpose, since the registry-derived sweep
     grows the refusal cases whenever a predicate declares a new tolerance.
 
     What these deliberately do *not* claim is an ordering. Moving the sign check
@@ -271,18 +272,6 @@ class TestABooleanIsAnsweredBeforeTheCoercion:
     ``finite_number_error`` has always held this domain - but a coercion now sits
     behind it, so the refusal has to stay.
     """
-
-    @pytest.mark.parametrize(("name", "param"), _tolerance_cases())
-    def test_a_boolean_tolerance_is_refused(self, name, param):
-        for value in [True, False, np.True_, np.False_]:
-            kwargs = _buildable_kwargs(PREDICATE_REGISTRY[name])
-            kwargs[param] = value
-            with pytest.raises(ValueError, match="finite") as excinfo:
-                make_predicate(name, **kwargs)
-            # Answered by the finiteness reason, not the sign reason: the coercion the
-            # sign check performs is never reached.
-            assert ">= 0" not in str(excinfo.value), f"{value!r}"
-            assert param in str(excinfo.value), f"{value!r}"
 
     def test_a_boolean_signed_param_is_refused_too(self):
         """The domain is the whole numeric kwarg set, not just the tolerances."""
