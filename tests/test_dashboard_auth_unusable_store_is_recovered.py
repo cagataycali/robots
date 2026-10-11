@@ -60,62 +60,42 @@ unusable = pytest.mark.parametrize("body,reason", UNUSABLE.values(), ids=list(UN
 STALE_TOKEN = jwt.encode({"sub": "root", "exp": int(time.time()) + 3600}, "a-previous-secret", algorithm="HS256")
 
 
-class TestTheRequestGetsAnAnswerRatherThanATraceback:
-    @unusable
-    def test_a_presented_token_is_refused_not_a_server_error(self, body, reason, tmp_path):
-        (tmp_path / "auth.json").write_text(body)
-        with pytest.raises(HTTPException) as e:
-            auth.verify_token(STALE_TOKEN)
-        assert e.value.status_code == 401, "a store nobody can use is not the caller's fault to pay 500 for"
+@unusable
+def test_an_unusable_store_is_recovered_like_an_unreadable_one(body, reason, tmp_path):
+    """One cell per store shape: the request, the file, the diagnosis and the seal.
 
-    @unusable
-    def test_the_login_screen_still_renders(self, body, reason, tmp_path):
-        """`auth_enabled()` and `list_credentials()` feed the screen; either raising takes it down."""
-        (tmp_path / "auth.json").write_text(body)
-        assert auth.auth_enabled() is False, "the recovered default holds no passkey yet"
-        assert auth.list_credentials() == []
-        assert auth.status(connection())["setup_required"] is True
+    The stale token is presented first, on the unrecovered file, because that
+    first read is what used to answer 500. Every later facet reads the store the
+    recovery left behind.
+    """
+    path = tmp_path / "auth.json"
+    path.write_text(body)
 
-    @unusable
-    def test_signing_in_works_again(self, body, reason, tmp_path):
-        """The point of the recovery: a session can be minted and verified after it."""
-        (tmp_path / "auth.json").write_text(body)
-        claims = auth.verify_token(issue_enrolled("root", "root"))
-        assert claims["sub"] == "root"
+    with pytest.raises(HTTPException) as refused:
+        auth.verify_token(STALE_TOKEN)
+    assert refused.value.status_code == 401, "a store nobody can use is not the caller's fault to pay 500 for"
 
+    backups = list(tmp_path.glob("auth.json.corrupt-*"))
+    assert len(backups) == 1 and backups[0].read_text() == body, "the file may hold the only credential id"
+    assert isinstance(json.loads(path.read_text())["jwt_secret"], str)
 
-class TestTheOperatorsFileAndTheDiagnosis:
-    @unusable
-    def test_the_bytes_are_kept_and_a_working_store_takes_over(self, body, reason, tmp_path):
-        path = tmp_path / "auth.json"
-        path.write_text(body)
+    damage = auth.store_corruption()
+    assert damage, "a silent repair of the file that decides whether this dashboard is sealed"
+    assert reason in damage["reason"], damage["reason"]
 
-        auth._load()
+    # Quarantining empties `credentials`, so enrollment must be re-sealed - as for a corrupt file.
+    with pytest.raises(HTTPException) as sealed:
+        auth.begin_registration(connection(peer=STRANGER), label="attacker")
+    assert sealed.value.status_code == 403
+    assert "corrupt-" in sealed.value.detail and "BOOTSTRAP_TOKEN" in sealed.value.detail
 
-        backups = list(tmp_path.glob("auth.json.corrupt-*"))
-        assert len(backups) == 1 and backups[0].read_text() == body, "the file may hold the only credential id"
-        assert isinstance(json.loads(path.read_text())["jwt_secret"], str)
+    # `auth_enabled()` and `list_credentials()` feed the login screen; either raising takes it down.
+    assert auth.auth_enabled() is False, "the recovered default holds no passkey yet"
+    assert auth.list_credentials() == []
+    assert auth.status(connection())["setup_required"] is True
 
-    @unusable
-    def test_the_reason_names_the_fault_rather_than_just_reporting_one(self, body, reason, tmp_path):
-        (tmp_path / "auth.json").write_text(body)
-
-        auth._load()
-
-        damage = auth.store_corruption()
-        assert damage, "a silent repair of the file that decides whether this dashboard is sealed"
-        assert reason in damage["reason"], damage["reason"]
-
-    @unusable
-    def test_a_stranger_cannot_seize_the_dashboard_through_it(self, body, reason, tmp_path):
-        """Quarantining empties `credentials`, so enrollment must be re-sealed - as for a corrupt file."""
-        (tmp_path / "auth.json").write_text(body)
-        auth._load()
-
-        with pytest.raises(HTTPException) as e:
-            auth.begin_registration(connection(peer=STRANGER), label="attacker")
-        assert e.value.status_code == 403
-        assert "corrupt-" in e.value.detail and "BOOTSTRAP_TOKEN" in e.value.detail
+    # The point of the recovery: a session can be minted and verified after it.
+    assert auth.verify_token(issue_enrolled("root", "root"))["sub"] == "root"
 
 
 # A store is usable when this module's readers can serve it, not when it matches

@@ -103,26 +103,27 @@ class TestEverySurfaceThatSetsTheSeedSharesOneDomain:
     """A seed gets one verdict whichever of the six surfaces receives it."""
 
     @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_the_constructor_refuses_it(self, seed):
-        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+    def test_every_surface_refuses_it_and_names_itself(self, seed):
+        """One cell per seed. ``reset`` writes past the frozen dataclass, and the
+        per-call ``get_actions`` seed bypasses the config, so each applies the
+        domain itself; each message says which surface refused."""
+        domain = "seed must be a whole number or None"
+        with pytest.raises(ValueError, match=domain) as from_construction:
             KimodoConfig(seed=seed)
-
-    @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_from_dict_refuses_it(self, seed):
-        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+        with pytest.raises(ValueError, match=domain):
             KimodoConfig.from_dict({"seed": seed})
-
-    @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_a_policy_level_override_refuses_it(self, seed):
-        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+        with pytest.raises(ValueError, match=domain):
             KimodoPolicy(seed=seed, motion_agent=_SeedRecordingAgent())
-
-    @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_a_per_episode_reseed_refuses_it(self, seed):
-        """``reset`` writes past the frozen dataclass, so it applies the domain itself."""
         policy, _ = _policy()
-        with pytest.raises(ValueError, match="seed must be a whole number or None"):
+        with pytest.raises(ValueError, match=domain) as from_reseed:
             policy.reset(seed=seed)
+        policy, _ = _policy(seed=42)
+        with pytest.raises(ValueError, match=domain) as from_get_actions:
+            asyncio.run(policy.get_actions({}, "waving", seed=seed))
+
+        assert str(from_construction.value).startswith(f"KimodoConfig: {domain}")
+        assert str(from_reseed.value).startswith(f"KimodoPolicy.reset: {domain}")
+        assert str(from_get_actions.value).startswith(f"KimodoPolicy.get_actions: {domain}")
 
     def test_a_json_config_file_refuses_the_infinity_it_can_spell(self, tmp_path):
         """``1e400`` is well-formed JSON and parses to ``inf``."""
@@ -130,30 +131,6 @@ class TestEverySurfaceThatSetsTheSeedSharesOneDomain:
         path.write_text('{"seed": 1e400}', encoding="utf-8")
         with pytest.raises(ValueError, match="seed must be a whole number or None"):
             KimodoConfig.from_json(path)
-
-    @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_a_per_call_seed_override_in_get_actions_refuses_it(self, seed):
-        """The per-call seed kwarg on get_actions also consults the domain."""
-        policy, _ = _policy(seed=42)
-        with pytest.raises(ValueError, match="seed must be a whole number or None"):
-            asyncio.run(policy.get_actions({}, "waving", seed=seed))
-
-    @pytest.mark.parametrize("seed", UNUSABLE)
-    def test_all_three_surfaces_state_the_same_domain_and_name_themselves(self, seed):
-        """One domain, and each message says which surface refused, so a caller
-        knows what to change and where."""
-        with pytest.raises(ValueError) as from_construction:
-            KimodoConfig(seed=seed)
-        policy, _ = _policy()
-        with pytest.raises(ValueError) as from_reseed:
-            policy.reset(seed=seed)
-        with pytest.raises(ValueError) as from_get_actions:
-            asyncio.run(policy.get_actions({}, "waving", seed=seed))
-
-        domain = "seed must be a whole number or None"
-        assert str(from_construction.value).startswith(f"KimodoConfig: {domain}")
-        assert str(from_reseed.value).startswith(f"KimodoPolicy.reset: {domain}")
-        assert str(from_get_actions.value).startswith(f"KimodoPolicy.get_actions: {domain}")
 
 
 class TestARefusedSeedChangesNothing:
@@ -195,17 +172,20 @@ class TestASeedTheDomainAcceptsSurvivesBothOfItsUses:
     """The controls: every accepted seed still reaches the sampler and keys itself."""
 
     @pytest.mark.parametrize("seed", USABLE)
-    def test_it_is_accepted_by_every_surface(self, seed):
+    def test_it_is_accepted_by_every_surface_and_keys_the_sample_it_produces(self, seed):
+        """Every surface accepts it, the key holds the seed itself, and a per-call
+        override still reaches the sampler - ``PolicyRunner`` forwards
+        ``policy_kwargs`` verbatim to every ``get_actions``, so a gate that refused
+        the override itself would take a working knob from every rollout."""
         assert KimodoConfig(seed=seed).seed == seed
         assert KimodoConfig.from_dict({"seed": seed}).seed == seed
         policy, _ = _policy()
         policy.reset(seed=seed)
+        assert KimodoPolicy._sample_key("walk forward", 100, 7.5, seed)[3] == seed
 
-    @pytest.mark.parametrize("seed", USABLE)
-    def test_it_keys_the_sample_it_produces(self, seed):
-        """The key holds the seed itself, so it names the run the sampler made."""
-        keyed = KimodoPolicy._sample_key("walk forward", 100, 7.5, seed)[3]
-        assert keyed == seed
+        policy, agent = _policy()
+        _pose(policy, seed=seed)
+        assert agent.seeds == [seed]
 
     def test_two_distinct_accepted_seeds_name_two_motions(self):
         """The invariant a fractional seed broke: distinct seeds, distinct samples."""
@@ -229,20 +209,6 @@ class TestASeedTheDomainAcceptsSurvivesBothOfItsUses:
         policy.reset(seed=2.0)
         _pose(policy)
         assert len(agent.seeds) == 1, "the same seed spelled two ways must not re-run the sampler"
-
-    @pytest.mark.parametrize("seed", USABLE)
-    def test_an_accepted_per_call_override_still_reaches_the_sampler(self, seed):
-        """The gate narrows nothing a caller could already ask for.
-
-        ``get_actions(..., seed=...)`` is a documented parameter and
-        ``PolicyRunner`` forwards ``policy_kwargs`` verbatim to every call, so a
-        gate that refused the override itself - rather than the values outside
-        the domain - would take a working knob away from every rollout that
-        passes one.
-        """
-        policy, agent = _policy()
-        _pose(policy, seed=seed)
-        assert agent.seeds == [seed]
 
     def test_two_distinct_accepted_per_call_seeds_name_two_motions(self):
         """Re-sampling on a changed per-call seed is what the override is for."""

@@ -134,31 +134,26 @@ class TestACadenceLerobotCannotDecodeIsRefused:
     """The regression: an undecodable cadence must never reach the argv."""
 
     @pytest.mark.parametrize("value", UNDECODABLE_CADENCES)
-    def test_an_undecodable_cadence_never_reaches_the_argv(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="save_freq must be an integer number of steps"):
-            _build(save_freq=value)
-
-    @pytest.mark.parametrize("value", UNDECODABLE_CADENCES)
-    def test_the_refusal_names_the_parameter_and_quotes_the_value(self, value: Any) -> None:
-        with pytest.raises(ValueError) as excinfo:
+    def test_an_undecodable_cadence_is_refused_with_or_without_a_validation_split(
+        self, value: Any, tmp_path: Path
+    ) -> None:
+        """One cell per cadence: refused by name and value, on the argv that also
+        spends it on ``--eval_steps``, and - the premise - failing at least one of
+        its two consumers, so nothing is refused that both could have honored."""
+        with pytest.raises(ValueError, match="save_freq must be an integer number of steps") as excinfo:
             _build(save_freq=value)
         message = str(excinfo.value)
         assert "lerobot_train: save_freq" in message, message
         assert repr(value) in message, message
 
-    @pytest.mark.parametrize("value", UNDECODABLE_CADENCES)
-    def test_the_same_cadence_is_refused_when_a_validation_split_is_requested(self, value: Any, tmp_path: Path) -> None:
-        """The path that also spends the value on ``--eval_steps``."""
         dataset = _write_dataset(tmp_path / "cubes")
         with pytest.raises(ValueError, match="save_freq must be an integer number of steps"):
             _build(dataset_root=str(dataset), save_freq=value, val_episodes=2)
 
-    @pytest.mark.parametrize("value", UNDECODABLE_CADENCES)
-    def test_no_argv_token_carries_the_undecodable_value(self, value: Any, tmp_path: Path) -> None:
-        """Both flags it feeds, not just the one named after it."""
-        dataset = _write_dataset(tmp_path / "cubes")
-        with pytest.raises(ValueError):
-            _build(dataset_root=str(dataset), save_freq=value, val_episodes=2)
+        pytest.importorskip("draccus")
+        assert not (_token_decodes(value) and _comparison_survives(value)), (
+            f"{value!r} is honored by lerobot's parser AND by the eval_steps comparison"
+        )
 
 
 class TestAUsableCadenceIsUntouched:
@@ -181,17 +176,17 @@ class TestTheFloorIsNotPartOfThisDomain:
     """A non-positive cadence is a documented capability, not a bad value."""
 
     @pytest.mark.parametrize("value", DISABLING_CADENCES)
-    def test_a_disabling_cadence_still_reaches_the_argv(self, value: int) -> None:
-        assert _flag(_build(save_freq=value), "save_freq") == str(value)
-
-    @pytest.mark.parametrize("value", DISABLING_CADENCES)
-    def test_a_disabling_cadence_still_falls_back_to_a_single_final_evaluation(
+    def test_a_disabling_cadence_reaches_the_argv_and_falls_back_to_a_final_evaluation(
         self, value: int, tmp_path: Path
     ) -> None:
-        """The fallback beside the guard is written for exactly this case."""
+        """The fallback beside the guard is written for exactly this case, and both
+        consumers really honor the value kept out of scope."""
+        assert _flag(_build(save_freq=value), "save_freq") == str(value)
         dataset = _write_dataset(tmp_path / "cubes")
         argv = _build(dataset_root=str(dataset), save_freq=value, steps=1234, val_episodes=2)
         assert _flag(argv, "eval_steps") == "1234"
+        pytest.importorskip("draccus")
+        assert _token_decodes(value) and _comparison_survives(value)
 
     def test_lerobot_really_honors_a_disabling_cadence(self) -> None:
         """Non-vacuity for the scope decision above."""
@@ -264,14 +259,6 @@ class TestThePremisesTheDomainRestsOn:
         declared = {field.name: field.type for field in dataclasses.fields(train_config.TrainPipelineConfig)}
         assert declared["save_freq"] is int
 
-    @pytest.mark.parametrize("value", UNDECODABLE_CADENCES)
-    def test_every_refused_cadence_fails_at_least_one_consumer(self, value: Any) -> None:
-        """Nothing is refused that both consumers could have honored."""
-        pytest.importorskip("draccus")
-        assert not (_token_decodes(value) and _comparison_survives(value)), (
-            f"{value!r} is honored by lerobot's parser AND by the eval_steps comparison"
-        )
-
     def test_both_failure_modes_are_really_represented(self) -> None:
         """Non-vacuity: neither consumer alone accounts for the probe set.
 
@@ -285,12 +272,6 @@ class TestThePremisesTheDomainRestsOn:
         comparison_only = [v for v in UNDECODABLE_CADENCES if _token_decodes(v) and not _comparison_survives(v)]
         assert token_only, "no value fails only lerobot's parser"
         assert comparison_only, "no value fails only the eval_steps comparison"
-
-    @pytest.mark.parametrize("value", DISABLING_CADENCES)
-    def test_a_disabling_cadence_is_honored_by_both_consumers(self, value: int) -> None:
-        """The other half: the values kept out of scope really are usable."""
-        pytest.importorskip("draccus")
-        assert _token_decodes(value) and _comparison_survives(value)
 
     def test_the_run_size_knobs_beside_it_hold_the_same_int_requirement(self) -> None:
         """The domain is the sibling's, with the floor removed - not a new one."""

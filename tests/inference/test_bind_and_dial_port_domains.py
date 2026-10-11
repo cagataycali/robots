@@ -65,53 +65,26 @@ class TestNeitherHalfAcceptsAnUnusablePort:
     """A value that names no port is refused by the bind and the dial surface."""
 
     @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_server_refuses_it(self, port: Any) -> None:
-        """``PolicyServer`` refuses it, naming the parameter, value and range."""
-        with pytest.raises(ValueError) as exc:
-            _server(port=port)
-        text = str(exc.value)
-        assert "PolicyServer" in text
-        assert "invalid port" in text
-        assert "1-65535" in text
+    def test_both_halves_refuse_it_before_building_anything(self, port: Any) -> None:
+        """One cell per port: each half names itself, the value's fault and the range.
 
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_client_refuses_it(self, port: Any) -> None:
-        """``RemotePolicy`` refuses it the same way."""
-        with pytest.raises(ValueError) as exc:
-            _client(port=port)
-        text = str(exc.value)
-        assert "RemotePolicy" in text
-        assert "invalid port" in text
-        assert "1-65535" in text
-
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_no_client_uri_is_built_from_it(self, port: Any) -> None:
-        """The refusal precedes ``uri``, so no unusable endpoint is ever stored.
-
-        Asserts the object does not exist rather than that a later connect
-        fails: ``uri`` is the client's whole addressing state, and a stored
-        ``ws://127.0.0.1:nan`` is what turned a bad port into an apparently
-        unreachable server.
+        The client refuses before ``uri`` exists - a stored ``ws://127.0.0.1:nan``
+        is what turned a bad port into an apparently unreachable server. The
+        server refuses before ``create_policy``, which can download a checkpoint
+        for a server that can never bind.
         """
-        with pytest.raises(ValueError):
-            client = _client(port=port)
-            pytest.fail(f"constructed a client addressing {client.uri!r}")
+        for build, name in ((_server, "PolicyServer"), (_client, "RemotePolicy")):
+            with pytest.raises(ValueError) as exc:
+                built = build(port=port)
+                pytest.fail(f"{name} accepted {port!r}: {vars(built).get('uri', built)!r}")
+            text = str(exc.value)
+            assert name in text and "invalid port" in text and "1-65535" in text, text
 
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_server_refuses_it_before_building_a_policy(self, port: Any) -> None:
-        """The refusal precedes ``create_policy``, which can download a checkpoint.
-
-        Uses the ``policy_provider`` spelling, where accepting the port first
-        would resolve and build a policy for a server that can never bind.
-        """
         calls: list[str] = []
-
-        class _Boom(Exception):
-            pass
 
         def _fail(provider: str, **_kwargs: Any) -> Any:
             calls.append(provider)
-            raise _Boom("create_policy must not be reached")
+            raise AssertionError("create_policy must not be reached")
 
         import strands_robots.policies as policies_pkg
 
@@ -129,13 +102,8 @@ class TestAnAddressablePortIsAcceptedByBoth:
     """The over-reach controls: the guards refuse only what they must."""
 
     @pytest.mark.parametrize("port", DIALABLE_PORTS)
-    def test_the_server_accepts_it(self, port: int) -> None:
-        """A port in range is stored for the bind."""
+    def test_the_server_binds_it_and_the_client_dials_it(self, port: int) -> None:
         assert _server(port=port).port == port
-
-    @pytest.mark.parametrize("port", DIALABLE_PORTS)
-    def test_the_client_dials_it(self, port: int) -> None:
-        """A port in range is interpolated into the endpoint."""
         assert _client(port=port).uri == f"ws://127.0.0.1:{port}"
 
 

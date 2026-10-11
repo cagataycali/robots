@@ -165,14 +165,31 @@ def _raw_motion(tmp_path: Path) -> str:
     return str(path)
 
 
-class TestTheConfigRefusesAnUnplayablePeriod:
-    """``ProtoMotionsConfig`` settles ``control_dt`` when it is built."""
+class TestEveryEntryRefusesAnUnplayablePeriod:
+    """The config, the sidecar loader and both ``MotionPlayer`` entries share one domain."""
 
     @pytest.mark.parametrize("value", _UNUSABLE)
-    def test_an_unusable_period_is_refused_at_construction(self, value: Any) -> None:
-        """Pre-fix every one of these was stored and carried to the resampler."""
+    def test_an_unusable_period_is_refused_wherever_it_enters(self, value: Any, tmp_path: Path) -> None:
+        """One cell per period, every entry it can arrive through.
+
+        Pre-fix the config stored every one of these; a sidecar ``true`` built a
+        one-second period and ``0``/``false`` raised ``ZeroDivisionError`` out of
+        the loader's ``logger.info`` argument. The cache's own key outranks the
+        argument, so it needs its own gate: a good ``control_dt=`` does not rescue
+        it - that path played a clip at a period its caller never asked for.
+        """
         with pytest.raises(ValueError, match="control_dt"):
             _built(control_dt=value)
+        with pytest.raises(ValueError, match="control_dt"):
+            load_config_from_yaml(_sidecar(tmp_path, control_dt=value))
+        with pytest.raises(ValueError, match=r"MotionPlayer: control_dt"):
+            MotionPlayer(_cache(), control_dt=value)
+        with pytest.raises(ValueError, match=r"MotionPlayer cache: control_dt"):
+            MotionPlayer(_cache(control_dt=value), control_dt=GTP_G1_CONTROL_DT)
+
+
+class TestTheConfigRefusesAnUnplayablePeriod:
+    """``ProtoMotionsConfig`` settles ``control_dt`` when it is built."""
 
     @pytest.mark.parametrize(("value", "expected"), _USABLE)
     def test_a_usable_period_is_kept_as_a_plain_float(self, value: Any, expected: float) -> None:
@@ -194,17 +211,6 @@ class TestTheConfigRefusesAnUnplayablePeriod:
 class TestTheSidecarRefusesAnUnplayablePeriod:
     """A checkpoint's ``unified_pipeline.yaml`` reaches the same domain."""
 
-    @pytest.mark.parametrize("value", _UNUSABLE)
-    def test_a_sidecar_period_is_reported_as_a_value_error(self, value: Any, tmp_path: Path) -> None:
-        """The loader hands the value through raw, so the domain sees it.
-
-        Pre-fix ``true`` built a config declaring a one-second control period,
-        and ``0``/``false`` raised ``ZeroDivisionError`` out of the loader's own
-        ``logger.info`` argument - neither naming the field.
-        """
-        with pytest.raises(ValueError, match="control_dt"):
-            load_config_from_yaml(_sidecar(tmp_path, control_dt=value))
-
     def test_a_sidecar_stating_a_deliberate_rate_still_loads(self, tmp_path: Path) -> None:
         """The control: a real sidecar timing block is unaffected."""
         config = load_config_from_yaml(_sidecar(tmp_path, control_dt=0.04, decimation=10))
@@ -217,21 +223,6 @@ class TestTheSidecarRefusesAnUnplayablePeriod:
 
 class TestThePlayerRefusesAnUnplayablePeriod:
     """Both places a period enters ``MotionPlayer`` are held to the domain."""
-
-    @pytest.mark.parametrize("value", _UNUSABLE)
-    def test_the_argument_is_refused_and_names_the_player(self, value: Any) -> None:
-        with pytest.raises(ValueError, match=r"MotionPlayer: control_dt"):
-            MotionPlayer(_cache(), control_dt=value)
-
-    @pytest.mark.parametrize("value", _UNUSABLE)
-    def test_a_cache_stating_an_unusable_period_is_refused_and_names_the_cache(self, value: Any) -> None:
-        """The cache's own key outranks the argument, so it needs its own gate.
-
-        A good ``control_dt=`` does not rescue it: pre-fix this is exactly the
-        path that played a clip at a period its caller never asked for.
-        """
-        with pytest.raises(ValueError, match=r"MotionPlayer cache: control_dt"):
-            MotionPlayer(_cache(control_dt=value), control_dt=GTP_G1_CONTROL_DT)
 
     def test_a_cache_without_the_key_keeps_the_argument(self) -> None:
         assert MotionPlayer(_cache(), control_dt=0.05).control_dt == pytest.approx(0.05)

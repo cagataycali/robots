@@ -103,40 +103,41 @@ class TestTheConsumerReallyRefusesTheseDeadlines:
             assert pool.submit(lambda: "chunk").result(timeout=None) == "chunk"
 
 
-class TestTheFacadesRefuseAnUnusableDeadline:
-    """``run_policy`` / ``eval_policy`` report it as a caller error."""
+class TestEveryLayerRefusesAnUnusableDeadline:
+    """The facades report it as a caller error; ``PolicyRunner`` raises it.
+
+    A direct runner caller has no structured envelope to read a refusal from,
+    which is why that layer raises where the facades return - the same split the
+    seed domain already uses on these two methods. One cell per value drives all
+    four surfaces, so neither layer can accept a deadline the other refuses.
+    """
 
     @pytest.mark.parametrize("value", UNUSABLE)
-    def test_run_policy_refuses(self, value: Any) -> None:
+    def test_every_surface_refuses_it_before_the_policy_is_queried(self, value: Any) -> None:
         sim, policy = _runner_arm()
         result = sim.run_policy(
             robot_name="arm", policy_object=policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value
         )
         assert result["status"] == "error", result
-        assert "rtc_inference_timeout_s" in _text(result)
-        assert "run_policy" in _text(result)
-        assert repr(value) in _text(result)
+        for fragment in ("rtc_inference_timeout_s", "run_policy", repr(value)):
+            assert fragment in _text(result), fragment
+        # No inference, no frame, no dataset row for a deadline that cannot hold.
+        assert policy.infer_starts == []
+        assert sim.send_count == 0
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_eval_policy_refuses(self, value: Any) -> None:
         sim, policy = _runner_arm()
         result = sim.eval_policy(
             robot_name="arm", policy_object=policy, n_episodes=1, max_steps=4, rtc_inference_timeout_s=value
         )
         assert result["status"] == "error", result
-        assert "rtc_inference_timeout_s" in _text(result)
-        assert "eval_policy" in _text(result)
+        assert "rtc_inference_timeout_s" in _text(result) and "eval_policy" in _text(result)
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_lands_before_the_policy_is_queried(self, value: Any) -> None:
-        """No inference, no frame, no dataset row for a deadline that cannot hold."""
         sim, policy = _runner_arm()
-        result = sim.run_policy(
-            robot_name="arm", policy_object=policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value
-        )
-        assert result["status"] == "error"
+        with pytest.raises(ValueError, match="rtc_inference_timeout_s"):
+            PolicyRunner(sim).run("arm", policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value)
+        with pytest.raises(ValueError, match="rtc_inference_timeout_s"):
+            PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=4, rtc_inference_timeout_s=value)
         assert policy.infer_starts == []
-        assert sim.send_count == 0
 
     def test_the_message_does_not_blame_the_policy(self) -> None:
         """The pre-fix report accused a healthy model; the refusal must not."""
@@ -148,29 +149,6 @@ class TestTheFacadesRefuseAnUnusableDeadline:
         assert "inference is stuck" not in text
         assert "check the policy/server" not in text
 
-
-class TestTheRunnerRaisesForTheSameValues:
-    """``PolicyRunner`` is drivable directly, so it enforces the domain too.
-
-    A direct caller has no structured envelope to read a refusal from, which is
-    why this layer raises where the facades return - the same split the seed
-    domain already uses on these two methods.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_run_raises(self, value: Any) -> None:
-        sim, policy = _runner_arm()
-        with pytest.raises(ValueError, match="rtc_inference_timeout_s"):
-            PolicyRunner(sim).run("arm", policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value)
-        assert policy.infer_starts == []
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_evaluate_raises(self, value: Any) -> None:
-        sim, policy = _runner_arm()
-        with pytest.raises(ValueError, match="rtc_inference_timeout_s"):
-            PolicyRunner(sim).evaluate("arm", policy, n_episodes=1, max_steps=4, rtc_inference_timeout_s=value)
-        assert policy.infer_starts == []
-
     def test_the_raised_message_names_the_method(self) -> None:
         sim, policy = _runner_arm()
         with pytest.raises(ValueError, match=r"PolicyRunner\.run: rtc_inference_timeout_s"):
@@ -181,15 +159,12 @@ class TestAUsableDeadlineIsStillHonored:
     """The accepted domain, including the ``None`` default and NumPy scalars."""
 
     @pytest.mark.parametrize("value", USABLE)
-    def test_run_policy_accepts(self, value: Any) -> None:
+    def test_the_facade_and_the_runner_accept(self, value: Any) -> None:
         sim, policy = _runner_arm()
         result = sim.run_policy(
             robot_name="arm", policy_object=policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value
         )
         assert result["status"] == "success", result
-
-    @pytest.mark.parametrize("value", USABLE)
-    def test_the_runner_accepts(self, value: Any) -> None:
         sim, policy = _runner_arm()
         result = PolicyRunner(sim).run("arm", policy, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value)
         assert result["status"] == "success", result
@@ -234,33 +209,6 @@ class TestTheDomainIsNotGatedOnTheAsyncFlag:
         )
         assert result["status"] == "error", result
         assert "rtc_inference_timeout_s" in _text(result)
-
-
-class TestTheFacadeAndTheRunnerAgree:
-    """Neither layer may accept a deadline the other refuses."""
-
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_the_two_layers_reach_the_same_verdict(self, value: Any) -> None:
-        sim, policy = _runner_arm()
-        facade_refused = (
-            sim.run_policy(
-                robot_name="arm",
-                policy_object=policy,
-                n_steps=4,
-                fast_mode=True,
-                rtc_inference_timeout_s=value,
-            )["status"]
-            == "error"
-        )
-
-        sim2, policy2 = _runner_arm()
-        try:
-            PolicyRunner(sim2).run("arm", policy2, n_steps=4, fast_mode=True, rtc_inference_timeout_s=value)
-            runner_refused = False
-        except ValueError:
-            runner_refused = True
-
-        assert facade_refused is runner_refused, f"verdicts differ for {value!r}"
 
 
 def _surfaces_taking_the_deadline() -> dict[str, list[str]]:

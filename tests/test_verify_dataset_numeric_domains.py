@@ -90,25 +90,6 @@ def _flagged_short_episode(report: dict[str, Any]) -> bool:
 class TestAThresholdOutsideTheDomainIsRefusedNotApplied:
     """``min_frames`` is reported, and never silently disables the check."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_the_report_names_the_threshold_as_the_problem(self, tmp_path: Path, value: Any) -> None:
-        report = _verify(root=_corrupt(tmp_path), min_frames=value)
-        assert report["status"] == "error", report
-        assert report["ok"] is False
-        assert any("min_frames must be a non-negative integer" in p for p in report["problems"]), report["problems"]
-
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_a_corrupt_dataset_is_never_certified(self, tmp_path: Path, value: Any) -> None:
-        """The headline: no threshold may turn this gate into a pass."""
-        report = _verify(root=_corrupt(tmp_path), min_frames=value)
-        assert report["status"] != "success", report
-
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_nothing_escapes_as_a_traceback(self, tmp_path: Path, value: Any) -> None:
-        """The checker's documented contract is that a bad input yields a report."""
-        report = _verify(root=_corrupt(tmp_path), min_frames=value)
-        assert isinstance(report, dict) and isinstance(report["problems"], list)
-
     def test_the_threshold_is_reported_before_the_parquet_is_read(self, tmp_path: Path) -> None:
         """A refused threshold is a caller error, not a dataset verdict."""
         report = _verify(root=_corrupt(tmp_path), min_frames=-5)
@@ -146,11 +127,6 @@ class TestTheSiblingCountSharesTheDomain:
         assert report["status"] == "error"
         assert any("expected must be a non-negative integer" in p for p in report["problems"])
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_every_unusable_expected_is_reported(self, tmp_path: Path, value: Any) -> None:
-        report = _verify(root=_write_dataset(tmp_path, [0], [3]), expected=value)
-        assert any("expected must be a non-negative integer" in p for p in report["problems"]), report["problems"]
-
     def test_none_still_means_no_expected_check(self, tmp_path: Path) -> None:
         report = _verify(root=_healthy(tmp_path), expected=None)
         assert report["status"] == "success", report
@@ -181,13 +157,6 @@ def _episodes_verdict(value: Any) -> str:
 class TestBothSurfacesAgreeOnTheDomain:
     """One question, one accepted domain, whichever surface asks it."""
 
-    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
-    def test_neither_surface_accepts_an_unusable_count(self, tmp_path: Path, value: Any) -> None:
-        gate = _verify(root=_write_dataset(tmp_path, [0], [3]), expected=value)
-        gate_refused = any("expected must be a non-negative integer" in p for p in gate["problems"])
-        assert gate_refused, gate["problems"]
-        assert _episodes_verdict(value) == "refused"
-
     @pytest.mark.parametrize("value", USABLE_COUNTS)
     def test_neither_surface_refuses_a_usable_count(self, tmp_path: Path, value: int) -> None:
         gate = _verify(root=_healthy(tmp_path), expected=value)
@@ -205,6 +174,24 @@ class TestBothSurfacesAgreeOnTheDomain:
             assert non_negative_count_error(value, "expected", "verify_dataset") is not None, value
         for value in USABLE_COUNTS:
             assert non_negative_count_error(value, "expected", "verify_dataset") is None, value
+
+
+class TestAnUnusableCountIsRefusedOnEverySurface:
+    """One cell per count: both thresholds of the gate, and the sim facade."""
+
+    @pytest.mark.parametrize("value", UNUSABLE_COUNTS)
+    def test_an_unusable_count_is_reported_never_applied(self, tmp_path: Path, value: Any) -> None:
+        """``min_frames`` never silently disables check 2, ``expected`` is reported, and
+        a bad input yields a report rather than a traceback (the checker's contract)."""
+        report = _verify(root=_corrupt(tmp_path / "corrupt"), min_frames=value)
+        assert isinstance(report, dict) and isinstance(report["problems"], list)
+        assert report["status"] == "error", report
+        assert report["ok"] is False
+        assert any("min_frames must be a non-negative integer" in p for p in report["problems"]), report["problems"]
+
+        gate = _verify(root=_write_dataset(tmp_path / "one", [0], [3]), expected=value)
+        assert any("expected must be a non-negative integer" in p for p in gate["problems"]), gate["problems"]
+        assert _episodes_verdict(value) == "refused"
 
 
 class TestTheCliGateFailsOnARefusedThreshold:

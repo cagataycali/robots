@@ -208,16 +208,6 @@ def _observed(engine: Any) -> tuple[float, Any, float]:
 class TestTheSharedDomain:
     """``positive_whole_number_error`` is the single definition all three share."""
 
-    @pytest.mark.parametrize("count", UNUSABLE_SUBSTEPS, ids=_substep_id)
-    def test_an_unusable_count_is_refused(self, count: Any) -> None:
-        error = positive_whole_number_error(count, "n_substeps", "send_action")
-        assert error is not None, count
-        assert "n_substeps" in error
-
-    @pytest.mark.parametrize(("count", "_expected"), USABLE_SUBSTEPS)
-    def test_a_usable_count_is_accepted(self, count: Any, _expected: int) -> None:
-        assert positive_whole_number_error(count, "n_substeps", "send_action") is None, count
-
     def test_an_accepted_count_survives_the_int_coercion_it_is_paired_with(self) -> None:
         """The guard exists so the ``int()`` each backend then applies cannot raise."""
         for count, expected in USABLE_SUBSTEPS:
@@ -303,24 +293,6 @@ class TestTheFloorIsADecisionWithEvidence:
 # --------------------------------------------------------------------------- #
 class TestMuJoCoSendAction:
     """Measured on a real compiled model, so the ordering claim is observable."""
-
-    @pytest.mark.parametrize("count", UNUSABLE_SUBSTEPS, ids=_substep_id)
-    def test_an_unusable_count_is_refused_without_writing_or_stepping(self, sim, count: Any) -> None:
-        before = _observed(sim)
-        result = sim.send_action({"lift_act": 0.5}, robot_name="arm", n_substeps=count)
-        assert result["status"] == "error", count
-        assert "n_substeps" in _text(result)
-        assert _observed(sim) == before, f"{count!r} changed the world it was refused for"
-
-    @pytest.mark.parametrize(("count", "expected"), USABLE_SUBSTEPS)
-    def test_a_usable_count_advances_exactly_that_many_steps(self, sim, count: Any, expected: int) -> None:
-        t0, c0, _ctrl0 = _observed(sim)
-        result = sim.send_action({"lift_act": 0.5}, robot_name="arm", n_substeps=count)
-        assert result["status"] == "success", _text(result)
-        t1, c1, ctrl1 = _observed(sim)
-        assert round((t1 - t0) / _TIMESTEP) == expected
-        assert c1 - c0 == expected
-        assert ctrl1 == pytest.approx(0.5)
 
     def test_an_integral_float_no_longer_raises_past_the_envelope(self, sim) -> None:
         """``3.0`` raised ``TypeError`` from ``range()`` pre-fix, after the write.
@@ -417,60 +389,68 @@ def _isaac_stub() -> tuple[Any, dict[str, int]]:
     return stub, calls
 
 
-class TestNewtonSendAction:
+# --------------------------------------------------------------------------- #
+# The three backends no longer disagree                                       #
+# --------------------------------------------------------------------------- #
+class TestEverySurfaceAgreesOnEachCount:
+    """One cell per count: the guard, all three backends, and their agreement.
+
+    An unusable count is refused by the shared guard naming the parameter, by
+    MuJoCo without moving the world, by Newton before any target is written and
+    by Isaac before the world ticks - in byte-identical text on all three.
+    """
+
     @pytest.mark.parametrize("count", UNUSABLE_SUBSTEPS, ids=_substep_id)
-    def test_an_unusable_count_is_refused_before_any_target_is_written(self, count: Any) -> None:
-        stub, calls = _newton_stub()
-        result = NewtonSimEngine.send_action(stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
-        assert result["status"] == "error", count
-        assert "n_substeps" in _text(result)
-        assert calls["write"] == [], f"{count!r} wrote targets it was refused for"
-        assert calls["advance"] == []
-        assert stub._targets == {}
+    def test_an_unusable_count_is_refused_everywhere_before_anything_moves(self, sim, count: Any) -> None:
+        error = positive_whole_number_error(count, "n_substeps", "send_action")
+        assert error is not None and "n_substeps" in error, count
+
+        before = _observed(sim)
+        mujoco = sim.send_action({"lift_act": 0.5}, robot_name="arm", n_substeps=count)
+        assert mujoco["status"] == "error", count
+        assert "n_substeps" in _text(mujoco)
+        assert _observed(sim) == before, f"{count!r} changed the world it was refused for"
+
+        newton_stub, newton_calls = _newton_stub()
+        newton = NewtonSimEngine.send_action(newton_stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
+        assert newton["status"] == "error", count
+        assert newton_calls == {"write": [], "advance": []}, f"{count!r} wrote targets it was refused for"
+        assert newton_stub._targets == {}
+
+        isaac_stub, isaac_calls = _isaac_stub()
+        isaac = IsaacSimulation.send_action(isaac_stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
+        assert isaac["status"] == "error", count
+        assert isaac_calls["n"] == 0, f"{count!r} ticked a world it was refused for"
+        assert (isaac_stub._step_count, isaac_stub._sim_time) == (0, 0.0)
+
+        assert _text(mujoco) == _text(newton) == _text(isaac)
 
     @pytest.mark.parametrize(("count", "expected"), USABLE_SUBSTEPS)
-    def test_a_usable_count_reaches_advance_already_coerced(self, count: Any, expected: int) -> None:
-        """The ``int()`` is the guard's other half: ``_advance`` gets a true ``int``.
+    def test_a_usable_count_advances_exactly_that_many_steps_everywhere(self, sim, count: Any, expected: int) -> None:
+        """MuJoCo advances ``expected`` steps; Newton's ``_advance`` gets a true ``int``.
 
         Pre-fix a ``3.0`` reached ``range(max(1, 3.0))`` and raised, and a
         ``2.7`` was added to ``step_count`` verbatim.
         """
-        stub, calls = _newton_stub()
-        result = NewtonSimEngine.send_action(stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
+        assert positive_whole_number_error(count, "n_substeps", "send_action") is None, count
+
+        t0, c0, _ctrl0 = _observed(sim)
+        result = sim.send_action({"lift_act": 0.5}, robot_name="arm", n_substeps=count)
         assert result["status"] == "success", _text(result)
-        assert calls["advance"] == [expected]
-        assert isinstance(calls["advance"][0], int)
+        t1, c1, ctrl1 = _observed(sim)
+        assert round((t1 - t0) / _TIMESTEP) == expected
+        assert c1 - c0 == expected
+        assert ctrl1 == pytest.approx(0.5)
+
+        stub, calls = _newton_stub()
+        newton = NewtonSimEngine.send_action(stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
+        assert newton["status"] == "success", _text(newton)
+        assert calls["advance"] == [expected] and type(calls["advance"][0]) is int
         assert calls["write"] == [True]
 
 
-class TestIsaacSendAction:
-    @pytest.mark.parametrize("count", UNUSABLE_SUBSTEPS, ids=_substep_id)
-    def test_an_unusable_count_is_refused_before_the_lock_and_any_tick(self, count: Any) -> None:
-        stub, calls = _isaac_stub()
-        result = IsaacSimulation.send_action(stub, {"lift": 0.5}, robot_name="arm", n_substeps=count)
-        assert result["status"] == "error", count
-        assert "n_substeps" in _text(result)
-        assert calls["n"] == 0, f"{count!r} ticked a world it was refused for"
-        assert stub._step_count == 0
-        assert stub._sim_time == 0.0
-
-
-# --------------------------------------------------------------------------- #
-# The three backends no longer disagree                                       #
-# --------------------------------------------------------------------------- #
 class TestTheThreeBackendsAgree:
     """One domain, one refusal - byte-identical, not merely equivalent."""
-
-    @pytest.mark.parametrize("count", UNUSABLE_SUBSTEPS, ids=_substep_id)
-    def test_the_refusal_is_the_same_text_on_every_backend(self, sim, count: Any) -> None:
-        mujoco_text = _text(sim.send_action({"lift_act": 0.5}, robot_name="arm", n_substeps=count))
-        newton_text = _text(
-            NewtonSimEngine.send_action(_newton_stub()[0], {"lift": 0.5}, robot_name="arm", n_substeps=count)
-        )
-        isaac_text = _text(
-            IsaacSimulation.send_action(_isaac_stub()[0], {"lift": 0.5}, robot_name="arm", n_substeps=count)
-        )
-        assert mujoco_text == newton_text == isaac_text
 
     def test_the_zero_the_backends_used_to_disagree_about(self, sim) -> None:
         """The clearest reason this was not merely an unvalidated input.
