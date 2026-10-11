@@ -154,37 +154,27 @@ def test_every_verb_has_an_actions_table_row() -> None:
 
 
 @pytest.mark.parametrize(("verb", "accessor", "kwargs", "args", "call_kwargs"), _VERBS, ids=_IDS)
-class TestEveryVerbHoldsTheHandleContract:
-    def test_a_missing_driver_is_refused_naming_the_parameter(
-        self, verb: Any, accessor: str, kwargs: dict[str, Any], args: Any, call_kwargs: Any
-    ) -> None:
-        out = verb(driver=None, **kwargs)
-        assert out["status"] == "error"
-        assert verb.__name__ in _text(out)
-        assert "`driver`" in _text(out)
+def test_every_verb_holds_the_handle_contract(
+    verb: Any, accessor: str, kwargs: dict[str, Any], args: tuple[Any, ...], call_kwargs: dict[str, Any]
+) -> None:
+    """A missing or wrong-shape handle is refused by name; a usable one is called
+    exactly once and its envelope - success or refusal alike - comes back verbatim."""
+    missing = verb(driver=None, **kwargs)
+    assert missing["status"] == "error"
+    assert verb.__name__ in _text(missing)
+    assert "`driver`" in _text(missing)
 
-    def test_a_wrong_shape_driver_is_refused_naming_the_type(
-        self, verb: Any, accessor: str, kwargs: dict[str, Any], args: Any, call_kwargs: Any
-    ) -> None:
-        out = verb(driver="g1-lab", **kwargs)
-        assert out["status"] == "error"
-        assert "'str'" in _text(out)
+    wrong_shape = verb(driver="g1-lab", **kwargs)
+    assert wrong_shape["status"] == "error"
+    assert "'str'" in _text(wrong_shape)
 
-    def test_a_usable_driver_is_called_once_and_the_envelope_round_trips(
-        self, verb: Any, accessor: str, kwargs: dict[str, Any], args: tuple[Any, ...], call_kwargs: dict[str, Any]
-    ) -> None:
-        envelope = {"status": "success", "content": [{"json": {"rc": 0}}]}
-        driver = _Recorder(accessor, envelope)
-        out = verb(driver=driver, **kwargs)
-        assert out is envelope, "the verb must return the driver's envelope verbatim"
-        assert driver.calls == [(args, call_kwargs)]
+    envelope = {"status": "success", "content": [{"json": {"rc": 0}}]}
+    driver = _Recorder(accessor, envelope)
+    assert verb(driver=driver, **kwargs) is envelope, "the verb must return the driver's envelope verbatim"
+    assert driver.calls == [(args, call_kwargs)]
 
-    def test_a_driver_side_refusal_surfaces_verbatim(
-        self, verb: Any, accessor: str, kwargs: dict[str, Any], args: Any, call_kwargs: Any
-    ) -> None:
-        refusal = {"status": "error", "content": [{"text": "rc=3104 rpc timeout"}]}
-        out = verb(driver=_Recorder(accessor, refusal), **kwargs)
-        assert out is refusal
+    refusal = {"status": "error", "content": [{"text": "rc=3104 rpc timeout"}]}
+    assert verb(driver=_Recorder(accessor, refusal), **kwargs) is refusal
 
 
 @pytest.mark.parametrize(

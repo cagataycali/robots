@@ -55,20 +55,14 @@ class TestTeleoperateRefusesAnUnusableRate:
     """``hz`` is refused at the call, before any hardware is touched."""
 
     @pytest.mark.parametrize("hz", UNUSABLE)
-    def test_unusable_hz_is_refused(self, hz):
+    def test_unusable_hz_is_refused_and_touches_no_device(self, hz):
+        """The guard runs before connect(), so a rejection has no side effects."""
         host = FakeHost()
-        _attached(host)
+        dev = _attached(host)
         res = host.teleoperate(hz=hz)
         assert res["status"] == "error"
         assert "hz must be a positive finite number" in res["content"][0]["text"]
         assert repr(hz) in res["content"][0]["text"]
-
-    @pytest.mark.parametrize("hz", UNUSABLE)
-    def test_a_refused_rate_starts_no_loop_and_touches_no_device(self, hz):
-        """The guard runs before connect(), so a rejection has no side effects."""
-        host = FakeHost()
-        dev = _attached(host)
-        host.teleoperate(hz=hz)
         assert dev.connect_calls == 0
         assert dev.get_action_calls == 0
         assert dev.is_connected is False

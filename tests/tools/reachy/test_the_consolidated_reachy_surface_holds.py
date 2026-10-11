@@ -108,42 +108,37 @@ def _bare_driver(connected: bool = True) -> ReachyDriver:
     return driver
 
 
-class TestEveryVerbRefusesAWrongHandle:
-    """Fact family 1: the live-handle judgement, uniform across the surface."""
+class TestEveryVerbHoldsTheHandleContract:
+    """Fact families 1 and 2: the live-handle judgement, uniform across the
+    surface, then one call through the table's accessor, envelope verbatim."""
 
     @pytest.mark.parametrize("verb", sorted(ALL_VERBS))
-    def test_a_none_driver_is_refused_naming_the_verb_and_parameter(self, verb: str) -> None:
+    def test_a_wrong_handle_is_refused_and_a_live_one_is_called_once(self, verb: str) -> None:
         result = ALL_VERBS[verb](driver=None)
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert text.startswith(f"{verb}: ")
         assert "`driver` is required" in text
 
-    @pytest.mark.parametrize("verb", sorted(ALL_VERBS))
-    def test_a_string_handle_is_refused_naming_the_received_type(self, verb: str) -> None:
         result = ALL_VERBS[verb](driver="reachy-mini")
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert text.startswith(f"{verb}: ")
         assert "'str'" in text
 
-    @pytest.mark.parametrize("verb", sorted(ALL_VERBS))
-    def test_an_accessor_present_as_data_is_still_refused(self, verb: str) -> None:
         result = ALL_VERBS[verb](driver=_AccessorIsData())
         assert result["status"] == "error"
         assert result["content"][0]["text"].startswith(f"{verb}: ")
 
-
-class TestEveryVerbMakesExactlyOneDriverCall:
-    """Fact family 2: one call, through the table's accessor, envelope verbatim."""
-
-    @pytest.mark.parametrize("verb", sorted(ALL_VERBS))
-    def test_the_tables_accessor_serves_the_call_and_the_envelope_returns_verbatim(self, verb: str) -> None:
         handle = _RecordingHandle()
         result = ALL_VERBS[verb](driver=handle, **VERB_ARGS[verb])
         assert result is handle.envelope
         assert len(handle.calls) == 1
         assert handle.calls[0][0] == VERB_ACCESSOR[verb]
+
+
+class TestEachVerbsOwnCall:
+    """The per-verb call shapes the table cannot express."""
 
     @pytest.mark.parametrize("sleep,accessor", [(False, "wake_up"), (True, "goto_sleep")])
     def test_reachy_wake_commands_the_motion_its_flag_names(self, sleep: bool, accessor: str) -> None:

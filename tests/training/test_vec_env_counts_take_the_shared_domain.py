@@ -107,47 +107,28 @@ def _refusal(**kwargs: Any) -> str | None:
 
 
 @pytest.mark.parametrize(("value", "why"), _PROBES, ids=_IDS)
-def test_num_envs_agrees_with_the_shared_count_domain(value: Any, why: str) -> None:
-    """A count the shared domain refuses is refused here, naming the parameter."""
-    expected = positive_count_error(value, "num_envs", "VecSimEnv")
-    got = _refusal(num_envs=value)
-    if expected is None:
-        assert got is None, f"{value!r} ({why}) is a usable count but was refused: {got}"
-    else:
-        assert got is not None, f"{value!r} ({why}) was admitted; the shared domain refuses it"
-        assert "num_envs" in got, f"the refusal of {value!r} does not name num_envs: {got}"
-
-
-@pytest.mark.parametrize(("value", "why"), _PROBES, ids=_IDS)
-def test_max_workers_agrees_with_the_shared_count_domain(value: Any, why: str) -> None:
-    """The pool size takes the same domain; ``None`` alone means "derive it"."""
-    if value is _MAX_WORKERS_MEANS_UNSTATED:
-        assert _refusal(num_envs=2, max_workers=value) is None, "None means derive from num_envs"
-        return
-    expected = positive_count_error(value, "max_workers", "VecSimEnv")
-    got = _refusal(num_envs=2, max_workers=value)
-    if expected is None:
-        assert got is None, f"{value!r} ({why}) is a usable pool size but was refused: {got}"
-    else:
-        assert got is not None, f"{value!r} ({why}) was admitted as a pool size"
-        assert "max_workers" in got, f"the refusal of {value!r} does not name max_workers: {got}"
-
-
-@pytest.mark.parametrize(("value", "why"), _PROBES, ids=_IDS)
-def test_a_count_leaves_the_constructor_only_as_a_value_error(value: Any, why: str) -> None:
-    """The documented contract is ``ValueError``; nothing else may escape.
+def test_both_counts_agree_with_the_shared_count_domain(value: Any, why: str) -> None:
+    """A count the shared domain refuses is refused naming its parameter, and only
+    as the documented ``ValueError``; for the pool size ``None`` alone means "derive it".
 
     ``float("inf")`` reached ``int()`` and raised ``OverflowError``; ``"4"`` and
     ``None`` reached the ``< 1`` comparison and raised ``TypeError``.
     """
-    for kwargs in ({"num_envs": value}, {"num_envs": 2, "max_workers": value}):
+    for param, kwargs in (("num_envs", {"num_envs": value}), ("max_workers", {"num_envs": 2, "max_workers": value})):
         try:
-            vec = VecSimEnv(_CountingFactory(), **kwargs)
+            VecSimEnv(_CountingFactory(), **kwargs).close()
         except ValueError:
-            continue
+            pass
         except BaseException as exc:  # noqa: BLE001 - reporting the escape
             raise AssertionError(f"{kwargs} ({why}) escaped as {type(exc).__name__}: {exc}") from exc
-        vec.close()
+        got = _refusal(**kwargs)
+        if param == "max_workers" and value is _MAX_WORKERS_MEANS_UNSTATED:
+            assert got is None, "None means derive from num_envs"
+        elif positive_count_error(value, param, "VecSimEnv") is None:
+            assert got is None, f"{param}={value!r} ({why}) is usable but was refused: {got}"
+        else:
+            assert got is not None, f"{param}={value!r} ({why}) was admitted; the shared domain refuses it"
+            assert param in got, f"the refusal of {param}={value!r} does not name {param}: {got}"
 
 
 def test_a_refused_count_builds_no_environment() -> None:

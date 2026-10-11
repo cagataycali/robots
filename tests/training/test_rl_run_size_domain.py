@@ -110,54 +110,31 @@ def _field_problems(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
     return [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
 
 
-class TestEveryRlBackendRefusesAnUnusableRunSize:
-    """Both trainers refuse every value their loop bound cannot be built from."""
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_the_problem_names_the_field_and_the_domain(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            problems = _field_problems(provider, spec, field)
-            assert problems == [positive_count_error(value, field, provider)], f"{provider} {field}={value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_a_non_count_never_reaches_a_run(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        """The refusal precedes ``setup``, so nothing is built before it."""
-        for value in NOT_A_COUNT:
-            setattr(spec, field, value)
-            result = create_trainer(provider).train(spec)
-            assert result.status == "error", f"{value!r}"
-            assert result.checkpoint_dir in (None, ""), f"{value!r}"
-            assert f"{field} must be a positive integer" in result.message, f"{value!r}"
-
-
-class TestTheUsableDomainIsUntouched:
-    """The gate refuses only what the loop bound cannot use."""
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_a_positive_integer_is_accepted(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        for value in USABLE:
-            setattr(spec, field, value)
-            assert _field_problems(provider, spec, field) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_the_shipped_default_is_accepted(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        assert _field_problems(provider, spec, field) == []
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_a_numpy_integer_is_refused_although_range_would_accept_it(
-        self, provider: str, spec: RLTrainSpec, field: str
-    ) -> None:
-        """The documented cost of the strict-``int`` rule, pinned not implied."""
-        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
-            assert len(range(value)) == int(value), f"{value!r}"
-            setattr(spec, field, value)
-            assert _field_problems(provider, spec, field), f"{value!r}"
+@pytest.mark.parametrize("provider", RL_BACKENDS)
+@pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
+def test_every_rl_backend_admits_exactly_the_count_domain(provider: str, spec: RLTrainSpec, field: str) -> None:
+    """Every value the loop bound cannot be built from is refused in the shared
+    words and never reaches a run (the refusal precedes ``setup``); the shipped
+    default and every positive ``int`` are untouched. NumPy integers are refused
+    although ``range()`` would accept them - the documented cost of the strict-``int``
+    rule that lets the domain refuse the integral float ``4.0``."""
+    assert _field_problems(provider, spec, field) == [], "the shipped default"
+    for value in USABLE:
+        setattr(spec, field, value)
+        assert _field_problems(provider, spec, field) == [], f"{value!r}"
+    for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
+        setattr(spec, field, value)
+        assert _field_problems(provider, spec, field), f"{value!r}"
+    for value in UNUSABLE:
+        setattr(spec, field, value)
+        problems = _field_problems(provider, spec, field)
+        assert problems == [positive_count_error(value, field, provider)], f"{provider} {field}={value!r}"
+    for value in NOT_A_COUNT:
+        setattr(spec, field, value)
+        result = create_trainer(provider).train(spec)
+        assert result.status == "error", f"{value!r}"
+        assert result.checkpoint_dir in (None, ""), f"{value!r}"
+        assert f"{field} must be a positive integer" in result.message, f"{value!r}"
 
 
 class TestASupervisedBackendStaysQuiet:

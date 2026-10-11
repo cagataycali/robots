@@ -63,14 +63,12 @@ BAD_SEGMENTS: tuple[tuple[str, str], ...] = (
 class TestASegmentThatIsNotOneTopicLevelIsRefused:
     @pytest.mark.parametrize("surface,build", SURFACES, ids=[s for s, _ in SURFACES])
     @pytest.mark.parametrize("segment,why", BAD_SEGMENTS, ids=[s[:12] or "empty" for s, _ in BAD_SEGMENTS])
-    def test_thing_name_is_refused(self, surface: str, build: Any, segment: str, why: str) -> None:
+    def test_either_name_is_refused_under_its_own_parameter(
+        self, surface: str, build: Any, segment: str, why: str
+    ) -> None:
         with pytest.raises(ValidationError) as excinfo:
             build(segment, "presence")
         assert f"{surface}.thing_name" in str(excinfo.value), why
-
-    @pytest.mark.parametrize("surface,build", SURFACES, ids=[s for s, _ in SURFACES])
-    @pytest.mark.parametrize("segment,why", BAD_SEGMENTS, ids=[s[:12] or "empty" for s, _ in BAD_SEGMENTS])
-    def test_shadow_name_is_refused(self, surface: str, build: Any, segment: str, why: str) -> None:
         with pytest.raises(ValidationError) as excinfo:
             build("rover-01", segment)
         assert f"{surface}.shadow_name" in str(excinfo.value), why

@@ -93,14 +93,10 @@ class TestMuJoCoCreateWorldChecksGroundPlane:
         sim.cleanup()
 
     @pytest.mark.parametrize("value", UNDECLARED, ids=repr)
-    def test_an_undeclared_spelling_is_refused_by_name(self, sim: Any, value: Any) -> None:
+    def test_an_undeclared_spelling_is_refused_by_name_and_builds_no_world(self, sim: Any, value: Any) -> None:
         result = sim.create_world(ground_plane=value)
         assert result["status"] == "error"
         assert _text(result) == boolean_flag_error(value, "ground_plane", "create_world")
-
-    @pytest.mark.parametrize("value", UNDECLARED, ids=repr)
-    def test_the_refused_call_builds_no_world(self, sim: Any, value: Any) -> None:
-        sim.create_world(ground_plane=value)
         # A world left behind by the refusal would make this the world-exists
         # report rather than a fresh build.
         result = sim.create_world()

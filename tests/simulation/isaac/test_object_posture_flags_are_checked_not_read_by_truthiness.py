@@ -83,85 +83,54 @@ def _engine(handle: Any = None) -> Any:
     return engine
 
 
-class TestSetObjectKinematicIsChecked:
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_a_non_boolean_is_refused(self, bad: Any) -> None:
-        result = _engine().set_object_kinematic("drop", bad)
-        assert result["status"] == "error", result
-        assert "kinematic" in result["content"][0]["text"]
+@pytest.mark.parametrize("bad", _NON_BOOL, ids=repr)
+def test_a_non_boolean_is_refused_by_every_surface_before_it_writes(bad: Any) -> None:
+    """The shared domain refuses it, and so does each surface: by its parameter
+    name, before the setter is reached (the handle stays untouched) and, for
+    ``create_world``, before any launch - the check is first in the method."""
+    assert boolean_flag_error(bad, "flag", "ctx") is not None
 
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_the_refusal_precedes_the_write(self, bad: Any) -> None:
-        """A truthy string must not reach the setter; the handle stays untouched."""
-        handle = _KinematicHandle()
-        result = _engine(handle).set_object_kinematic("drop", bad)
-        assert result["status"] == "error", result
-        assert handle.written is None
+    kinematic = _KinematicHandle()
+    result = _engine(kinematic).set_object_kinematic("drop", bad)
+    assert result["status"] == "error", result
+    assert "kinematic" in result["content"][0]["text"]
+    assert kinematic.written is None
 
-    @pytest.mark.parametrize("good", [True, False])
-    def test_a_boolean_reaches_the_write(self, good: bool) -> None:
-        handle = _KinematicHandle()
-        result = _engine(handle).set_object_kinematic("drop", good)
-        assert result["status"] == "success", result
-        assert handle.written is good
+    collision = _CollisionHandle()
+    result = _engine(collision).set_object_collision("drop", bad)
+    assert result["status"] == "error", result
+    assert "enabled" in result["content"][0]["text"]
+    assert collision.written is None
 
-
-class TestSetObjectCollisionIsChecked:
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_a_non_boolean_is_refused(self, bad: Any) -> None:
-        result = _engine().set_object_collision("drop", bad)
-        assert result["status"] == "error", result
-        assert "enabled" in result["content"][0]["text"]
-
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_the_refusal_precedes_the_write(self, bad: Any) -> None:
-        handle = _CollisionHandle()
-        result = _engine(handle).set_object_collision("drop", bad)
-        assert result["status"] == "error", result
-        assert handle.written is None
-
-    @pytest.mark.parametrize("good", [True, False])
-    def test_a_boolean_reaches_the_write(self, good: bool) -> None:
-        handle = _CollisionHandle()
-        result = _engine(handle).set_object_collision("drop", good)
-        assert result["status"] == "success", result
-        assert handle.written is good
+    result = isaac_engine().create_world(ground_plane=bad)
+    assert result["status"] == "error", result
+    assert "ground_plane" in result["content"][0]["text"]
 
 
-class TestCreateWorldGroundPlaneIsChecked:
-    def _fresh(self) -> Any:
-        engine = isaac_engine()
-        return engine
-
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_a_non_boolean_is_refused_before_any_launch(self, bad: Any) -> None:
-        """The check is first in the method, so a bad flag is refused without
-        launching Kit - no ground plane is added and no world is built."""
-        result = self._fresh().create_world(ground_plane=bad)
-        assert result["status"] == "error", result
-        assert "ground_plane" in result["content"][0]["text"]
-
-    def test_the_flag_is_routed_through_the_shared_domain(self) -> None:
-        """Read off the source: create_world calls boolean_flag_error on
-        ground_plane, so the refusal is the shared one rather than a local copy."""
-        tree = ast.parse(textwrap.dedent(inspect.getsource(IsaacSimulation.create_world)))
-        routed = any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "boolean_flag_error"
-            and any(isinstance(a, ast.Name) and a.id == "ground_plane" for a in node.args)
-            for node in ast.walk(tree)
-        )
-        assert routed, "create_world does not route ground_plane through boolean_flag_error"
+@pytest.mark.parametrize("good", [True, False])
+def test_a_boolean_reaches_the_write(good: bool) -> None:
+    kinematic = _KinematicHandle()
+    assert _engine(kinematic).set_object_kinematic("drop", good)["status"] == "success"
+    assert kinematic.written is good
+    collision = _CollisionHandle()
+    assert _engine(collision).set_object_collision("drop", good)["status"] == "success"
+    assert collision.written is good
 
 
-class TestTheDomainIsTheSharedOne:
-    """Parametrized over boolean_flag_error itself, not a copied spelling list."""
+def test_the_ground_plane_flag_is_routed_through_the_shared_domain() -> None:
+    """Read off the source: create_world calls boolean_flag_error on
+    ground_plane, so the refusal is the shared one rather than a local copy."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(IsaacSimulation.create_world)))
+    routed = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "boolean_flag_error"
+        and any(isinstance(a, ast.Name) and a.id == "ground_plane" for a in node.args)
+        for node in ast.walk(tree)
+    )
+    assert routed, "create_world does not route ground_plane through boolean_flag_error"
 
-    @pytest.mark.parametrize("bad", _NON_BOOL)
-    def test_non_booleans_are_in_the_refused_domain(self, bad: Any) -> None:
-        assert boolean_flag_error(bad, "flag", "ctx") is not None
 
-    @pytest.mark.parametrize("good", _BOOL)
-    def test_booleans_are_honoured(self, good: Any) -> None:
-        assert boolean_flag_error(good, "flag", "ctx") is None
+@pytest.mark.parametrize("good", _BOOL)
+def test_booleans_are_honoured_by_the_shared_domain(good: Any) -> None:
+    assert boolean_flag_error(good, "flag", "ctx") is None
