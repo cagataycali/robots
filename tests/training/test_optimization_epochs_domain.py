@@ -20,8 +20,9 @@ been built.
 
 Scoped to the on-policy backend: FastSAC optimizes per gradient step from a
 replay buffer and has no epoch loop over a rollout batch, so it must not report
-on a field it never reads. Every domain test here reaches the real ``validate``
-entry point, so it covers the wiring as well as the domain.
+on a field it never reads. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -31,168 +32,15 @@ import inspect
 import textwrap
 from typing import Any
 
-import numpy as np
 import pytest
 
-from strands_robots.training import create_trainer
-from strands_robots.training._validate import optimization_epochs_problems
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import positive_count_error
-
-# The one backend whose update loops over a rollout batch.
-ON_POLICY = "ppo"
-
-# Backends with no epoch loop - they must stay quiet about the field.
-NO_EPOCH_LOOP_BACKENDS = ("fast_sac", "fast_td3", "mock")
-
-# Non-positive counts. These are the silent half: the run succeeds having taken
-# no gradient step, and reports losses of 0.0 through ``max(1, n_updates)``.
-NO_OPTIMIZATION: list[Any] = [0, -1, -3, -100]
-
-# Values ``range()`` cannot use as a bound, or reads as a different count than
-# the caller wrote. ``True`` is ``range(1)``; an integral float still raises.
-NOT_A_COUNT: list[Any] = [
-    True,
-    False,
-    2.7,
-    5.0,
-    float("nan"),
-    float("inf"),
-    "5",
-    None,
-    [5],
-    {"num_learning_epochs": 5},
-]
-
-UNUSABLE: list[Any] = [*NO_OPTIMIZATION, *NOT_A_COUNT]
-
-# A positive ``int`` is the whole domain.
-USABLE: list[Any] = [1, 2, 5, 5000]
-
-# ``range()`` itself accepts any object with ``__index__``, so these three DO
-# bound a loop (``len(range(np.int64(4))) == 4``) and are nonetheless refused:
-# the shared count domain is strict about ``int``, and it is the domain every
-# other count in this preflight already uses (``val_episodes``). The wider
-# alternative, ``positive_whole_number_error``, would accept the integral float
-# ``5.0`` that ``range()`` raises on - a guard accepting what its own consumer
-# refuses - so the narrower rule is the correct one and this is its cost.
-REFUSED_BY_THE_SHARED_COUNT_RULE: list[Any] = [np.int64(4), np.int32(3), np.uint8(2)]
 
 
 @pytest.fixture
 def spec() -> RLTrainSpec:
     """An otherwise-valid RL spec, so only the field under test is exercised."""
     return RLTrainSpec(output_dir="/tmp/optimization_epochs_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-
-
-def _epoch_problems(provider: str, spec: RLTrainSpec) -> list[str]:
-    """Problems the real ``validate`` entry point reports about the field.
-
-    Filtered on the shared domains\' ``"{context}: {param} "`` message shape
-    rather than on a bare substring, so an unrelated problem can neither mask a
-    missing refusal nor be mistaken for one.
-    """
-    prefix = f"{provider}: num_learning_epochs "
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
-
-
-class TestTheOnPolicyBackendRefusesAnUnusableEpochCount:
-    """PPO refuses every value its epoch loop cannot honor."""
-
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.num_learning_epochs = value
-            assert _epoch_problems(ON_POLICY, spec), f"ppo accepted num_learning_epochs={value!r}"
-
-    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.num_learning_epochs = value
-            problems = _epoch_problems(ON_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            (problem,) = problems
-            assert "num_learning_epochs" in problem, f"{value!r}"
-            assert "positive integer" in problem, f"{value!r}"
-            assert repr(value) in problem, problem
-
-    def test_a_non_positive_count_never_reaches_a_run(self, spec: RLTrainSpec) -> None:
-        """``train`` is fail-closed on ``validate``, so no rollout is collected."""
-        for value in NO_OPTIMIZATION:
-            spec.num_learning_epochs = value
-            result = create_trainer(ON_POLICY).train(spec)
-            assert result.status == "error", f"{value!r}"
-            assert "num_learning_epochs" in result.message, f"{value!r}"
-
-
-class TestTheUsableDomainIsUntouched:
-    """Every count the epoch loop can honor still passes."""
-
-    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.num_learning_epochs = value
-            assert _epoch_problems(ON_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec) -> None:
-        """Non-vacuity: the fixture is not refused before the field is set."""
-        assert spec.num_learning_epochs == 5
-        assert _epoch_problems(ON_POLICY, spec) == []
-
-    def test_a_numpy_integer_is_refused_although_range_would_accept_it(self, spec: RLTrainSpec) -> None:
-        """The measured cost of using the strict shared count rule.
-
-        These spellings do bound a loop, so refusing them is a narrowing rather
-        than a fix. It is the right narrowing: the wider domain would accept the
-        integral float ``5.0``, which ``range()`` raises on, and every other
-        count in this preflight is already held to this same rule. No caller in
-        the repository passes one - the examples, docs and tests all write a
-        plain ``int`` literal.
-        """
-        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
-            assert len(range(value)) == int(value), f"{value!r}"
-            spec.num_learning_epochs = value
-            assert _epoch_problems(ON_POLICY, spec), f"{value!r}"
-
-
-class TestABackendWithNoEpochLoopStaysQuiet:
-    """A backend that never reads the field must not report on it."""
-
-    @pytest.mark.parametrize("provider", NO_EPOCH_LOOP_BACKENDS)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.num_learning_epochs = value
-            assert _epoch_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_EPOCH_LOOP_BACKENDS)
-    def test_but_it_still_refuses_a_field_it_does_read(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: silence is scoping, not a preflight that reports nothing.
-
-        ``learning_rate`` is the field chosen here because it is the universal
-        one - every backend reads it, including the non-RL ``mock``, which has no
-        discount factor to report on either.
-        """
-        spec.learning_rate = -1.0
-        prefix = f"{provider}: learning_rate "
-        assert [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
-
-
-class TestTheDomainIsTheSharedCountRule:
-    """The gate contributes no rule of its own beyond reading the field."""
-
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec) -> None:
-        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
-            spec.num_learning_epochs = value
-            shared = positive_count_error(value, "num_learning_epochs", "ppo")
-            assert (optimization_epochs_problems(spec, context="ppo") == []) is (shared is None), f"{value!r}"
-
-    def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec) -> None:
-        spec.num_learning_epochs = 0
-        assert optimization_epochs_problems(spec, context="ppo") == [
-            positive_count_error(0, "num_learning_epochs", "ppo")
-        ]
-
-    def test_the_context_names_the_backend_that_refused(self, spec: RLTrainSpec) -> None:
-        spec.num_learning_epochs = 0
-        (problem,) = _epoch_problems(ON_POLICY, spec)
-        assert problem.startswith("ppo: ")
 
 
 # --- why the domain exists: the field bounds the whole optimizer step --------

@@ -23,8 +23,9 @@ env and both networks are built.
 
 Scoped twice over: only the off-policy backend tunes a temperature, and within it
 only the ``autotune_alpha`` branch builds the optimizer, so both the other
-backends and a spec that tunes nothing must stay quiet. Every test reaches the
-real ``validate`` entry point, so the wiring is covered as well as the domain.
+backends and a spec that tunes nothing must stay quiet. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -32,18 +33,13 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import positive_finite_number_error
 
 # The one backend that tunes an entropy temperature.
 OFF_POLICY = "fast_sac"
-
-# Backends that read ``learning_rate`` but never ``alpha_lr``.
-NO_TEMPERATURE_BACKENDS = ("ppo", "fast_td3", "mock")
 
 # Values the temperature optimizer cannot be driven by. ``0`` and ``False`` build
 # it and never move it; ``inf`` poisons it and the actor with it; ``True`` is a
@@ -64,10 +60,6 @@ UNUSABLE: list[Any] = [
     {},
 ]
 
-# Rates a temperature optimizer can actually be driven by, including the spellings
-# a config or a probed value arrives as.
-USABLE: list[Any] = [3e-4, 1e-5, 1.0, 0.5, np.float64(3e-4), np.float32(1e-4)]
-
 
 @pytest.fixture
 def spec() -> RLTrainSpec:
@@ -86,45 +78,6 @@ def _alpha_lr_problems(provider: str, spec: RLTrainSpec) -> list[str]:
     mask a missing refusal nor be mistaken for one.
     """
     return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: alpha_lr ")]
-
-
-class TestTheOffPolicyBackendRefusesAnUnusableTemperatureRate:
-    """FastSAC refuses every value its temperature optimizer cannot be driven by."""
-
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.alpha_lr = value
-            assert _alpha_lr_problems(OFF_POLICY, spec), f"fast_sac accepted alpha_lr={value!r}"
-
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.alpha_lr = value
-            problems = _alpha_lr_problems(OFF_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith("fast_sac: alpha_lr must be a positive finite number"), problem
-            assert repr(value) in problem, problem
-
-    def test_a_refusal_does_not_hide_the_first_learning_rate(self, spec: RLTrainSpec) -> None:
-        """Both optimizers' rates are reported at once, not one round at a time."""
-        spec.alpha_lr = 0.0
-        spec.learning_rate = 0.0
-        problems = create_trainer(OFF_POLICY).validate(spec)
-        assert any(p.startswith("fast_sac: alpha_lr ") for p in problems), problems
-        assert any(p.startswith("fast_sac: learning_rate ") for p in problems), problems
-
-
-class TestTheUsableDomainIsUntouched:
-    """A rate the optimizer can be driven by is not newly refused."""
-
-    def test_a_usable_rate_reports_nothing(self, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.alpha_lr = value
-            assert _alpha_lr_problems(OFF_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
-        """The shipped ``3e-4`` default must not trip the new gate."""
-        assert _alpha_lr_problems(OFF_POLICY, spec) == []
 
 
 class TestTheCheckAppliesOnlyWhenATemperatureIsTuned:
@@ -153,23 +106,6 @@ class TestTheCheckAppliesOnlyWhenATemperatureIsTuned:
         assert spec.autotune_alpha is True
 
 
-class TestABackendWithNoTemperatureStaysQuiet:
-    """A backend that never reads the field must not report on it."""
-
-    @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
-    def test_it_reports_nothing_about_the_temperature_rate(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.alpha_lr = value
-            assert _alpha_lr_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
-    def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
-        """The same spec's *own* learning rate is still refused by those backends."""
-        spec.learning_rate = 0.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
-
-
 class TestNoneIsAValueRatherThanASentinel:
     """``alpha_lr`` has a concrete default, so ``None`` is not a request for one.
 
@@ -180,10 +116,6 @@ class TestNoneIsAValueRatherThanASentinel:
     for a default. The asymmetry is deliberate and pinned here so it is not
     smoothed away in either direction.
     """
-
-    def test_a_none_temperature_rate_is_refused(self, spec: RLTrainSpec) -> None:
-        spec.alpha_lr = None  # type: ignore[assignment]
-        assert _alpha_lr_problems(OFF_POLICY, spec)
 
     def test_a_none_learning_rate_is_still_accepted(self, spec: RLTrainSpec) -> None:
         # ``RLTrainSpec`` narrows the annotation to ``float``, but the gate still
@@ -209,28 +141,6 @@ class TestNoneIsAValueRatherThanASentinel:
         assert base["learning_rate"].type == "float | None"
         assert rl["alpha_lr"].type == "float"
         assert rl["alpha_lr"].default == pytest.approx(3e-4)
-
-
-class TestTheGateAddsNothingToTheSharedDomain:
-    """The gate contributes the scoping, not a second numeric rule.
-
-    Every verdict is the shared ``positive_finite_number_error`` domain's, so the
-    two cannot drift on what counts as a usable rate.
-    """
-
-    def test_the_verdict_is_the_shared_domains(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE + USABLE:
-            spec.alpha_lr = value
-            shared = positive_finite_number_error(value, "alpha_lr", OFF_POLICY)
-            assert bool(_alpha_lr_problems(OFF_POLICY, spec)) is (shared is not None), f"{value!r}"
-
-    def test_the_message_is_the_shared_domains_verbatim(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.alpha_lr = value
-            problems = _alpha_lr_problems(OFF_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem == positive_finite_number_error(value, "alpha_lr", OFF_POLICY), f"{value!r}"
 
 
 class TestGuardingTheFirstRateDoesNotGuardTheSecond:

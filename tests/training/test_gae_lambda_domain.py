@@ -18,160 +18,22 @@ and surfaces only as a torch constraint error from the distribution sample, and
 bootstrapped trace the caller asked for.
 
 Scoped to the on-policy backend: FastSAC has no advantage trace and must not
-report on a field it never reads. Every test here reaches the real ``validate``
-entry point, so it covers the wiring as well as the domain.
+report on a field it never reads. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
 import pytest
 
-from strands_robots.training import create_trainer
-from strands_robots.training._validate import (
-    _closed_unit_interval_error,
-)
 from strands_robots.training.rl import RLTrainSpec
-
-# The one backend that estimates an advantage trace.
-ON_POLICY = "ppo"
-
-# Backends that read ``gamma`` but never ``lam`` - they must stay quiet about it.
-NO_TRACE_BACKENDS = ("fast_sac", "fast_td3", "mock")
-
-# Values outside the closed interval. Above 1 the trace diverges in the horizon;
-# below 0 it either diverges again (|gamma * lam| > 1) or stops accumulating.
-OUT_OF_INTERVAL: list[Any] = [1.5, 2.0, 1.0000001, 10.0, 1e6, -0.5, -1, -2.0]
-
-# Values the shared numeric domain refuses before the interval is considered.
-NOT_A_FINITE_NUMBER: list[Any] = [
-    float("nan"),
-    float("inf"),
-    float("-inf"),
-    True,
-    False,
-    "0.95",
-    None,
-    [0.95],
-    {"lam": 0.95},
-]
-
-UNUSABLE: list[Any] = [*OUT_OF_INTERVAL, *NOT_A_FINITE_NUMBER]
-
-# Both endpoints are legitimate and standard: 1 is the Monte-Carlo advantage (no
-# bootstrapping) and 0 is TD(0), the one-step advantage. Integral and NumPy
-# spellings of an in-range value are usable too - the shared domain accepts any
-# finite real, and float() reads them all.
-USABLE: list[Any] = [0.0, 1.0, 0.95, 0.5, 0, 1, np.float64(0.9), np.float32(0.8)]
 
 
 @pytest.fixture
 def spec() -> RLTrainSpec:
     """An otherwise-valid RL spec, so only the field under test is exercised."""
     return RLTrainSpec(output_dir="/tmp/gae_lambda_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-
-
-def _lam_problems(provider: str, spec: RLTrainSpec) -> list[str]:
-    """Problems the real ``validate`` entry point reports about ``lam``.
-
-    Filtered on the shared domains\' ``"{context}: {param} "`` message shape
-    rather than on a bare ``"lam"`` substring, so an unrelated problem can
-    neither mask a missing refusal nor be mistaken for one.
-    """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: lam ")]
-
-
-class TestTheOnPolicyBackendRefusesAnUnusableTraceDecay:
-    """PPO refuses every value the advantage trace cannot decay by."""
-
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.lam = value
-            assert _lam_problems(ON_POLICY, spec), f"ppo accepted lam={value!r}"
-
-    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec) -> None:
-        for value in OUT_OF_INTERVAL:
-            spec.lam = value
-            assert "must be in [0, 1]" in _lam_problems(ON_POLICY, spec)[0], f"{value!r}"
-
-    def test_a_non_numeric_value_reads_like_every_other_numeric_field(self, spec: RLTrainSpec) -> None:
-        for value in NOT_A_FINITE_NUMBER:
-            spec.lam = value
-            assert "must be a finite number" in _lam_problems(ON_POLICY, spec)[0], f"{value!r}"
-
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec) -> None:
-        spec.lam = 1.5
-        assert _lam_problems(ON_POLICY, spec)[0].startswith("ppo: lam ")
-
-    def test_an_unusable_value_is_a_problem_not_an_exception(self, spec: RLTrainSpec) -> None:
-        """``validate`` is documented pure and read-only: it reports, never raises."""
-        for value in UNUSABLE:
-            spec.lam = value
-            assert isinstance(create_trainer(ON_POLICY).validate(spec), list), f"{value!r}"
-
-
-class TestTheUsableDomainIsUntouched:
-    """No value the trace can actually decay by becomes a problem."""
-
-    def test_it_is_accepted(self, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.lam = value
-            assert _lam_problems(ON_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_default_spec_still_validates_clean(self, spec: RLTrainSpec) -> None:
-        assert _lam_problems(ON_POLICY, spec) == []
-
-
-class TestABackendWithNoAdvantageTraceStaysQuiet:
-    """A backend that never reads the field must not report on it.
-
-    :class:`~strands_robots.training.base.TrainSpec` documents that a backend
-    reads the fields it supports and ignores the rest, so FastSAC - which
-    bootstraps a target-Q rather than estimating a trace - refusing an unusable
-    ``lam`` would be a false rejection. That is the whole reason this is a
-    separate gate from the discount factor's, which every RL backend does read.
-    """
-
-    @pytest.mark.parametrize("provider", NO_TRACE_BACKENDS)
-    def test_it_reports_nothing_about_lam(self, spec: RLTrainSpec, provider: str) -> None:
-        for value in UNUSABLE:
-            spec.lam = value
-            assert _lam_problems(provider, spec) == [], f"{value!r}"
-
-    def test_but_the_shared_discount_factor_is_still_refused(self, spec: RLTrainSpec) -> None:
-        """Non-vacuity: the quiet backend is not simply ignoring the whole spec."""
-        for value in [1.5, float("nan")]:
-            spec.gamma = value
-            assert [p for p in create_trainer("fast_sac").validate(spec) if p.startswith("fast_sac: gamma ")], (
-                f"{value!r}"
-            )
-
-
-class TestTheIntervalIsTheWholeLocalContribution:
-    """The helper decides the interval and delegates everything else.
-
-    Type, ``bool`` and finiteness are the shared numeric domain\'s job, so the two
-    functions must agree on every value except the ones the interval alone
-    excludes. Pinning that keeps the refusal text for a non-numeric ``lam``
-    identical to every other numeric field\'s.
-    """
-
-    def test_it_agrees_with_the_shared_domain(self) -> None:
-        from strands_robots.utils import finite_number_error
-
-        for value in [*USABLE, *NOT_A_FINITE_NUMBER]:
-            local = _closed_unit_interval_error(value, "lam", "ppo")
-            shared = finite_number_error(value, "lam", "ppo")
-            assert (local is None) == (shared is None), f"diverged for lam={value!r}"
-
-    def test_only_the_interval_diverges(self) -> None:
-        from strands_robots.utils import finite_number_error
-
-        for value in OUT_OF_INTERVAL:
-            assert finite_number_error(value, "lam", "ppo") is None, f"{value!r}"
-            assert _closed_unit_interval_error(value, "lam", "ppo") is not None, f"{value!r}"
 
 
 class TestBoundingTheDiscountFactorAloneDoesNotBoundTheTrace:

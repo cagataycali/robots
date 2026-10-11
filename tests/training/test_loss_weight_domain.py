@@ -20,184 +20,25 @@ run whose honored checkpoint parameter sum is ``140.6023186540351162``:
 The floor is deliberately **not** part of the domain: zero and negative are real
 configurations for both fields, so this gate tests finiteness and numeric-ness
 only. That is what distinguishes it from the sibling ``max_grad_norm`` gate,
-whose endpoint ``clip_grad_norm_`` itself settles.
+whose endpoint ``clip_grad_norm_`` itself settles. The refusal through the real
+``validate`` entry point is one row of ``tests/training/test_rl_spec_field_domains.py``;
+this module keeps what the weights do to the objective.
 """
 
 from __future__ import annotations
 
 import inspect
 import math
-import pathlib
-from typing import Any
 
-import numpy as np
 import pytest
 
-from strands_robots.training import create_trainer
-from strands_robots.training._validate import loss_weight_problems
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import finite_number_error
-
-# The backend that composes the weighted objective.
-ON_POLICY = "ppo"
-
-# Backends that read neither weight. Per ``TrainSpec`` a backend ignores the
-# fields it does not support, so reporting on one would be a false rejection.
-NON_COMPOSING_BACKENDS = ("fast_sac", "fast_td3", "mock")
-
-# The two weights, with the default each ships.
-WEIGHTS: tuple[tuple[str, float], ...] = (("value_loss_coef", 1.0), ("entropy_coef", 0.0))
-
-# A non-finite weight makes the loss non-finite, so the optimizer writes it into
-# every parameter and the next rollout raises from inside torch.
-NON_FINITE: list[Any] = [math.nan, math.inf, -math.inf, np.float64(np.nan), np.float64(np.inf)]
-
-# A bool reads as a flag and lands as a coefficient of one.
-BOOLEANS: list[Any] = [True, False, np.bool_(True)]
-
-# Not a number at all: these raise from inside torch, naming nothing.
-NON_NUMERIC: list[Any] = ["1.0", None, [1.0], {}]
-
-# Finite in decimal but outside a 64-bit float, so the conversion itself fails.
-BEYOND_FLOAT_RANGE: list[Any] = [10**400]
-
-UNUSABLE: list[Any] = [*NON_FINITE, *BOOLEANS, *NON_NUMERIC, *BEYOND_FLOAT_RANGE]
-
-# Any finite real. The floor is not this gate's question: zero disables the term
-# and a negative weight reverses its sign, and both are configurations rather
-# than mistakes.
-USABLE: list[Any] = [1.0, 0.0, -0.5, 0.5, 2, 1e-8, np.float64(1.0), np.float32(0.5), np.int64(2)]
 
 
 @pytest.fixture
 def spec() -> RLTrainSpec:
     """An otherwise-valid RL spec, so only the field under test is exercised."""
     return RLTrainSpec(output_dir="/tmp/loss_weight_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-
-
-def _weight_problems(provider: str, spec: RLTrainSpec, param: str) -> list[str]:
-    """Problems the real ``validate`` entry point reports about *param*.
-
-    Filtered on the shared domains' ``"{context}: {param} "`` message shape
-    rather than on a bare substring, so an unrelated problem can neither mask a
-    missing refusal nor be mistaken for one.
-    """
-    prefix = f"{provider}: {param} "
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
-
-
-class TestTheOnPolicyBackendRefusesAnUnusableLossWeight:
-    """PPO refuses every weight the composed objective cannot honor."""
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, param: str, default: float) -> None:
-        for value in UNUSABLE:
-            setattr(spec, param, value)
-            assert _weight_problems(ON_POLICY, spec, param), f"ppo accepted {param}={value!r}"
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_the_problem_names_the_field_the_domain_and_the_value(
-        self, spec: RLTrainSpec, param: str, default: float
-    ) -> None:
-        for value in [*NON_FINITE, *BOOLEANS, *NON_NUMERIC]:
-            setattr(spec, param, value)
-            problems = _weight_problems(ON_POLICY, spec, param)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert param in problem, f"{value!r}"
-            assert "must be a finite number" in problem, f"{value!r}"
-            assert repr(value) in problem, problem
-
-    def test_each_weight_is_reported_independently(self, spec: RLTrainSpec) -> None:
-        """Two unusable weights produce two problems, not one."""
-        spec.value_loss_coef = math.nan
-        spec.entropy_coef = math.inf
-        problems = create_trainer(ON_POLICY).validate(spec)
-        assert len([p for p in problems if p.startswith("ppo: value_loss_coef ")]) == 1
-        assert len([p for p in problems if p.startswith("ppo: entropy_coef ")]) == 1
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_the_refusal_is_read_only_and_train_fails_closed(
-        self, tmp_path: pathlib.Path, param: str, default: float
-    ) -> None:
-        """``train`` reports the problem rather than raising from inside torch."""
-        spec = RLTrainSpec(output_dir=str(tmp_path / "run"), env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-        setattr(spec, param, math.nan)
-        result = create_trainer(ON_POLICY).train(spec)
-        assert result.status == "error"
-        assert param in result.message
-        assert not list(tmp_path.rglob("*.pt")), "a refused spec must not write a checkpoint"
-
-
-class TestTheUsableDomainIsUntouched:
-    """Every finite real weight is still accepted, including the endpoints."""
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_it_reports_no_problem(self, spec: RLTrainSpec, param: str, default: float) -> None:
-        for value in USABLE:
-            setattr(spec, param, value)
-            assert _weight_problems(ON_POLICY, spec, param) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec, param: str, default: float) -> None:
-        assert getattr(spec, param) == default
-        assert _weight_problems(ON_POLICY, spec, param) == []
-
-
-class TestTheFloorIsDeliberatelyNotDecided:
-    """Zero and negative are configurations, so this gate must not refuse them.
-
-    Recorded as its own contract because it is the difference between this gate
-    and the sibling ``max_grad_norm`` one: there the endpoint is settled by
-    ``clip_grad_norm_``, here both readings are live - ``entropy_coef=0.0`` is the
-    shipped default, ``value_loss_coef=0`` stops training the critic, and a
-    negative entropy weight penalizes entropy rather than rewarding it.
-    """
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_zero_and_negative_stay_inside_the_domain(self, spec: RLTrainSpec, param: str, default: float) -> None:
-        for value in [0.0, 0, -0.5, -1.0, -1e-8]:
-            setattr(spec, param, value)
-            assert _weight_problems(ON_POLICY, spec, param) == [], f"{value!r}"
-
-
-class TestTheGateIsExactlyTheSharedRule:
-    """The gate adds nothing to the shared finite-number domain.
-
-    Looped over both the usable and the unusable sets, so a local difference
-    would have to show up as a disagreement rather than as absent coverage.
-    """
-
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_it_agrees_with_the_shared_domain_everywhere(self, spec: RLTrainSpec, param: str, default: float) -> None:
-        for value in [*USABLE, *UNUSABLE]:
-            setattr(spec, param, value)
-            gate_refuses = bool(loss_weight_problems(spec, context="ppo"))
-            shared_refuses = finite_number_error(value, param, "ppo") is not None
-            assert gate_refuses is shared_refuses, f"{param}={value!r}"
-
-    def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec) -> None:
-        spec.value_loss_coef = math.nan
-        (problem,) = [p for p in loss_weight_problems(spec, context="ppo") if "value_loss_coef" in p]
-        assert problem == finite_number_error(math.nan, "value_loss_coef", "ppo")
-
-
-class TestTheBackendsThatDoNotComposeItStaySilent:
-    """A backend that reads neither weight must not report on either."""
-
-    @pytest.mark.parametrize("provider", NON_COMPOSING_BACKENDS)
-    @pytest.mark.parametrize("param,default", WEIGHTS)
-    def test_no_problem_is_reported(self, provider: str, param: str, default: float, tmp_path: pathlib.Path) -> None:
-        spec = RLTrainSpec(output_dir=str(tmp_path), env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-        setattr(spec, param, math.nan)
-        assert _weight_problems(provider, spec, param) == []
-
-    @pytest.mark.parametrize("provider", NON_COMPOSING_BACKENDS)
-    def test_the_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, tmp_path: pathlib.Path) -> None:
-        """Non-vacuity: the same spec is still refused on a field they do read."""
-        spec = RLTrainSpec(output_dir=str(tmp_path), env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-        spec.learning_rate = math.nan
-        assert _weight_problems(provider, spec, "learning_rate")
 
 
 def _ppo_update_source() -> str:

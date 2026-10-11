@@ -39,8 +39,9 @@ raises the same ``TypeError`` while ``nan`` reaches a successful run that never
 spends it, so a check scoped to the tuning branch would let the raising shape
 through for the untuned one.
 
-Every test reaches the real ``validate`` entry point, so the wiring is covered as
-well as the domain.
+The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -49,7 +50,6 @@ import inspect
 import math
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
@@ -58,29 +58,6 @@ from strands_robots.utils import finite_number_error
 
 # The one backend that optimizes a temperature against a target entropy.
 OFF_POLICY = "fast_sac"
-
-# Backends that never read ``target_entropy``.
-NO_TARGET_BACKENDS = ("ppo", "fast_td3", "mock")
-
-# Values with no reading as a target entropy. ``True`` / ``False`` are a silent
-# ``+1.0`` / ``0.0`` a bare comparison would take; the non-finite values poison
-# ``alpha``; the rest raise out of the ``float()`` coercion in ``setup``.
-UNUSABLE: list[Any] = [
-    True,
-    False,
-    float("nan"),
-    float("inf"),
-    float("-inf"),
-    "-6",
-    "-6.0",
-    [-6.0],
-    {},
-    10**400,
-]
-
-# Target entropies with a reading, including the negative default the field is
-# documented to substitute and the spellings a config or a probed value arrives as.
-USABLE: list[Any] = [-6.0, -6, -3.5, 0.0, 1.5, -1e-3, np.float64(-6.0), np.float32(-2.5)]
 
 
 @pytest.fixture
@@ -102,51 +79,8 @@ def _target_entropy_problems(provider: str, spec: RLTrainSpec) -> list[str]:
     return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: target_entropy ")]
 
 
-class TestTheOffPolicyBackendRefusesATargetWithNoReading:
-    """FastSAC refuses every value that is not a finite real target entropy."""
-
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.target_entropy = value
-            assert _target_entropy_problems(OFF_POLICY, spec), f"fast_sac accepted target_entropy={value!r}"
-
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.target_entropy = value
-            (problem,) = _target_entropy_problems(OFF_POLICY, spec)
-            assert problem.startswith("fast_sac: target_entropy must be"), problem
-            assert repr(value) in problem or str(value) in problem, problem
-
-    def test_a_refusal_does_not_hide_the_rest_of_the_temperature_block(self, spec: RLTrainSpec) -> None:
-        """All three temperature fields are reported at once, not one round at a time."""
-        spec.target_entropy = float("nan")
-        spec.init_alpha = 0.0
-        spec.alpha_lr = 0.0
-        problems = create_trainer(OFF_POLICY).validate(spec)
-        for field in ("target_entropy", "init_alpha", "alpha_lr"):
-            assert any(p.startswith(f"fast_sac: {field} ") for p in problems), (field, problems)
-
-
-class TestTheUsableDomainIsUntouched:
-    """A finite real target entropy of either sign is not newly refused."""
-
-    def test_a_usable_target_reports_nothing(self, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.target_entropy = value
-            assert _target_entropy_problems(OFF_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_negative_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
-        """The substituted ``-num_actions`` is the reading a positive domain would refuse."""
-        spec.target_entropy = -6.0
-        assert _target_entropy_problems(OFF_POLICY, spec) == []
-
-
 class TestTheNoneSentinelIsExemptRatherThanRefused:
     """``None`` is the documented request for ``-num_actions``, not a value."""
-
-    def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
-        assert spec.target_entropy is None
-        assert _target_entropy_problems(OFF_POLICY, spec) == []
 
     def test_the_field_declares_the_sentinel_in_its_annotation(self) -> None:
         """Executable premise for the exemption, unlike the two neighbouring fields."""
@@ -187,32 +121,8 @@ class TestBothTemperatureBranchesAreCovered:
         assert setup.index("float(spec.target_entropy)") < setup.index("if self.autotune_alpha:")
 
 
-class TestABackendThatIgnoresTheFieldStaysSilent:
-    """Per ``TrainSpec`` a backend ignores the fields it does not support."""
-
-    @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
-    def test_it_reports_nothing_about_the_target(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in list[Any]([float("nan"), True, [-6.0]]):
-            spec.target_entropy = value
-            assert _target_entropy_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
-    def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: the same spec's own learning rate is still refused by them."""
-        spec.target_entropy = float("nan")
-        spec.learning_rate = 0.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
-
-
 class TestTheDomainIsTheSharedSignedOne:
     """The verdict is the shared helper's, not a local re-derivation."""
-
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE + USABLE:
-            spec.target_entropy = value
-            expected = finite_number_error(value, "target_entropy", OFF_POLICY)
-            assert _target_entropy_problems(OFF_POLICY, spec) == ([expected] if expected else []), f"{value!r}"
 
     def test_the_domain_is_signed_rather_than_positive(self) -> None:
         """The premise the two neighbouring gates could not express."""

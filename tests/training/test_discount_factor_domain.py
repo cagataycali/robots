@@ -17,50 +17,16 @@ The off-policy preflights already bounded their own interval coefficient this wa
 on-policy backends share. That precedent is a shared gate too now rather than a
 bare comparison inside each backend - see
 ``tests/training/test_polyak_coefficient_domain.py``, whose interval is half-open
-where this one is closed. Every test here reaches the real ``validate`` entry point, so it
-covers the wiring as well as the domain.
+where this one is closed. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
 import pytest
 
-from strands_robots.training import create_trainer
-from strands_robots.training._validate import (
-    _closed_unit_interval_error,
-)
 from strands_robots.training.rl import RLTrainSpec
-
-# Every backend that discounts a return with the field.
-RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
-
-# Values outside the closed interval: the discounted return either diverges in
-# the horizon (> 1) or stops accumulating future reward at all (< 0).
-OUT_OF_INTERVAL: list[Any] = [1.5, 5.0, 1.0000001, -0.5, -1, 100.0]
-
-# Values the shared numeric domain refuses before the interval is considered.
-NOT_A_FINITE_NUMBER: list[Any] = [
-    float("nan"),
-    float("inf"),
-    float("-inf"),
-    True,
-    False,
-    "0.99",
-    None,
-    [0.99],
-    {"gamma": 0.99},
-]
-
-UNUSABLE: list[Any] = [*OUT_OF_INTERVAL, *NOT_A_FINITE_NUMBER]
-
-# Both endpoints are legitimate and standard: 1 is the undiscounted episodic
-# return, 0 a myopic agent that optimizes the immediate reward only. Integral
-# and NumPy spellings of an in-range value are usable too - the shared domain
-# accepts any finite real, and float() reads them all.
-USABLE: list[Any] = [0.0, 1.0, 0.99, 0.5, 0, 1, np.float64(0.97), np.float32(0.9)]
 
 
 @pytest.fixture
@@ -72,98 +38,6 @@ def spec() -> RLTrainSpec:
     PPO preflight contract test uses.
     """
     return RLTrainSpec(output_dir="/tmp/discount_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-
-
-def _gamma_problems(provider: str, spec: RLTrainSpec) -> list[str]:
-    """Problems the real ``validate`` entry point reports about ``gamma``.
-
-    Filtered on the shared domains' ``"{context}: {param} "`` message shape
-    rather than on a bare ``"gamma"`` substring, so an unrelated problem can
-    neither mask a missing refusal nor be mistaken for one.
-    """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: gamma ")]
-
-
-class TestEveryRLBackendRefusesAnUnusableDiscountFactor:
-    """Both backends refuse every value the return cannot be discounted by."""
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, provider: str) -> None:
-        for value in UNUSABLE:
-            spec.gamma = value
-            assert _gamma_problems(provider, spec), f"{provider} accepted gamma={value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_an_out_of_interval_value_names_the_interval(self, spec: RLTrainSpec, provider: str) -> None:
-        """The message states the domain, so the fix needs no guesswork."""
-        for value in OUT_OF_INTERVAL:
-            spec.gamma = value
-            assert any("must be in [0, 1]" in p for p in _gamma_problems(provider, spec)), f"{value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_a_non_numeric_value_reads_like_every_other_numeric_field(self, spec: RLTrainSpec, provider: str) -> None:
-        """Type / bool / finiteness refusals come from the shared domain."""
-        for value in NOT_A_FINITE_NUMBER:
-            spec.gamma = value
-            assert any("must be a finite number" in p for p in _gamma_problems(provider, spec)), f"{value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, provider: str) -> None:
-        spec.gamma = 1.5
-        assert _gamma_problems(provider, spec)
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_an_unusable_value_is_a_problem_not_an_exception(self, spec: RLTrainSpec, provider: str) -> None:
-        """``validate`` returns problems; it must not raise out of the check.
-
-        A string or ``None`` would raise from a bare comparison against the
-        interval bounds, which is the failure mode a read-only preflight exists
-        to replace.
-        """
-        for value in NOT_A_FINITE_NUMBER:
-            spec.gamma = value
-            problems = create_trainer(provider).validate(spec)  # must not raise
-            assert any(p.startswith(f"{provider}: gamma ") for p in problems), problems
-
-
-class TestTheUsableDomainIsUntouched:
-    """No value the return can be discounted by becomes a problem."""
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_it_is_accepted(self, spec: RLTrainSpec, provider: str) -> None:
-        for value in USABLE:
-            spec.gamma = value
-            assert _gamma_problems(provider, spec) == [], f"{provider} refused gamma={value!r}"
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_the_default_spec_still_validates_clean(self, spec: RLTrainSpec, provider: str) -> None:
-        """The shipped default (0.99) reports nothing at all."""
-        assert create_trainer(provider).validate(spec) == []
-
-
-class TestTheIntervalIsTheWholeLocalContribution:
-    """The helper decides the interval and delegates everything else.
-
-    Type, ``bool`` and finiteness are the shared numeric domain's job, so the two
-    functions must agree on every value except the ones the interval alone
-    excludes. Pinning that keeps the refusal text for a non-numeric ``gamma``
-    identical to every other numeric field's.
-    """
-
-    def test_it_agrees_with_the_shared_domain(self) -> None:
-        for value in [*USABLE, *NOT_A_FINITE_NUMBER]:
-            from strands_robots.utils import finite_number_error
-
-            local = _closed_unit_interval_error(value, "gamma", "ppo")
-            shared = finite_number_error(value, "gamma", "ppo")
-            assert (local is None) == (shared is None), f"diverged for gamma={value!r}"
-
-    def test_only_the_interval_diverges(self) -> None:
-        for value in OUT_OF_INTERVAL:
-            from strands_robots.utils import finite_number_error
-
-            assert finite_number_error(value, "gamma", "ppo") is None, f"{value!r}"
-            assert _closed_unit_interval_error(value, "gamma", "ppo") is not None, f"{value!r}"
 
 
 class TestTheDivergenceTheDomainPrevents:

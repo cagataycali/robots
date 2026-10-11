@@ -47,8 +47,9 @@ the two share one domain helper rather than carrying a copy each.
 
 Scoped to the on-policy backend: ``spec.clip_param`` appears in ``rl/ppo.py`` and
 nowhere else, so a backend that does not clip a policy ratio must not report on a
-field it never reads. Every domain test here reaches the real ``validate`` entry
-point, so it covers the wiring as well as the domain.
+field it never reads. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -63,7 +64,6 @@ import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import (
-    _clip_bound_error,
     clip_range_problems,
     gradient_clip_problems,
 )
@@ -72,9 +72,6 @@ from strands_robots.utils import positive_finite_number_error
 
 # The one backend whose update clips a policy ratio.
 ON_POLICY = "ppo"
-
-# Backends that never clip a ratio - they must stay quiet about the field.
-NO_CLIP_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Half-widths the clip can honor.
 USABLE: list[Any] = [0.2, 0.1, 0.5, 1.0, 3, np.float64(0.2), np.int64(2)]
@@ -128,37 +125,8 @@ def spec() -> RLTrainSpec:
     return _spec()
 
 
-def _clip_problems(provider: str, spec: RLTrainSpec) -> list[str]:
-    """Every problem the backend's real ``validate`` reports about the width."""
-    return [p for p in create_trainer(provider).validate(spec) if ": clip_param " in p]
-
-
 class TestTheTrustRegionRefusesAWidthItCannotHonor:
     """A half-width no reading makes usable is reported, not clipped with."""
-
-    def test_an_unusable_width_is_refused(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.clip_param = value
-            assert _clip_problems(ON_POLICY, spec) != [], f"{value!r} was accepted"
-
-    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.clip_param = value
-            problems = _clip_problems(ON_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith("ppo: clip_param "), problem
-            assert "must be a positive finite number" in problem, problem
-
-    def test_the_message_is_the_shared_domain_verbatim(self, spec: RLTrainSpec) -> None:
-        """The gate adds no wording of its own; it delegates."""
-        spec.clip_param = -0.2
-        (problem,) = _clip_problems(ON_POLICY, spec)
-        assert problem == _clip_bound_error(-0.2, "clip_param", "ppo")
-
-    def test_the_preflight_reports_rather_than_raises(self) -> None:
-        """``validate`` is read-only, so an unusable width never escapes it."""
-        assert isinstance(create_trainer(ON_POLICY).validate(_spec(clip_param=None)), list)
 
     def test_two_unusable_optimization_fields_report_two_problems(self, spec: RLTrainSpec) -> None:
         """The clip-range gate is additional to the sibling bound, not a merge."""
@@ -171,15 +139,6 @@ class TestTheTrustRegionRefusesAWidthItCannotHonor:
 
 class TestTheUsableDomainIsUntouched:
     """Every half-width the clip can honor still passes."""
-
-    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec) -> None:
-        for value in [*USABLE, *NO_CLIPPING]:
-            spec.clip_param = value
-            assert _clip_problems(ON_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_shipped_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
-        assert spec.clip_param == 0.2
-        assert _clip_problems(ON_POLICY, spec) == []
 
     def test_a_spec_without_the_field_is_silent(self) -> None:
         """A plain ``TrainSpec`` has no ``clip_param``, so there is nothing to judge."""
@@ -211,36 +170,10 @@ class TestTheTwoClipBoundsShareOneDomain:
             }
             assert "_clip_bound_error" in called, f"{gate.__name__} does not delegate: {called}"
 
-    def test_the_domain_is_the_shared_positive_finite_rule(self) -> None:
-        for value in [*USABLE, *UNUSABLE]:
-            mine = clip_range_problems(_spec(clip_param=value), context="ppo")
-            shared = positive_finite_number_error(value, "clip_param", "ppo")
-            assert mine == ([shared] if shared is not None else []), f"diverged on {value!r}"
-
     def test_infinity_is_the_one_carve_out(self) -> None:
         for value in NO_CLIPPING:
             assert clip_range_problems(_spec(clip_param=value), context="ppo") == [], f"{value!r}"
             assert positive_finite_number_error(value, "clip_param", "ppo") is not None, f"{value!r}"
-
-    def test_negative_infinity_is_not_carved_out(self) -> None:
-        assert clip_range_problems(_spec(clip_param=float("-inf")), context="ppo") != []
-
-
-class TestTheBackendsThatDoNotClipStaySilent:
-    """A backend that never reads the field must not report on it."""
-
-    @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    def test_a_non_clipping_backend_says_nothing_about_the_width(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.clip_param = value
-            assert _clip_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    def test_the_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str) -> None:
-        """Non-vacuity: the same backends do refuse a field they *do* read."""
-        spec = _spec(learning_rate=float("nan"))
-        problems = create_trainer(provider).validate(spec)
-        assert any(": learning_rate " in p for p in problems), problems
 
 
 class TestTheConsumerCannotJudgeTheWidth:
@@ -293,21 +226,3 @@ class TestTheConsumerCannotJudgeTheWidth:
         torch = pytest.importorskip("torch")
         ratio = torch.tensor([0.7, 1.0, 1.4])
         assert torch.equal(torch.clamp(ratio, 1.0 - math.inf, 1.0 + math.inf), ratio)
-
-
-class TestTheRefusalPrecedesTheUpdate:
-    """A refused width reaches no optimizer."""
-
-    def test_the_on_policy_train_fails_closed_before_building_anything(self, tmp_path: Any) -> None:
-        pytest.importorskip("torch")
-        called: list[str] = []
-
-        def env_factory() -> None:
-            called.append("env")
-            raise AssertionError("the refused width reached the environment")
-
-        spec = _spec(env_factory=env_factory, output_dir=str(tmp_path), clip_param=float("nan"))
-        result = create_trainer(ON_POLICY).train(spec)
-        assert result.status == "error"
-        assert "clip_param" in (result.message or ""), result.message
-        assert called == [], "the preflight must precede the environment"

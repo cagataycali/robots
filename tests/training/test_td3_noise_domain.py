@@ -29,52 +29,16 @@ exploiting its own sharp errors. Neither expression judges its scalars:
 Only a positive finite number can be honored, so all three consult the shared
 :func:`~strands_robots.utils.positive_finite_number_error` domain. There is no
 "disable" spelling to carve out - a run that wants no smoothing is a different
-algorithm, not a boundary value of this one. Every test reaches the real
-``validate`` entry point, so the wiring is covered as well as the domain.
+algorithm, not a boundary value of this one. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-import numpy as np
 import pytest
 
-from strands_robots.training import create_trainer
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import positive_finite_number_error
-
-# The three noise scalars, with the defaults the shipped spec carries.
-NOISE_FIELDS = ("exploration_noise_std", "target_noise_std", "target_noise_clip")
-
-# The one backend built on a deterministic actor.
-DETERMINISTIC_BACKEND = "fast_td3"
-
-# Backends that never read the noise fields: SAC explores through its
-# stochastic actor and smooths nothing, PPO likewise.
-NO_NOISE_BACKENDS = ("ppo", "fast_sac", "mock")
-
-# Values with no usable reading as a noise scale: zero and negatives are
-# silent (the mechanism vanishes or nothing changes), ``True`` a silent 1.0,
-# non-finite values poison the actions or the TD target, and the rest raise.
-UNUSABLE: list[Any] = [
-    0,
-    0.0,
-    -0.1,
-    -1,
-    True,
-    False,
-    float("nan"),
-    float("inf"),
-    float("-inf"),
-    "0.1",
-    None,
-    [0.1],
-    {},
-]
-
-# Scales the two expressions honor, including config spellings.
-USABLE: list[Any] = [0.1, 0.2, 0.5, 1.0, 1e-3, np.float64(0.3), np.float32(0.5)]
 
 
 @pytest.fixture
@@ -84,84 +48,6 @@ def spec() -> RLTrainSpec:
         output_dir="/tmp/td3_noise_domain",
         env_factory=lambda: None,  # type: ignore[arg-type,return-value]
     )
-
-
-def _noise_reports(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
-    """Problems the real ``validate`` entry point reports about *field*.
-
-    Filtered on the shared domains' ``"{context}: {param} "`` message shape rather
-    than on a bare substring, so an unrelated problem can neither mask a missing
-    refusal nor be mistaken for one.
-    """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: {field} ")]
-
-
-class TestTheDeterministicBackendRefusesAnUnusableScale:
-    """FastTD3 refuses every value neither noise expression can honor."""
-
-    @pytest.mark.parametrize("field", NOISE_FIELDS)
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            problems = _noise_reports(DETERMINISTIC_BACKEND, spec, field)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith(f"fast_td3: {field} must be a positive finite number"), problem
-            assert repr(value) in problem, problem
-
-    def test_every_unusable_scale_is_reported_at_once(self, spec: RLTrainSpec) -> None:
-        """Three bad scalars come back as three problems, not one per round."""
-        for field in NOISE_FIELDS:
-            setattr(spec, field, 0.0)
-        problems = create_trainer(DETERMINISTIC_BACKEND).validate(spec)
-        for field in NOISE_FIELDS:
-            assert any(p.startswith(f"fast_td3: {field} ") for p in problems), (field, problems)
-
-
-class TestTheUsableDomainIsUntouched:
-    """A scale the expressions honor is not newly refused."""
-
-    @pytest.mark.parametrize("field", NOISE_FIELDS)
-    def test_a_usable_scale_reports_nothing(self, spec: RLTrainSpec, field: str) -> None:
-        for value in USABLE:
-            setattr(spec, field, value)
-            assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == [], f"{value!r}"
-
-    def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
-        """The shipped defaults must not trip the new gate."""
-        for field in NOISE_FIELDS:
-            assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == []
-        assert (spec.exploration_noise_std, spec.target_noise_std, spec.target_noise_clip) == (0.1, 0.2, 0.5)
-
-
-class TestABackendWithNoNoiseStaysQuiet:
-    """A backend that never reads the fields must not report on them."""
-
-    @pytest.mark.parametrize("provider", NO_NOISE_BACKENDS)
-    @pytest.mark.parametrize("field", NOISE_FIELDS)
-    def test_it_reports_nothing_about_the_noise(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        setattr(spec, field, 0.0)
-        assert _noise_reports(provider, spec, field) == []
-
-    @pytest.mark.parametrize("provider", NO_NOISE_BACKENDS)
-    def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
-        """The same spec's *own* learning rate is still refused by those backends."""
-        spec.learning_rate = 0.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
-
-
-class TestTheGateAddsNothingToTheSharedDomain:
-    """The verdict is the shared rule's, so the two cannot drift apart."""
-
-    @pytest.mark.parametrize("field", NOISE_FIELDS)
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE + USABLE:
-            setattr(spec, field, value)
-            shared = positive_finite_number_error(value, field, DETERMINISTIC_BACKEND)
-            assert _noise_reports(DETERMINISTIC_BACKEND, spec, field) == ([shared] if shared is not None else []), (
-                f"{value!r}"
-            )
 
 
 class TestTheSilentReadingsAreReal:

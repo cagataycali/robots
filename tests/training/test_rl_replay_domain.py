@@ -39,8 +39,9 @@ of leaving it to the relation alone - a non-finite value compares False against
 every ``int``, so the relation passed and the run took zero gradient steps while
 reporting success, the same outcome ``buffer_size=True`` produces above.
 
-Every domain test here reaches the real ``validate`` entry point, so it covers
-the wiring as well as the domain.
+The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -48,47 +49,16 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import rl_replay_problems
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import positive_count_error
-
-# The backends that build a replay loop from these three fields.
-SAC_BACKENDS = ("fast_sac", "fast_td3")
-
-# Backends that never read them: PPO sizes minibatches from num_mini_batches, and
-# the supervised backends have no replay loop at all. Each must stay quiet, or an
-# off-policy-only value would be a false rejection of a field it does not use.
-QUIET_BACKENDS = ("ppo", "mock")
-
-# The three replay counts.
-REPLAY_FIELDS = ("buffer_size", "batch_size", "gradient_steps")
-
-# Non-positive counts: the half a local ``<= 0`` test already caught (though with
-# a local message, not the shared-domain one this gate now emits).
-NO_TRAINING: list[Any] = [0, -1, -1000, False]
 
 # Values that survive ``value <= 0`` and cannot be a count. ``True`` is the silent
 # half - a degenerate size of one - and the fractions / non-finite values reach a
 # tensor allocation or a ``range()`` and raise there.
 SILENTLY_DEGENERATE_OR_LATE: list[Any] = [True, 0.5, float("nan"), float("inf")]
-
-# Values that reach a run and raise there, or raise out of the comparison itself.
-NOT_A_COUNT: list[Any] = [*SILENTLY_DEGENERATE_OR_LATE, 100.5, 4.0, "256", None, [256], {"buffer_size": 256}]
-
-UNUSABLE: list[Any] = [*NO_TRAINING, *NOT_A_COUNT]
-
-# A positive ``int`` is the whole domain. All are <= the default learning_starts
-# (1000), so setting batch_size to one cannot also trip the >= batch_size relation.
-USABLE: list[Any] = [1, 8, 256]
-
-# ``range()`` and torch accept an object with ``__index__``, so a numpy integer
-# would bound a loop and size a tensor - and is still refused, because the shared
-# count rule is strict about ``int``. Pinned so the documented cost is not implied.
-REFUSED_BY_THE_SHARED_COUNT_RULE: list[Any] = [np.int64(256), np.int32(8), np.uint8(1)]
 
 
 @pytest.fixture
@@ -97,112 +67,8 @@ def spec() -> RLTrainSpec:
     return RLTrainSpec(output_dir="/tmp/rl_replay_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
 
 
-def _field_problems(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
-    """Problems the real ``validate`` entry point reports about ``field``.
-
-    Filtered on the shared domain's ``"{context}: {param} "`` message shape, so a
-    problem about a different field (the ``learning_starts >= batch_size``
-    relation names ``learning_starts``, not ``batch_size``) can neither mask a
-    missing refusal nor be mistaken for one.
-    """
-    prefix = f"{provider}: {field} "
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
-
-
-class TestFastSacRefusesAnUnusableReplayCount:
-    """FastSAC refuses every value its replay loop cannot be built from."""
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_the_problem_names_the_field_and_the_domain(self, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            problems = _field_problems("fast_sac", spec, field)
-            assert problems == [positive_count_error(value, field, "fast_sac")], f"fast_sac {field}={value!r}"
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_a_non_count_never_reaches_a_run(self, spec: RLTrainSpec, field: str) -> None:
-        """The refusal precedes ``setup``, so nothing is built before it."""
-        for value in NOT_A_COUNT:
-            setattr(spec, field, value)
-            result = create_trainer("fast_sac").train(spec)
-            assert result.status == "error", f"{value!r}"
-            assert result.checkpoint_dir in (None, ""), f"{value!r}"
-            assert f"{field} must be a positive integer" in result.message, f"{value!r}"
-
-
-class TestTheUsableDomainIsUntouched:
-    """The gate refuses only what the replay loop cannot use."""
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_a_positive_integer_is_accepted(self, spec: RLTrainSpec, field: str) -> None:
-        for value in USABLE:
-            setattr(spec, field, value)
-            assert _field_problems("fast_sac", spec, field) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_the_shipped_default_is_accepted(self, spec: RLTrainSpec, field: str) -> None:
-        assert _field_problems("fast_sac", spec, field) == []
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_a_numpy_integer_is_refused_although_range_would_accept_it(self, spec: RLTrainSpec, field: str) -> None:
-        """The documented cost of the strict-``int`` rule, pinned not implied."""
-        for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
-            assert len(range(value)) == int(value), f"{value!r}"
-            setattr(spec, field, value)
-            assert _field_problems("fast_sac", spec, field), f"{value!r}"
-
-
-class TestABackendThatDoesNotReadThemStaysQuiet:
-    """A backend with no SAC replay loop reports nothing about these fields."""
-
-    @pytest.mark.parametrize("provider", QUIET_BACKENDS)
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            assert _field_problems(provider, spec, field) == [], f"{value!r}"
-
-    def test_ppo_still_refuses_the_run_size_it_does_read(self, spec: RLTrainSpec) -> None:
-        """Non-vacuity: PPO's silence here is scoping, not a backend that checks nothing."""
-        spec.total_timesteps = 0
-        assert [p for p in create_trainer("ppo").validate(spec) if "total_timesteps" in p]
-
-    def test_mock_still_refuses_the_run_size_it_does_read(self, spec: RLTrainSpec) -> None:
-        """Non-vacuity for the supervised backend."""
-        spec.steps = 0
-        assert _field_problems("mock", spec, "steps")
-
-
 class TestTheDomainIsTheSharedCountRule:
     """The gate contributes no rule of its own beyond reading the three fields."""
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str) -> None:
-        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
-            setattr(spec, field, value)
-            shared = positive_count_error(value, field, "fast_sac")
-            assert (rl_replay_problems(spec, context="fast_sac") == []) is (shared is None), f"{value!r}"
-
-    @pytest.mark.parametrize("field", REPLAY_FIELDS)
-    def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec, field: str) -> None:
-        setattr(spec, field, 0)
-        assert rl_replay_problems(spec, context="fast_sac") == [positive_count_error(0, field, "fast_sac")]
-
-    def test_all_three_counts_are_reported_together(self, spec: RLTrainSpec) -> None:
-        """One call per field, so a caller sees every count it got wrong."""
-        spec.buffer_size = 0
-        spec.batch_size = -1
-        spec.gradient_steps = 0.5  # type: ignore[assignment]
-        assert rl_replay_problems(spec, context="fast_sac") == [
-            positive_count_error(0, "buffer_size", "fast_sac"),
-            positive_count_error(-1, "batch_size", "fast_sac"),
-            positive_count_error(0.5, "gradient_steps", "fast_sac"),
-        ]
-
-    def test_the_context_names_the_backend_that_refused(self, spec: RLTrainSpec) -> None:
-        spec.buffer_size = 0
-        (problem,) = _field_problems("fast_sac", spec, "buffer_size")
-        assert problem.startswith("fast_sac: ")
 
     def test_a_spec_without_the_rl_fields_reports_nothing(self) -> None:
         """The gate reads through ``getattr`` defaults, so a plain spec is quiet."""
@@ -266,10 +132,6 @@ class TestTauAndLearningStartsAreNotInThisDomain:
     def test_the_gate_reports_nothing_about_it(self, spec: RLTrainSpec, field: str) -> None:
         setattr(spec, field, 0)
         assert not [p for p in rl_replay_problems(spec, context="fast_sac") if field in p]
-
-    def test_fast_sac_still_refuses_a_tau_outside_the_unit_interval(self, spec: RLTrainSpec) -> None:
-        spec.tau = 2.0
-        assert [p for p in create_trainer("fast_sac").validate(spec) if "tau" in p]
 
     def test_fast_sac_still_refuses_learning_starts_below_batch_size(self, spec: RLTrainSpec) -> None:
         spec.learning_starts = 1

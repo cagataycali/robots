@@ -27,9 +27,10 @@ the field, and only inside ``train``, after the env and both networks are built.
 Scoped once, not twice: only the off-policy backend holds a temperature, but
 within it ``init_alpha`` is read on *both* branches, so unlike the rate this check
 must not be conditioned on ``autotune_alpha`` - with tuning off the field is the
-temperature for the whole run and nothing can move it afterwards. Every test
-reaches the real ``validate`` entry point, so the wiring is covered as well as the
-domain.
+temperature for the whole run and nothing can move it afterwards. The refusal
+through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -37,18 +38,13 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import positive_finite_number_error
 
 # The one backend that holds an entropy temperature.
 OFF_POLICY = "fast_sac"
-
-# Backends that never read ``init_alpha``.
-NO_TEMPERATURE_BACKENDS = ("ppo", "fast_td3", "mock")
 
 # Values with no usable logarithm. ``0`` / ``0.0`` / ``False`` give ``-inf`` and a
 # temperature of exactly zero that nothing can move; ``True`` is a silent ``1.0``;
@@ -69,10 +65,6 @@ UNUSABLE: list[Any] = [
     {},
 ]
 
-# Temperatures with a finite logarithm, including the spellings a config or a
-# probed value arrives as.
-USABLE: list[Any] = [1.0, 0.2, 5.0, 1e-3, np.float64(1.0), np.float32(0.5)]
-
 
 @pytest.fixture
 def spec() -> RLTrainSpec:
@@ -91,46 +83,6 @@ def _init_alpha_problems(provider: str, spec: RLTrainSpec) -> list[str]:
     mask a missing refusal nor be mistaken for one.
     """
     return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: init_alpha ")]
-
-
-class TestTheOffPolicyBackendRefusesATemperatureWithNoLogarithm:
-    """FastSAC refuses every value ``torch.log`` cannot turn into a temperature."""
-
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.init_alpha = value
-            assert _init_alpha_problems(OFF_POLICY, spec), f"fast_sac accepted init_alpha={value!r}"
-
-    def test_the_problem_names_the_field_and_the_value(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.init_alpha = value
-            problems = _init_alpha_problems(OFF_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith("fast_sac: init_alpha must be a positive finite number"), problem
-            assert repr(value) in problem, problem
-
-    def test_a_refusal_does_not_hide_the_rate_that_moves_it(self, spec: RLTrainSpec) -> None:
-        """The temperature and its rate are reported at once, not one round at a time."""
-        spec.init_alpha = 0.0
-        spec.alpha_lr = 0.0
-        problems = create_trainer(OFF_POLICY).validate(spec)
-        assert any(p.startswith("fast_sac: init_alpha ") for p in problems), problems
-        assert any(p.startswith("fast_sac: alpha_lr ") for p in problems), problems
-
-
-class TestTheUsableDomainIsUntouched:
-    """A temperature with a finite logarithm is not newly refused."""
-
-    def test_a_usable_temperature_reports_nothing(self, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.init_alpha = value
-            assert _init_alpha_problems(OFF_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_default_spec_reports_nothing(self, spec: RLTrainSpec) -> None:
-        """The shipped ``1.0`` default must not trip the new gate."""
-        assert _init_alpha_problems(OFF_POLICY, spec) == []
-        assert spec.init_alpha == 1.0
 
 
 class TestBothTemperatureBranchesAreCovered:
@@ -160,23 +112,6 @@ class TestBothTemperatureBranchesAreCovered:
         assert setup.count("spec.init_alpha") == 2, setup.count("spec.init_alpha")
 
 
-class TestABackendWithNoTemperatureStaysQuiet:
-    """A backend that never reads the field must not report on it."""
-
-    @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
-    def test_it_reports_nothing_about_the_temperature(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.init_alpha = value
-            assert _init_alpha_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_TEMPERATURE_BACKENDS)
-    def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
-        """The same spec's *own* learning rate is still refused by those backends."""
-        spec.learning_rate = 0.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
-
-
 class TestNoneIsAValueRatherThanASentinel:
     """``init_alpha`` is annotated ``float`` with a concrete default.
 
@@ -184,26 +119,12 @@ class TestNoneIsAValueRatherThanASentinel:
     default. Here there is nothing to fall back to: ``torch.log(None)`` raises.
     """
 
-    def test_none_is_refused(self, spec: RLTrainSpec) -> None:
-        spec.init_alpha = None  # type: ignore[assignment]
-        assert _init_alpha_problems(OFF_POLICY, spec)
-
     def test_the_field_declares_a_concrete_default(self) -> None:
         import dataclasses
 
         (field,) = [f for f in dataclasses.fields(RLTrainSpec) if f.name == "init_alpha"]
         assert field.default == 1.0
         assert "None" not in str(field.type)
-
-
-class TestTheGateAddsNothingToTheSharedDomain:
-    """The verdict is the shared rule's, so the two cannot drift apart."""
-
-    def test_the_verdict_matches_the_shared_domain(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE + USABLE:
-            spec.init_alpha = value
-            shared = positive_finite_number_error(value, "init_alpha", OFF_POLICY)
-            assert _init_alpha_problems(OFF_POLICY, spec) == ([shared] if shared is not None else []), f"{value!r}"
 
 
 class TestGuardingTheRateDoesNotGuardTheTemperature:

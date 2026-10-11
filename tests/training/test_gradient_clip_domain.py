@@ -38,8 +38,9 @@ reach the shared domain, which answers each with a reason of its own.
 
 Scoped to the on-policy backend: ``clip_grad_norm_`` appears in ``rl/ppo.py``
 and nowhere else, so a backend that does not clip must not report on a field it
-never reads. Every domain test here reaches the real ``validate`` entry point,
-so it covers the wiring as well as the domain.
+never reads. The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
@@ -60,9 +61,6 @@ from strands_robots.utils import positive_finite_number_error
 
 # The one backend whose update clips a gradient.
 ON_POLICY = "ppo"
-
-# Backends that never clip - they must stay quiet about the field.
-NO_CLIP_BACKENDS = ("fast_sac", "fast_td3", "mock")
 
 # Zero scales every gradient to zero, so the run takes no informed step at all.
 NO_GRADIENT_STEP: list[Any] = [0, 0.0]
@@ -149,9 +147,6 @@ PLAIN_REFUSAL: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, *NOT_A_CLIP, 
 
 UNUSABLE: list[Any] = [*PLAIN_REFUSAL, *BEYOND_FLOAT_RANGE]
 
-# The silent half: these reach a full run and report success.
-SILENT: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, True, "1.0"]
-
 # Any positive real. Unlike the count domains this one is continuous, so an
 # integral float and a NumPy real are both usable - the consumer divides by the
 # gradient norm rather than indexing with the value.
@@ -182,21 +177,6 @@ def _clip_problems(provider: str, spec: RLTrainSpec) -> list[str]:
 class TestTheOnPolicyBackendRefusesAnUnusableGradientClip:
     """PPO refuses every value ``clip_grad_norm_`` cannot honor."""
 
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.max_grad_norm = value
-            assert _clip_problems(ON_POLICY, spec), f"ppo accepted max_grad_norm={value!r}"
-
-    def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec) -> None:
-        for value in PLAIN_REFUSAL:
-            spec.max_grad_norm = value
-            problems = _clip_problems(ON_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert "max_grad_norm" in problem, f"{value!r}"
-            assert "must be a positive finite number" in problem, f"{value!r}"
-            assert repr(value) in problem, problem
-
     def test_a_value_past_the_float64_range_is_refused_with_its_own_reason(self, spec: RLTrainSpec) -> None:
         """It is positive and finite, so ``must be a positive finite number`` would be false of it."""
         for value in BEYOND_FLOAT_RANGE:
@@ -209,40 +189,15 @@ class TestTheOnPolicyBackendRefusesAnUnusableGradientClip:
             assert "must be a positive finite number" not in problem, f"{value!r}"
             assert repr(value) in problem, f"{value!r}"
 
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.max_grad_norm = value
-            problems = _clip_problems(ON_POLICY, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith(f"{ON_POLICY}: "), f"{value!r}"
-
     def test_the_preflight_reports_rather_than_raises(self, spec: RLTrainSpec) -> None:
         """``validate`` is read-only, so even a value ``float()`` chokes on reports."""
         for value in UNUSABLE:
             spec.max_grad_norm = value
             assert isinstance(create_trainer(ON_POLICY).validate(spec), list), f"{value!r}"
 
-    def test_a_silently_honored_value_never_reaches_a_run(self, spec: RLTrainSpec) -> None:
-        """``train`` is fail-closed on ``validate``, so no rollout is collected."""
-        for value in SILENT:
-            spec.max_grad_norm = value
-            result = create_trainer(ON_POLICY).train(spec)
-            assert result.status == "error", f"{value!r}"
-            assert "max_grad_norm" in result.message, f"{value!r}"
-
 
 class TestTheUsableDomainIsUntouched:
     """Every bound the clip can honor still passes."""
-
-    def test_a_positive_real_is_accepted(self, spec: RLTrainSpec) -> None:
-        for value in [*USABLE, *NO_CLIPPING]:
-            spec.max_grad_norm = value
-            assert _clip_problems(ON_POLICY, spec) == [], f"{value!r}"
-
-    def test_the_shipped_default_is_inside_the_domain(self, spec: RLTrainSpec) -> None:
-        assert spec.max_grad_norm == 1.0
-        assert _clip_problems(ON_POLICY, spec) == []
 
     def test_a_spec_without_the_field_is_silent(self) -> None:
         """A plain ``TrainSpec`` has no ``max_grad_norm``, so there is nothing to judge."""
@@ -265,9 +220,6 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
         for value in NO_CLIPPING:
             assert _clip_bound_error(value, "max_grad_norm", "ppo") is None, f"{value!r}"
             assert positive_finite_number_error(value, "max_grad_norm", "ppo") is not None, f"{value!r}"
-
-    def test_negative_infinity_is_not_carved_out(self) -> None:
-        assert _clip_bound_error(float("-inf"), "max_grad_norm", "ppo") is not None
 
     def test_the_carve_out_declines_rather_than_raising(self) -> None:
         """A value the carve-out cannot read is delegated, never raised on."""
@@ -294,25 +246,6 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
         """``float("inf")`` is the carve-out's value, so the type test carries it."""
         assert float("inf") == math.inf  # the premise the type test guards
         assert _clip_bound_error("inf", "max_grad_norm", "ppo") is not None
-
-
-class TestTheBackendsThatDoNotClipStaySilent:
-    """A backend that never reads the field must not report on it."""
-
-    @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    def test_no_problem_is_reported(self, spec: RLTrainSpec, provider: str) -> None:
-        for value in UNUSABLE:
-            spec.max_grad_norm = value
-            assert _clip_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_CLIP_BACKENDS)
-    def test_the_silence_is_scoping_and_not_an_empty_preflight(self, spec: RLTrainSpec, provider: str) -> None:
-        """Non-vacuity: these backends do refuse a field they *do* read."""
-        spec.max_grad_norm = 0.0
-        spec.learning_rate = -1.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
-        assert not any(p.startswith(f"{provider}: max_grad_norm ") for p in problems), problems
 
 
 def _ppo_update_source() -> str:

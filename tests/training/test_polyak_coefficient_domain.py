@@ -42,44 +42,19 @@ because it freezes the target network at its initialization. That one decision -
 zero outside the interval - is what makes this domain half-open where the
 on-policy pair's is closed.
 
-Every test reaches the real ``validate`` entry point, so the wiring is covered as
-well as the domain.
+The refusal through the real ``validate`` entry point is one row of
+``tests/training/test_rl_spec_field_domains.py``; this module keeps what the
+field does to the run that consumes it.
 """
 
 from __future__ import annotations
 
-from fractions import Fraction
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import finite_number_error
-
-# The two backends that maintain a target network and so read the coefficient.
-OFF_POLICY = ("fast_sac", "fast_td3")
-
-# Backends with no target network, which must stay silent about the field.
-NO_TARGET_BACKENDS = ("ppo", "mock")
-
-# Values a bare interval comparison took or raised on. ``True`` is the silent
-# hard update; the strings, ``None`` and the list raised ``TypeError`` out of the
-# comparison; ``10**400`` is a finite real with no float64 form.
-UNUSABLE_WITH_NO_READING: list[Any] = [True, False, "0.005", "1.0", None, [0.005], {}, 10**400]
-
-# Values outside the interval but with a numeric reading - refused before and
-# after, on the interval rather than on the type.
-OUTSIDE_THE_INTERVAL: list[Any] = [0.0, -0.005, -1.0, 1.0000001, 2.0, 100.0]
-
-# Non-finite values the chained comparison happened to answer; still refused,
-# now for finiteness rather than by accident.
-NON_FINITE: list[Any] = [float("nan"), float("inf"), float("-inf")]
-
-# Coefficients with a reading, including both spellings of the endpoint that is
-# inside the interval and the scalar types a config or a sweep arrives as.
-USABLE: list[Any] = [0.005, 0.5, 1.0, 1, 1e-8, Fraction(1, 200), np.float64(0.01), np.float32(0.005)]
 
 
 @pytest.fixture
@@ -89,89 +64,6 @@ def spec() -> RLTrainSpec:
         output_dir="/tmp/polyak_coefficient_domain",
         env_factory=lambda: None,  # type: ignore[arg-type,return-value]
     )
-
-
-def _tau_problems(provider: str, spec: RLTrainSpec) -> list[str]:
-    """Problems the real ``validate`` entry point reports about ``tau``.
-
-    Filtered on the shared domains' ``"{context}: {param} "`` message shape rather
-    than on a bare ``"tau"`` substring, so an unrelated problem can neither mask a
-    missing refusal nor be mistaken for one.
-    """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: tau ")]
-
-
-class TestACoefficientWithNoReadingIsReportedRatherThanTakenOrRaisedOn:
-    """The two holes the bare comparison left: a silent bool and a raising type."""
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_it_is_reported_as_a_problem(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE_WITH_NO_READING:
-            spec.tau = value
-            assert _tau_problems(provider, spec), f"{provider} accepted tau={value!r}"
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_nothing_raises_out_of_a_preflight_that_returns_its_problems(
-        self, provider: str, spec: RLTrainSpec
-    ) -> None:
-        """``validate`` answers with a message; a numeric string used to raise TypeError."""
-        for value in UNUSABLE_WITH_NO_READING:
-            spec.tau = value
-            problems = create_trainer(provider).validate(spec)  # must not raise
-            assert any(p.startswith(f"{provider}: tau ") for p in problems), problems
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_a_boolean_is_refused_rather_than_read_as_the_hard_update(self, provider: str, spec: RLTrainSpec) -> None:
-        """``True`` aliased ``tau=1.0``, which switches target networks off."""
-        spec.tau = True
-        assert _tau_problems(provider, spec)
-        # The value it aliased is still accepted on its own axis - the refusal is
-        # of the spelling, not of the reading.
-        spec.tau = 1.0
-        assert _tau_problems(provider, spec) == []
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_the_problem_names_the_backend_the_field_and_the_value(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE_WITH_NO_READING + OUTSIDE_THE_INTERVAL + NON_FINITE:
-            spec.tau = value
-            problems = _tau_problems(provider, spec)
-            assert len(problems) == 1, (value, problems)
-            problem = problems[0]
-            assert problem.startswith(f"{provider}: tau must be"), problem
-            assert repr(value) in problem or str(value) in problem, problem
-
-
-class TestTheIntervalIsUnchanged:
-    """No value that had a reading before is newly refused, and none is newly taken."""
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_a_usable_coefficient_reports_nothing(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in USABLE:
-            spec.tau = value
-            assert _tau_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_a_coefficient_outside_the_interval_is_still_refused(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in OUTSIDE_THE_INTERVAL + NON_FINITE:
-            spec.tau = value
-            assert _tau_problems(provider, spec), f"{value!r}"
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_the_default_spec_reports_nothing(self, provider: str, spec: RLTrainSpec) -> None:
-        assert spec.tau == 0.005
-        assert _tau_problems(provider, spec) == []
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_the_upper_endpoint_is_inside_the_interval(self, provider: str, spec: RLTrainSpec) -> None:
-        """One is the deliberate hard update ``tp = p``, not a degenerate spelling."""
-        spec.tau = 1.0
-        assert _tau_problems(provider, spec) == []
-
-    @pytest.mark.parametrize("provider", OFF_POLICY)
-    def test_zero_is_outside_it(self, provider: str, spec: RLTrainSpec) -> None:
-        """Zero freezes the target parameters at their initialization for the whole run."""
-        spec.tau = 0.0
-        assert _tau_problems(provider, spec)
 
 
 class TestTheDomainIsHalfOpenWhereTheOnPolicyOneIsClosed:
@@ -184,45 +76,6 @@ class TestTheDomainIsHalfOpenWhereTheOnPolicyOneIsClosed:
         problems = create_trainer("fast_sac").validate(spec)
         assert not [p for p in problems if p.startswith("fast_sac: gamma ")], problems
         assert [p for p in problems if p.startswith("fast_sac: tau ")], problems
-
-    def test_everything_but_the_interval_is_the_shared_signed_domain(self, spec: RLTrainSpec) -> None:
-        """Type, bool and finiteness verdicts read identically to every other field's."""
-        for value in UNUSABLE_WITH_NO_READING + NON_FINITE:
-            spec.tau = value
-            expected = finite_number_error(value, "tau", "fast_sac")
-            assert expected is not None, value
-            assert _tau_problems("fast_sac", spec) == [expected], value
-
-
-class TestBothOffPolicyBackendsAgree:
-    """One rule, two callers - a second copy of it would be free to drift."""
-
-    def test_the_two_backends_report_the_same_verdict(self, spec: RLTrainSpec) -> None:
-        for value in UNUSABLE_WITH_NO_READING + OUTSIDE_THE_INTERVAL + NON_FINITE + USABLE:
-            spec.tau = value
-            sac = _tau_problems("fast_sac", spec)
-            td3 = _tau_problems("fast_td3", spec)
-            assert bool(sac) == bool(td3), (value, sac, td3)
-            # Only the backend name differs, since the message is prefixed with it.
-            assert [p.replace("fast_sac:", "") for p in sac] == [p.replace("fast_td3:", "") for p in td3], f"{value!r}"
-
-
-class TestABackendWithNoTargetNetworkStaysSilent:
-    """Per ``TrainSpec`` a backend ignores the fields it does not support."""
-
-    @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
-    def test_it_reports_nothing_about_the_coefficient(self, provider: str, spec: RLTrainSpec) -> None:
-        for value in list[Any]([True, float("nan"), "0.005", 0.0, 2.0]):
-            spec.tau = value
-            assert _tau_problems(provider, spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", NO_TARGET_BACKENDS)
-    def test_silence_is_scoping_rather_than_an_empty_preflight(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: the same spec's own learning rate is still refused by them."""
-        spec.tau = True
-        spec.learning_rate = 0.0
-        problems = create_trainer(provider).validate(spec)
-        assert any(p.startswith(f"{provider}: learning_rate ") for p in problems), problems
 
 
 class TestWhatTheUncheckedCoefficientDidToTheTargetNetwork:
