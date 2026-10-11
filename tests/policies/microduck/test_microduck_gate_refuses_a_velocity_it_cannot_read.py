@@ -144,22 +144,22 @@ class TestARefusedTickDoesNotMoveTheSelection:
     """The invariant: a velocity the tick cannot honor leaves the skill alone."""
 
     @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_tick_is_refused(self, value):
-        assert isinstance(_tick_error(_bundle(active=_MOVE_KEY), target_velocity=value), ValueError)
-
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_active_skill_is_unchanged_from_move(self, value):
+    def test_the_tick_is_refused_naming_the_bundle_and_nothing_moves(self, value):
+        """The diagnosis half too: a bare numpy message named neither surface nor parameter."""
         bundle = _bundle(active=_MOVE_KEY)
-        _tick_error(bundle, target_velocity=value)
+        error = _tick_error(bundle, target_velocity=value)
+        assert isinstance(error, ValueError), error
+        assert str(error).startswith(_BUNDLE_PREFIX), str(error)
+        assert "target_velocity" in str(error), str(error)
         assert bundle.active == _MOVE_KEY
+        # A refused tick must not have handed the value to a policy either.
+        assert all(pol._session.last_input is None for pol in bundle._policies.values())  # type: ignore[union-attr]
 
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_active_skill_is_unchanged_from_idle(self, value):
         # The other direction: a magnitude the gate would have read as moving
         # must not pull the bundle out of idle on a tick that fails.
-        bundle = _bundle(active=_IDLE_KEY)
-        _tick_error(bundle, target_velocity=value)
-        assert bundle.active == _IDLE_KEY
+        idle = _bundle(active=_IDLE_KEY)
+        _tick_error(idle, target_velocity=value)
+        assert idle.active == _IDLE_KEY
 
     def test_the_selection_does_not_move_across_a_later_tick_either(self):
         # The failure mode that made this a defect rather than a lost tick: the
@@ -170,26 +170,9 @@ class TestARefusedTickDoesNotMoveTheSelection:
         _tick(bundle)
         assert bundle.active == _MOVE_KEY
 
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_no_held_skill_ran(self, value):
-        # A refused tick must not have handed the value to a policy either.
-        bundle = _bundle(active=_MOVE_KEY)
-        _tick_error(bundle, target_velocity=value)
-        assert all(pol._session.last_input is None for pol in bundle._policies.values())  # type: ignore[union-attr]
-
 
 class TestTheRefusalNamesTheBundleAndTheParameter:
     """The diagnosis half: a bare numpy message named neither."""
-
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_message_names_the_surface_the_caller_called(self, value):
-        error = _tick_error(_bundle(active=_MOVE_KEY), target_velocity=value)
-        assert str(error).startswith(_BUNDLE_PREFIX), str(error)
-
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_message_names_the_parameter(self, value):
-        error = _tick_error(_bundle(active=_MOVE_KEY), target_velocity=value)
-        assert "target_velocity" in str(error), str(error)
 
     @pytest.mark.parametrize("value", [pytest.param({"vx": 1.0}, id="mapping")])
     def test_a_mapping_is_the_documented_error_type(self, value):
@@ -212,7 +195,10 @@ class TestTheGateRefusesExactlyWhatTheTickRefuses:
     child's. Refusing less leaves a refused tick moving the selection; refusing
     more would reject a goal a caller may legitimately ask for. Asserted as an
     equality over both grids rather than as two lists, so a future widening on
-    either side has to move both.
+    either side has to move both. The child's own verdict is the premise, and it
+    holds on the pre-fix code too: it is measured by driving a bare
+    :class:`MicroduckPolicy`, not by reading the child's source, so the parity
+    grades behaviour rather than spelling.
     """
 
     @pytest.mark.parametrize("value", _REFUSED)
@@ -224,23 +210,6 @@ class TestTheGateRefusesExactlyWhatTheTickRefuses:
     def test_the_gate_accepts_a_value_the_tick_accepts(self, value, expected):
         gate_refuses = composite_mod._target_velocity_error(_BUNDLE_PREFIX, value) is not None
         assert gate_refuses is _child_refuses(value) is False
-
-
-class TestTheChildsRefusalSetIsThePremise:
-    """What the child does on its own. Holds on the pre-fix code too.
-
-    The gate is being held to this set, so the set itself is worth stating: it
-    is measured by driving a bare :class:`MicroduckPolicy`, not by reading the
-    child's source, so the parity above grades behaviour rather than spelling.
-    """
-
-    @pytest.mark.parametrize("value", _REFUSED)
-    def test_the_tick_alone_refuses_it(self, value):
-        assert _child_refuses(value)
-
-    @pytest.mark.parametrize("value,expected", _ACCEPTED)
-    def test_the_tick_alone_accepts_it(self, value, expected):
-        assert not _child_refuses(value)
 
     def test_the_refused_set_covers_every_kind_the_two_guards_answer(self):
         # Non-vacuity: the grid above must keep reaching all three failure kinds,

@@ -141,25 +141,27 @@ class TestBothSurfacesThatSetASamplerKnobShareOneDomain:
     """A knob gets one verdict whether it is a config field or a per-call override."""
 
     @pytest.mark.parametrize(("knob", "value"), UNUSABLE_CASES)
-    def test_the_config_field_refuses_it(self, knob, value):
-        with pytest.raises(ValueError, match=f"{knob} must be"):
+    def test_both_surfaces_refuse_it_with_one_reason_and_spend_nothing(self, knob, value):
+        """One value, one verdict, each message naming its surface - and no re-sample.
+
+        The per-call path is the one a coercion used to take: read from kwargs,
+        spent unchecked. Pre-fix the admitted values here did not raise at all -
+        they keyed a different buffer, so the sampler ran again with a number the
+        caller never named and the motion being tracked was replaced mid-rollout.
+        A refusal is therefore also checked to leave the held motion, the cursor
+        and the sampler alone.
+        """
+        with pytest.raises(ValueError, match=f"{knob} must be") as from_field:
             KimodoConfig(**{knob: value})
 
-    @pytest.mark.parametrize(("knob", "value"), UNUSABLE_CASES)
-    def test_a_per_call_override_refuses_it(self, knob, value):
-        """The path a coercion used to take: read from kwargs, spent unchecked."""
-        policy, _ = _policy()
-        with pytest.raises(ValueError, match=f"{knob} must be"):
+        policy, agent = _policy()
+        first = _pose(policy)
+        second = _pose(policy)
+        assert first != second, "the stub motion must advance, or a rewind is unobservable"
+        with pytest.raises(ValueError, match=f"{knob} must be") as from_override:
             _pose(policy, **{knob: value})
-
-    @pytest.mark.parametrize(("knob", "value"), UNUSABLE_CASES)
-    def test_both_surfaces_state_the_same_reason_and_name_themselves(self, knob, value):
-        """One value, one verdict - and each message says which surface refused."""
-        with pytest.raises(ValueError) as from_field:
-            KimodoConfig(**{knob: value})
-        policy, _ = _policy()
-        with pytest.raises(ValueError) as from_override:
-            _pose(policy, **{knob: value})
+        assert len(agent.knobs) == 1, "a refused override must not run the sampler"
+        assert _pose(policy) != second, "the cursor must not have been rewound"
 
         field_text, override_text = str(from_field.value), str(from_override.value)
         assert field_text.startswith(f"{_CONFIG}: ")
@@ -171,25 +173,6 @@ class TestBothSurfacesThatSetASamplerKnobShareOneDomain:
 
 class TestARefusedOverrideSpendsNothing:
     """A refusal is not a partial application: the held motion survives it."""
-
-    @pytest.mark.parametrize(("knob", "value"), UNUSABLE_CASES)
-    def test_it_leaves_the_held_motion_the_cursor_and_the_sampler_alone(self, knob, value):
-        """What a coerced knob cost: a re-sample, and the motion in hand.
-
-        Pre-fix the admitted values here did not raise at all - they keyed a
-        different buffer, so the sampler ran again with a number the caller
-        never named and the motion being tracked was replaced mid-rollout.
-        """
-        policy, agent = _policy()
-        first = _pose(policy)
-        second = _pose(policy)
-        assert first != second, "the stub motion must advance, or a rewind is unobservable"
-
-        with pytest.raises(ValueError, match=f"{knob} must be"):
-            _pose(policy, **{knob: value})
-
-        assert len(agent.knobs) == 1, "a refused override must not run the sampler"
-        assert _pose(policy) != second, "the cursor must not have been rewound"
 
     def test_the_ceiling_the_field_applies_is_not_escapable_per_call(self):
         """The composite half of the domain: the shared rule plus this ceiling."""
@@ -208,13 +191,15 @@ class TestAKnobTheDomainAcceptsSurvivesBothOfItsUses:
     _DECLARED = {"diffusion_steps": (int, 0, 7.5), "guidance_scale": (float, 1, 100)}
 
     @pytest.mark.parametrize(("knob", "value", "reaches"), USABLE_CASES)
-    def test_an_accepted_override_reaches_the_sampler_as_the_declared_type(self, knob, value, reaches):
+    def test_an_accepted_knob_reaches_the_sampler_as_the_declared_type(self, knob, value, reaches):
         """The gate narrows nothing, and the conversion after it still normalises.
 
         A NumPy scalar and an integral float are both inside the shared domains,
-        so they still pass - and the sampler is still handed the ``int`` and
-        ``float`` its signature declares rather than the caller's spelling.
+        so both surfaces still take them - neither may accept a spelling the
+        other refuses - and the sampler is still handed the ``int`` and ``float``
+        its signature declares rather than the caller's spelling.
         """
+        assert getattr(KimodoConfig(**{knob: value}), knob) == reaches
         declared, position, other = self._DECLARED[knob]
         policy, agent = _policy()
         _pose(policy, **{knob: value})
@@ -223,11 +208,6 @@ class TestAKnobTheDomainAcceptsSurvivesBothOfItsUses:
         assert spent == reaches
         assert isinstance(spent, declared)
         assert agent.knobs[0][1 - position] == other, "the knob not overridden keeps its config value"
-
-    @pytest.mark.parametrize(("knob", "value", "reaches"), USABLE_CASES)
-    def test_the_config_field_takes_it_too(self, knob, value, reaches):
-        """Neither surface may accept a spelling the other refuses."""
-        assert getattr(KimodoConfig(**{knob: value}), knob) == reaches
 
     def test_a_changed_accepted_override_still_re_samples(self):
         """Re-sampling on a changed knob is what the override is for."""

@@ -106,33 +106,22 @@ class TestResolutionDomain:
     @pytest.mark.parametrize("param", RESOLUTION_PARAMS)
     @pytest.mark.parametrize("value", OUT_OF_DOMAIN)
     def test_out_of_domain_resolution_is_refused(
-        self, ply: Path, no_splat_backend: list[dict[str, Any]], param: str, value: Any
+        self, ply: Path, tmp_path: Path, no_splat_backend: list[dict[str, Any]], param: str, value: Any
     ) -> None:
         # Premise: the shared domain is what refuses this value, so the case list
         # above cannot drift from the domain it claims to cover.
         assert positive_whole_number_error(value, param, "premise") is not None
-
-        with pytest.raises(ValueError, match=re.escape(param)):
-            bg.bake_gsplat_panorama(ply, **_sizes(**{param: value}))
-
+        # An explicit ``out_path`` is honored verbatim, so it bypasses the name
+        # composed from the resolutions -- but not the pixels those resolutions
+        # size, which is the other thing the check protects. It is the request
+        # shape where the cache-key argument for checking early does not apply
+        # and the refusal still has to.
+        for out_path in (None, tmp_path / "explicit.jpg"):
+            with pytest.raises(ValueError, match=re.escape(param)):
+                bg.bake_gsplat_panorama(ply, out_path=out_path, **_sizes(**{param: value}))
         # The ordering claim: refused before the splats are touched. Before this
         # fix a missing ``sim-gs`` extra answered instead, with an ImportError
         # advising an install that leaves the resolution exactly as unusable.
-        assert no_splat_backend == []
-
-    @pytest.mark.parametrize("param", RESOLUTION_PARAMS)
-    @pytest.mark.parametrize("value", OUT_OF_DOMAIN)
-    def test_out_of_domain_resolution_is_refused_with_an_explicit_out_path(
-        self, ply: Path, tmp_path: Path, no_splat_backend: list[dict[str, Any]], param: str, value: Any
-    ) -> None:
-        # An explicit ``out_path`` is honored verbatim, so it bypasses the name
-        # composed from the resolutions -- but not the pixels those resolutions
-        # size, which is the other thing the check protects. Covered separately
-        # because it is the request shape where the cache-key argument for
-        # checking early does not apply and the refusal still has to.
-        with pytest.raises(ValueError, match=re.escape(param)):
-            bg.bake_gsplat_panorama(ply, out_path=tmp_path / "explicit.jpg", **_sizes(**{param: value}))
-
         assert no_splat_backend == []
 
     def test_the_refusal_names_the_bake(self, ply: Path, no_splat_backend: list[dict[str, Any]]) -> None:

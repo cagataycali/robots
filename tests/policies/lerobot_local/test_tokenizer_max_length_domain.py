@@ -92,23 +92,22 @@ def _preflight_refusal(value: Any) -> str | None:
 
 
 class TestAnUnusableTokenBudgetIsRefusedAtConstruction:
-    """The value is refused where the caller names it, before any download."""
+    """The value is refused where the caller names it, before any download.
+
+    The rollout entry point (``preflight``) reports the same text before the
+    weights are fetched, and both quote the shared count rule: the provider adds
+    nothing to it, so it cannot drift.
+    """
 
     @pytest.mark.parametrize("value", UNUSABLE)
-    def test_construction_refuses_it(self, value: Any) -> None:
+    def test_construction_and_preflight_refuse_it_before_the_checkpoint_load(self, value: Any) -> None:
         refusal = _construction_refusal(value)
         assert refusal is not None, f"tokenizer_max_length={value!r} was accepted"
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_names_the_parameter_and_the_provider(self, value: Any) -> None:
-        refusal = _construction_refusal(value)
-        assert refusal is not None
         assert "tokenizer_max_length" in refusal
         assert refusal.startswith("lerobot_local:")
+        assert refusal == positive_count_error(value, "tokenizer_max_length", "lerobot_local")
+        assert _preflight_refusal(value) == refusal, "the two surfaces must report the same text"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_the_refusal_precedes_the_checkpoint_load(self, value: Any) -> None:
-        """No weights are fetched for a value the provider cannot honor."""
         loads: list[bool] = []
         with pytest.raises(ValueError):
             _construct(loads, tokenizer_max_length=value)
@@ -125,11 +124,10 @@ class TestAUsableTokenBudgetIsAccepted:
     """The guard refuses only what no tokenizer can slice by."""
 
     @pytest.mark.parametrize("value", USABLE)
-    def test_construction_accepts_it(self, value: Any) -> None:
+    def test_construction_and_preflight_accept_it_and_store_it_verbatim(self, value: Any) -> None:
         assert _construction_refusal(value) is None
-
-    @pytest.mark.parametrize("value", USABLE)
-    def test_the_accepted_value_is_stored_verbatim(self, value: Any) -> None:
+        assert positive_count_error(value, "tokenizer_max_length", "lerobot_local") is None
+        assert _preflight_refusal(value) is None
         policy = _construct(tokenizer_max_length=value)
         assert policy._tokenizer_max_length == value
 
@@ -137,44 +135,9 @@ class TestAUsableTokenBudgetIsAccepted:
         policy = _construct()
         assert policy._tokenizer_max_length == 48
 
-
-class TestPreflightRefusesTheSameBudgets:
-    """The rollout entry point reports it before the weights are fetched."""
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_preflight_refuses_it(self, value: Any) -> None:
-        refusal = _preflight_refusal(value)
-        assert refusal is not None, f"preflight accepted tokenizer_max_length={value!r}"
-        assert "tokenizer_max_length" in refusal
-
-    @pytest.mark.parametrize("value", USABLE)
-    def test_preflight_accepts_a_usable_budget(self, value: Any) -> None:
-        assert _preflight_refusal(value) is None
-
     def test_preflight_says_nothing_when_the_key_is_absent(self) -> None:
         """Omitting it asks for the provider default, which is not a caller value."""
         LerobotLocalPolicy.preflight(set(), pretrained_name_or_path="test/model")
-
-
-class TestTheTwoSurfacesAgree:
-    """One parameter, one accepted domain, whichever surface receives it."""
-
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_construction_and_preflight_reach_the_same_verdict(self, value: Any) -> None:
-        assert (_construction_refusal(value) is None) == (_preflight_refusal(value) is None)
-
-    @pytest.mark.parametrize("value", UNUSABLE)
-    def test_both_surfaces_report_the_same_text(self, value: Any) -> None:
-        assert _construction_refusal(value) == _preflight_refusal(value)
-
-
-class TestTheDomainIsTheSharedOne:
-    """The provider adds nothing to the shared count rule, so it cannot drift."""
-
-    @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
-    def test_the_verdict_matches_the_shared_domain(self, value: Any) -> None:
-        shared = positive_count_error(value, "tokenizer_max_length", "lerobot_local")
-        assert _construction_refusal(value) == shared
 
     def test_an_integral_float_is_refused_because_the_tokenizer_cannot_take_one(self) -> None:
         """``48.0`` is the boundary case the wider whole-number domain would admit.

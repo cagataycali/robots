@@ -79,31 +79,19 @@ class TestControlFrequencyDomain:
     """``set_control_frequency`` accepts exactly the rates a loop can run at."""
 
     @pytest.mark.parametrize("bad", UNUSABLE_RATES)
-    def test_an_unusable_rate_is_refused_where_it_arrives(self, bad):
-        p = MockPolicy()
-        assert _verdict(lambda: p.set_control_frequency(bad)) == "refused"
-        # Refused means not stored: a later read cannot pick up the bad value.
-        assert p.control_frequency is None
-
-    @pytest.mark.parametrize("bad", UNUSABLE_RATES)
-    def test_the_refusal_names_the_parameter_and_the_value(self, bad):
+    def test_an_unusable_rate_is_refused_naming_the_parameter_and_the_value(self, bad):
         p = MockPolicy()
         with pytest.raises(ValueError) as excinfo:
             p.set_control_frequency(bad)
+        # Refused means not stored: a later read cannot pick up the bad value.
+        assert p.control_frequency is None
         message = str(excinfo.value)
         assert "set_control_frequency" in message
         assert "control_frequency" in message
         assert repr(bad) in message
 
     @pytest.mark.parametrize("hz", USABLE_RATES)
-    def test_a_usable_rate_is_stored_as_a_float(self, hz):
-        p = MockPolicy()
-        p.set_control_frequency(hz)
-        assert isinstance(p.control_frequency, float)
-        assert p.control_frequency == float(hz)
-
-    @pytest.mark.parametrize("hz", USABLE_RATES)
-    def test_every_accepted_rate_converts_into_a_step_count(self, hz):
+    def test_a_usable_rate_is_stored_as_a_float_that_converts_into_a_step_count(self, hz):
         """The property the domain exists for: an accepted rate is usable downstream.
 
         The provider multiplies a measured latency by this rate and takes
@@ -115,7 +103,8 @@ class TestControlFrequencyDomain:
         policy._rtc_latency_history = deque([0.05])
         p = MockPolicy()
         p.set_control_frequency(hz)
-        assert p.control_frequency is not None
+        assert isinstance(p.control_frequency, float)
+        assert p.control_frequency == float(hz)
         delay = policy._estimate_inference_delay(fps=p.control_frequency)
         assert isinstance(delay, int)
         assert delay >= 0
@@ -139,16 +128,11 @@ class TestObservedDelayDomain:
     """``set_rtc_observed_delay`` accepts exactly the counts a chunk can be sliced by."""
 
     @pytest.mark.parametrize("bad", UNUSABLE_STEPS)
-    def test_an_unusable_step_count_is_refused(self, bad):
-        p = MockPolicy()
-        assert _verdict(lambda: p.set_rtc_observed_delay(bad)) == "refused"
-        assert p.rtc_observed_delay_steps is None
-
-    @pytest.mark.parametrize("bad", UNUSABLE_STEPS)
-    def test_the_refusal_names_the_parameter_and_the_value(self, bad):
+    def test_an_unusable_step_count_is_refused_naming_the_parameter_and_the_value(self, bad):
         p = MockPolicy()
         with pytest.raises(ValueError) as excinfo:
             p.set_rtc_observed_delay(bad)
+        assert p.rtc_observed_delay_steps is None
         message = str(excinfo.value)
         assert "set_rtc_observed_delay" in message
         assert "rtc_observed_delay_steps" in message
@@ -188,12 +172,15 @@ class TestPolicyAndRunnerAgreeOnTheRateDomain:
     """
 
     @pytest.mark.parametrize("value", UNUSABLE_RATES + USABLE_RATES)
-    def test_the_two_guards_return_the_same_verdict(self, value):
-        runner_refuses = SimEngine._validate_positive_frequency(value, "run_policy") is not None
-        policy_refuses = _verdict(lambda: MockPolicy().set_control_frequency(value)) == "refused"
-        assert policy_refuses == runner_refuses, (
-            f"verdicts differ for {value!r}: runner_refuses={runner_refuses}, policy_refuses={policy_refuses}"
+    def test_the_runner_the_policy_and_the_wire_return_the_same_verdict(self, value):
+        """``PolicyServer`` used to ``float(...)`` the wire rate first, re-admitting nan and inf."""
+        runner = "refused" if SimEngine._validate_positive_frequency(value, "run_policy") is not None else "accepted"
+        local = _verdict(lambda: MockPolicy().set_control_frequency(value))
+        server = PolicyServer(policy=MockPolicy())
+        wire = _verdict(
+            lambda: server._dispatch({"type": protocol.MSG_SET_CONTROL_FREQUENCY, "hz": value}),
         )
+        assert runner == local == wire, f"verdicts differ for {value!r}: runner={runner}, local={local}, wire={wire}"
 
 
 class _RecordingPolicy(MockPolicy):
@@ -230,15 +217,6 @@ class TestTheWireCannotAcceptWhatTheLocalApiRefuses:
         else:
             assert decoded == value
             assert type(decoded) is type(value)
-
-    @pytest.mark.parametrize("value", UNUSABLE_RATES + USABLE_RATES)
-    def test_the_rate_domain_is_the_same_over_the_wire(self, value):
-        local = _verdict(lambda: MockPolicy().set_control_frequency(value))
-        server = PolicyServer(policy=MockPolicy())
-        wire = _verdict(
-            lambda: server._dispatch({"type": protocol.MSG_SET_CONTROL_FREQUENCY, "hz": value}),
-        )
-        assert wire == local, f"verdicts differ for {value!r}: local={local}, wire={wire}"
 
     @pytest.mark.parametrize("value", UNUSABLE_STEPS)
     def test_an_unusable_step_count_from_the_wire_never_reaches_inference(self, value):

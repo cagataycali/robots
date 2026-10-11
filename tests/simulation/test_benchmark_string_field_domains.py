@@ -100,22 +100,27 @@ def _refuses(build: Any, **overrides: Any) -> str | None:
 
 
 class TestDirectConstructionRefusesANonString:
-    """Every field, every value that is not a ``str`` at all."""
+    """Every field, every value that is not a ``str`` at all, on both paths.
+
+    One rule, two paths: the spec path must reach the same verdict as a direct
+    construction, and so must the helper both route through - so the rule cannot
+    be widened at one call site without the helper agreeing. The messages are
+    not compared: the contexts differ by design (``"spec"`` for a spec file, the
+    class name for a direct construction), so what has to agree is the verdict.
+    """
 
     @pytest.mark.parametrize("field", sorted(FIELDS))
     @pytest.mark.parametrize("value", NOT_A_STRING)
-    def test_it_is_refused(self, field: str, value: Any) -> None:
+    def test_it_is_refused_naming_the_field_and_the_type_by_every_path(self, field: str, value: Any) -> None:
         text = _refuses(_make, **{field: value})
         assert text is not None, f"{field}={value!r} was accepted"
-
-    @pytest.mark.parametrize("field", sorted(FIELDS))
-    @pytest.mark.parametrize("value", NOT_A_STRING)
-    def test_the_message_names_the_field_and_the_type(self, field: str, value: Any) -> None:
-        text = _refuses(_make, **{field: value})
-        assert text is not None
         assert field in text, text
         assert type(value).__name__ in text, text
         assert "DeclarativeBenchmark" in text, text
+        spec = _refuses(_from_dict, **{field: value})
+        assert spec is not None, f"{field}={value!r}: from_dict accepted what __init__ refused: {text!r}"
+        helper = spec_mod._spec_string_error(value, field, "DeclarativeBenchmark", **FIELDS[field])
+        assert helper is not None, (helper, text)
 
 
 class TestDirectConstructionRefusesAnEmptyIdentifier:
@@ -171,14 +176,6 @@ class TestBothConstructionPathsAgree:
     """
 
     @pytest.mark.parametrize("field", sorted(FIELDS))
-    @pytest.mark.parametrize("value", NOT_A_STRING)
-    def test_a_non_string_is_refused_by_both(self, field: str, value: Any) -> None:
-        direct = _refuses(_make, **{field: value})
-        spec = _refuses(_from_dict, **{field: value})
-        assert (direct is None) == (spec is None), f"{field}={value!r}: __init__={direct!r} from_dict={spec!r}"
-        assert direct is not None
-
-    @pytest.mark.parametrize("field", sorted(FIELDS))
     def test_the_empty_string_verdict_agrees(self, field: str) -> None:
         direct = _refuses(_make, **{field: ""})
         spec = _refuses(_from_dict, **{field: ""})
@@ -219,13 +216,6 @@ class TestTheDomainIsTheWholeContribution:
     Parity between the helper and the two construction paths, so the rule cannot
     be widened at one call site without the helper agreeing.
     """
-
-    @pytest.mark.parametrize("field", sorted(FIELDS))
-    @pytest.mark.parametrize("value", NOT_A_STRING)
-    def test_the_helper_and_the_constructor_agree(self, field: str, value: Any) -> None:
-        helper = spec_mod._spec_string_error(value, field, "DeclarativeBenchmark", **FIELDS[field])
-        direct = _refuses(_make, **{field: value})
-        assert (helper is None) == (direct is None), (helper, direct)
 
     @pytest.mark.parametrize("field", sorted(FIELDS))
     @pytest.mark.parametrize("value", ["", None])

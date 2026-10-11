@@ -175,39 +175,28 @@ class TestACountThatCanBeHonoredIsAccepted:
 
 
 class TestACountThatCannotBeHonoredIsRefusedByBothOwners:
-    """The same value reaches the same verdict whichever owner is handed it."""
+    """The same value reaches the same verdict whichever owner is handed it.
+
+    Routing is graded through the answer - each owner's message is the shared
+    domain's own - so a hand-rolled copy cannot drift back. ``'4' < 1`` named
+    neither the field nor a remedy; a refusal names both. A refusal leaves the
+    scene exactly as it was, so the count is not recorded either.
+    """
 
     @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_the_field_refuses_it(self, value: Any) -> None:
-        refusal = _field_refusal(value)
+    def test_both_owners_refuse_it_with_the_domains_own_message(self, value: Any) -> None:
+        field = _field_refusal(value)
+        assert field is not None, f"IsaacConfig accepted num_envs={value!r} as an environment count"
+        assert field == positive_count_error(value, "num_envs", "IsaacConfig")
 
-        assert refusal is not None, f"IsaacConfig accepted num_envs={value!r} as an environment count"
-        assert "num_envs" in refusal
+        request = _argument_refusal(value)
+        assert request is not None, f"replicate accepted num_envs={value!r} as an environment count"
+        assert request == positive_count_error(value, "num_envs", "replicate")
 
-    @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_the_request_refuses_it(self, value: Any) -> None:
-        refusal = _argument_refusal(value)
-
-        assert refusal is not None, f"replicate accepted num_envs={value!r} as an environment count"
-        assert "num_envs" in refusal
-
-    @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_neither_owner_raises_the_bare_comparison_TypeError(self, value: Any) -> None:
-        """``'4' < 1`` named neither the field nor a remedy; a refusal names both."""
-        assert _field_refusal(value) is not None
-        assert _argument_refusal(value) is not None
-
-
-class TestBothOwnersQuoteTheSharedDomain:
-    """Routing is graded through the answer, so a hand-rolled copy cannot drift back."""
-
-    @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_the_field_message_is_the_domains_own(self, value: Any) -> None:
-        assert _field_refusal(value) == positive_count_error(value, "num_envs", "IsaacConfig")
-
-    @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_the_request_message_is_the_domains_own(self, value: Any) -> None:
-        assert _argument_refusal(value) == positive_count_error(value, "num_envs", "replicate")
+        stub = _stub()
+        IsaacSimulation.replicate(stub, num_envs=value)  # type: ignore[arg-type]
+        assert stub._num_envs_active == 1
+        assert stub._replicated is False
 
 
 class TestAnUnstatedCountStillTakesTheConfiguredOne:
@@ -258,15 +247,6 @@ class TestASuppliedZeroIsNotReadAsUnstated:
 
 class TestARefusedCountIsNotPartiallyApplied:
     """A refusal leaves the scene exactly as it was, replicable and extensible."""
-
-    @pytest.mark.parametrize("value", list(_REFUSED.values()), ids=list(_REFUSED))
-    def test_the_count_is_not_recorded(self, value: Any) -> None:
-        stub = _stub()
-
-        IsaacSimulation.replicate(stub, num_envs=value)  # type: ignore[arg-type]
-
-        assert stub._num_envs_active == 1
-        assert stub._replicated is False
 
     def test_the_scene_is_not_locked_against_further_robots(self) -> None:
         """``add_robot`` refuses once ``_replicated`` latches, so it must not latch.

@@ -158,24 +158,19 @@ class TestEveryEntryPointSharesTheDomain:
 
     @pytest.mark.parametrize("bad", OUT_OF_DOMAIN)
     @pytest.mark.parametrize("param", RESOLUTION_PARAMS)
-    def test_render_refuses_what_the_shared_domain_refuses(self, param: str, bad: object) -> None:
+    def test_each_entry_point_refuses_what_the_shared_domain_refuses(self, param: str, bad: object, tmp_path) -> None:
+        """The render pays no background render, the bake writes nothing, the cache path names no file."""
         assert positive_whole_number_error(bad, param, "ctx") is not None, "premise: out of the shared domain"
         bg = WindowBackground()
         with pytest.raises(ValueError, match=re.escape(param)):
             render_environment_map(bg, **_sizes(**{param: bad}))
         assert bg.renders == 0
 
-    @pytest.mark.parametrize("bad", OUT_OF_DOMAIN)
-    @pytest.mark.parametrize("param", RESOLUTION_PARAMS)
-    def test_bake_refuses_it_too_and_writes_nothing(self, param: str, bad: object, tmp_path) -> None:
         out = tmp_path / f"env_{param}.png"
         with pytest.raises(ValueError, match=re.escape(param)):
             bake_environment_map(WindowBackground(), out, **_sizes(**{param: bad}))
         assert not out.exists()
 
-    @pytest.mark.parametrize("bad", OUT_OF_DOMAIN)
-    @pytest.mark.parametrize("param", RESOLUTION_PARAMS)
-    def test_the_cache_path_names_no_file_for_a_refused_resolution(self, param: str, bad: object, tmp_path) -> None:
         with pytest.raises(ValueError, match=re.escape(param)):
             environment_map_cache_path(tmp_path / "scene.ply", (0.0, 0.0, 0.4), **_sizes(**{param: bad}))
 

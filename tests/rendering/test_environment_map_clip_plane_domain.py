@@ -82,6 +82,10 @@ OUT_OF_DOMAIN = [
     True,
     False,
     None,
+    # Passed through, a non-numeric plane reached ``gsplat``'s pybind11 binding
+    # and raised a ``TypeError`` naming ``fully_fused_projection_packed_fwd`` and
+    # dumping every gaussian tensor -- after one GPU render, without naming the
+    # parameter at fault.
     "0.01",
     pytest.param(10**400, id="beyond_float64"),
 ]
@@ -212,20 +216,6 @@ class TestEachClipPlaneSharesTheContinuousDomain:
         with pytest.raises(ValueError, match=re.escape(param)):
             render_environment_map(bg, **_kwargs(**{param: bad}))
         assert bg.renders == 0, f"refused after {bg.renders} renders; a GPU-bound bake must not be paid for"
-
-    @pytest.mark.parametrize("param", CLIP_PARAMS)
-    def test_the_raw_rasterizer_error_is_no_longer_the_caller_s_first_signal(self, param: str) -> None:
-        """A non-numeric plane is refused here, not deep inside a rasterizer.
-
-        Passed through, ``znear="0.01"`` reached ``gsplat``'s pybind11 binding and
-        raised a ``TypeError`` naming ``fully_fused_projection_packed_fwd`` and
-        dumping every gaussian tensor -- after one GPU render, and without naming
-        the parameter at fault.
-        """
-        bg = ClipHonoringBackground()
-        with pytest.raises(ValueError, match=re.escape(param)):
-            render_environment_map(bg, **_kwargs(**{param: "0.01"}))
-        assert bg.renders == 0
 
 
 class TestTheAcceptedDomainIsUnchanged:

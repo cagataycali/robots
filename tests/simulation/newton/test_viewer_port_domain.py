@@ -127,41 +127,29 @@ def _text(result: dict[str, Any]) -> str:
 
 class TestUnusablePortIsRefused:
     @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_viser_dashboard_refuses_it(self, port: Any) -> None:
+    def test_the_viser_dashboard_refuses_it_and_constructs_nothing(self, port: Any) -> None:
+        """Nothing is bound and nothing is advertised for a port that cannot exist.
+
+        The obvious retry must work too. Pre-fix a value that did not raise inside
+        ``ViewerViser`` filled the single viewer slot, so the retry with a usable
+        port came back as "Viewer already open" rather than opening one.
+        """
         stub = _viewer_stub()
         result = NewtonSimEngine.open_viewer(stub, "viser", port=port)
         assert result["status"] == "error", (port, result)
         assert "port" in _text(result)
-
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_a_refused_port_constructs_no_viewer(self, port: Any) -> None:
-        """Nothing is bound and nothing is advertised for a port that cannot exist."""
-        stub = _viewer_stub()
-        NewtonSimEngine.open_viewer(stub, "viser", port=port)
         assert stub.built == []
         assert stub._viewer is None
         assert stub._viewer_kind is None
 
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_viewer_slot_stays_reusable(self, port: Any) -> None:
-        """The obvious retry must work.
-
-        Pre-fix a value that did not raise inside ``ViewerViser`` filled the
-        single viewer slot, so the retry with a usable port came back as
-        "Viewer already open" rather than opening one.
-        """
-        stub = _viewer_stub()
-        assert NewtonSimEngine.open_viewer(stub, "viser", port=port)["status"] == "error"
         retry = NewtonSimEngine.open_viewer(stub, "viser", port=8080)
         assert retry["status"] == "success", retry
         assert "8080" in _text(retry)
 
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_auto_refuses_it_when_it_resolves_to_viser(self, port: Any) -> None:
-        """``"auto"`` is the documented headless default, so it reaches the bind."""
-        stub = _viewer_stub(has_display=False)
-        assert NewtonSimEngine.open_viewer(stub, "auto", port=port)["status"] == "error"
-        assert stub.built == []
+        # ``"auto"`` is the documented headless default, so it reaches the bind.
+        headless = _viewer_stub(has_display=False)
+        assert NewtonSimEngine.open_viewer(headless, "auto", port=port)["status"] == "error"
+        assert headless.built == []
 
     @pytest.mark.parametrize("port", (*UNUSABLE_PORTS, *USABLE_PORTS))
     def test_the_accepted_domain_is_the_shared_tcp_port_domain(self, port: Any) -> None:
@@ -200,24 +188,12 @@ class TestOnlyTheBoundPortIsValidated:
     """
 
     @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_gl_window_ignores_the_port(self, port: Any) -> None:
-        stub = _viewer_stub(has_display=True)
-        result = NewtonSimEngine.open_viewer(stub, "gl", port=port)
-        assert result["status"] == "success", (port, result)
-        assert [kind for kind, _ in stub.built] == ["gl"]
-
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_the_null_sink_ignores_the_port(self, port: Any) -> None:
-        stub = _viewer_stub()
-        result = NewtonSimEngine.open_viewer(stub, "null", port=port)
-        assert result["status"] == "success", (port, result)
-        assert [kind for kind, _ in stub.built] == ["null"]
-
-    @pytest.mark.parametrize("port", UNUSABLE_PORTS)
-    def test_auto_ignores_it_when_a_display_resolves_to_gl(self, port: Any) -> None:
-        stub = _viewer_stub(has_display=True)
-        assert NewtonSimEngine.open_viewer(stub, "auto", port=port)["status"] == "success"
-        assert [kind for kind, _ in stub.built] == ["gl"]
+    def test_the_gl_window_the_null_sink_and_auto_on_a_display_ignore_the_port(self, port: Any) -> None:
+        for kind, has_display, expected in (("gl", True, "gl"), ("null", False, "null"), ("auto", True, "gl")):
+            stub = _viewer_stub(has_display=has_display)
+            result = NewtonSimEngine.open_viewer(stub, kind, port=port)
+            assert result["status"] == "success", (kind, port, result)
+            assert [built for built, _ in stub.built] == [expected], kind
 
 
 class TestEarlierRefusalsStillPrecedeThePort:
