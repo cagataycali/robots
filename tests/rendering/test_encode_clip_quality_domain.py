@@ -32,6 +32,7 @@ import hashlib
 import math
 import subprocess
 import sys
+from typing import Any
 
 import numpy as np
 import pytest
@@ -51,14 +52,14 @@ from strands_robots.rendering.video import (
 # non-finite floats, both bools (``True`` silently acted as a quality of 1), a
 # numeric string, a missing value, a sequence, and an integer too large to
 # convert to a float.
-OUT_OF_RANGE = [0, -5, 11, 500]
-NOT_A_NUMBER = [math.nan, math.inf, -math.inf, True, False, np.True_, "8", None, [8], 10**400]
-UNUSABLE_QUALITY = [*OUT_OF_RANGE, *NOT_A_NUMBER]
+OUT_OF_RANGE: list[Any] = [0, -5, 11, 500]
+NOT_A_NUMBER: list[Any] = [math.nan, math.inf, -math.inf, True, False, np.True_, "8", None, [8], 10**400]
+UNUSABLE_QUALITY: list[Any] = [*OUT_OF_RANGE, *NOT_A_NUMBER]
 
 # Qualities inside the range, in every spelling the guard accepts: the bounds,
 # a plain int, a fractional value the encoder maps onto a bitrate, an integral
 # float, and NumPy reals that the writer's own type gate would refuse.
-USABLE_QUALITY = [1, 10, 8, 2.7, 8.0, np.int64(8), np.float32(8.0), np.float64(8.0)]
+USABLE_QUALITY: list[Any] = [1, 10, 8, 2.7, 8.0, np.int64(8), np.float32(8.0), np.float64(8.0)]
 
 
 def _frames(n: int = 6, w: int = 48, h: int = 32) -> list[np.ndarray]:
@@ -66,14 +67,14 @@ def _frames(n: int = 6, w: int = 48, h: int = 32) -> list[np.ndarray]:
     return [np.full((h, w, 3), (i * 20) % 256, dtype=np.uint8) for i in range(n)]
 
 
-@pytest.mark.parametrize("suffix", [".gif", ".mp4"])
-@pytest.mark.parametrize("quality", UNUSABLE_QUALITY)
-def test_unusable_quality_is_refused_before_any_file_is_written(tmp_path, suffix, quality) -> None:
+def test_unusable_quality_is_refused_before_any_file_is_written(tmp_path) -> None:
     """A quality the encoder cannot honor is a ValueError naming the parameter."""
-    out = tmp_path / f"clip{suffix}"
-    with pytest.raises(ValueError, match="quality must be"):
-        encode_clip(_frames(), out, fps=10, quality=quality)
-    assert not out.exists(), f"encode_clip(quality={quality!r}) left a file behind at {out}"
+    for suffix in (".gif", ".mp4"):
+        for quality in UNUSABLE_QUALITY:
+            out = tmp_path / f"clip{suffix}"
+            with pytest.raises(ValueError, match="quality must be"):
+                encode_clip(_frames(), out, fps=10, quality=quality)
+            assert not out.exists(), f"encode_clip(quality={quality!r}) left a file behind at {out}"
 
 
 def test_the_lower_bound_is_one_not_the_zero_the_docstring_advertised() -> None:
@@ -84,17 +85,16 @@ def test_the_lower_bound_is_one_not_the_zero_the_docstring_advertised() -> None:
     assert _clip_quality_error(_MIN_CLIP_QUALITY) is None
 
 
-@pytest.mark.parametrize("suffix", [".gif", ".mp4"])
-@pytest.mark.parametrize("quality", USABLE_QUALITY)
-def test_a_usable_quality_still_encodes_a_clip(tmp_path, suffix, quality) -> None:
+def test_a_usable_quality_still_encodes_a_clip(tmp_path) -> None:
     """Every accepted spelling encodes, so the guard is not narrower than the encoder."""
     pytest.importorskip("imageio.v2")
-    out = encode_clip(_frames(), tmp_path / f"clip{suffix}", fps=10, quality=quality)
-    assert out.exists() and out.stat().st_size > 0
+    for suffix in (".gif", ".mp4"):
+        for index, quality in enumerate(USABLE_QUALITY):
+            out = encode_clip(_frames(), tmp_path / f"clip{index}{suffix}", fps=10, quality=quality)
+            assert out.exists() and out.stat().st_size > 0, f"quality={quality!r} {suffix}"
 
 
-@pytest.mark.parametrize("quality", [np.int64(8), np.float32(8.0), np.float64(8.0), 8.0])
-def test_a_numpy_real_encodes_identically_to_the_plain_int(tmp_path, quality) -> None:
+def test_a_numpy_real_encodes_identically_to_the_plain_int(tmp_path) -> None:
     """The ``float()`` at the writer is load-bearing: NumPy reals are honored.
 
     The ffmpeg writer gates the knob on ``isinstance(quality, (float, int))``,
@@ -104,8 +104,10 @@ def test_a_numpy_real_encodes_identically_to_the_plain_int(tmp_path, quality) ->
     """
     pytest.importorskip("imageio.v2")
     plain = encode_clip(_frames(), tmp_path / "plain.mp4", fps=10, quality=8)
-    coerced = encode_clip(_frames(), tmp_path / "coerced.mp4", fps=10, quality=quality)
-    assert hashlib.md5(coerced.read_bytes()).digest() == hashlib.md5(plain.read_bytes()).digest()
+    quality: Any
+    for index, quality in enumerate([np.int64(8), np.float32(8.0), np.float64(8.0), 8.0]):
+        coerced = encode_clip(_frames(), tmp_path / f"coerced{index}.mp4", fps=10, quality=quality)
+        assert hashlib.md5(coerced.read_bytes()).digest() == hashlib.md5(plain.read_bytes()).digest(), repr(quality)
 
 
 def test_a_fractional_quality_is_honored_rather_than_rounded(tmp_path) -> None:
@@ -132,8 +134,7 @@ def test_true_would_have_been_a_silent_quality_of_one(tmp_path) -> None:
     assert lowest.read_bytes() != default.read_bytes()
 
 
-@pytest.mark.parametrize("quality", [0, -5, 500, True])
-def test_quality_is_refused_before_the_optional_encoder_is_probed(tmp_path, monkeypatch, quality) -> None:
+def test_quality_is_refused_before_the_optional_encoder_is_probed(tmp_path, monkeypatch) -> None:
     """The same mistake reports identically whether or not imageio is installed."""
     from strands_robots.rendering import video
 
@@ -141,24 +142,26 @@ def test_quality_is_refused_before_the_optional_encoder_is_probed(tmp_path, monk
         raise AssertionError("require_optional must not be reached for a refused quality")
 
     monkeypatch.setattr(video, "require_optional", _no_imageio)
-    with pytest.raises(ValueError, match="quality must be"):
-        encode_clip(_frames(), tmp_path / "clip.mp4", fps=10, quality=quality)
+    for quality in (0, -5, 500, True):
+        with pytest.raises(ValueError, match="quality must be"):
+            encode_clip(_frames(), tmp_path / "clip.mp4", fps=10, quality=quality)
 
 
-@pytest.mark.parametrize("quality", [0, 500, True, "8"])
-def test_the_domain_does_not_depend_on_the_output_container(tmp_path, quality) -> None:
+def test_the_domain_does_not_depend_on_the_output_container(tmp_path) -> None:
     """One signature, one domain: changing the extension cannot make a call valid.
 
     ``quality`` is read only by the MP4 writer, but it is refused for a ``.gif``
     target too - otherwise the same call would be valid or invalid depending on
     a string, and a caller would learn that an out-of-range quality is fine.
     """
-    messages = []
-    for suffix in (".gif", ".mp4"):
-        with pytest.raises(ValueError, match="quality must be") as excinfo:
-            encode_clip(_frames(), tmp_path / f"clip{suffix}", fps=10, quality=quality)
-        messages.append(str(excinfo.value))
-    assert messages[0] == messages[1], messages
+    quality: Any
+    for quality in [0, 500, True, "8"]:
+        messages = []
+        for suffix in (".gif", ".mp4"):
+            with pytest.raises(ValueError, match="quality must be") as excinfo:
+                encode_clip(_frames(), tmp_path / f"clip{suffix}", fps=10, quality=quality)
+            messages.append(str(excinfo.value))
+        assert messages[0] == messages[1], messages
 
 
 def test_the_refusal_does_not_depend_on_assertions_being_enabled(tmp_path) -> None:
@@ -188,16 +191,16 @@ def test_the_refusal_does_not_depend_on_assertions_being_enabled(tmp_path) -> No
     assert "ALL-REFUSED" in proc.stdout, proc.stdout
 
 
-@pytest.mark.parametrize("quality", NOT_A_NUMBER)
-def test_both_quality_knobs_in_this_module_refuse_the_same_non_numeric_values(quality) -> None:
+def test_both_quality_knobs_in_this_module_refuse_the_same_non_numeric_values() -> None:
     """The clip and JPEG quality guards agree on what is not a quality at all.
 
     The two encoders accept different ranges, but "is this a number a quality
     can be read from" is one question, so ``bool``, a numeric string, a
     non-finite float and a missing value are refused by both.
     """
-    assert _clip_quality_error(quality) is not None
-    assert _jpeg_quality_error(quality) is not None
+    for quality in NOT_A_NUMBER:
+        assert _clip_quality_error(quality) is not None, repr(quality)
+        assert _jpeg_quality_error(quality) is not None, repr(quality)
 
 
 def test_the_two_quality_ranges_differ_because_the_encoders_do() -> None:

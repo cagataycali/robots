@@ -125,12 +125,12 @@ def test_no_module_path_in_this_file_reads_the_real_credential_store(tmp_path, m
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))
-@pytest.mark.parametrize("spelling", [s for s in UNIT_SPELLINGS if s])
-def test_a_duration_that_is_not_a_whole_number_of_seconds_is_refused_by_name(knob, spelling, monkeypatch):
+def test_a_duration_that_is_not_a_whole_number_of_seconds_is_refused_by_name(knob, monkeypatch):
     reader, _surface = KNOBS[knob]
-    monkeypatch.setenv(auth._ENV + knob, spelling)
-    with pytest.raises(ValueError, match=knob):
-        getattr(auth, reader)()
+    for spelling in [s for s in UNIT_SPELLINGS if s]:
+        monkeypatch.setenv(auth._ENV + knob, spelling)
+        with pytest.raises(ValueError, match=knob):
+            getattr(auth, reader)()
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))
@@ -146,13 +146,13 @@ def test_the_refusal_names_the_value_and_the_default_it_would_have_used(knob, mo
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))
-@pytest.mark.parametrize("value", ["0", "-1", "-3600"])
-def test_a_lifetime_at_or_below_zero_is_refused(knob, value, monkeypatch):
+def test_a_lifetime_at_or_below_zero_is_refused(knob, monkeypatch):
     """It parses, and it means every token minted under it is dead on arrival."""
-    monkeypatch.setenv(auth._ENV + knob, value)
     reader, _surface = KNOBS[knob]
-    with pytest.raises(ValueError, match=knob):
-        getattr(auth, reader)()
+    for value in ("0", "-1", "-3600"):
+        monkeypatch.setenv(auth._ENV + knob, value)
+        with pytest.raises(ValueError, match=knob):
+            getattr(auth, reader)()
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))
@@ -175,12 +175,12 @@ def test_a_bare_integer_is_honoured_at_the_surface_that_spends_it(knob, monkeypa
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))
-@pytest.mark.parametrize("raw", ["", "   "])
-def test_an_empty_variable_still_means_unset(knob, raw, monkeypatch):
+def test_an_empty_variable_still_means_unset(knob, monkeypatch):
     """Unchanged, and cross-referenced by the challenge-cap pins next door."""
-    monkeypatch.setenv(auth._ENV + knob, raw)
     reader, _surface = KNOBS[knob]
-    assert getattr(auth, reader)() == DOCUMENTED_DEFAULTS[knob]
+    for raw in ("", "   "):
+        monkeypatch.setenv(auth._ENV + knob, raw)
+        assert getattr(auth, reader)() == DOCUMENTED_DEFAULTS[knob], repr(raw)
 
 
 @pytest.mark.parametrize("knob", sorted(KNOBS))

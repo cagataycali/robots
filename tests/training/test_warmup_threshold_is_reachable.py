@@ -97,30 +97,28 @@ class TestAnUnreachableThresholdIsRefused:
     """A spec whose warmup fill is out of reach is reported, not run."""
 
     @pytest.mark.parametrize("provider", OFF_POLICY)
-    @pytest.mark.parametrize("case", list(UNREACHABLE), ids=lambda c: c)
-    def test_the_problem_names_the_threshold_and_the_short_count(self, provider: str, case: str) -> None:
-        overrides, short_field = UNREACHABLE[case]
-        (problem,) = _about_the_threshold(provider, _spec(**overrides))
-        assert "learning_starts" in problem
-        assert short_field in problem
-        assert "zero gradient steps" in problem
+    def test_the_problem_names_the_threshold_and_the_short_count(self, provider: str) -> None:
+        for case, (overrides, short_field) in UNREACHABLE.items():
+            (problem,) = _about_the_threshold(provider, _spec(**overrides))
+            assert "learning_starts" in problem, case
+            assert short_field in problem, case
+            assert "zero gradient steps" in problem, case
 
     @pytest.mark.parametrize("provider", OFF_POLICY)
-    @pytest.mark.parametrize("case", list(UNREACHABLE), ids=lambda c: c)
-    def test_nothing_is_built_and_no_checkpoint_is_exported(self, provider: str, case: str, tmp_path: Any) -> None:
+    def test_nothing_is_built_and_no_checkpoint_is_exported(self, provider: str, tmp_path: Any) -> None:
         """The refusal precedes ``setup``, so the run that learns nothing never starts.
 
         Before the relation was checked this returned ``status="success"`` with a
         written ``policy.pt`` - the randomly initialized network, no gradient
         step having run.
         """
-        overrides, _ = UNREACHABLE[case]
-        result = create_trainer(provider).train(_spec(output_dir=str(tmp_path), **overrides))
-        assert result.status == "error"
-        assert result.checkpoint_dir in (None, "")
-        assert result.exported_model in (None, "")
-        assert "is never reached" in result.message
-        assert list(tmp_path.iterdir()) == []
+        for case, (overrides, _) in UNREACHABLE.items():
+            result = create_trainer(provider).train(_spec(output_dir=str(tmp_path), **overrides))
+            assert result.status == "error", case
+            assert result.checkpoint_dir in (None, ""), case
+            assert result.exported_model in (None, ""), case
+            assert "is never reached" in result.message, case
+            assert list(tmp_path.iterdir()) == [], case
 
     @pytest.mark.parametrize("provider", OFF_POLICY)
     def test_both_short_counts_are_reported_together(self, provider: str) -> None:
@@ -144,10 +142,10 @@ class TestTheSameOneSlotBufferGetsOneVerdict:
         assert int(True) == 1
 
     @pytest.mark.parametrize("provider", OFF_POLICY)
-    @pytest.mark.parametrize("capacity", [True, 1])
-    def test_neither_spelling_reaches_a_run(self, provider: str, capacity: Any) -> None:
-        spec = _spec(buffer_size=capacity, learning_starts=16, batch_size=16)
-        assert create_trainer(provider).validate(spec), f"{provider} accepted buffer_size={capacity!r}"
+    def test_neither_spelling_reaches_a_run(self, provider: str) -> None:
+        for capacity in (True, 1):
+            spec = _spec(buffer_size=capacity, learning_starts=16, batch_size=16)
+            assert create_trainer(provider).validate(spec), f"{provider} accepted buffer_size={capacity!r}"
 
     @pytest.mark.parametrize("provider", OFF_POLICY)
     def test_each_spelling_is_refused_by_the_gate_that_owns_its_reason(self, provider: str) -> None:
@@ -190,28 +188,27 @@ class TestTheUsableDomainIsUntouched:
 class TestANonCountIsLeftToItsOwnGate:
     """The relation is only asked of counts; a non-count keeps its own message."""
 
-    @pytest.mark.parametrize("field", OPERANDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_relation_reports_nothing_about_it(self, field: str, value: Any) -> None:
-        spec = _spec(**{field: value})
-        assert warmup_reachability_problems(spec, context="fast_sac") == []
+    def test_the_relation_reports_nothing_about_it_and_the_field_is_still_refused(self) -> None:
+        """The relation is silent, and the field's own gate still refuses it.
 
-    @pytest.mark.parametrize("field", OPERANDS)
-    @pytest.mark.parametrize("value", NOT_A_COUNT, ids=repr)
-    def test_the_field_is_still_refused_by_its_own_domain(self, field: str, value: Any) -> None:
-        """Non-vacuity: the silence above is scoping, not an accepted non-count."""
-        problems = create_trainer("fast_sac").validate(_spec(**{field: value}))
-        assert [p for p in problems if field in p], f"fast_sac accepted {field}={value!r}"
+        The second half is the non-vacuity: the silence is scoping, not an
+        accepted non-count.
+        """
+        for field in OPERANDS:
+            for value in NOT_A_COUNT:
+                spec = _spec(**{field: value})
+                assert warmup_reachability_problems(spec, context="fast_sac") == [], f"{field}={value!r}"
+                problems = create_trainer("fast_sac").validate(spec)
+                assert [p for p in problems if field in p], f"fast_sac accepted {field}={value!r}"
 
 
 class TestABackendWithNoWarmupStaysQuiet:
     """A backend that never waits for a replay fill reports nothing about one."""
 
-    @pytest.mark.parametrize("provider", NO_WARMUP)
-    @pytest.mark.parametrize("case", list(UNREACHABLE), ids=lambda c: c)
-    def test_it_reports_nothing_about_the_threshold(self, provider: str, case: str) -> None:
-        overrides, _ = UNREACHABLE[case]
-        assert _about_the_threshold(provider, _spec(**overrides)) == []
+    def test_it_reports_nothing_about_the_threshold(self) -> None:
+        for provider in NO_WARMUP:
+            for case, (overrides, _) in UNREACHABLE.items():
+                assert _about_the_threshold(provider, _spec(**overrides)) == [], f"{provider}: {case}"
 
     def test_ppo_still_refuses_the_run_size_it_does_read(self) -> None:
         """Non-vacuity: PPO's silence is scoping, not a backend that checks nothing."""

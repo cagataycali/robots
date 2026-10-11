@@ -142,32 +142,24 @@ class TestAValueThatIsNotCameraNamesIsRefused:
     """Each surface reports the parameter instead of guessing or raising."""
 
     @pytest.mark.parametrize("surface", _SURFACES)
-    @pytest.mark.parametrize(("label", "make"), _UNUSABLE, ids=[c[0] for c in _UNUSABLE])
-    def test_the_parameter_is_named_in_a_structured_error(
-        self, cam_sim, tmp_path, surface: str, label: str, make: Callable[[], Any]
-    ) -> None:
-        result = _invoke(cam_sim, surface, tmp_path, make())
-        assert result["status"] == "error", (surface, label, result)
-        text = " ".join(block["text"] for block in result["content"] if "text" in block)
-        assert "cameras" in text, (surface, label, text)
-        assert surface in text, (surface, label, text)
+    def test_the_parameter_is_named_in_a_structured_error(self, cam_sim, tmp_path, surface: str) -> None:
+        """Every unusable value, on every surface, is the same refusal envelope.
 
-    @pytest.mark.parametrize("surface", _SURFACES)
-    @pytest.mark.parametrize(("label", "make"), [("non_string_element", lambda: [3]), ("not_a_sequence", lambda: 3)])
-    def test_a_non_name_value_does_not_escape_the_tool_envelope(
-        self, cam_sim, tmp_path, surface: str, label: str, make: Callable[[], Any]
-    ) -> None:
-        """These two used to raise a bare ``TypeError`` past the dispatch layer.
-
-        The rendering surfaces reached ``"tag__" + 3`` / ``for c in 3`` with the
-        caller's value, so a ``TypeError`` naming neither the parameter nor the
-        method left a method documented to return a result dict.
+        One verdict per surface for every value is also what makes the surfaces
+        agree - the divergence this contract removes. ``[3]`` and ``3`` used to
+        raise a bare ``TypeError`` past the dispatch layer (``"tag__" + 3`` /
+        ``for c in 3``), naming neither the parameter nor the method, so an
+        escape is reported as one rather than propagated.
         """
-        try:
-            result = _invoke(cam_sim, surface, tmp_path, make())
-        except Exception as exc:  # noqa: BLE001 - an escape is the regression
-            pytest.fail(f"{surface} raised {type(exc).__name__}: {exc}")
-        assert result["status"] == "error", (surface, label, result)
+        for label, make in _UNUSABLE:
+            try:
+                result = _invoke(cam_sim, surface, tmp_path, make())
+            except Exception as exc:  # noqa: BLE001 - an escape is the regression
+                pytest.fail(f"{surface}({label}) raised {type(exc).__name__}: {exc}")
+            assert result["status"] == "error", (surface, label, result)
+            text = " ".join(block["text"] for block in result["content"] if "text" in block)
+            assert "cameras" in text, (surface, label, text)
+            assert surface in text, (surface, label, text)
 
 
 class TestARefusedCallStartsNothing:
@@ -250,22 +242,6 @@ class TestDistinctNamesAreStillHonored:
         result = _invoke(cam_sim, surface, tmp_path, [])
         text = " ".join(block.get("text", "") for block in result["content"])
         assert "must be a list of names" not in text, (surface, text)
-
-
-class TestEverySurfaceAgrees:
-    """One parameter, one verdict - the divergence this change removes."""
-
-    @pytest.mark.parametrize(("label", "make"), _UNUSABLE, ids=[c[0] for c in _UNUSABLE])
-    def test_the_surfaces_reach_the_same_verdict(self, cam_sim, tmp_path, label: str, make: Callable[[], Any]) -> None:
-        verdicts = {}
-        for index, surface in enumerate(_SURFACES):
-            scope = tmp_path / f"parity{index}"
-            scope.mkdir()
-            try:
-                verdicts[surface] = _invoke(cam_sim, surface, scope, make())["status"]
-            except Exception as exc:  # noqa: BLE001 - a raise is one of the verdicts
-                verdicts[surface] = f"raised {type(exc).__name__}"
-        assert len(set(verdicts.values())) == 1, (label, verdicts)
 
 
 def _backend_root() -> pathlib.Path:

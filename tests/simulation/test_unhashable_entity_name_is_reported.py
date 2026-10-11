@@ -128,15 +128,15 @@ def _envelope_miss(call: Callable[[Any], Any], name: Any) -> str | None:
     return None
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_an_unhashable_name_is_reported_as_absent(sim, label, name):
+def test_an_unhashable_name_is_reported_as_absent(sim):
     """Each name-taking method returns its error envelope, not a TypeError."""
     failures = {
-        method: miss
+        f"{method}({label})": miss
+        for label, name in UNHASHABLE
         for method, call in _mujoco_lookups(sim).items()
         if (miss := _envelope_miss(call, name)) is not None
     }
-    assert not failures, f"a {label} name escaped or was accepted:\n" + "\n".join(
+    assert not failures, "an unhashable name escaped or was accepted:\n" + "\n".join(
         f"  {k}: {v}" for k, v in sorted(failures.items())
     )
 
@@ -195,10 +195,10 @@ class TestTheEnvelopeProbe:
             _envelope_miss(interrupt, ["crate"])
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_get_observation_answers_an_unhashable_name_without_raising(sim, label, name):
+def test_get_observation_answers_an_unhashable_name_without_raising(sim):
     """``get_observation`` has no error channel; it must still not raise."""
-    assert isinstance(sim.get_observation(robot_name=name), dict)
+    for label, name in UNHASHABLE:
+        assert isinstance(sim.get_observation(robot_name=name), dict), label
 
 
 def test_the_reported_message_names_the_value_and_what_exists(sim):
@@ -278,14 +278,14 @@ def _newton_engine():
     return engine
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_newton_reports_an_unhashable_name_the_same_way(label, name):
-    engine = _newton_engine()
-    for method in ("remove_robot", "get_robot_state", "list_bodies", "get_features"):
-        result = getattr(engine, method)(name)
-        assert isinstance(result, dict) and result.get("status") == "error", (
-            f"newton {method} accepted a {label} name: {result!r}"
-        )
+def test_newton_reports_an_unhashable_name_the_same_way():
+    for label, name in UNHASHABLE:
+        engine = _newton_engine()
+        for method in ("remove_robot", "get_robot_state", "list_bodies", "get_features"):
+            result = getattr(engine, method)(name)
+            assert isinstance(result, dict) and result.get("status") == "error", (
+                f"newton {method} accepted a {label} name: {result!r}"
+            )
 
 
 def test_newton_still_resolves_a_registered_name():
@@ -355,23 +355,23 @@ _ISAAC_ENVELOPE_LOOKUPS: dict[str, Callable[[Any, Any], Any]] = {
 }
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_isaac_reports_an_unhashable_name_the_same_way(label, name):
+def test_isaac_reports_an_unhashable_name_the_same_way():
     """Each Isaac method returns its error envelope, not a TypeError."""
     failures = {
-        method: miss
+        f"{method}({label})": miss
+        for label, name in UNHASHABLE
         for method, call in _ISAAC_ENVELOPE_LOOKUPS.items()
         if (miss := _envelope_miss(lambda n, _c=call: _c(_isaac_engine(), n), name)) is not None
     }
-    assert not failures, f"a {label} name escaped or was accepted on Isaac:\n" + "\n".join(
+    assert not failures, "an unhashable name escaped or was accepted on Isaac:\n" + "\n".join(
         f"  {k}: {v}" for k, v in sorted(failures.items())
     )
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_isaac_get_observation_answers_an_unhashable_name_empty(label, name):
+def test_isaac_get_observation_answers_an_unhashable_name_empty():
     """``get_observation`` has no error channel on Isaac either."""
-    assert _isaac_engine().get_observation(robot_name=name) == {}
+    for label, name in UNHASHABLE:
+        assert _isaac_engine().get_observation(robot_name=name) == {}, label
 
 
 def _mjlab_engine() -> Any:
@@ -406,37 +406,36 @@ _ROSTER_ENGINES: dict[str, Callable[[Any], Any]] = {
 }
 
 
-@pytest.mark.parametrize("method", ["robot_joint_names", "robot_action_keys"])
 @pytest.mark.parametrize("backend", sorted(_ROSTER_ENGINES))
-@pytest.mark.parametrize(
-    "name", ["arm_", "", *(n for _, n in UNHASHABLE)], ids=["typo", "empty", *(lbl for lbl, _ in UNHASHABLE)]
-)
-def test_a_roster_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend, method, name):
-    engine = _ROSTER_ENGINES[backend](sim)
-    with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
-        getattr(engine, method)(name)
-    assert getattr(engine, method)("arm"), f"{backend} {method}('arm') lost the registered robot"
+def test_a_roster_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend):
+    names: list[Any] = ["arm_", "", *(n for _, n in UNHASHABLE)]
+    for method in ("robot_joint_names", "robot_action_keys"):
+        for name in names:
+            engine = _ROSTER_ENGINES[backend](sim)
+            with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
+                getattr(engine, method)(name)
+            assert getattr(engine, method)("arm"), f"{backend} {method}('arm') lost the registered robot"
 
 
-@pytest.mark.parametrize("method", ["actuator_ranges", "saturated_actuators"])
 @pytest.mark.parametrize("backend", sorted(_ROSTER_ENGINES))
-@pytest.mark.parametrize("name", ["arm_", ""], ids=["typo", "empty"])
-def test_a_limits_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend, method, name):
+def test_a_limits_lookup_refuses_a_name_the_scene_does_not_hold(sim, backend):
     """``{}`` and ``None`` are answers about a robot ("no limits", "cannot tell"), not about a missing one."""
-    with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
-        getattr(_ROSTER_ENGINES[backend](sim), method)(name)
+    for method in ("actuator_ranges", "saturated_actuators"):
+        for name in ("arm_", ""):
+            with pytest.raises(ValueError, match=r"not found\..*Available robots: \['arm'\]"):
+                getattr(_ROSTER_ENGINES[backend](sim), method)(name)
 
 
-@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-def test_isaac_raises_the_documented_miss_for_an_unhashable_camera(label, name):
+def test_isaac_raises_the_documented_miss_for_an_unhashable_camera():
     """``get_camera_params`` reports through an exception, so it must be the documented one.
 
     Its contract names ``KeyError`` for an unknown camera. A partial lookup
     replaced that with a ``TypeError`` out of the membership test itself, which
     no caller handling the documented failure would catch.
     """
-    with pytest.raises(KeyError, match="not found"):
-        _isaac_engine().get_camera_params(camera_name=name)
+    for _label, name in UNHASHABLE:
+        with pytest.raises(KeyError, match="not found"):
+            _isaac_engine().get_camera_params(camera_name=name)
 
 
 def test_isaac_resolves_a_registered_name_against_the_registry_alone():
@@ -737,8 +736,7 @@ class TestTheRefusalTheUpstreamExemptionRestsOn:
     is what stops the exemption outliving it.
     """
 
-    @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
-    def test_the_policy_hook_is_never_reached_for_a_refused_name(self, sim, label, name):
+    def test_the_policy_hook_is_never_reached_for_a_refused_name(self, sim):
         calls: list[Any] = []
         original = sim._maybe_install_action_controller
 
@@ -748,15 +746,16 @@ class TestTheRefusalTheUpstreamExemptionRestsOn:
 
         sim._maybe_install_action_controller = spy  # type: ignore[method-assign]
         try:
-            for method, call in (
-                ("run_policy", lambda n: sim.run_policy(robot_name=n, n_steps=2)),
-                ("eval_policy", lambda n: sim.eval_policy(robot_name=n, n_episodes=1, max_steps=2)),
-            ):
-                result = call(name)
-                assert isinstance(result, dict) and result.get("status") == "error", (
-                    f"{method} accepted a {label} robot_name: {result!r}"
-                )
-            assert not calls, f"a {label} robot_name reached the WBC hook via {calls!r}"
+            for label, name in UNHASHABLE:
+                for method, call in (
+                    ("run_policy", lambda n: sim.run_policy(robot_name=n, n_steps=2)),
+                    ("eval_policy", lambda n: sim.eval_policy(robot_name=n, n_episodes=1, max_steps=2)),
+                ):
+                    result = call(name)
+                    assert isinstance(result, dict) and result.get("status") == "error", (
+                        f"{method} accepted a {label} robot_name: {result!r}"
+                    )
+                assert not calls, f"a {label} robot_name reached the WBC hook via {calls!r}"
         finally:
             del sim._maybe_install_action_controller
 

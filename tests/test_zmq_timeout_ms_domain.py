@@ -310,45 +310,32 @@ class TestBothClientsRefuseTheSameBudgets:
     """Every ZMQ client shares one domain, so its verdicts are the helper's."""
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
-    @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
-    def test_an_unusable_budget_is_refused_as_a_value_error(self, cls: type, label: str, value: Any) -> None:
-        with pytest.raises(ValueError, match="timeout_ms"):
-            cls(host="127.0.0.1", port=5555, timeout_ms=value)
-
-    @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
-    def test_the_refusal_names_the_class_that_received_it(self, cls: type) -> None:
-        with pytest.raises(ValueError, match=cls.__name__):
-            cls(host="127.0.0.1", port=5555, timeout_ms=0)
-
-    @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
-    def test_every_client_agrees_with_the_shared_domain(self, label: str, value: Any) -> None:
+    def test_every_client_refuses_with_the_shared_domains_words(self, cls: type) -> None:
         """Each client's verdict is the helper's verdict, word for word.
 
         Stated against the helper rather than pairwise so it holds with one
-        client as it did with two, and a third joins by construction.
+        client as it did with two, and a third joins by construction. The
+        helper's message names the surface and the parameter
+        (:class:`TestTheSharedDomain`), so this is also the class-and-parameter
+        naming of the refusal.
         """
-        for cls in CLIENTS:
+        for label, value in UNUSABLE:
             _, expected = coerce_zmq_timeout_ms(cls.__name__, "timeout_ms", value)
-            assert expected is not None
+            assert expected is not None, label
             with pytest.raises(ValueError) as excinfo:
                 cls(host="127.0.0.1", port=5555, timeout_ms=value)
-            assert str(excinfo.value) == expected
-
-    @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
-    def test_a_refused_budget_opens_no_socket(self, cls: type) -> None:
-        """The guard precedes ``_load_zmq``, so nothing is created to leak.
-
-        Also why the report is identical with and without the optional extra
-        installed: the refusal happens before the dependency is loaded.
-        """
-        with pytest.raises(ValueError):
-            cls(host="127.0.0.1", port=5555, timeout_ms=0)
+            assert str(excinfo.value) == expected, label
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     def test_a_refused_budget_is_reported_before_the_transport_is_loaded(
         self, cls: type, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Made non-vacuous by breaking the loader: the guard still answers."""
+        """The guard precedes ``_load_zmq``, so nothing is created to leak.
+
+        Also why the report is identical with and without the optional extra
+        installed. Made non-vacuous by breaking the loader: the guard still
+        answers.
+        """
         module = inspect.getmodule(cls)
         assert module is not None
 
@@ -376,8 +363,7 @@ class TestAHealthyServerIsNoLongerReportedUnreachable:
                 client.context.term()
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
-    @pytest.mark.parametrize("value", [0, False, True, -1], ids=["zero", "false", "true", "minus-one"])
-    def test_an_unusable_budget_can_no_longer_call_a_live_sidecar_unreachable(self, cls: type, value: Any) -> None:
+    def test_an_unusable_budget_can_no_longer_call_a_live_sidecar_unreachable(self, cls: type) -> None:
         """Before this change ``ping()`` returned ``False`` here - or hung.
 
         ``ping`` swallows every exception and answers ``False``, logging the
@@ -386,8 +372,9 @@ class TestAHealthyServerIsNoLongerReportedUnreachable:
         than wrong: it blocked forever, so ``ping`` could not answer at all.
         """
         with sidecar_for(cls) as sidecar:
-            with pytest.raises(ValueError, match="timeout_ms"):
-                cls(host="127.0.0.1", port=sidecar.port, timeout_ms=value)
+            for value in (0, False, True, -1):
+                with pytest.raises(ValueError, match="timeout_ms"):
+                    cls(host="127.0.0.1", port=sidecar.port, timeout_ms=value)
 
 
 @requires_wire
@@ -669,15 +656,12 @@ class TestZmqStillTreatsTheseValuesAsMeasured:
         with pytest.raises(zmq.ZMQError):
             socket.setsockopt(zmq.RCVTIMEO, -2)
 
-    @pytest.mark.parametrize(
-        "value",
-        [float("nan"), float("inf"), 1.5, 15000.0, "15000", None, [15000]],
-        ids=["nan", "inf", "fractional", "integral-float", "string", "none", "list"],
-    )
-    def test_a_non_int_never_reaches_the_socket_at_all(self, socket: Any, value: Any) -> None:
+    def test_a_non_int_never_reaches_the_socket_at_all(self, socket: Any) -> None:
         """Including ``15000.0`` - a usable budget ``setsockopt`` still refuses."""
-        with pytest.raises(TypeError):
-            socket.setsockopt(zmq.RCVTIMEO, value)
+        value: Any
+        for value in [float("nan"), float("inf"), 1.5, 15000.0, "15000", None, [15000]]:
+            with pytest.raises(TypeError):
+                socket.setsockopt(zmq.RCVTIMEO, value)
 
     def test_a_numpy_integer_is_also_refused_by_setsockopt(self, socket: Any) -> None:
         """The measurement the coercion exists for."""

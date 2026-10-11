@@ -175,24 +175,24 @@ class TestTheCoercingGuardIsTotal:
     the surviving guard cannot be narrowed without a failure here.
     """
 
-    @pytest.mark.parametrize("vec", UNUSABLE)
-    def test_an_unusable_pose_is_refused_by_the_coercing_guard(self, vec: Any) -> None:
-        value, err = coerce_pose_vector("add_camera", "position", vec, 3)
-        assert err is not None, f"{vec!r} passed the coercing guard"
-        assert value is None
-        # ... and the twin agrees, so neither ordering of the two would differ.
-        assert pose_vector_error("add_camera", "position", vec, 3) is not None
+    def test_an_unusable_pose_is_refused_by_the_coercing_guard(self) -> None:
+        for vec in UNUSABLE:
+            value, err = coerce_pose_vector("add_camera", "position", vec, 3)
+            assert err is not None, f"{vec!r} passed the coercing guard"
+            assert value is None, repr(vec)
+            # ... and the twin agrees, so neither ordering of the two would differ.
+            assert pose_vector_error("add_camera", "position", vec, 3) is not None, repr(vec)
 
-    @pytest.mark.parametrize("vec", USABLE)
-    def test_an_accepted_pose_is_one_the_twin_also_accepts(self, vec: Any) -> None:
-        value, err = coerce_pose_vector("add_camera", "position", vec, 3)
-        assert err is None, err
-        assert value is not None
-        assert pose_vector_error("add_camera", "position", value, 3) is None
+    def test_an_accepted_pose_is_one_the_twin_also_accepts(self) -> None:
+        for vec in USABLE:
+            value, err = coerce_pose_vector("add_camera", "position", vec, 3)
+            assert err is None, err
+            assert value is not None, repr(vec)
+            assert pose_vector_error("add_camera", "position", value, 3) is None, repr(vec)
 
-    @pytest.mark.parametrize("default", SUBSTITUTED_DEFAULTS)
-    def test_the_substituted_defaults_satisfy_the_rule(self, default: list[float]) -> None:
-        assert pose_vector_error("add_camera", "position", default, 3) is None
+    def test_the_substituted_defaults_satisfy_the_rule(self) -> None:
+        for default in SUBSTITUTED_DEFAULTS:
+            assert pose_vector_error("add_camera", "position", default, 3) is None, default
 
     def test_an_omitted_pose_is_not_refused(self) -> None:
         """``None`` means omitted, so the caller's own default applies."""
@@ -203,14 +203,14 @@ class TestTheSurvivingGuardReportsTheSharedVerdict:
     """``add_camera``'s refusal is the shared rule's message, verbatim."""
 
     @pytest.mark.parametrize("param", ["position", "target"])
-    @pytest.mark.parametrize("vec", UNUSABLE)
-    def test_an_unusable_pose_is_refused_with_the_shared_message(self, sim, param: str, vec: Any) -> None:
-        kwargs: dict[str, Any] = {"position": [0.55, 0.0, 0.35], "target": [0.2, 0.0, 0.05]}
-        kwargs[param] = vec
-        result = sim.add_camera("cam", **kwargs)
-        assert result["status"] == "error", result
-        assert _text(result) == coerce_pose_vector("add_camera", param, vec, 3)[1]
-        assert "cam" not in sim._world.cameras
+    def test_an_unusable_pose_is_refused_with_the_shared_message(self, sim, param: str) -> None:
+        for vec in UNUSABLE:
+            kwargs: dict[str, Any] = {"position": [0.55, 0.0, 0.35], "target": [0.2, 0.0, 0.05]}
+            kwargs[param] = vec
+            result = sim.add_camera("cam", **kwargs)
+            assert result["status"] == "error", result
+            assert _text(result) == coerce_pose_vector("add_camera", param, vec, 3)[1], repr(vec)
+            assert "cam" not in sim._world.cameras, repr(vec)
 
     def test_a_usable_pose_still_registers_the_camera(self, sim) -> None:
         result = sim.add_camera("front", position=np.array([0.55, 0.0, 0.35]), target=[0.2, 0.0, 0.05])

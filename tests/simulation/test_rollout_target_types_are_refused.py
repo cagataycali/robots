@@ -87,21 +87,20 @@ def _wait_until_idle(engine: Simulation, timeout: float = 15.0) -> None:
 
 
 @pytest.mark.parametrize("facade", ["run_policy", "start_policy", "eval_policy", "evaluate_benchmark"])
-@pytest.mark.parametrize(("label", "kwargs", "words"), CASES, ids=[c[0] for c in CASES])
-def test_a_non_string_target_is_refused_before_anything_is_driven(sim, facade, label, kwargs, words):
+def test_a_non_string_target_is_refused_before_anything_is_driven(sim, facade):
     applied: list[Any] = []
     real_send = sim.send_action
     sim.send_action = lambda *a, **k: (applied.append(a), real_send(*a, **k))[1]
     try:
-        result = _call(sim, facade, kwargs)
-        _wait_until_idle(sim)
+        for label, kwargs, words in CASES:
+            result = _call(sim, facade, kwargs)
+            _wait_until_idle(sim)
+            assert result["status"] == "error", (label, result)
+            assert _text(result).startswith(f"{facade}: "), (label, result)
+            assert words in _text(result), (label, result)
+            assert applied == [], label
     finally:
         sim.send_action = real_send
-
-    assert result["status"] == "error", result
-    assert _text(result).startswith(f"{facade}: "), result
-    assert words in _text(result), result
-    assert applied == []
 
 
 def test_a_string_instruction_still_drives_the_arm(sim):
