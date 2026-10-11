@@ -39,72 +39,37 @@ _ROBOTS = _load_registry()
 # Robots that have simulation assets (asset.dir + asset.model_xml).
 # Hardware-only robots (e.g. reachy2) have no 'asset' key.
 _SIM_ROBOTS = {name: info for name, info in _ROBOTS.items() if "asset" in info}
-_SIM_ROBOT_NAMES = list(_SIM_ROBOTS.keys())
-
-
-#
-# Tests for ALL robots (sim + hardware-only)
-#
 
 
 @pytest.mark.parametrize("name", list(_ROBOTS.keys()), ids=list(_ROBOTS.keys()))
-def test_registry_entry_is_well_formed(name: str) -> None:
-    """Every robot must have a description and category."""
+def test_registry_entry_is_well_formed_and_resolves(name: str) -> None:
+    """Every robot has a description and category and resolves through the API.
+
+    A sim-capable robot (one with an ``asset`` key; hardware-only robots such
+    as reachy2 have none) also names a non-empty ``asset.dir`` and
+    ``asset.model_xml``, keeps every asset path relative and free of ``..``,
+    and spells its model and scene files with an ``.xml`` extension.
+    """
+    from strands_robots.registry import get_robot, resolve_name
+
     info = _ROBOTS[name]
     assert "description" in info, f"Robot '{name}' missing 'description'"
     assert "category" in info, f"Robot '{name}' missing 'category'"
+    assert resolve_name(name) is not None, f"resolve_name({name!r}) returned None"
+    assert get_robot(name) is not None, f"get_robot({name!r}) returned None"
 
-
-@pytest.mark.parametrize("name", list(_ROBOTS.keys()), ids=list(_ROBOTS.keys()))
-def test_registry_resolve_via_api(name: str) -> None:
-    """Verify the registry API can look up each robot without errors."""
-    from strands_robots.registry import get_robot, resolve_name
-
-    canonical = resolve_name(name)
-    assert canonical is not None, f"resolve_name({name!r}) returned None"
-
-    info = get_robot(name)
-    assert info is not None, f"get_robot({name!r}) returned None"
-
-
-#
-# Tests for sim-capable robots only (have 'asset' key)
-#
-
-
-@pytest.mark.parametrize("name", _SIM_ROBOT_NAMES, ids=_SIM_ROBOT_NAMES)
-def test_sim_robot_has_required_asset_fields(name: str) -> None:
-    """Sim robots must have asset.dir and asset.model_xml."""
+    if name not in _SIM_ROBOTS:
+        return
     asset = _SIM_ROBOTS[name]["asset"]
     assert "dir" in asset, f"Robot '{name}' missing 'asset.dir'"
     assert "model_xml" in asset, f"Robot '{name}' missing 'asset.model_xml'"
     assert isinstance(asset["dir"], str) and asset["dir"], f"Robot '{name}' has empty 'asset.dir'"
     assert isinstance(asset["model_xml"], str) and asset["model_xml"], f"Robot '{name}' has empty 'asset.model_xml'"
-
-
-@pytest.mark.parametrize("name", _SIM_ROBOT_NAMES, ids=_SIM_ROBOT_NAMES)
-def test_sim_robot_paths_are_safe(name: str) -> None:
-    """No registry path should contain traversal sequences."""
-    asset = _SIM_ROBOTS[name]["asset"]
-    dir_name = asset.get("dir", "")
-    model_xml = asset.get("model_xml", "")
-    scene_xml = asset.get("scene_xml", "")
-
-    for field, value in [("dir", dir_name), ("model_xml", model_xml), ("scene_xml", scene_xml)]:
+    for field in ("dir", "model_xml", "scene_xml"):
+        value = asset.get(field, "")
         if not value:
             continue
         assert ".." not in value, f"Robot '{name}' asset.{field} contains '..': {value!r}"
         assert not value.startswith("/"), f"Robot '{name}' asset.{field} is absolute: {value!r}"
-
-
-@pytest.mark.parametrize("name", _SIM_ROBOT_NAMES, ids=_SIM_ROBOT_NAMES)
-def test_sim_robot_xml_has_xml_extension(name: str) -> None:
-    """model_xml and scene_xml should end with .xml."""
-    asset = _SIM_ROBOTS[name]["asset"]
-    model_xml = asset.get("model_xml", "")
-    scene_xml = asset.get("scene_xml", "")
-
-    if model_xml:
-        assert model_xml.endswith(".xml"), f"Robot '{name}' model_xml doesn't end with .xml: {model_xml!r}"
-    if scene_xml:
-        assert scene_xml.endswith(".xml"), f"Robot '{name}' scene_xml doesn't end with .xml: {scene_xml!r}"
+        if field != "dir":
+            assert value.endswith(".xml"), f"Robot '{name}' {field} doesn't end with .xml: {value!r}"

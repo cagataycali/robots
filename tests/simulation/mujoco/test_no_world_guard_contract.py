@@ -119,23 +119,17 @@ def partial_world_sim():
 
 
 @pytest.mark.parametrize(("method", "args", "kwargs"), GUARDED_CALLS, ids=[c[0] for c in GUARDED_CALLS])
-def test_no_world_returns_unified_error(no_world_sim, method, args, kwargs):
-    """With no world at all, every guarded method returns the exact unified text."""
-    result = getattr(no_world_sim, method)(*args, **kwargs)
-    _assert_no_world_error(result, method)
+def test_no_world_and_a_partial_world_return_the_unified_error(no_world_sim, partial_world_sim, method, args, kwargs):
+    """With no world, or a partial one, every guarded method returns the exact unified text.
 
-
-@pytest.mark.parametrize(("method", "args", "kwargs"), GUARDED_CALLS, ids=[c[0] for c in GUARDED_CALLS])
-def test_partial_world_returns_unified_error(partial_world_sim, method, args, kwargs):
-    """A partial world (model/data still None) must NOT slip past the guard.
-
+    A partial world (model/data still None) must NOT slip past the guard.
     Pre-fix, ``send_action``/``replace_scene_mjcf``/``patch_scene_mjcf``/
     ``add_robot`` only checked ``_world is None`` (or ``_model`` alone) and so
     accepted this state, then either crashed or silently recovered. They must
     now report the standard no-world error like every other guarded method.
     """
-    result = getattr(partial_world_sim, method)(*args, **kwargs)
-    _assert_no_world_error(result, method)
+    _assert_no_world_error(getattr(no_world_sim, method)(*args, **kwargs), method)
+    _assert_no_world_error(getattr(partial_world_sim, method)(*args, **kwargs), method)
 
 
 def test_require_world_helper_is_wired_to_the_constant(no_world_sim):

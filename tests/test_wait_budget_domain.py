@@ -247,18 +247,49 @@ class TestTheStoredPeriodIsTheWholeCadenceOfTheLoop:
         assert timeouts == [0.02] * 3
 
 
-class TestTheSharedDomain:
-    """``positive_finite_number_error`` decides which values name a cadence."""
+class TestTheSharedDomainDecidesEverySurface:
+    """``positive_finite_number_error`` decides which values name a cadence, on every surface.
+
+    Each guard runs before its surface probes for an optional transport, which
+    lets the same caller mistake report identically on an install with the
+    ``[ros2]`` extra and one without it and builds no DDS or rclpy state for a
+    cadence that was never usable. The rclpy guard also precedes the
+    process-wide ``ROS_DOMAIN_ID`` write: that write lands before ``rclpy`` is
+    imported, so a construction that could never succeed used to move it
+    anyway. The two bridges are alternative transports for the same robot - a
+    caller switches with ``Robot(ros2_transport=...)`` - so neither may accept
+    a period the other refuses.
+    """
 
     @pytest.mark.parametrize("value", UNUSABLE_PERIODS, ids=repr)
-    def test_a_value_that_cannot_pace_a_loop_is_refused(self, value: Any) -> None:
+    def test_a_value_that_cannot_pace_a_loop_is_refused_before_any_transport_or_environment_write(
+        self, value: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os
+
         error = positive_finite_number_error(value, "poll_period", "Surface")
         assert error is not None
         assert error.startswith("Surface: poll_period must be")
 
+        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("the cyclonedds probe must not be reached")
+
+        monkeypatch.setattr(rtps_mod, "require_optional", _unreachable)
+        with pytest.raises(ValueError, match="poll_period must be"):
+            HardwareRtpsBridge(poll_period=value)
+
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
+        with pytest.raises(ValueError, match="spin_period must be"):
+            HardwareRosBridge(domain_id=11, spin_period=value)
+        assert os.environ["ROS_DOMAIN_ID"] == "7"
+        accepted = [name for name, fn in SURFACES if not _refuses(fn, value)]
+        assert accepted == [], f"accepted by {accepted}"
+
     @pytest.mark.parametrize("value", USABLE_PERIODS, ids=repr)
-    def test_a_period_that_paces_a_loop_is_accepted(self, value: float) -> None:
+    def test_a_period_that_paces_a_loop_is_accepted_by_every_surface(self, value: float) -> None:
         assert positive_finite_number_error(value, "poll_period", "Surface") is None
+        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
+        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
 
     def test_a_period_past_the_float_range_is_refused_for_its_own_reason(self) -> None:
         """``10**400`` is positive and finite, so ``must be > 0`` would be false of it.
@@ -270,26 +301,6 @@ class TestTheSharedDomain:
         error = positive_finite_number_error(10**400, "poll_period", "Surface")
         assert error is not None
         assert "within the range of a 64-bit float" in error
-
-
-class TestARefusedPeriodReachesNoTransport:
-    """Each guard runs before its surface probes for an optional transport.
-
-    Placing it there is what lets the same caller mistake report identically on
-    an install with the ``[ros2]`` extra and one without it, and it means no DDS
-    or rclpy state is built for a cadence that was never usable.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_PERIODS, ids=repr)
-    def test_the_rtps_bridge_refuses_before_probing_for_cyclonedds(
-        self, value: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def _unreachable(*_args: Any, **_kwargs: Any) -> Any:
-            raise AssertionError("the cyclonedds probe must not be reached")
-
-        monkeypatch.setattr(rtps_mod, "require_optional", _unreachable)
-        with pytest.raises(ValueError, match="poll_period must be"):
-            HardwareRtpsBridge(poll_period=value)
 
     def test_a_usable_period_still_reaches_the_cyclonedds_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
         probed: list[str] = []
@@ -303,61 +314,15 @@ class TestARefusedPeriodReachesNoTransport:
             HardwareRtpsBridge(poll_period=0.02)
         assert probed == ["cyclonedds"]
 
-    @pytest.mark.parametrize("value", UNUSABLE_PERIODS, ids=repr)
-    def test_the_rclpy_bridge_refuses_before_its_base_constructor_runs(self, value: Any) -> None:
-        """``rclpy`` is probed by the base constructor, so the guard precedes it."""
-        with pytest.raises(ValueError, match="spin_period must be"):
-            HardwareRosBridge(spin_period=value)
+    def test_a_usable_period_still_reaches_the_rclpy_probe_and_pins_the_domain(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os
 
-    def test_a_usable_period_still_reaches_the_rclpy_probe(self) -> None:
+        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
         with blocked("rclpy"), pytest.raises(ImportError, match="rclpy"):
-            HardwareRosBridge(spin_period=0.02)
-
-
-class TestARefusedSpinPeriodLeavesTheProcessEnvironmentAlone:
-    """The rclpy guard precedes the process-wide ``ROS_DOMAIN_ID`` write.
-
-    That write is global to the process and lands before ``rclpy`` is imported,
-    so a construction that can never succeed used to move it anyway: the period
-    was read well after the base had already pinned the domain. Refusing first
-    means a rejected call has no side effect at all.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_PERIODS, ids=repr)
-    def test_a_refused_period_does_not_touch_ros_domain_id(self, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        import os
-
-        with pytest.raises(ValueError, match="spin_period must be"):
-            HardwareRosBridge(domain_id=11, spin_period=value)
-        assert os.environ["ROS_DOMAIN_ID"] == "7"
-
-    def test_a_usable_period_still_lets_the_domain_be_pinned(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ROS_DOMAIN_ID", "7")
-        import os
-
-        with blocked("rclpy"), pytest.raises(ImportError):
             HardwareRosBridge(domain_id=11, spin_period=0.02)
         assert os.environ["ROS_DOMAIN_ID"] == "11"
-
-
-class TestBothSurfacesRefuseTheSamePeriods:
-    """Neither surface may accept a period the other one refuses.
-
-    The two bridges are alternative transports for the same robot - a caller
-    switches between them with ``Robot(ros2_transport=...)`` - so a cadence one
-    of them runs a hot thread on is not one the other may accept either.
-    """
-
-    @pytest.mark.parametrize("value", UNUSABLE_PERIODS, ids=repr)
-    def test_an_unusable_period_is_refused_by_every_surface(self, value: Any) -> None:
-        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
-        assert all(refused.values()), f"accepted by {[n for n, r in refused.items() if not r]}"
-
-    @pytest.mark.parametrize("value", USABLE_PERIODS, ids=repr)
-    def test_a_usable_period_is_refused_by_no_surface(self, value: float) -> None:
-        refused = {name: _refuses(fn, value) for name, fn in SURFACES}
-        assert not any(refused.values()), f"refused by {[n for n, r in refused.items() if r]}"
 
     @pytest.mark.parametrize("name,fn", SURFACES, ids=SURFACE_IDS)
     def test_each_surface_names_the_parameter_the_caller_used(self, name: str, fn: Any) -> None:

@@ -182,46 +182,19 @@ def test_the_population_is_the_whole_fleet() -> None:
     )
 
 
-@pytest.mark.parametrize(("name", "cls"), _CLASSES, ids=[n for n, _ in _CLASSES])
-@pytest.mark.parametrize("action", _UNDECLARED, ids=[repr(a) for a in _UNDECLARED])
-def test_an_undeclared_verb_is_refused_and_names_the_declared_ones(name: str, cls: type[Any], action: Any) -> None:
-    """The refusal has to be actionable: a caller cannot guess the vocabulary."""
-    driver = _build(cls)
-    verbs = declared_verbs(driver.tool_spec)
-    if action in verbs:
-        # A driver that deliberately declares this verb (the Reachy Mini has a
-        # real ``home``) is graded on its dispatch elsewhere; there is no
-        # undeclared-verb premise for this cell.
-        pytest.skip(f"{name} declares {action!r}")
+def _halt_recorder(name: str, driver: Any) -> list[str]:
+    """Replace every halt member ``driver`` has with a recorder; return its log.
 
-    envelope = _invoke(driver, action)
-
-    assert envelope["status"] == "error", f"{name} ran undeclared verb {action!r} instead of refusing it"
-    text = _text(envelope)
-    for verb in verbs:
-        assert verb in text, f"{name}'s refusal must name declared verb {verb!r}: {text}"
-
-
-@pytest.mark.parametrize(("name", "cls"), _CLASSES, ids=[n for n, _ in _CLASSES])
-@pytest.mark.parametrize("action", _UNDECLARED, ids=[repr(a) for a in _UNDECLARED])
-def test_an_undeclared_verb_does_not_reach_the_halt(name: str, cls: type[Any], action: Any) -> None:
-    """The envelope is half of it; the robot must not have been halted.
-
-    A refusal that arrived *after* the halt ran would satisfy the cell above and
-    still be the defect - the fallthrough's whole cost is that a read request
-    stopped the robot.
+    The stand-in answers a success envelope rather than ``None``, and matches
+    the sync/async shape of the member it replaces, so a dispatcher that reaches
+    the halt fails on the caller's own assertion rather than on a ``TypeError``
+    from awaiting or unpacking the result.
     """
-    driver = _build(cls)
-    if action in declared_verbs(driver.tool_spec):
-        pytest.skip(f"{name} declares {action!r}")
     called: list[str] = []
     patched = [member for member in _HALT_MEMBERS if hasattr(driver, member)]
     assert patched, f"{name} exposes none of {_HALT_MEMBERS}, so no halt could be observed"
     for member in patched:
-        # The stand-in answers a success envelope rather than ``None``, and
-        # matches the sync/async shape of the member it replaces, so a
-        # dispatcher that reaches the halt fails on this cell's own assertion
-        # rather than on a ``TypeError`` from awaiting or unpacking the result.
+
         def _record(*args: Any, _member: str = member, **kwargs: Any) -> dict[str, Any]:
             called.append(_member)
             return {"status": "success", "content": [{"text": f"{_member} stand-in"}]}
@@ -231,10 +204,37 @@ def test_an_undeclared_verb_does_not_reach_the_halt(name: str, cls: type[Any], a
 
         original = getattr(driver, member)
         setattr(driver, member, _record_async if inspect.iscoroutinefunction(original) else _record)
+    return called
 
-    _invoke(driver, action)
 
-    assert called == [], f"{name} halted the robot for undeclared verb {action!r} (called {called})"
+@pytest.mark.parametrize(("name", "cls"), _CLASSES, ids=[n for n, _ in _CLASSES])
+def test_an_undeclared_verb_is_refused_by_name_and_does_not_reach_the_halt(name: str, cls: type[Any]) -> None:
+    """Each undeclared verb is refused naming the declared ones, and nothing halted.
+
+    The refusal has to be actionable - a caller cannot guess the vocabulary -
+    and the envelope is only half of it: a refusal that arrived *after* the
+    halt ran would still be the defect, because the fallthrough's whole cost is
+    that a read request stopped the robot. A verb the driver deliberately
+    declares (the Reachy Mini has a real ``home``) is graded on its dispatch
+    elsewhere and has no undeclared-verb premise here.
+    """
+    probed: list[Any] = []
+    for action in _UNDECLARED:
+        driver = _build(cls)
+        verbs = declared_verbs(driver.tool_spec)
+        if action in verbs:
+            continue
+        probed.append(action)
+        called = _halt_recorder(name, driver)
+
+        envelope = _invoke(driver, action)
+
+        assert called == [], f"{name} halted the robot for undeclared verb {action!r} (called {called})"
+        assert envelope["status"] == "error", f"{name} ran undeclared verb {action!r} instead of refusing it"
+        text = _text(envelope)
+        for verb in verbs:
+            assert verb in text, f"{name}'s refusal must name declared verb {verb!r}: {text}"
+    assert len(probed) >= len(_UNDECLARED) - 1, f"{name} declares most of {_UNDECLARED}, so this probed {probed}"
 
 
 @pytest.mark.parametrize(("name", "cls"), _CLASSES, ids=[n for n, _ in _CLASSES])

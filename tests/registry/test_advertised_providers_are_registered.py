@@ -220,20 +220,15 @@ def test_every_provider_schema_advertises_examples_in_a_readable_form() -> None:
 
 
 @pytest.mark.parametrize(("site", "name"), _ADVERTISED)
-def test_every_advertised_provider_example_is_registered(site: str, name: str) -> None:
-    """Every provider a schema names as an example must be registered."""
-    registered = _registered_spellings()
-    assert name in registered, f"{site} advertises unregistered provider {name!r}; registered={sorted(registered)}"
-
-
-@pytest.mark.parametrize(("site", "name"), _ADVERTISED)
-def test_every_advertised_provider_example_resolves_to_itself(site: str, name: str) -> None:
-    """An advertised name must resolve to its own provider, not the fallback.
+def test_every_advertised_provider_example_is_registered_and_resolves_to_itself(site: str, name: str) -> None:
+    """Every provider a schema names as an example is registered and resolves to itself.
 
     ``resolve_policy`` redirects an unrecognised string to ``lerobot_local``,
     so a phantom name "resolves" and misdirects rather than refusing. Asserting
     the resolved provider equals the advertised name is what separates the two.
     """
+    registered = _registered_spellings()
+    assert name in registered, f"{site} advertises unregistered provider {name!r}; registered={sorted(registered)}"
     provider, _ = resolve_policy(name)
     assert provider == name, f"{site} advertises {name!r}, which resolves to {provider!r} (phantom/misdirecting)"
 

@@ -274,73 +274,46 @@ _IDS = [domain.gate.strip("_").removesuffix("_problems") for domain in DOMAINS]
 
 
 @pytest.mark.parametrize("domain", DOMAINS, ids=_IDS)
-class TestTheReadersAndTheGateAreTheSameSet:
-    """The biconditional, both ways, for every shared domain in the table."""
+def test_the_readers_and_the_gate_are_the_same_set(domain: SharedDomain) -> None:
+    """The biconditional, both ways, for one shared domain in the table.
 
-    @staticmethod
-    def _readers(domain: SharedDomain) -> set[str]:
-        return {name for name, source in _trainer_sources().items() if reads_spec_field(source, domain.fields)}
-
-    def test_the_reader_set_is_the_expected_one(self, domain: SharedDomain) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        assert self._readers(domain) == set(domain.readers)
-
-    def test_every_reader_routes_through_the_gate(self, domain: SharedDomain) -> None:
-        adrift = sorted(
-            name
-            for name, source in _trainer_sources().items()
-            if reads_spec_field(source, domain.fields) and not calls_the_gate(source, domain.gate)
-        )
-        assert adrift == [], f"modules read {domain.fields} without {domain.gate}: {adrift}"
-
-    def test_no_module_gates_a_field_it_does_not_read(self, domain: SharedDomain) -> None:
-        """The other half: a gate is not a free extra check on an unread field."""
-        over_reaching = sorted(
-            name
-            for name, source in _trainer_sources().items()
-            if calls_the_gate(source, domain.gate) and not reads_spec_field(source, domain.fields)
-        )
-        assert over_reaching == sorted(domain.gates_without_reading), (
-            f"modules call {domain.gate} without reading {domain.fields}: {over_reaching}"
-        )
-
-    def test_the_only_comparisons_are_the_declared_ones(self, domain: SharedDomain) -> None:
-        """Any other comparison against a literal is a re-implemented domain."""
-        found = {
-            comparison
-            for source in _trainer_sources().values()
-            for comparison in comparisons_against_a_literal(source, domain.fields)
-        }
-        assert found == set(domain.comparisons)
-
-    def test_the_only_conversions_are_the_declared_ones(self, domain: SharedDomain) -> None:
-        """Any other conversion is a local type test the gate already makes."""
-        found = {
-            conversion
-            for source in _trainer_sources().values()
-            for conversion in conversions_of_the_field(source, domain.fields)
-        }
-        assert found == set(domain.conversions)
+    The reader set is the expected one (non-vacuity: a mis-rooted scan cannot
+    report a clean sweep over nothing); every reader routes through the gate; a
+    gate is not a free extra check on an unread field; and any other comparison
+    against a literal, or conversion of the field, is a re-implemented domain.
+    """
+    sources = _trainer_sources()
+    readers = {name for name, source in sources.items() if reads_spec_field(source, domain.fields)}
+    gated = {name for name, source in sources.items() if calls_the_gate(source, domain.gate)}
+    assert readers == set(domain.readers)
+    assert sorted(readers - gated) == [], (
+        f"modules read {domain.fields} without {domain.gate}: {sorted(readers - gated)}"
+    )
+    assert sorted(gated - readers) == sorted(domain.gates_without_reading), (
+        f"modules call {domain.gate} without reading {domain.fields}: {sorted(gated - readers)}"
+    )
+    comparisons = {
+        found for source in sources.values() for found in comparisons_against_a_literal(source, domain.fields)
+    }
+    assert comparisons == set(domain.comparisons)
+    conversions = {found for source in sources.values() for found in conversions_of_the_field(source, domain.fields)}
+    assert conversions == set(domain.conversions)
 
 
 class TestTheScannersDetectAPlantedDefect:
     """A scanner that silently matched nothing would look like a clean tree."""
 
     @pytest.mark.parametrize("domain", DOMAINS, ids=_IDS)
-    def test_a_reader_that_names_the_field_is_reported(self, domain: SharedDomain) -> None:
-        planted = f"def validate(self, spec):\n    return [] if spec.{domain.fields[0]} else []\n"
-        assert reads_spec_field(planted, domain.fields)
-        assert not calls_the_gate(planted, domain.gate)
-
-    @pytest.mark.parametrize("domain", DOMAINS, ids=_IDS)
-    def test_a_reader_that_forwards_the_field_by_name_is_reported(self, domain: SharedDomain) -> None:
-        """The form a transport-only provider takes: no attribute names the field."""
-        planted = (
+    def test_a_reader_that_names_or_forwards_the_field_is_reported(self, domain: SharedDomain) -> None:
+        """Both reader forms: an attribute, and the transport-only provider's name list."""
+        named = f"def validate(self, spec):\n    return [] if spec.{domain.fields[0]} else []\n"
+        forwarded = (
             f"FIELDS = ({domain.fields[0]!r},)\n"
             "def validate(self, spec):\n    return [getattr(spec, f) for f in FIELDS]\n"
         )
-        assert reads_spec_field(planted, domain.fields)
-        assert not calls_the_gate(planted, domain.gate)
+        for planted in (named, forwarded):
+            assert reads_spec_field(planted, domain.fields)
+            assert not calls_the_gate(planted, domain.gate)
 
     @pytest.mark.parametrize(
         "planted",

@@ -235,42 +235,29 @@ class TestTheFixturesAreWhatTheyClaim:
             f"the fixtures reach {sorted(reached)}; a conversion arm no fixture reaches is ungraded"
         )
 
-    @pytest.mark.parametrize(("label", "axis", "degrees"), ROTATIONS, ids=_ids(ROTATIONS))
-    def test_mujoco_compiles_every_rotation(self, tmp_path, label, axis, degrees):
-        """Each rotation fixture is a model MuJoCo accepts, so it has an oracle."""
-        quat = _mujoco_body_quat(_write_object(tmp_path, f'xyaxes="{_xyaxes(axis, degrees)}"', name=label))
-        assert np.isclose(float(np.linalg.norm(quat)), 1.0), f"MuJoCo compiled {label} to a non-unit {quat}"
-
-    @pytest.mark.parametrize(("label", "axis", "degrees"), ROTATIONS, ids=_ids(ROTATIONS))
-    def test_every_rotation_is_far_from_identity(self, tmp_path, label, axis, degrees):
-        """A reader that fell back to identity cannot pass any grading by coincidence."""
-        quat = _mujoco_body_quat(_write_object(tmp_path, f'xyaxes="{_xyaxes(axis, degrees)}"', name=label))
-        assert _same_rotation(quat, IDENTITY) > 0.1, f"{label} compiles to {quat}, too close to identity to grade"
-
-    @pytest.mark.parametrize(("label", "declaration"), ANTIPODAL_ZAXES, ids=_ids(ANTIPODAL_ZAXES))
-    def test_mujoco_compiles_every_antipodal_zaxis(self, tmp_path, label, declaration):
-        """The axis opposite ``+z`` is a model MuJoCo accepts, not one it refuses."""
-        quat = _mujoco_body_quat(_write_object(tmp_path, f'zaxis="{declaration}"', name=f"z_{label}"))
-        assert _same_rotation(quat, IDENTITY) > 0.1, f"zaxis {declaration!r} compiles to {quat}, too close to identity"
-
-    @pytest.mark.parametrize(("label", "body_attrs", "compiler"), UNUSABLE, ids=_ids(UNUSABLE))
-    def test_mujoco_refuses_every_unusable_declaration(self, tmp_path, label, body_attrs, compiler):
-        """These have no compiled answer to grade against, which is why they are
-        graded against the tolerated reading instead."""
-        path = _write_object(tmp_path, body_attrs, compiler, name=f"u_{label}")
-        with pytest.raises(ValueError):
-            mujoco.MjModel.from_xml_path(path)
-
 
 class TestARotationAtAHalfTurnIsReadAsTheCompilerReadsIt:
     """The arms a rotation past a third of a turn reaches, graded against MuJoCo."""
 
     @pytest.mark.parametrize(("label", "axis", "degrees"), ROTATIONS, ids=_ids(ROTATIONS))
-    def test_the_scene_reader_matches_the_compiler(self, tmp_path, label, axis, degrees):
+    def test_both_readers_match_the_compiler_on_a_unit_quaternion(self, tmp_path, label, axis, degrees):
+        """Scene object and robot link (whose orientation Isaac consumes) both read MuJoCo's answer.
+
+        Premises first: MuJoCo compiles the fixture to a unit quaternion, so it
+        has an oracle, and that quaternion is far from identity, so a reader
+        that fell back to identity cannot pass by coincidence. The reported norm
+        is graded on its own: the trace form divides by a term that vanishes at
+        a half turn, and an arm that divided by it anyway would drift off the
+        unit sphere before it drifted far enough to fail the comparison.
+        """
         declaration = _xyaxes(axis, degrees)
         path = _write_object(tmp_path, f'xyaxes="{declaration}"', name=label)
         expected = _mujoco_body_quat(path)
+        assert np.isclose(float(np.linalg.norm(expected)), 1.0), f"MuJoCo compiled {label} to a non-unit {expected}"
+        assert _same_rotation(expected, IDENTITY) > 0.1, f"{label} compiles to {expected}, too close to identity"
+
         got = _object_quat(path)
+        assert float(np.linalg.norm(np.asarray(got, dtype=float))) == pytest.approx(1.0, abs=1e-9)
         delta = _same_rotation(got, expected)
         assert delta < 1e-6, (
             f'{label} declared as xyaxes="{declaration}" was reported as '
@@ -278,33 +265,24 @@ class TestARotationAtAHalfTurnIsReadAsTheCompilerReadsIt:
             f"{tuple(round(float(v), 6) for v in expected)} (|delta| {delta:.3e})"
         )
 
-    @pytest.mark.parametrize(("label", "axis", "degrees"), ROTATIONS, ids=_ids(ROTATIONS))
-    def test_the_robot_reader_matches_the_compiler(self, tmp_path, label, axis, degrees):
-        """The same declaration on a robot link, whose orientation Isaac consumes."""
-        declaration = _xyaxes(axis, degrees)
-        path = _write_link(tmp_path, f'xyaxes="{declaration}"', name=label)
-        expected = _mujoco_body_quat(path)
-        got = _link_quat(path)
-        delta = _same_rotation(got, expected)
+        link_path = _write_link(tmp_path, f'xyaxes="{declaration}"', name=label)
+        link_expected = _mujoco_body_quat(link_path)
+        link_got = _link_quat(link_path)
+        delta = _same_rotation(link_got, link_expected)
         assert delta < 1e-6, (
             f'link {label} declared as xyaxes="{declaration}" was reported as '
-            f"{tuple(round(v, 6) for v in got)}, but MuJoCo compiles that model with "
-            f"{tuple(round(float(v), 6) for v in expected)} (|delta| {delta:.3e})"
+            f"{tuple(round(v, 6) for v in link_got)}, but MuJoCo compiles that model with "
+            f"{tuple(round(float(v), 6) for v in link_expected)} (|delta| {delta:.3e})"
         )
-
-    @pytest.mark.parametrize(("label", "axis", "degrees"), ROTATIONS, ids=_ids(ROTATIONS))
-    def test_the_reported_orientation_is_a_unit_quaternion(self, tmp_path, label, axis, degrees):
-        """A quaternion off unit norm scales whatever it rotates, so norm is graded
-        on its own: the trace form divides by a term that vanishes at a half turn,
-        and an arm that divided by it anyway would drift off the unit sphere before
-        it drifted far enough to fail the comparison above."""
-        got = _object_quat(_write_object(tmp_path, f'xyaxes="{_xyaxes(axis, degrees)}"', name=label))
-        assert float(np.linalg.norm(np.asarray(got, dtype=float))) == pytest.approx(1.0, abs=1e-9)
 
     @pytest.mark.parametrize(("label", "declaration"), ANTIPODAL_ZAXES, ids=_ids(ANTIPODAL_ZAXES))
     def test_an_antipodal_zaxis_matches_the_compiler(self, tmp_path, label, declaration):
+        """The axis opposite ``+z`` is a model MuJoCo accepts, and the reader agrees with it."""
         path = _write_object(tmp_path, f'zaxis="{declaration}"', name=f"z_{label}")
         expected = _mujoco_body_quat(path)
+        assert _same_rotation(expected, IDENTITY) > 0.1, (
+            f"zaxis {declaration!r} compiles to {expected}, too close to identity"
+        )
         got = _object_quat(path)
         delta = _same_rotation(got, expected)
         assert delta < 1e-6, (
@@ -324,7 +302,11 @@ class TestADeclarationWithNoUsableAxisIsIdentity:
 
     @pytest.mark.parametrize(("label", "body_attrs", "compiler"), UNUSABLE, ids=_ids(UNUSABLE))
     def test_the_reading_is_identity(self, tmp_path, label, body_attrs, compiler):
-        got = _object_quat(_write_object(tmp_path, body_attrs, compiler, name=f"u_{label}"))
+        """MuJoCo refuses the declaration, so it has no compiled answer: identity is the graded reading."""
+        path = _write_object(tmp_path, body_attrs, compiler, name=f"u_{label}")
+        with pytest.raises(ValueError):
+            mujoco.MjModel.from_xml_path(path)
+        got = _object_quat(path)
         assert got == pytest.approx(IDENTITY), (
             f"{label} was reported as {tuple(round(v, 6) for v in got)}; a declaration naming no "
             "axis the reader can use stays identity, the reading it documents, rather than being "

@@ -116,17 +116,17 @@ class _StubSim:
 
 @pytest.mark.parametrize(("name", "param", "annotation"), _numeric_params())
 def test_every_numeric_predicate_kwarg_refuses_a_non_finite_value(name: str, param: str, annotation: str) -> None:
+    """Each non-finite value is refused naming the field; the finite stand-ins still build.
+
+    The control is what keeps the refusal honest: a guard that refused every
+    value would pass the loop alone, so the valid domain is checked unchanged.
+    """
+    make_predicate(name, **_kwargs_for(name))
     for bad in [INF, -INF, NAN]:
         kwargs = _kwargs_for(name)
         kwargs[param] = [bad, 0.0, 0.0] if annotation.startswith(("list", "tuple")) else bad
         with pytest.raises(ValueError, match=f"{param}"):
             make_predicate(name, **kwargs)
-
-
-@pytest.mark.parametrize(("name", "param", "annotation"), _numeric_params())
-def test_every_numeric_predicate_kwarg_still_accepts_a_finite_value(name: str, param: str, annotation: str) -> None:
-    """Control for the guard above: the valid domain is unchanged."""
-    make_predicate(name, **_kwargs_for(name))
 
 
 def test_no_registry_param_annotation_escapes_the_guard_unclassified() -> None:
