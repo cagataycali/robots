@@ -193,8 +193,8 @@ GATES_GRADED_ELSEWHERE: dict[str, str] = {
     # one field against the other rather than against a literal.
     "_rl_warmup_batch_problems": "tests/training/test_learning_starts_count_domain.py",
     "_rl_warmup_reachability_problems": "tests/training/test_learning_starts_count_domain.py",
-    # Graded against torch's own device vocabulary, not against a reader set.
-    "_spec_device_problems": "tests/training/test_rl_trainer_device_domain.py",
+    # Graded against torch's own device vocabulary, as a row of the RL table.
+    "_spec_device_problems": "tests/training/test_rl_spec_field_domains.py",
     # Not a field domain: the remote-code / credential posture of a whole spec.
     "_security_problems": "tests/training/test_call_time_dependency_preflight.py",
 }

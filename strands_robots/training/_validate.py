@@ -228,10 +228,12 @@ def rl_run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
 def torch_device_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """Report ``device`` when stated: one torch can place tensors on.
 
-    Empty when the field is unstated or torch is not importable.
+    Empty when the field is unstated or torch is not importable. Unstated is
+    ``None`` or a falsy scalar - what ``spec.device or <default>`` replaces in
+    ``setup`` - so a container is graded rather than read by truthiness.
     """
     device = getattr(spec, "device", None)
-    if not device:
+    if device is None or (isinstance(device, str | numbers.Number) and not device):
         return []
     problem = torch_device_error(device, "device", context)
     return [] if problem is None else [problem]

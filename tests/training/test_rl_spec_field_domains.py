@@ -5,8 +5,8 @@ by only some of them: PPO alone estimates a GAE trace, clips a trust region and
 standardizes advantages, FastSAC alone tunes an entropy temperature, FastTD3 alone
 delays its actor and injects deterministic-policy noise, and both off-policy
 backends replay and Polyak-average; all three size the run from ``total_timesteps``
-and ``rollout_steps``, checkpoint every ``log_interval`` iterations and normalize
-observations. Each field's preflight gate is a one-liner over a shared rule in
+and ``rollout_steps``, checkpoint every ``log_interval`` iterations, normalize
+observations and place tensors on ``device``. Each field's preflight gate is a one-liner over a shared rule in
 :mod:`strands_robots.utils` or :mod:`strands_robots.training._validate`, so the
 contract every field shares is one table here, run over every training backend:
 
@@ -25,6 +25,7 @@ field's own ``test_<field>_domain.py``.
 
 from __future__ import annotations
 
+import numbers
 from collections.abc import Callable
 from dataclasses import dataclass
 from fractions import Fraction
@@ -46,6 +47,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_finite_number_error,
     step_cadence_error,
+    torch_device_error,
 )
 
 SUPERVISED = ("mock", "lerobot_local", "cosmos3", "rsl_rl", "sagemaker", "isaaclab")
@@ -130,6 +132,20 @@ FLAG_UNUSABLE: list[Any] = [
 ]
 FLAG_USABLE: list[Any] = [True, False, np.True_, np.False_]
 
+# Measured against ``torch.device``: ``'gpu'`` is the ordinary mistake, and a
+# non-``str`` is refused before torch is consulted (``torch.device(1)`` constructs
+# on any host and dies at the first ``.to()``). ``'cuda:7'`` and ``'mps'`` are
+# usable on a host without them: the spelling is the domain, not the inventory.
+DEVICE_UNUSABLE: list[Any] = ["gpu", "CUDA", "cuda:abc", "  ", 1, 2.0, True, ["cuda"], np.array(["cuda", "cpu"])]
+DEVICE_USABLE: list[Any] = ["cpu", "cuda", "cuda:0", "cuda:7", "mps", None, "", 0]
+
+
+def _stated_device_error(value: Any, param: str, context: str) -> str | None:
+    """``torch_device_error`` for a stated device; ``spec.device or ...`` owns a falsy scalar."""
+    if value is None or (isinstance(value, str | numbers.Number) and not value):
+        return None
+    return torch_device_error(value, param, context)
+
 
 @dataclass(frozen=True)
 class FieldDomain:
@@ -143,6 +159,8 @@ class FieldDomain:
     # The shared rule ``rule`` narrows (an interval) or widens (the ``inf`` clip
     # carve-out); every value it refuses, ``rule`` refuses in the same words.
     base: Callable[[Any, str, str], str | None] | None = None
+    # The rule reads its domain from torch, and passes everything without it.
+    needs_torch: bool = False
 
     @property
     def silent(self) -> tuple[str, ...]:
@@ -201,6 +219,9 @@ DOMAINS = {
         ("normalize_advantage",), boolean_flag_error, ("ppo",), FLAG_UNUSABLE, FLAG_USABLE
     ),
     "autotune_alpha": FieldDomain(("autotune_alpha",), boolean_flag_error, ("fast_sac",), FLAG_UNUSABLE, FLAG_USABLE),
+    "device": FieldDomain(
+        ("device",), _stated_device_error, RL, DEVICE_UNUSABLE, DEVICE_USABLE, torch_device_error, needs_torch=True
+    ),
     "replay": FieldDomain(
         ("buffer_size", "batch_size", "gradient_steps"),
         positive_count_error,
@@ -219,17 +240,23 @@ def _spec() -> RLTrainSpec:
 def _reports(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
     """Problems the real ``validate`` entry point reports about ``field``.
 
-    Filtered on the shared rules' ``"{context}: {param} "`` message shape rather than
-    on a bare substring, so an unrelated problem can neither mask a missing refusal
-    nor be mistaken for one.
+    Filtered on the shared rules' ``"{context}: {param} "`` / ``"{context}: {param}="``
+    message shapes rather than on a bare substring, so an unrelated problem can
+    neither mask a missing refusal nor be mistaken for one.
     """
     trainer = create_trainer(provider)
-    return [p for p in trainer.validate(spec) if p.startswith(f"{trainer.provider_name}: {field} ")]
+    return [p for p in trainer.validate(spec) if _names(p, f"{trainer.provider_name}: {field}")]
+
+
+def _names(problem: str, prefix: str) -> bool:
+    return problem.startswith((f"{prefix} ", f"{prefix}="))
 
 
 @pytest.mark.parametrize("group", DOMAINS)
 def test_every_reader_reports_exactly_the_shared_verdict(group: str) -> None:
     domain = DOMAINS[group]
+    if domain.needs_torch:
+        pytest.importorskip("torch")
     for provider in domain.readers:
         default = _spec()
         for field in domain.fields:
@@ -252,7 +279,7 @@ def test_every_reader_reports_exactly_the_shared_verdict(group: str) -> None:
             setattr(spec, field, domain.unusable[0])
         problems = create_trainer(provider).validate(spec)
         for field in domain.fields:
-            assert sum(p.startswith(f"{provider}: {field} ") for p in problems) == 1, (field, problems)
+            assert sum(_names(p, f"{provider}: {field}") for p in problems) == 1, (field, problems)
 
 
 @pytest.mark.parametrize("group", DOMAINS)
@@ -281,7 +308,8 @@ def test_a_refused_field_stops_the_run_before_anything_is_built(group: str, tmp_
 
     The probe is each group's first unusable value: ``True`` for every numeric
     group, the spelling every bare reading took silently (a rate, a count, a
-    weight or a delay of one), and ``"false"`` for a posture flag.
+    weight or a delay of one), ``"false"`` for a posture flag and ``"gpu"`` for
+    the device.
     """
     pytest.importorskip("torch")
     domain = DOMAINS[group]
@@ -296,7 +324,7 @@ def test_a_refused_field_stops_the_run_before_anything_is_built(group: str, tmp_
         setattr(spec, field, domain.unusable[0])
         result = create_trainer(domain.readers[0]).train(spec)
         assert result.status == "error", field
-        assert f"{field} " in (result.message or ""), result.message
+        assert any(f"{field}{sep}" in (result.message or "") for sep in " ="), result.message
         assert not result.checkpoint_dir, field
     assert built == []
     assert not list(tmp_path.rglob("*.pt"))
