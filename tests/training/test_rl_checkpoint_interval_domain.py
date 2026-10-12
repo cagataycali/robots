@@ -53,7 +53,6 @@ import pytest
 
 from strands_robots.training._validate import rl_checkpoint_interval_problems
 from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.mock import MockTrainer
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.fast_td3 import FastTd3Trainer
@@ -67,9 +66,6 @@ from tests.training._spec_field_reads import reads_spec_field
 # One domain, so one value set: imported from the supervised guard rather than
 # restated, which is what stops the two fields drifting on to two rules.
 from tests.training.test_checkpoint_cadence_domain import (
-    A_FRACTIONAL_CADENCE,
-    A_STRING_CADENCE,
-    CHECKPOINTING_BACKENDS,
     RAISED_IN_THE_CONSUMER,
     UNUSABLE,
     USABLE,
@@ -86,9 +82,6 @@ A_REQUESTED_CADENCE = 5
 # What that cadence really writes, measured on the inherited loop.
 THE_REQUESTED_SCHEDULE = [1, 6, 11, 16, 20]
 
-# The shape the shared domain emits: ``"{context}: log_interval must be ..."``.
-_NAMES_THE_INTERVAL = ": log_interval "
-
 
 @pytest.fixture
 def spec(tmp_path: pathlib.Path) -> RLTrainSpec:
@@ -104,11 +97,6 @@ def spec(tmp_path: pathlib.Path) -> RLTrainSpec:
     )
 
 
-def _interval_problems_of(trainer: Trainer, spec: TrainSpec) -> list[str]:
-    """``validate`` problems about ``log_interval``."""
-    return [p for p in trainer.validate(spec) if _NAMES_THE_INTERVAL in p]
-
-
 def _checkpoint_iterations(cadence: Any) -> list[int | None]:
     """Iterations the inherited RL loop writes a checkpoint at, for *cadence*.
 
@@ -120,63 +108,6 @@ def _checkpoint_iterations(cadence: Any) -> list[int | None]:
     algo = _BareRLAlgo()
     algo.train(RLTrainSpec(total_timesteps=RL_ITERS, log_interval=cadence, output_dir="/tmp/rl-out"))
     return list(algo.saved_iterations)
-
-
-class TestEveryRLBackendRefusesAnUnusableInterval:
-    """First half of the biconditional: a backend that checkpoints must refuse."""
-
-    @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    def test_it_is_reported_as_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.log_interval = value
-            assert _interval_problems_of(trainer_cls(), spec) != [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
-        trainer = trainer_cls()
-        spec.log_interval = A_FRACTIONAL_CADENCE
-        problems = _interval_problems_of(trainer, spec)
-        assert problems and problems[0].startswith(f"{trainer.provider_name}: ")
-
-    @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    def test_an_unusable_interval_is_a_problem_not_an_exception(
-        self, spec: RLTrainSpec, trainer_cls: type[Trainer]
-    ) -> None:
-        """``validate`` is documented to *return* problems, for every spelling.
-
-        A str or a list reaches the loop's ``%`` as an operand it cannot take, so
-        a preflight that compared the value itself would raise here instead.
-        """
-        for value in RAISED_IN_THE_CONSUMER:
-            spec.log_interval = value
-            assert _interval_problems_of(trainer_cls(), spec) != [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    def test_a_usable_interval_is_not_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
-        """Including ``0`` and a negative: this domain has no floor."""
-        for value in USABLE:
-            spec.log_interval = value
-            assert _interval_problems_of(trainer_cls(), spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", RL_BACKENDS)
-    def test_the_default_interval_is_not_a_problem(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
-        assert _interval_problems_of(trainer_cls(), spec) == []
-
-
-class TestASupervisedBackendReportsNothingAboutIt:
-    """Second half of the biconditional: a non-reader must not report.
-
-    Per :class:`~strands_robots.training.base.TrainSpec` a backend ignores the
-    fields it does not support, so a supervised backend reporting on the RL
-    loop's interval would be a false rejection - it has ``save_freq`` for the
-    same question.
-    """
-
-    @pytest.mark.parametrize("trainer_cls", (*CHECKPOINTING_BACKENDS, MockTrainer))
-    def test_it_says_nothing(self, spec: RLTrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.log_interval = value
-            assert _interval_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
 
 class TestWhatTheLoopDoesWithAnUnusableInterval:
@@ -351,23 +282,6 @@ class TestOneOwnerForTheRLCheckpointInterval:
 
 class TestTheSharedDomainSurface:
     """The gate itself, called directly."""
-
-    def test_it_refuses_what_the_supervised_gate_refuses(self) -> None:
-        for value in UNUSABLE:
-            assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") != [], f"{value!r}"
-
-    def test_it_accepts_what_the_supervised_gate_accepts(self) -> None:
-        for value in USABLE:
-            assert rl_checkpoint_interval_problems(RLTrainSpec(log_interval=value), context="acme") == [], f"{value!r}"
-
-    def test_it_reports_one_problem_at_a_time_naming_its_own_field(self) -> None:
-        problems = rl_checkpoint_interval_problems(RLTrainSpec(log_interval=A_FRACTIONAL_CADENCE), context="acme")
-        assert len(problems) == 1
-        assert problems[0].startswith("acme: log_interval must be an integer number of steps, got 2.7.")
-
-    def test_it_reports_the_context_it_was_given(self) -> None:
-        problems = rl_checkpoint_interval_problems(RLTrainSpec(log_interval=A_STRING_CADENCE), context="acme")
-        assert problems and problems[0].startswith("acme: ")
 
     def test_a_spec_without_the_field_reports_nothing(self) -> None:
         """``log_interval`` lives on ``RLTrainSpec``, so a plain spec carries no interval.

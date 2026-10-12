@@ -32,7 +32,8 @@ numeric domains beside them: a backend that reads a field routes it through the
 gate, and a backend that ignores the field reports nothing about it. Three gates
 rather than one because the readers differ - all three backends read
 ``normalize_obs``, PPO alone reads ``normalize_advantage`` and SAC alone reads
-``autotune_alpha``.
+``autotune_alpha``. The biconditional is graded for every backend in
+``test_rl_spec_field_domains.py``; this file pins the gate order and the readers.
 """
 
 from __future__ import annotations
@@ -55,48 +56,7 @@ from strands_robots.training.factory import create_trainer
 from strands_robots.training.rl.base_algo import RLTrainSpec
 from tests._package_ast import parse_source, walk_tree
 from tests.training._spec_field_reads import reads_spec_field
-
-# The spellings a caller reaches for when opting out (every one truthy), two
-# truthy numbers, and the falsy values that are not a declared spelling of the
-# negative posture either.
-NOT_A_BOOLEAN: list[Any] = [
-    "false",
-    "no",
-    "0",
-    1,
-    0,
-    float("nan"),
-    None,
-    [],
-]
-
-# Both python spellings plus the numpy booleans the shared domain also accepts.
-A_BOOLEAN: list[Any] = [
-    True,
-    False,
-    np.True_,
-    np.False_,
-]
-
-# Which backend reads which field, by provider name. The one-owner scan at the
-# bottom derives the same sets from the tree, so a backend that starts reading a
-# field is graded on arrival.
-READERS: dict[str, tuple[str, ...]] = {
-    "normalize_obs": ("ppo", "fast_sac", "fast_td3"),
-    "normalize_advantage": ("ppo",),
-    "autotune_alpha": ("fast_sac",),
-}
-RL_PROVIDERS = ("ppo", "fast_sac", "fast_td3")
-IGNORERS: dict[str, tuple[str, ...]] = {
-    field: tuple(p for p in RL_PROVIDERS if p not in readers) for field, readers in READERS.items()
-}
-GATES: dict[str, str] = {
-    "normalize_obs": "_observation_normalization_problems",
-    "normalize_advantage": "_advantage_normalization_problems",
-    "autotune_alpha": "_temperature_autotune_problems",
-}
-READER_CELLS = [(field, provider) for field, providers in READERS.items() for provider in providers]
-IGNORER_CELLS = [(field, provider) for field, providers in IGNORERS.items() for provider in providers]
+from tests.training.test_rl_spec_field_domains import DOMAINS
 
 
 @pytest.fixture
@@ -106,15 +66,6 @@ def spec(tmp_path: pathlib.Path) -> RLTrainSpec:
         output_dir=str(tmp_path / "out"),
         env_factory=lambda: None,  # type: ignore[arg-type,return-value]
     )
-
-
-def _problems_about(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
-    """``validate`` problems naming *field* in the shared domain's own shape.
-
-    Matched as ``"{provider}: {field} "`` rather than the bare word, so an
-    unrelated problem quoting the field name can neither mask nor fake a verdict.
-    """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: {field} ")]
 
 
 def _set(spec: RLTrainSpec, **fields: Any) -> RLTrainSpec:
@@ -127,58 +78,6 @@ def _set(spec: RLTrainSpec, **fields: Any) -> RLTrainSpec:
     for name, value in fields.items():
         setattr(spec, name, value)
     return spec
-
-
-class TestEveryReaderRefusesAPostureItCanOnlyMisread:
-    """A backend that branches on a flag refuses every value it could only misread."""
-
-    @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    def test_the_flag_is_refused(self, spec: RLTrainSpec, field: str, provider: str) -> None:
-        for value in NOT_A_BOOLEAN:
-            assert _problems_about(provider, _set(spec, **{field: value}), field), (
-                f"{provider} accepted {field}={value!r}"
-            )
-
-    @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    def test_the_problem_names_the_backend_the_field_and_the_value(
-        self, spec: RLTrainSpec, field: str, provider: str
-    ) -> None:
-        (problem,) = _problems_about(provider, _set(spec, **{field: "false"}), field)
-        assert problem.startswith(f"{provider}: {field} must be a boolean, got 'false'"), problem
-
-    @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    def test_a_refused_flag_is_a_problem_not_an_exception(self, spec: RLTrainSpec, field: str, provider: str) -> None:
-        """``validate`` is documented pure and read-only; a refusal is a return value."""
-        problems = create_trainer(provider).validate(_set(spec, **{field: "false"}))
-        assert isinstance(problems, list)
-
-
-class TestAUsableBooleanIsUntouched:
-    """The controls: every declared spelling passes, and passes unchanged."""
-
-    @pytest.mark.parametrize(("field", "provider"), READER_CELLS)
-    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str) -> None:
-        for value in A_BOOLEAN:
-            assert _problems_about(provider, _set(spec, **{field: value}), field) == [], f"{value!r}"
-
-    def test_the_defaults_report_nothing(self, spec: RLTrainSpec) -> None:
-        for provider in RL_PROVIDERS:
-            for field in READERS:
-                assert _problems_about(provider, spec, field) == []
-
-
-class TestABackendThatIgnoresTheFieldReportsNothing:
-    """The other half of the biconditional.
-
-    A backend that never reads a flag has nothing to misread, and refusing a
-    value the requested backend ignores would send a caller to fix a field that
-    changes nothing about their run.
-    """
-
-    @pytest.mark.parametrize(("field", "provider"), IGNORER_CELLS)
-    def test_it_reports_nothing(self, spec: RLTrainSpec, field: str, provider: str) -> None:
-        for value in NOT_A_BOOLEAN:
-            assert _problems_about(provider, _set(spec, **{field: value}), field) == [], f"{value!r}"
 
 
 class TestTheRefusalPrecedesTheCheckTheFlagGates:
@@ -254,13 +153,13 @@ def _trainer_modules() -> list[pathlib.Path]:
 
 
 class TestTheGateOrderAndTheListedReaders:
-    """What the shared table cannot see: an ordering, and this file's own tuples.
+    """What the shared table cannot see: an ordering, and where its reader tuples come from.
 
     Which backends must route each flag through its gate is graded for every
     shared domain in ``tests/training/test_every_shared_domain_has_one_owner.py``.
     Two claims are local to these three flags: the rate gate is consulted only
-    after the flag gate it depends on, and the hand-written reader tuples this
-    file exercises are the backends that really read each field.
+    after the flag gate it depends on, and the hand-written reader tuples the
+    field table exercises are the backends that really read each field.
     """
 
     def test_the_rate_gate_is_consulted_after_the_flag_gate_it_depends_on(self) -> None:
@@ -276,8 +175,9 @@ class TestTheGateOrderAndTheListedReaders:
         assert calls == ["_temperature_autotune_problems", "_temperature_learning_rate_problems"], calls
 
     def test_the_class_of_readers_reads_the_field_in_the_test_table(self) -> None:
-        """The hand-written reader tuples above agree with the derived ones."""
+        """The reader tuples in the shared table agree with the ones derived from the tree."""
         by_module = {"ppo.py": "ppo", "fast_sac.py": "fast_sac", "fast_td3.py": "fast_td3"}
-        for field, listed in READERS.items():
+        for field in ("normalize_obs", "normalize_advantage", "autotune_alpha"):
+            listed = DOMAINS[field].readers
             readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}
             assert {by_module[name] for name in readers} == set(listed), field

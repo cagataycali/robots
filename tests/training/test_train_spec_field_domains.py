@@ -30,7 +30,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import TrainSpec, create_trainer
@@ -43,28 +42,24 @@ from strands_robots.utils import (
     step_cadence_error,
 )
 from tests.training.test_rl_spec_field_domains import (
+    BACKENDS,
+    CADENCE_UNUSABLE,
+    CADENCE_USABLE,
     COUNT_UNUSABLE,
     COUNT_USABLE,
-    NON_FINITE,
-    NOT_A_NUMBER,
+    FLAG_UNUSABLE,
+    FLAG_USABLE,
     RATE_UNUSABLE,
     RATE_USABLE,
+    RL,
+    SUPERVISED,
 )
 
-SUPERVISED = ("mock", "lerobot_local", "cosmos3", "rsl_rl", "sagemaker", "isaaclab")
-RL = ("ppo", "fast_sac", "fast_td3")
-BACKENDS = SUPERVISED + RL
-
-DEFINED: list[Any] = [v for v in NOT_A_NUMBER if v is not None]
 # Zero is a seed; ``None`` is the unset sentinel.
 SEED_UNUSABLE: list[Any] = [v for v in COUNT_UNUSABLE if v is not None and not (type(v) is int and v == 0)]
 SEED_USABLE: list[Any] = [0, *COUNT_USABLE, 2**32 - 1]
-CADENCE_UNUSABLE: list[Any] = [*DEFINED, 2.5, 2.0, *NON_FINITE]
-CADENCE_USABLE: list[Any] = [1, 100, 5000, 0, -1]
 # A split is bounded by the dataset too (10 episodes here), so usable counts stay below it.
 SPLIT_USABLE: list[Any] = [1, 2, 8]
-FLAG_UNUSABLE: list[Any] = ["false", "no", "0", "", "yes", 0, 1, None, [], [True], np.array([True, False])]
-FLAG_USABLE: list[Any] = [True, False, np.True_, np.False_]
 
 
 @dataclass(frozen=True)

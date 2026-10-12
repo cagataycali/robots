@@ -1,19 +1,22 @@
 """Every RL hyperparameter is refused by exactly the backends that read it, in the shared words.
 
-``RLTrainSpec`` carries a dozen-and-a-half numeric hyperparameters, and each one is
-read by only some of the RL backends: PPO alone estimates a GAE trace and clips a
-trust region, FastSAC alone tunes an entropy temperature, FastTD3 alone delays its
-actor and injects deterministic-policy noise, and both off-policy backends replay
-and Polyak-average. Each field's preflight gate is a one-liner over a shared rule in
+``RLTrainSpec`` carries two dozen fields only the RL backends read, and many are read
+by only some of them: PPO alone estimates a GAE trace, clips a trust region and
+standardizes advantages, FastSAC alone tunes an entropy temperature, FastTD3 alone
+delays its actor and injects deterministic-policy noise, and both off-policy
+backends replay and Polyak-average; all three size the run from ``total_timesteps``
+and ``rollout_steps``, checkpoint every ``log_interval`` iterations and normalize
+observations. Each field's preflight gate is a one-liner over a shared rule in
 :mod:`strands_robots.utils` or :mod:`strands_robots.training._validate`, so the
-contract every field shares is one table here:
+contract every field shares is one table here, run over every training backend:
 
 * every backend that reads the field reports, for every probe value, exactly the
   shared rule's verdict - one problem in the rule's own words for an unusable value,
   nothing for a usable one, nothing for the shipped default - and setting every
   field of a group unusable at once reports each of them in the same pass;
-* every backend that does not read the field reports nothing about it, while it
-  still refuses a field it does read (silence is scoping, not an empty preflight).
+* every backend that does not read the field - the supervised ones included -
+  reports nothing about it, while it still refuses a field it does read (silence
+  is scoping, not an empty preflight).
 
 What each refused value does to the run that consumes it (a diverging return, a
 never-firing cadence, a frozen temperature) is pinned beside the consumer, in the
@@ -37,9 +40,17 @@ from strands_robots.training._validate import (
     _half_open_unit_interval_error,
 )
 from strands_robots.training.rl import RLTrainSpec
-from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
+from strands_robots.utils import (
+    boolean_flag_error,
+    finite_number_error,
+    positive_count_error,
+    positive_finite_number_error,
+    step_cadence_error,
+)
 
-RL_BACKENDS = ("ppo", "fast_sac", "fast_td3", "mock")
+SUPERVISED = ("mock", "lerobot_local", "cosmos3", "rsl_rl", "sagemaker", "isaaclab")
+RL = ("ppo", "fast_sac", "fast_td3")
+BACKENDS = SUPERVISED + RL
 
 # Spellings no numeric rule reads: a bool is a silent 1/0, the rest raise out of a
 # bare comparison mid-run.
@@ -51,6 +62,7 @@ COUNT_UNUSABLE: list[Any] = [
     0,
     -1,
     -1000,
+    0.5,
     2.5,
     2.0,
     100.5,
@@ -95,6 +107,29 @@ HALF_OPEN_UNIT_USABLE: list[Any] = [0.005, 0.5, 1.0, 1, 1e-8, Fraction(1, 200), 
 CLIP_UNUSABLE: list[Any] = [*NOT_A_NUMBER, "inf", 0, 0.0, -0.2, -1.0, -100.0, float("nan"), float("-inf"), 10**400]
 CLIP_USABLE: list[Any] = [0.2, 0.1, 1.0, 10.0, 1e-8, 3, np.float64(1.0), np.int64(2), float("inf"), np.float64(np.inf)]
 
+# A cadence in iterations: ``0`` and a negative are the documented "no periodic
+# checkpoints" mode, so the domain has no floor.
+CADENCE_UNUSABLE: list[Any] = [*(v for v in NOT_A_NUMBER if v is not None), 2.5, 2.0, *NON_FINITE]
+CADENCE_USABLE: list[Any] = [1, 100, 5000, 0, -1]
+
+# The opt-out spellings a caller reaches for (every one truthy), falsy values that
+# are not ``False`` either, and a 2-element array whose truth value raises.
+FLAG_UNUSABLE: list[Any] = [
+    "false",
+    "no",
+    "0",
+    "",
+    "yes",
+    0,
+    1,
+    float("nan"),
+    None,
+    [],
+    [True],
+    np.array([True, False]),
+]
+FLAG_USABLE: list[Any] = [True, False, np.True_, np.False_]
+
 
 @dataclass(frozen=True)
 class FieldDomain:
@@ -111,7 +146,7 @@ class FieldDomain:
 
     @property
     def silent(self) -> tuple[str, ...]:
-        return tuple(p for p in RL_BACKENDS if p not in self.readers)
+        return tuple(p for p in BACKENDS if p not in self.readers)
 
 
 DOMAINS = {
@@ -157,6 +192,15 @@ DOMAINS = {
         HALF_OPEN_UNIT_UNUSABLE,
         HALF_OPEN_UNIT_USABLE,
     ),
+    "run_size": FieldDomain(
+        ("total_timesteps", "rollout_steps"), positive_count_error, RL, COUNT_UNUSABLE, COUNT_USABLE
+    ),
+    "log_interval": FieldDomain(("log_interval",), step_cadence_error, RL, CADENCE_UNUSABLE, CADENCE_USABLE),
+    "normalize_obs": FieldDomain(("normalize_obs",), boolean_flag_error, RL, FLAG_UNUSABLE, FLAG_USABLE),
+    "normalize_advantage": FieldDomain(
+        ("normalize_advantage",), boolean_flag_error, ("ppo",), FLAG_UNUSABLE, FLAG_USABLE
+    ),
+    "autotune_alpha": FieldDomain(("autotune_alpha",), boolean_flag_error, ("fast_sac",), FLAG_UNUSABLE, FLAG_USABLE),
     "replay": FieldDomain(
         ("buffer_size", "batch_size", "gradient_steps"),
         positive_count_error,
@@ -179,7 +223,8 @@ def _reports(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
     on a bare substring, so an unrelated problem can neither mask a missing refusal
     nor be mistaken for one.
     """
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(f"{provider}: {field} ")]
+    trainer = create_trainer(provider)
+    return [p for p in trainer.validate(spec) if p.startswith(f"{trainer.provider_name}: {field} ")]
 
 
 @pytest.mark.parametrize("group", DOMAINS)
@@ -222,7 +267,7 @@ def test_a_backend_that_does_not_read_the_field_stays_silent(group: str) -> None
                 assert _reports(provider, spec, field) == [], f"{provider} read {field}={value!r}"
 
 
-@pytest.mark.parametrize("provider", RL_BACKENDS)
+@pytest.mark.parametrize("provider", BACKENDS)
 def test_the_silence_is_scoping_rather_than_an_empty_preflight(provider: str) -> None:
     """Every backend still refuses the one rate they all read."""
     spec = _spec()
@@ -234,8 +279,9 @@ def test_the_silence_is_scoping_rather_than_an_empty_preflight(provider: str) ->
 def test_a_refused_field_stops_the_run_before_anything_is_built(group: str, tmp_path: Any) -> None:
     """``train`` is fail-closed on ``validate``: no env, no checkpoint.
 
-    ``True`` is the probe because it is the spelling every bare reading took
-    silently (a rate, a count, a weight or a delay of one).
+    The probe is each group's first unusable value: ``True`` for every numeric
+    group, the spelling every bare reading took silently (a rate, a count, a
+    weight or a delay of one), and ``"false"`` for a posture flag.
     """
     pytest.importorskip("torch")
     domain = DOMAINS[group]
@@ -247,7 +293,7 @@ def test_a_refused_field_stops_the_run_before_anything_is_built(group: str, tmp_
 
     for field in domain.fields:
         spec = RLTrainSpec(output_dir=str(tmp_path / field), env_factory=env_factory)  # type: ignore[arg-type]
-        setattr(spec, field, True)
+        setattr(spec, field, domain.unusable[0])
         result = create_trainer(domain.readers[0]).train(spec)
         assert result.status == "error", field
         assert f"{field} " in (result.message or ""), result.message

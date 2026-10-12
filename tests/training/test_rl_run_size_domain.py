@@ -31,8 +31,8 @@ the third factor of this product is held to what its two siblings are held to.
 :class:`TestNumEnvsIsNotInTheSharedDomain` pins the scope line;
 ``test_rl_env_count_domain.py`` pins the shared half.
 
-Every domain test here reaches the real ``validate`` entry point, so it covers
-the wiring as well as the domain.
+Which backends refuse which values, in which words, is graded for every backend
+in ``test_rl_spec_field_domains.py``; this file pins why the domain exists.
 """
 
 from __future__ import annotations
@@ -56,15 +56,10 @@ from tests.training._spec_field_reads import reads_spec_field
 # The backends that size a training loop from these two fields.
 RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
 
-# A backend that sizes its run from ``steps`` instead - it must stay quiet about
-# fields it never reads, or an RL-only value would be a false rejection.
-SUPERVISED_BACKENDS = ("mock",)
 
 # The two factors, and the field the domain deliberately excludes.
 RUN_SIZE_FIELDS = ("total_timesteps", "rollout_steps")
 
-# Non-positive counts: the half a local ``<= 0`` test already caught.
-NO_TRAINING: list[Any] = [0, -1, -1000]
 
 # Values that survive ``value <= 0`` and cannot bound the loop. The first four
 # are the silent half - ``max(1, ...)`` reads each as a single iteration, because
@@ -75,16 +70,6 @@ SILENTLY_ONE_ITERATION: list[Any] = [True, 0.5, float("nan"), float("inf")]
 # Values that reach the loop and raise there, or raise out of the comparison.
 NOT_A_COUNT: list[Any] = [*SILENTLY_ONE_ITERATION, False, 100.5, 4.0, "16", None, [16], {"total_timesteps": 16}]
 
-UNUSABLE: list[Any] = [*NO_TRAINING, *NOT_A_COUNT]
-
-# A positive ``int`` is the whole domain.
-USABLE: list[Any] = [1, 4, 24, 100_000]
-
-# ``range()`` accepts any object with ``__index__``, so these DO bound a loop and
-# are still refused: the shared count domain is strict about ``int``, which is
-# what lets it refuse the integral float ``4.0`` that ``range()`` raises on. A
-# guard that accepted what its own consumer refuses would be the wrong trade.
-REFUSED_BY_THE_SHARED_COUNT_RULE: list[Any] = [np.int64(24), np.int32(4), np.uint8(8)]
 
 # The two values PPO's divisibility relation used to mishandle. Annotated ``Any``
 # because they are deliberately outside the field's declared type - which is the
@@ -99,90 +84,8 @@ def spec() -> RLTrainSpec:
     return RLTrainSpec(output_dir="/tmp/rl_run_size_domain", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
 
 
-def _field_problems(provider: str, spec: RLTrainSpec, field: str) -> list[str]:
-    """Problems the real ``validate`` entry point reports about ``field``.
-
-    Filtered on the shared domains' ``"{context}: {param} "`` message shape
-    rather than on a bare substring, so an unrelated problem can neither mask a
-    missing refusal nor be mistaken for one.
-    """
-    prefix = f"{provider}: {field} "
-    return [p for p in create_trainer(provider).validate(spec) if p.startswith(prefix)]
-
-
-@pytest.mark.parametrize("provider", RL_BACKENDS)
-@pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-def test_every_rl_backend_admits_exactly_the_count_domain(provider: str, spec: RLTrainSpec, field: str) -> None:
-    """Every value the loop bound cannot be built from is refused in the shared
-    words and never reaches a run (the refusal precedes ``setup``); the shipped
-    default and every positive ``int`` are untouched. NumPy integers are refused
-    although ``range()`` would accept them - the documented cost of the strict-``int``
-    rule that lets the domain refuse the integral float ``4.0``."""
-    assert _field_problems(provider, spec, field) == [], "the shipped default"
-    for value in USABLE:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field) == [], f"{value!r}"
-    for value in REFUSED_BY_THE_SHARED_COUNT_RULE:
-        setattr(spec, field, value)
-        assert _field_problems(provider, spec, field), f"{value!r}"
-    for value in UNUSABLE:
-        setattr(spec, field, value)
-        problems = _field_problems(provider, spec, field)
-        assert problems == [positive_count_error(value, field, provider)], f"{provider} {field}={value!r}"
-    for value in NOT_A_COUNT:
-        setattr(spec, field, value)
-        result = create_trainer(provider).train(spec)
-        assert result.status == "error", f"{value!r}"
-        assert result.checkpoint_dir in (None, ""), f"{value!r}"
-        assert f"{field} must be a positive integer" in result.message, f"{value!r}"
-
-
-class TestASupervisedBackendStaysQuiet:
-    """A backend that sizes its run from ``steps`` reports nothing about these."""
-
-    @pytest.mark.parametrize("provider", SUPERVISED_BACKENDS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_it_reports_nothing_about_the_field(self, provider: str, spec: RLTrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            assert _field_problems(provider, spec, field) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("provider", SUPERVISED_BACKENDS)
-    def test_but_it_still_refuses_the_run_size_it_does_read(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: silence is scoping, not a backend that checks nothing."""
-        spec.steps = 0
-        assert _field_problems(provider, spec, "steps")
-
-
 class TestTheDomainIsTheSharedCountRule:
     """The gate contributes no rule of its own beyond reading the two fields."""
-
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_it_agrees_with_the_shared_count_domain(self, spec: RLTrainSpec, field: str) -> None:
-        for value in [*UNUSABLE, *USABLE, *REFUSED_BY_THE_SHARED_COUNT_RULE]:
-            setattr(spec, field, value)
-            shared = positive_count_error(value, field, "ppo")
-            assert (rl_run_size_problems(spec, context="ppo") == []) is (shared is None), f"{value!r}"
-
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_the_message_is_the_shared_one_verbatim(self, spec: RLTrainSpec, field: str) -> None:
-        setattr(spec, field, 0)
-        assert rl_run_size_problems(spec, context="ppo") == [positive_count_error(0, field, "ppo")]
-
-    def test_both_factors_are_reported_together(self, spec: RLTrainSpec) -> None:
-        """One call per field, so a caller sees every factor it got wrong."""
-        spec.total_timesteps = 0
-        spec.rollout_steps = -1
-        assert rl_run_size_problems(spec, context="ppo") == [
-            positive_count_error(0, "total_timesteps", "ppo"),
-            positive_count_error(-1, "rollout_steps", "ppo"),
-        ]
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_the_context_names_the_backend_that_refused(self, provider: str, spec: RLTrainSpec) -> None:
-        spec.total_timesteps = 0
-        (problem,) = _field_problems(provider, spec, "total_timesteps")
-        assert problem.startswith(f"{provider}: ")
 
     def test_a_spec_without_the_rl_fields_reports_nothing(self) -> None:
         """The gate reads through ``getattr`` defaults, so a plain spec is quiet."""
