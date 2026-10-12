@@ -56,6 +56,7 @@ from strands_robots.training import _isaaclab_runtime as runtime
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 from strands_robots.utils import (
     boolean_flag_error,
+    is_boolean,
     positive_count_error,
     positive_finite_number_error,
     refusal_repr,
@@ -374,7 +375,10 @@ class IsaacLabTrainer(Trainer):
                 f"{ctx}: save_freq={spec.save_freq} is in rsl_rl iterations; skrl checkpoints every "
                 "agent.agent.experiment.checkpoint_interval TIMESTEPS - set that in extra['overrides']"
             )
-        if spec.base_model and spec.resume:
+        # Read only a flag its own gate accepts: ``_resume_problems`` already reports any
+        # other value, and an array's truth value would raise out of ``validate``.
+        resume = spec.resume if is_boolean(spec.resume) else False
+        if spec.base_model and resume:
             problems.append(f"{ctx}: pass base_model or resume=True, not both - both name the checkpoint to start from")
         elif spec.base_model:
             path = Path(spec.base_model).expanduser()
@@ -383,7 +387,7 @@ class IsaacLabTrainer(Trainer):
                     f"{ctx}: base_model {spec.base_model!r} is not an rsl_rl model_<iteration>.pt nor a run directory "
                     "holding one (Isaac Lab starts from --checkpoint <file>; Hub ids are not fetched)"
                 )
-        elif spec.resume and isinstance((spec.extra or {}).get("task"), str) and self._start_checkpoint(spec) is None:
+        elif resume and isinstance((spec.extra or {}).get("task"), str) and self._start_checkpoint(spec) is None:
             problems.append(
                 f"{ctx}: resume=True but {spec.output_dir} holds no {(spec.extra or {}).get('task')} run with a "
                 "model_<iteration>.pt to resume from"

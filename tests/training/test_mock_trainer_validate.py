@@ -44,3 +44,12 @@ class TestRequiredFieldPreflight:
 
         assert "dataset_root is required" in problems
         assert not any("not a LeRobotDataset v3 root" in p for p in problems)
+
+    def test_a_directory_without_dataset_metadata_is_not_a_dataset_root(self, tmp_path):
+        # The layout check the empty-root guard short-circuits: a real directory
+        # with no ``meta/info.json`` is refused by name.
+        problems = MockTrainer().validate(
+            TrainSpec(dataset_root=str(tmp_path), base_model="mock/base", output_dir=str(tmp_path / "out"))
+        )
+
+        assert any(p.startswith("dataset_root is not a LeRobotDataset v3 root") for p in problems), problems

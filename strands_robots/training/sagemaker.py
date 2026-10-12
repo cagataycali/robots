@@ -152,7 +152,9 @@ def _forwarded_items(spec: TrainSpec) -> list[tuple[str, Any]]:
     items: list[tuple[str, Any]] = []
     for field in _FORWARDED_FIELDS:
         value = getattr(spec, field)
-        if value is None or value == "" or value == {}:
+        # ``isinstance`` before the emptiness test: ``value == ""`` on an array
+        # is an array, whose truth value raises out of ``validate``.
+        if value is None or (isinstance(value, (str, dict)) and not value):
             continue
         items.append((field, value))
     return items

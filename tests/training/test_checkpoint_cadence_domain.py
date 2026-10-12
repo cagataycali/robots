@@ -25,12 +25,9 @@ caller supplies outside the domain, one route refuses it and the other runs with
 it. :attr:`TrainSpec.extra` already states the rule this breaks - one spec must
 mean one run whichever path the backend takes.
 
-The tests below pin the contract in both directions: every backend that reads the
-field refuses the same unusable values through the one shared domain with a
-message naming itself, a usable cadence is untouched (``0`` and a negative
-included - they select the documented "disable periodic saving" mode), a backend
-that ignores the field reports nothing about it, and the refused values are
-grounded in what the real consumers do with them.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below ground the
+refused values in what the real consumers do with them.
 """
 
 from __future__ import annotations
@@ -42,11 +39,9 @@ from typing import Any
 
 import pytest
 
-from strands_robots.training._validate import checkpoint_cadence_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.lerobot import LerobotTrainer
-from strands_robots.training.mock import MockTrainer
 from strands_robots.training.sagemaker import SagemakerTrainer
 
 # The backends that checkpoint from the field.
@@ -148,32 +143,6 @@ class TestEveryCheckpointingBackendRefusesAnUnusableCadence:
     """The first half of the biconditional: a reader must route through the gate."""
 
     @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.save_freq = value
-            assert _cadence_problems_of(trainer_cls(), spec) != [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        trainer = trainer_cls()
-        spec.save_freq = A_FRACTIONAL_CADENCE
-        problems = _cadence_problems_of(trainer, spec)
-        assert problems and problems[0].startswith(f"{trainer.provider_name}: ")
-
-    @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    def test_an_unusable_cadence_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer]
-    ) -> None:
-        """``validate`` is documented to *return* problems, so it must not raise.
-
-        The in-process consumer raises ``TypeError`` from a bare comparison on a
-        non-number, and the gate runs before any such comparison in ``validate``.
-        """
-        for value in UNUSABLE:
-            spec.save_freq = value
-            assert isinstance(trainer_cls().validate(spec), list), f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
     def test_the_message_says_how_to_disable_periodic_saving(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
         """A caller who wrote ``2.7`` may have meant "rarely"; say what to write.
 
@@ -182,35 +151,6 @@ class TestEveryCheckpointingBackendRefusesAnUnusableCadence:
         """
         spec.save_freq = A_FRACTIONAL_CADENCE
         assert "non-positive" in _cadence_problems_of(trainer_cls(), spec)[0]
-
-
-class TestAUsableCadenceIsUntouched:
-    """The controls: nothing the consumers honor may be refused."""
-
-    @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    def test_a_usable_cadence_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in USABLE:
-            spec.save_freq = value
-            assert _cadence_problems_of(trainer_cls(), spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", CHECKPOINTING_BACKENDS)
-    def test_the_default_cadence_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """The field has a concrete default, so every spec carries a value."""
-        assert _cadence_problems_of(trainer_cls(), spec) == []
-
-
-class TestABackendThatIgnoresTheFieldReportsNothing:
-    """A backend must not report on a field it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports and
-    ignores the rest", so this gate is scoped to the checkpointing backends
-    rather than made universal like the learning-rate one.
-    """
-
-    def test_it_checkpoints_from_nothing(self, spec: TrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.save_freq = value
-            assert _cadence_problems_of(MockTrainer(), spec) == [], f"{value!r}"
 
 
 class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
@@ -292,23 +232,3 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
 def _reject(constant: str) -> Any:
     """A strict-JSON hook: refuse the constants ``json.dumps`` emits for non-finites."""
     raise ValueError(constant)
-
-
-class TestTheGateIsUsableOnItsOwn:
-    """The shared gate's own contract, independent of any backend."""
-
-    def test_it_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        spec.save_freq = A_FRACTIONAL_CADENCE
-        problems = checkpoint_cadence_problems(spec, context="acme")
-        assert len(problems) == 1
-        assert problems[0].startswith("acme: save_freq must be an integer number of steps, got 2.7.")
-
-    def test_a_usable_cadence_reports_nothing(self, spec: TrainSpec) -> None:
-        for value in USABLE:
-            spec.save_freq = value
-            assert checkpoint_cadence_problems(spec, context="acme") == [], f"{value!r}"
-
-    def test_it_reports_one_problem_at_a_time(self, spec: TrainSpec) -> None:
-        """One field, one problem - so a caller fixes one thing per message."""
-        spec.save_freq = A_STRING_CADENCE
-        assert len(checkpoint_cadence_problems(spec, context="acme")) == 1

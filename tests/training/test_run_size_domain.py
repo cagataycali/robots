@@ -16,11 +16,10 @@ the dataset and the model were already loaded - and a non-numeric value raised
 out of the comparison itself, from a :meth:`Trainer.validate` documented to
 *return* problems rather than raise.
 
-The tests below pin the contract in both directions: every backend that reads
-the run size refuses the same unusable values through the one shared domain,
-a usable run size is untouched, and a backend that drives training from other
-fields (the RL trainers, on ``total_timesteps`` / ``batch_size``) reports
-nothing for a field it never reads.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below ground the
+refused values in what the consumer does with them and keep every backend on the
+one gate.
 """
 
 from __future__ import annotations
@@ -49,15 +48,11 @@ RUN_SIZE_FIELDS = ("steps", "global_batch_size")
 
 # Non-positive: already refused before this change (by four separate copies of
 # the same comparison). Kept so the fix cannot regress what worked.
-NON_POSITIVE = (0, -5)
 
 # Slipped through a comparison, then misbehaved in the consumer.
-WRONG_TYPE = (True, False, 2.7, float("nan"), float("inf"))
 
 # Raised out of the comparison itself, i.e. out of validate().
-NOT_COMPARABLE = ("1000", None, [4])
 
-UNUSABLE = NON_POSITIVE + WRONG_TYPE + NOT_COMPARABLE
 
 # Every backend that reads the run size. The RL trainers are deliberately
 # absent - see TestTheRLTrainersIgnoreAFieldTheyDoNotRead.
@@ -84,86 +79,6 @@ def spec(tmp_path: pathlib.Path) -> TrainSpec:
         output_dir=str(out),
         embodiment="so101",
     )
-
-
-def _mutate(spec: TrainSpec, field: str, value: Any) -> TrainSpec:
-    """Set one run-size field to a value its annotation does not describe."""
-    setattr(spec, field, value)
-    return spec
-
-
-class TestEveryBackendRefusesAnUnusableRunSize:
-    """One domain, five backends, one verdict per value."""
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_unusable_run_size_is_reported(self, spec: TrainSpec, trainer_cls: type[Trainer], field: str) -> None:
-        for value in UNUSABLE:
-            trainer = trainer_cls()
-            problems = trainer.validate(_mutate(spec, field, value))
-            named = [p for p in problems if field in p]
-            assert named, f"{trainer_cls.__name__} accepted {field}={value!r}: {problems}"
-            assert "must be a positive integer" in named[0], f"{value!r}"
-            assert repr(value) in named[0], named[0]
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """A shared domain must still say which backend rejected the spec."""
-        trainer = trainer_cls()
-        problems = trainer.validate(_mutate(spec, "steps", 0))
-        named = [p for p in problems if "steps" in p]
-        assert named and named[0].startswith(f"{trainer.provider_name}: "), named
-
-
-class TestValidateReportsInsteadOfRaising:
-    """``validate`` returns problems - a non-numeric run size must not raise."""
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_a_non_comparable_value_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
-    ) -> None:
-        for value in NOT_COMPARABLE:
-            problems = trainer_cls().validate(_mutate(spec, field, value))
-            assert isinstance(problems, list), f"{value!r}"
-            assert any(field in p for p in problems), problems
-
-
-class TestAUsableRunSizeIsUntouched:
-    """The change is additive: every honorable run size still validates."""
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    @pytest.mark.parametrize(("steps", "batch"), [(10000, 32), (1, 1), (2, 4096)])
-    def test_a_usable_run_size_raises_no_run_size_problem(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], steps: int, batch: int
-    ) -> None:
-        spec.steps = steps
-        spec.global_batch_size = batch
-        problems = trainer_cls().validate(spec)
-        assert not [p for p in problems if "positive integer" in p], problems
-
-
-class TestTheRLTrainersIgnoreAFieldTheyDoNotRead:
-    """A backend must not report on a spec field it never consumes.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports
-    and ignores the rest". The RL trainers drive training from
-    ``total_timesteps`` / ``batch_size`` and never read ``steps`` or
-    ``global_batch_size``, so the run-size gate must stay off their path -
-    otherwise an RL spec carrying the inherited defaults would be refused for
-    a reason that has no effect on the run.
-    """
-
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_an_rl_spec_is_not_refused_for_an_unread_field(self, field: str) -> None:
-        pytest.importorskip("torch")
-        from strands_robots.training.rl.base_algo import RLTrainSpec
-        from strands_robots.training.rl.ppo import PpoTrainer
-
-        rl_spec = RLTrainSpec(output_dir="/tmp/rl-out", env_factory=lambda: None)  # type: ignore[arg-type,return-value]
-        setattr(rl_spec, field, 0)
-        problems = PpoTrainer().validate(rl_spec)
-        assert not [p for p in problems if field in p], problems
 
 
 class TestTheRefusedValuesAreOnesTheConsumerCannotHonor:
@@ -258,24 +173,6 @@ class TestOneOwnerForTheRunSizeDomain:
         assert not adrift, f"validate() does not call _run_size_problems: {adrift}"
         # Non-vacuity: the scan really reached every backend, not an empty tree.
         assert seen == {t.__name__ for t in SUPERVISED_TRAINERS + STEPS_ONLY_TRAINERS}, seen
-
-    @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
-    def test_a_steps_only_backend_refuses_an_unusable_steps_in_the_shared_wording(
-        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer]
-    ) -> None:
-        for value in UNUSABLE:
-            trainer = trainer_cls()
-            spec = TrainSpec(output_dir=str(tmp_path), extra={"task": "Isaac-Cartpole"})
-            named = [p for p in trainer.validate(_mutate(spec, "steps", value)) if ": steps " in p]
-            assert named and "must be a positive integer" in named[0], named
-            assert named[0].startswith(f"{trainer.provider_name}: "), named
-
-    @pytest.mark.parametrize("trainer_cls", STEPS_ONLY_TRAINERS)
-    def test_a_steps_only_backend_ignores_the_batch_it_never_reads(
-        self, tmp_path: pathlib.Path, trainer_cls: type[Trainer]
-    ) -> None:
-        spec = TrainSpec(output_dir=str(tmp_path), global_batch_size=0, extra={"task": "Isaac-Cartpole"})
-        assert not [p for p in trainer_cls().validate(spec) if "global_batch_size" in p]
 
     def test_no_backend_re_implements_the_domain(self) -> None:
         copies = {p.name: hits for p in _training_modules() if (hits := _local_run_size_comparisons(p.read_text()))}

@@ -27,57 +27,32 @@ in the same biconditional as the numeric domains beside them: a backend that
 reads the field routes it through the gate, and a backend that ignores the field
 reports nothing about it. Two gates rather than one because the readers differ -
 GR00T reads ``resume`` and ignores ``streaming``.
+
+Which backends refuse which values is the table in
+``tests/training/test_train_spec_field_domains.py``; the tests below pin the
+refusal's order against the check the flag gates and the provider-agnostic tool.
 """
 
 from __future__ import annotations
 
-import inspect
 import pathlib
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.tools.train_policy import train_policy
-from strands_robots.training._validate import resume_problems, streaming_problems
-from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.isaaclab import IsaacLabTrainer
+from strands_robots.training.base import TrainSpec
 from strands_robots.training.lerobot import LerobotTrainer
-from strands_robots.training.mock import MockTrainer
-from strands_robots.training.rsl_rl import RslRlTrainer
-from strands_robots.training.sagemaker import SagemakerTrainer
-from tests.training._spec_field_reads import reads_spec_field
 
 # The spellings a caller reaches for when opting out (every one truthy), two
 # truthy numbers, and the falsy values that are not a declared spelling of the
 # negative posture either.
-NOT_A_BOOLEAN: list[Any] = [
-    "false",
-    "no",
-    "0",
-    1,
-    0,
-    float("nan"),
-    None,
-    [],
-]
 
 # Both python spellings plus the numpy booleans the shared domain also accepts.
-A_BOOLEAN: list[Any] = [
-    True,
-    False,
-    np.True_,
-    np.False_,
-]
 
 # Which backend reads which field, by name or through a forwarding table. The
 # one-owner scan at the bottom derives the same sets from the tree, so a
 # backend that starts reading a field is graded on arrival.
-READS_RESUME = (LerobotTrainer, RslRlTrainer, SagemakerTrainer, IsaacLabTrainer)
-READS_STREAMING = (LerobotTrainer, SagemakerTrainer)
-IGNORES_RESUME = (MockTrainer, Cosmos3Trainer)
-IGNORES_STREAMING = (MockTrainer, Cosmos3Trainer, RslRlTrainer)
 
 
 @pytest.fixture
@@ -94,16 +69,6 @@ def spec(tmp_path: pathlib.Path) -> TrainSpec:
         base_model="lerobot/act",
         embodiment="new_embodiment",
     )
-
-
-def _problems_about(trainer: Trainer, spec: TrainSpec, field: str) -> list[str]:
-    """``validate`` problems naming *field* in the shared domain's own shape.
-
-    Matched as ``": <field> "`` rather than the bare word: pytest derives
-    ``tmp_path`` from the test name, so an unrelated problem quoting a path can
-    contain the field name too.
-    """
-    return [p for p in trainer.validate(spec) if f": {field} " in p]
 
 
 def _set(spec: TrainSpec, **fields: Any) -> TrainSpec:
@@ -125,75 +90,6 @@ def _run_tool(**kwargs: Any) -> dict[str, Any]:
 
 def _text(envelope: dict[str, Any]) -> str:
     return " ".join(item.get("text", "") for item in envelope.get("content", []))
-
-
-class TestEveryReaderRefusesAPostureItCanOnlyMisread:
-    """Each backend that reads a field refuses every non-boolean, by name."""
-
-    @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    def test_resume_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in NOT_A_BOOLEAN:
-            spec.resume = value
-            problems = _problems_about(trainer_cls(), spec, "resume")
-            assert problems, f"{trainer_cls.__name__} accepted resume={value!r}"
-            assert any("resume must be a boolean" in p for p in problems), problems
-
-    @pytest.mark.parametrize("trainer_cls", READS_STREAMING)
-    def test_streaming_is_refused(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in NOT_A_BOOLEAN:
-            spec.streaming = value
-            problems = _problems_about(trainer_cls(), spec, "streaming")
-            assert problems, f"{trainer_cls.__name__} accepted streaming={value!r}"
-            assert any("streaming must be a boolean" in p for p in problems), problems
-
-    @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        trainer = trainer_cls()
-        _set(spec, resume="false")
-        assert any(p.startswith(f"{trainer.provider_name}: resume ") for p in _problems_about(trainer, spec, "resume"))
-
-    @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    def test_a_refused_flag_is_a_problem_not_an_exception(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """``validate`` returns problems; a non-boolean must not raise out of it."""
-        _set(spec, resume=[1], streaming={"on": True})
-        problems = trainer_cls().validate(spec)  # must not raise
-        assert any(": resume " in p for p in problems), problems
-
-
-class TestAUsableBooleanIsUntouched:
-    """Both python spellings and the numpy booleans pass every reader."""
-
-    @pytest.mark.parametrize("trainer_cls", READS_RESUME)
-    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in A_BOOLEAN:
-            spec.resume = value
-            assert _problems_about(trainer_cls(), spec, "resume") == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", READS_STREAMING)
-    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in A_BOOLEAN:
-            spec.streaming = value
-            assert _problems_about(trainer_cls(), spec, "streaming") == [], f"{value!r}"
-
-
-class TestABackendThatIgnoresTheFieldReportsNothing:
-    """A backend must not report on a field it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports
-    and ignores the rest", so each gate is scoped to that field's readers.
-    """
-
-    @pytest.mark.parametrize("trainer_cls", IGNORES_RESUME)
-    def test_resume(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in NOT_A_BOOLEAN:
-            spec.resume = value
-            assert _problems_about(trainer_cls(), spec, "resume") == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", IGNORES_STREAMING)
-    def test_streaming(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in NOT_A_BOOLEAN:
-            spec.streaming = value
-            assert _problems_about(trainer_cls(), spec, "streaming") == [], f"{value!r}"
 
 
 class TestTheRefusalPrecedesTheCheckTheFlagGates:
@@ -250,64 +146,3 @@ class TestTheProviderAgnosticToolReportsTheRefusal:
         envelope = _run_tool(action="list", resume="false", streaming="no")
         assert envelope["status"] == "success"
         assert "must be a boolean" not in _text(envelope)
-
-
-class TestTheGatesAreUsableOnTheirOwn:
-    """Each gate's own contract, independent of any backend."""
-
-    def test_resume_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        _set(spec, resume="false")
-        [problem] = resume_problems(spec, context="acme")
-        assert problem.startswith("acme: resume must be a boolean, got 'false'.")
-
-    def test_streaming_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        _set(spec, streaming=0)
-        [problem] = streaming_problems(spec, context="acme")
-        assert problem.startswith("acme: streaming must be a boolean, got 0.")
-
-    def test_each_gate_reads_only_its_own_field(self, spec: TrainSpec) -> None:
-        _set(spec, resume="false")
-        assert streaming_problems(spec, context="acme") == []
-        _set(spec, resume=False, streaming="false")
-        assert resume_problems(spec, context="acme") == []
-
-    def test_the_defaults_report_nothing(self, spec: TrainSpec) -> None:
-        assert resume_problems(spec, context="acme") == []
-        assert streaming_problems(spec, context="acme") == []
-
-
-def _trainer_modules() -> list[pathlib.Path]:
-    """Every trainer module, minus the one that defines the shared gates.
-
-    Rooted at the module that defines :class:`Trainer` so the scan cannot
-    silently point at the wrong tree. The gates' own module reads the fields as
-    their owner, not as a consumer, and is excluded by derivation rather than by
-    name.
-    """
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(resume_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-class TestTheListedReadersAgreeWithTheTree:
-    """The trainer classes this file exercises are the ones that read the fields.
-
-    Which backends must route ``spec.resume`` through ``_resume_problems`` and
-    ``spec.streaming`` through ``_streaming_problems`` is graded for every shared
-    domain in ``tests/training/test_every_shared_domain_has_one_owner.py``. What
-    that table cannot see is this file's own hand-written class tuples, so a
-    backend that stops reading a flag would leave them exercising a case that no
-    longer exists: they are checked against the derived set here.
-    """
-
-    def test_the_class_of_readers_reads_the_field_in_the_test_table(self) -> None:
-        """The hand-written reader tuples above agree with the derived ones."""
-        by_module = {
-            "lerobot.py": LerobotTrainer,
-            "rsl_rl.py": RslRlTrainer,
-            "sagemaker.py": SagemakerTrainer,
-            "isaaclab.py": IsaacLabTrainer,
-        }
-        for field, listed in (("resume", READS_RESUME), ("streaming", READS_STREAMING)):
-            readers = {p.name for p in _trainer_modules() if reads_spec_field(p.read_text(), (field,))}
-            assert {by_module[name] for name in readers} == set(listed), field

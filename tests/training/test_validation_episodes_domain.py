@@ -23,11 +23,11 @@ lerobot then holds out ``ceil(episodes_in_task * eval_split)``:
 * A non-numeric value raised ``TypeError`` out of the comparison itself, from a
   ``validate`` documented to *return* problems.
 
-The tests below pin the contract in both directions: every unusable value is
-reported (never raised) by the backend that reads the field and refused by the
-tool that writes the same flag, a usable count still produces the split and the
-evaluation cadence, the dataset-dependent bounds that already worked still fire,
-and a backend that ignores the field reports nothing about it.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below pin that
+the tool writing the same flag refuses the same values, that a usable count still
+produces the split and the evaluation cadence, and that the dataset-dependent
+bounds still fire.
 """
 
 from __future__ import annotations
@@ -42,11 +42,8 @@ import pytest
 pytest.importorskip("psutil")
 
 from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
-from strands_robots.training._validate import validation_episodes_problems  # noqa: E402
 from strands_robots.training.base import Trainer, TrainSpec  # noqa: E402
-from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
-from strands_robots.training.mock import MockTrainer  # noqa: E402
 from strands_robots.utils import validation_split_fraction  # noqa: E402
 
 TOTAL_EPISODES = 10
@@ -163,25 +160,6 @@ def _tool_verdict(dataset_root: pathlib.Path, value: Any) -> str:
 class TestTheBackendRefusesAnUnusableValidationCount:
     """Every value no split can honor is reported as a problem, never raised."""
 
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.val_episodes = value
-            problems = _count_problems_of(LerobotTrainer(), spec)
-            assert problems, f"LerobotTrainer accepted val_episodes={value!r}"
-            assert any("must be a positive integer" in p for p in problems), problems
-
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec) -> None:
-        trainer = LerobotTrainer()
-        spec.val_episodes = 0
-        assert any(p.startswith(f"{trainer.provider_name}: val_episodes ") for p in _count_problems_of(trainer, spec))
-
-    def test_a_non_numeric_count_is_a_problem_not_an_exception(self, spec: TrainSpec) -> None:
-        """The comparison the gate replaced raised ``TypeError`` for these."""
-        for value in RAISED_IN_THE_COMPARISON:
-            spec.val_episodes = value
-            problems = LerobotTrainer().validate(spec)  # must not raise
-            assert any(_NAMES_THE_COUNT in p for p in problems), problems
-
     def test_the_dataset_dependent_comparison_is_not_reached(self, spec: TrainSpec) -> None:
         """Guard order: the domain gate runs before anything compares the value.
 
@@ -207,11 +185,6 @@ class TestANonPositiveCountWasSilentlyDropped:
         for value in SILENTLY_DROPPED:
             spec.val_episodes = value
             assert _eval_flags(LerobotTrainer().build_command(spec)) == [], f"{value!r}"
-
-    def test_so_the_request_is_refused_instead(self, spec: TrainSpec) -> None:
-        for value in SILENTLY_DROPPED:
-            spec.val_episodes = value
-            assert _count_problems_of(LerobotTrainer(), spec), f"{value!r}"
 
 
 class TestACountThatComparesAsPositiveWasSilentlyRewritten:
@@ -248,19 +221,9 @@ class TestACountThatComparesAsPositiveWasSilentlyRewritten:
         spec.val_episodes = fractional
         assert _count_problems_of(LerobotTrainer(), spec)
 
-    def test_so_the_request_is_refused_instead(self, spec: TrainSpec) -> None:
-        for value in SILENTLY_REWRITTEN:
-            spec.val_episodes = value
-            assert _count_problems_of(LerobotTrainer(), spec), f"{value!r}"
-
 
 class TestAUsableCountIsUntouched:
     """A count the split reproduces exactly still produces the split."""
-
-    def test_a_usable_count_is_not_a_problem(self, spec: TrainSpec) -> None:
-        for value in USABLE:
-            spec.val_episodes = value
-            assert _count_problems_of(LerobotTrainer(), spec) == [], f"{value!r}"
 
     def test_it_still_produces_the_split_and_the_evaluation_cadence(self, spec: TrainSpec) -> None:
         for value in USABLE:
@@ -275,10 +238,9 @@ class TestAUsableCountIsUntouched:
             fraction = validation_split_fraction(value, TOTAL_EPISODES)
             assert math.ceil(TOTAL_EPISODES * fraction) == value, f"{value!r}"
 
-    def test_an_unset_count_is_not_a_problem(self, spec: TrainSpec) -> None:
+    def test_an_unset_count_produces_no_split(self, spec: TrainSpec) -> None:
         """``None`` is the documented "train on every episode" sentinel."""
         assert spec.val_episodes is None
-        assert _count_problems_of(LerobotTrainer(), spec) == []
         assert _eval_flags(LerobotTrainer().build_command(spec)) == []
 
 
@@ -390,41 +352,3 @@ class TestTheParityClassifierCollectsFailuresWithoutSwallowingControlFlow:
         monkeypatch.setattr(f"{__name__}.build_train_command", _raising_tool(exc))
         with pytest.raises(type(exc)):
             _tool_verdict(dataset, 3)
-
-
-class TestABackendThatIgnoresTheFieldReportsNothing:
-    """A backend must not report on a field it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports and
-    ignores the rest", so this gate is scoped to the LeRobot backend rather than
-    made universal like the learning-rate one.
-    """
-
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
-    def test_it_validates_nothing_about_the_count(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.val_episodes = value
-            assert _count_problems_of(trainer_cls(), spec) == [], f"{value!r}"
-
-
-class TestTheGateIsUsableOnItsOwn:
-    """The shared gate's own contract, independent of any backend."""
-
-    def test_it_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        spec.val_episodes = 0
-        (problem,) = validation_episodes_problems(spec, context="anything")
-        assert problem.startswith("anything: val_episodes ")
-
-    def test_it_reports_exactly_one_problem_per_unusable_value(self, spec: TrainSpec) -> None:
-        for value in UNUSABLE:
-            spec.val_episodes = value
-            assert len(validation_episodes_problems(spec, context="ctx")) == 1, f"{value!r}"
-
-    def test_it_reports_nothing_for_a_usable_count(self, spec: TrainSpec) -> None:
-        for value in USABLE:
-            spec.val_episodes = value
-            assert validation_episodes_problems(spec, context="ctx") == [], f"{value!r}"
-
-    def test_an_unset_count_is_not_a_problem(self, spec: TrainSpec) -> None:
-        assert spec.val_episodes is None
-        assert validation_episodes_problems(spec, context="ctx") == []

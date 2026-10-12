@@ -25,12 +25,10 @@ process count failed was silent or late:
   itself - from inside a :meth:`Trainer.validate` documented to *return*
   problems.
 
-The tests below pin the contract in both directions: every backend that reads
-either field refuses the same unusable values through the one shared domain with
-a message naming itself, a usable topology is untouched (including the
-multi-node refusal, which must still fire for a *usable* count), a backend that
-ignores the fields reports nothing about them, and the refused values are
-grounded in what the comparison and the real launcher do with them.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below pin that
+the multi-node refusal still fires for a usable count and ground the refused
+values in what the comparison and the real launcher do with them.
 """
 
 from __future__ import annotations
@@ -41,15 +39,10 @@ from typing import Any
 
 import pytest
 
-from strands_robots.training._validate import launch_topology_problems
 from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.lerobot import LerobotTrainer
-from strands_robots.training.mock import MockTrainer
 
 # The two fields, and the backends that launch from them.
-TOPOLOGY_FIELDS = ("num_gpus", "num_nodes")
-LAUNCHING_BACKENDS = (LerobotTrainer, Cosmos3Trainer)
 
 # Values no launcher can honor, split by how each one failed before the gate.
 
@@ -61,8 +54,6 @@ REACHED_THE_LAUNCHER: tuple[Any, ...] = (2.7, float("inf"))
 
 # Raised TypeError out of the comparison, from inside validate().
 RAISED_OUT_OF_VALIDATE: tuple[Any, ...] = ("4", None, [2])
-
-UNUSABLE: tuple[Any, ...] = SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER + tuple(RAISED_OUT_OF_VALIDATE)
 
 
 @pytest.fixture
@@ -86,52 +77,8 @@ def _problems_about(trainer: Trainer, spec: TrainSpec, field: str) -> list[str]:
     return [p for p in trainer.validate(spec) if field in p]
 
 
-class TestEveryLaunchingBackendRefusesAnUnusableProcessCount:
-    """Each backend that launches from a field refuses every unusable value."""
-
-    @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer], field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            problems = _problems_about(trainer_cls(), spec, field)
-            assert problems, f"{trainer_cls.__name__} accepted {field}={value!r}"
-            assert any("must be a positive integer" in p for p in problems), problems
-
-    @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    def test_the_problem_names_the_backend_that_refused_it(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
-    ) -> None:
-        trainer = trainer_cls()
-        setattr(spec, field, 0)
-        assert any(p.startswith(f"{trainer.provider_name}: {field} ") for p in _problems_about(trainer, spec, field))
-
-    @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    def test_a_non_numeric_count_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
-    ) -> None:
-        """``validate`` returns problems; it must not raise out of a comparison."""
-        for value in RAISED_OUT_OF_VALIDATE:
-            setattr(spec, field, value)
-            problems = trainer_cls().validate(spec)  # must not raise
-            assert any(field in p for p in problems), problems
-
-
 class TestAUsableTopologyIsUntouched:
     """A usable process count raises no topology problem on any backend."""
-
-    @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    def test_a_usable_gpu_count_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in (1, 2, 8):
-            spec.num_gpus = value
-            assert _problems_about(trainer_cls(), spec, "num_gpus") == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", LAUNCHING_BACKENDS)
-    def test_the_single_node_default_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        spec.num_nodes = 1
-        assert _problems_about(trainer_cls(), spec, "num_nodes") == []
 
     @pytest.mark.parametrize("trainer_cls", (LerobotTrainer,))
     def test_the_multi_node_refusal_still_fires_for_a_usable_count(
@@ -148,34 +95,6 @@ class TestAUsableTopologyIsUntouched:
         problems = _problems_about(trainer_cls(), spec, "num_nodes")
         assert any("multi-node" in p for p in problems), problems
         assert not any("must be a positive integer" in p for p in problems), problems
-
-
-class TestABackendThatIgnoresTheFieldsReportsNothing:
-    """A backend must not report on a field it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports
-    and ignores the rest", so this gate is scoped to the launching backends
-    rather than made universal like the learning-rate one.
-    """
-
-    @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    def test_the_mock_backend_launches_from_neither_field(self, spec: TrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            assert _problems_about(MockTrainer(), spec, field) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("field", TOPOLOGY_FIELDS)
-    def test_an_rl_backend_launches_from_neither_field(self, tmp_path: pathlib.Path, field: str) -> None:
-        pytest.importorskip("torch")
-        from strands_robots.training.rl.base_algo import RLTrainSpec
-        from strands_robots.training.rl.fast_sac import FastSacTrainer
-
-        rl_spec = RLTrainSpec(
-            output_dir=str(tmp_path),
-            env_factory=lambda: None,  # type: ignore[arg-type,return-value]
-        )
-        setattr(rl_spec, field, 0)
-        assert [p for p in FastSacTrainer().validate(rl_spec) if field in p] == []
 
 
 class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
@@ -218,21 +137,3 @@ class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
         for value in RAISED_OUT_OF_VALIDATE:
             with pytest.raises(TypeError):
                 _ = value > 1  # type: ignore[operator]
-
-
-class TestTheGateIsUsableOnItsOwn:
-    """The shared gate's own contract, independent of any backend."""
-
-    def test_it_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        spec.num_gpus = 0
-        assert launch_topology_problems(spec, context="acme") == ["acme: num_gpus must be a positive integer, got 0."]
-
-    def test_a_usable_topology_reports_nothing(self, spec: TrainSpec) -> None:
-        spec.num_gpus, spec.num_nodes = 8, 2
-        assert launch_topology_problems(spec, context="acme") == []
-
-    def test_both_fields_are_reported_together(self, spec: TrainSpec) -> None:
-        spec.num_gpus, spec.num_nodes = 0, "4"  # type: ignore[assignment]
-        problems = launch_topology_problems(spec, context="acme")
-        assert len(problems) == 2
-        assert "num_gpus" in problems[0] and "num_nodes" in problems[1]

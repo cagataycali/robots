@@ -42,9 +42,7 @@ pytest.importorskip("psutil")
 from strands_robots.tools.lerobot_train import build_train_command  # noqa: E402
 from strands_robots.training._validate import lora_hyperparameter_problems  # noqa: E402
 from strands_robots.training.base import Trainer, TrainSpec  # noqa: E402
-from strands_robots.training.cosmos3 import Cosmos3Trainer  # noqa: E402
 from strands_robots.training.lerobot import LerobotTrainer  # noqa: E402
-from strands_robots.training.mock import MockTrainer  # noqa: E402
 
 TOTAL_EPISODES = 10
 
@@ -236,51 +234,8 @@ class TestAScalingOfZeroTrainsAnAdapterThatCannotBeApplied:
                 peft.get_peft_model(_lora_target(torch), config)
 
 
-class TestTheBackendRefusesAnUnusableAdapterHyperparameter:
-    """Every value neither path can honor is reported as a problem, never raised."""
-
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, field: str) -> None:
-        for value in UNUSABLE:
-            setattr(spec, field, value)
-            assert _problems_of(LerobotTrainer(), spec, field), f"{field}={value!r} was accepted"
-
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, field: str) -> None:
-        setattr(spec, field, 0)
-        problems = _problems_of(LerobotTrainer(), spec, field)
-        assert problems and problems[0].startswith("lerobot_local: ")
-
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_a_non_numeric_value_is_a_problem_not_an_exception(self, spec: TrainSpec, field: str) -> None:
-        """``validate`` is documented to *return* problems, so it must not raise."""
-        for value in NON_NUMERIC:
-            setattr(spec, field, value)
-            assert _problems_of(LerobotTrainer(), spec, field), f"{value!r}"
-
-    def test_both_unusable_values_are_reported_together(self, spec: TrainSpec) -> None:
-        """One pass reports both, rather than making the caller re-run to find the second."""
-        spec.lora_r = 0
-        spec.lora_alpha = -8
-        problems = lora_hyperparameter_problems(spec, context="lerobot_local")
-        assert len(problems) == 2
-        assert any("lora_r" in p for p in problems) and any("lora_alpha" in p for p in problems)
-
-
 class TestAUsableAdapterHyperparameterIsUntouched:
     """The guard refuses exactly the values that cannot be honored."""
-
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_a_usable_value_is_not_a_problem(self, spec: TrainSpec, field: str) -> None:
-        for value in USABLE:
-            setattr(spec, field, value)
-            assert _problems_of(LerobotTrainer(), spec, field) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_an_unset_value_is_not_a_problem(self, spec: TrainSpec, field: str) -> None:
-        """``None`` is the documented "keep peft's own default" sentinel."""
-        setattr(spec, field, None)
-        assert _problems_of(LerobotTrainer(), spec, field) == []
 
     def test_an_alpha_larger_than_the_rank_is_usable(self, spec: TrainSpec) -> None:
         """The common LoRA setting: alpha above r scales the update up."""
@@ -405,23 +360,6 @@ class TestTheParityClassifierCollectsFailuresWithoutSwallowingControlFlow:
         monkeypatch.setattr(f"{__name__}.build_train_command", _raising_tool(exc))
         with pytest.raises(type(exc)):
             _tool_verdict(dataset, "lora_r", 8)
-
-
-class TestABackendThatIgnoresTheFieldsReportsNothing:
-    """A backend must not report on fields it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports and
-    ignores the rest", so this gate is scoped to the LeRobot backend rather than
-    made universal like the learning-rate one.
-    """
-
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer, Cosmos3Trainer))
-    @pytest.mark.parametrize("field", FIELDS)
-    def test_it_validates_nothing_about_the_adapter(
-        self, spec: TrainSpec, trainer_cls: type[Trainer], field: str
-    ) -> None:
-        setattr(spec, field, 0)
-        assert _problems_of(trainer_cls(), spec, field) == []
 
 
 def _peft_flag_writers() -> list[pathlib.Path]:

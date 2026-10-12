@@ -20,11 +20,9 @@ and the appliers do not agree about a single value:
   bad seed fails - if at all - inside the run, after the dataset and model are
   loaded.
 
-The tests below pin the contract in both directions: every backend that reads the
-field refuses the same unusable values through the one shared domain with a
-message naming itself, a usable seed (``0`` included) is untouched, a backend that
-ignores the field reports nothing about it, and the refused values are grounded in
-what the real appliers do with them.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below ground the
+refused values in what the real appliers do with them.
 """
 
 from __future__ import annotations
@@ -34,31 +32,22 @@ from typing import Any
 
 import pytest
 
-from strands_robots.training._validate import seed_problems
-from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.cosmos3 import Cosmos3Trainer
-from strands_robots.training.lerobot import LerobotTrainer
-from strands_robots.training.mock import MockTrainer
+from strands_robots.training.base import TrainSpec
 
 # The backends that seed from the field. The RL trainers are exercised through
 # their own spec type further down (their validate() needs an RLTrainSpec).
-SEEDING_BACKENDS = (LerobotTrainer, Cosmos3Trainer)
 
 # Values no applier can honor, split by how each one failed before the gate.
 
 # Silently rewritten by torch's modulo, and refused by NumPy - so no applier
 # honors the value the caller supplied.
-SILENTLY_REWRITTEN: tuple[Any, ...] = (-1, -5, True, False, 2.7, 3.0)
 
 # Raised out of the applier: torch refuses nan/inf/list, NumPy refuses the float
 # and the string.
-RAISED_IN_THE_APPLIER: tuple[Any, ...] = (float("nan"), float("inf"), "42", [7])
 
-UNUSABLE: tuple[Any, ...] = SILENTLY_REWRITTEN + RAISED_IN_THE_APPLIER
 
 # Seeds every applier honors as themselves. ``0`` is a seed, not a degenerate
 # value, which is why the domain's floor is zero rather than one.
-USABLE = (0, 1, 42, 1000, 2**31 - 1)
 
 
 @pytest.fixture
@@ -81,104 +70,6 @@ def spec(tmp_path: pathlib.Path) -> TrainSpec:
 # rather than the bare word because pytest derives ``tmp_path`` from the test
 # name, so a path in an unrelated problem can contain "seed" too - a filter that
 # picked that up could both mask and fake a verdict.
-_NAMES_THE_SEED = ": seed "
-
-
-def _seed_problems_of(trainer: Trainer, spec: TrainSpec) -> list[str]:
-    """``validate`` problems about ``seed``."""
-    return [p for p in trainer.validate(spec) if _NAMES_THE_SEED in p]
-
-
-def _rl_spec(tmp_path: pathlib.Path) -> Any:
-    """A minimal :class:`RLTrainSpec` for the two RL trainers."""
-    from strands_robots.training.rl.base_algo import RLTrainSpec
-
-    return RLTrainSpec(
-        output_dir=str(tmp_path),
-        env_factory=lambda: None,  # type: ignore[arg-type,return-value]
-    )
-
-
-def _rl_trainers() -> list[Any]:
-    """The two RL trainers, or skip when torch is absent."""
-    pytest.importorskip("torch")
-    from strands_robots.training.rl.fast_sac import FastSacTrainer
-    from strands_robots.training.rl.ppo import PpoTrainer
-
-    return [FastSacTrainer(), PpoTrainer()]
-
-
-class TestEverySeedingBackendRefusesAnUnusableSeed:
-    """Each backend that seeds from the field refuses every unusable value."""
-
-    @pytest.mark.parametrize("trainer_cls", SEEDING_BACKENDS)
-    def test_it_is_reported_as_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.seed = value
-            problems = _seed_problems_of(trainer_cls(), spec)
-            assert problems, f"{trainer_cls.__name__} accepted seed={value!r}"
-            assert any("must be a non-negative integer" in p for p in problems), problems
-
-    @pytest.mark.parametrize("trainer_cls", SEEDING_BACKENDS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        trainer = trainer_cls()
-        spec.seed = -1
-        assert any(p.startswith(f"{trainer.provider_name}: seed ") for p in _seed_problems_of(trainer, spec))
-
-    @pytest.mark.parametrize("trainer_cls", SEEDING_BACKENDS)
-    def test_an_unusable_seed_is_a_problem_not_an_exception(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """``validate`` returns problems; it must not raise out of the check."""
-        for value in RAISED_IN_THE_APPLIER:
-            spec.seed = value
-            problems = trainer_cls().validate(spec)  # must not raise
-            assert any(_NAMES_THE_SEED in p for p in problems), problems
-
-    def test_both_rl_trainers_refuse_it_too(self, tmp_path: pathlib.Path) -> None:
-        for value in UNUSABLE:
-            rl_spec = _rl_spec(tmp_path)
-            rl_spec.seed = value
-            for trainer in _rl_trainers():
-                problems = [p for p in trainer.validate(rl_spec) if _NAMES_THE_SEED in p]
-                assert problems, f"{type(trainer).__name__} accepted seed={value!r}"
-                assert any(p.startswith(f"{trainer.provider_name}: seed ") for p in problems), problems
-
-
-class TestAUsableSeedIsUntouched:
-    """A seed every applier honors raises no problem, and zero is one of them."""
-
-    @pytest.mark.parametrize("trainer_cls", SEEDING_BACKENDS)
-    def test_a_usable_seed_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in USABLE:
-            spec.seed = value
-            assert _seed_problems_of(trainer_cls(), spec) == [], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", SEEDING_BACKENDS)
-    def test_an_unset_seed_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """``None`` is the documented "use the backend's own default" sentinel."""
-        assert spec.seed is None
-        assert _seed_problems_of(trainer_cls(), spec) == []
-
-    def test_the_rl_trainers_accept_it_too(self, tmp_path: pathlib.Path) -> None:
-        for value in USABLE:
-            rl_spec = _rl_spec(tmp_path)
-            rl_spec.seed = value
-            for trainer in _rl_trainers():
-                assert [p for p in trainer.validate(rl_spec) if _NAMES_THE_SEED in p] == [], f"{value!r}"
-
-
-class TestABackendThatIgnoresTheFieldReportsNothing:
-    """A backend must not report on a field it never reads.
-
-    :class:`TrainSpec` documents that a backend "reads the fields it supports and
-    ignores the rest", so this gate is scoped to the seeding backends rather than
-    made universal like the learning-rate one.
-    """
-
-    @pytest.mark.parametrize("trainer_cls", (MockTrainer,))
-    def test_it_seeds_from_nothing(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.seed = value
-            assert _seed_problems_of(trainer_cls(), spec) == [], f"{value!r}"
 
 
 class TestTheRefusedValuesAreOnesNoApplierCanHonor:
@@ -222,18 +113,3 @@ class TestTheRefusedValuesAreOnesNoApplierCanHonor:
             set_seed(-1)
         after_the_failure = [random.random() for _ in range(2)]
         assert untouched != after_the_failure
-
-
-class TestTheGateIsUsableOnItsOwn:
-    """The shared gate's own contract, independent of any backend."""
-
-    def test_it_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        spec.seed = -1
-        assert seed_problems(spec, context="acme") == ["acme: seed must be a non-negative integer, got -1."]
-
-    def test_a_usable_seed_reports_nothing(self, spec: TrainSpec) -> None:
-        spec.seed = 0
-        assert seed_problems(spec, context="acme") == []
-
-    def test_an_unset_seed_reports_nothing(self, spec: TrainSpec) -> None:
-        assert seed_problems(spec, context="acme") == []

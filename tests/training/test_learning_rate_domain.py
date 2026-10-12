@@ -31,10 +31,10 @@ A negative or ``nan`` value *is* refused - by ``torch.optim.Adam`` itself - but
 only once the dataset and model are loaded, past the point
 :meth:`Trainer.validate` documents itself as running before.
 
-The tests below pin the contract in both directions: every backend refuses the
-same unusable values through the one shared domain with a message naming itself,
-a usable rate and the documented ``None`` sentinel are untouched, and the
-refused values are grounded in what a real optimizer does with them.
+Which backends refuse which values, in which words, is the table in
+``tests/training/test_train_spec_field_domains.py``. The tests below ground the
+refused values in what a real optimizer does with them and keep every backend on
+the one gate.
 """
 
 from __future__ import annotations
@@ -47,7 +47,6 @@ from typing import Any
 
 import pytest
 
-from strands_robots.training._validate import learning_rate_problems
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.cosmos3 import Cosmos3Trainer
 from strands_robots.training.lerobot import LerobotTrainer
@@ -71,9 +70,7 @@ SILENT_MISREAD = (True,)
 LOUD_BUT_LATE = (-1e-3, float("nan"))
 
 # Never reached an optimizer at all: a config field of the wrong type.
-NOT_A_NUMBER: tuple[Any, ...] = ("1e-4", [1e-4], {"lr": 1e-4})
 
-UNUSABLE: tuple[Any, ...] = SILENT_NO_OP + SILENT_DIVERGENCE + SILENT_MISREAD + LOUD_BUT_LATE + NOT_A_NUMBER
 
 SUPERVISED_TRAINERS = (MockTrainer, Cosmos3Trainer, LerobotTrainer, RslRlTrainer, SagemakerTrainer)
 RL_TRAINER_NAMES = ("FastSacTrainer", "FastTd3Trainer", "PpoTrainer")
@@ -96,98 +93,6 @@ def spec(tmp_path: pathlib.Path) -> TrainSpec:
         output_dir=str(out),
         embodiment="so101",
     )
-
-
-def _rl_trainers() -> list[Trainer]:
-    """The two RL trainers, which read the rate straight into ``Adam``."""
-    pytest.importorskip("torch")
-    from strands_robots.training.rl.fast_sac import FastSacTrainer
-    from strands_robots.training.rl.ppo import PpoTrainer
-
-    return [FastSacTrainer(), PpoTrainer()]
-
-
-def _rl_spec(tmp_path: pathlib.Path, rate: Any) -> Any:
-    """An otherwise-valid RL spec carrying ``rate``."""
-    pytest.importorskip("torch")
-    from strands_robots.training.rl.base_algo import RLTrainSpec
-
-    spec = RLTrainSpec(
-        output_dir=str(tmp_path),
-        env_factory=lambda: None,  # type: ignore[arg-type,return-value]
-    )
-    spec.learning_rate = rate
-    return spec
-
-
-class TestEveryBackendRefusesAnUnusableLearningRate:
-    """One domain, seven backends, one verdict per value."""
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_a_supervised_backend_reports_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in UNUSABLE:
-            spec.learning_rate = value
-            problems = trainer_cls().validate(spec)
-            named = [p for p in problems if "learning_rate" in p]
-            assert named, f"{trainer_cls.__name__} accepted learning_rate={value!r}: {problems}"
-            assert "must be a positive finite number" in named[0], named[0]
-            assert repr(value) in named[0], named[0]
-
-    def test_an_rl_backend_reports_it(self, tmp_path: pathlib.Path) -> None:
-        for value in UNUSABLE:
-            for trainer in _rl_trainers():
-                problems = trainer.validate(_rl_spec(tmp_path, value))
-                named = [p for p in problems if "learning_rate" in p]
-                assert named, f"{trainer.provider_name} accepted learning_rate={value!r}: {problems}"
-                assert "must be a positive finite number" in named[0], named[0]
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_the_problem_names_the_backend_that_refused_it(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """A shared domain must still say which backend rejected the spec."""
-        trainer = trainer_cls()
-        spec.learning_rate = 0
-        named = [p for p in trainer.validate(spec) if "learning_rate" in p]
-        assert named and named[0].startswith(f"{trainer.provider_name}: "), named
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_a_non_numeric_rate_is_a_problem_not_an_exception(
-        self, spec: TrainSpec, trainer_cls: type[Trainer]
-    ) -> None:
-        """``validate`` returns problems - it must not raise on a bad type."""
-        for value in NOT_A_NUMBER:
-            spec.learning_rate = value
-            problems = trainer_cls().validate(spec)
-            assert isinstance(problems, list), f"{value!r}"
-            assert any("learning_rate" in p for p in problems), problems
-
-
-class TestAUsableLearningRateIsUntouched:
-    """The change is additive: nothing honorable becomes a problem."""
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_a_usable_rate_raises_no_learning_rate_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        for value in [1e-5, 1e-4, 3e-4, 0.1, 1.0]:
-            spec.learning_rate = value
-            assert not [p for p in trainer_cls().validate(spec) if "learning_rate" in p], f"{value!r}"
-
-    @pytest.mark.parametrize("trainer_cls", SUPERVISED_TRAINERS)
-    def test_the_none_sentinel_is_not_a_problem(self, spec: TrainSpec, trainer_cls: type[Trainer]) -> None:
-        """``None`` is the documented "use the backend's own default" spelling."""
-        spec.learning_rate = None
-        assert not [p for p in trainer_cls().validate(spec) if "learning_rate" in p]
-
-    def test_an_rl_spec_at_its_own_default_is_not_a_problem(self, tmp_path: pathlib.Path) -> None:
-        """``RLTrainSpec`` pins a concrete rate instead of the sentinel."""
-        pytest.importorskip("torch")
-        from strands_robots.training.rl.base_algo import RLTrainSpec
-
-        spec = RLTrainSpec(
-            output_dir=str(tmp_path),
-            env_factory=lambda: None,  # type: ignore[arg-type,return-value]
-        )
-        assert spec.learning_rate > 0
-        for trainer in _rl_trainers():
-            assert not [p for p in trainer.validate(spec) if "learning_rate" in p]
 
 
 class TestTheRefusedValuesAreOnesTheConsumerCannotHonor:
@@ -361,19 +266,3 @@ class TestOneOwnerForTheLearningRateDomain:
         assert set(validators) == {"RogueTrainer"}
         assert not _calls_learning_rate_gate(validators["RogueTrainer"])
         assert _local_learning_rate_comparisons(planted) == ["spec.learning_rate <= 0"]
-
-
-class TestTheGateIsUsableOnItsOwn:
-    """The shared gate is a plain function - the trainers only bind a context."""
-
-    def test_it_reports_the_context_it_was_given(self, spec: TrainSpec) -> None:
-        spec.learning_rate = 0
-        problems = learning_rate_problems(spec, context="probe")
-        assert len(problems) == 1
-        assert problems[0].startswith("probe: ")
-
-    def test_a_usable_spec_reports_nothing(self, spec: TrainSpec) -> None:
-        spec.learning_rate = 1e-4
-        assert learning_rate_problems(spec, context="probe") == []
-        spec.learning_rate = None
-        assert learning_rate_problems(spec, context="probe") == []

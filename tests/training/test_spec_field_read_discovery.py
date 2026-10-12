@@ -287,7 +287,6 @@ class TestEveryFieldScopedGuardSeesBothFormsOfARead:
         assert set(_guard_modules()) == {
             "test_every_shared_domain_has_one_owner.py",
             "test_learning_starts_count_domain.py",
-            "test_posture_flag_domain.py",
             "test_rl_checkpoint_interval_domain.py",
             "test_rl_posture_flag_domain.py",
             "test_rl_run_size_domain.py",
