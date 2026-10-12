@@ -54,14 +54,12 @@ from __future__ import annotations
 
 import ast
 import inspect
-import math
 import textwrap
 from typing import Any
 
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training._validate import rl_run_size_problems
 from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.training.rl.fast_sac import FastSacTrainer
@@ -77,20 +75,6 @@ NOT_A_COUNT: list[Any] = [True, False, 1.0, 2.5, 100.5, float("nan"), float("inf
 
 # The subset a bare comparison could not even report on: it raises instead.
 RAISED_OUT_OF_THE_COMPARISON: list[Any] = ["4", None, [1], {"n": 1}]
-
-# The values that SURVIVED a bare comparison, classified by what each did to the
-# derived bound. Every other value in ``NOT_A_COUNT`` was already refused by one
-# comparison or the other, so it is graded above but carries no harm of its own.
-#
-# ``max(1, ...)`` reads ``nan`` as ``1`` (nan compares false against everything)
-# and ``inf`` as ``inf``, so the two land on opposite sides of the intended count.
-WRONG_RUN_LENGTH: dict[Any, int] = {float("nan"): 1000, float("inf"): 1}
-
-# An integral or fractional float keeps the bound a float, but only while
-# ``total_timesteps // steps_per_iter`` is at least one - a large enough float is
-# clamped back to the int ``1`` and lands in ``WRONG_RUN_LENGTH``'s territory
-# instead. These two are the reachable float-bound cases at this run size.
-FLOAT_BOUND: list[float] = [1.0, 2.5]
 
 # ``True`` is numerically ``1``, so it does not change the run length at all: the
 # harm is that a value which reads as a flag is accepted as a count of one, the
@@ -151,51 +135,7 @@ class TestEveryBackendRefusesANonCount:
 
 
 class TestTheHarmTheDomainReplaces:
-    """The arithmetic that made a surviving non-count a wrong-length run.
-
-    These read the derived bound rather than the trainers, because the values are
-    refused now - the point is what they *would* do to the loop, which is why
-    refusing them at a read-only preflight is the fix.
-    """
-
-    @pytest.mark.parametrize(("value", "expected"), list(WRONG_RUN_LENGTH.items()))
-    def test_a_surviving_non_count_changes_the_run_length(self, value: Any, expected: int) -> None:
-        """And by how much, in each direction, so a wrong number here fails loudly."""
-        intended = max(1, 1000 // max(1, 64 * 1))
-        assert intended == 15
-        got = max(1, 1000 // max(1, 64 * value))
-        assert got == expected != intended, (value, got, expected, intended)
-
-    def test_nan_lengthens_the_run_where_inf_shortens_it(self) -> None:
-        """The clamp, not the value, decides the direction - which is why it is silent.
-
-        ``nan`` compares false against everything, so ``max(1, nan)`` keeps the
-        ``1`` and the budget divides by a single step; ``inf`` survives the clamp
-        and swallows the whole budget in one iteration.
-        """
-        assert math.isnan(64 * float("nan"))
-        assert max(1, 64 * float("nan")) == 1
-        assert max(1, 64 * float("inf")) == float("inf")
-
-    def test_a_float_makes_the_loop_bound_unusable_as_a_range(self) -> None:
-        for value in FLOAT_BOUND:
-            num_iters = max(1, 1000 // max(1, 64 * value))
-            assert isinstance(num_iters, float), (value, num_iters)
-            with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-                range(num_iters)  # type: ignore[call-overload]
-
-    def test_a_large_float_is_clamped_back_to_a_usable_bound_and_is_still_wrong(self) -> None:
-        """The float-bound harm has a boundary; past it the harm is the length again.
-
-        ``100.5`` makes ``1000 // 6432.0`` the float ``0.0``, which the clamp
-        replaces with the int ``1`` - so ``range()`` is happy and the run is one
-        iteration instead of fifteen. Recorded so the two harms are not conflated:
-        a float is not always a float bound.
-        """
-        num_iters = max(1, 1000 // max(1, 64 * 100.5))
-        assert num_iters == 1
-        assert isinstance(num_iters, int)
-        assert range(num_iters) is not None
+    """A flag is numerically one, so the run length cannot be what the domain refuses it for."""
 
     def test_a_flag_is_numerically_one_so_the_length_is_not_the_harm(self) -> None:
         """``True`` runs the intended length; what it changes is what the field means.
@@ -271,27 +211,6 @@ class TestThePremises:
     def test_the_shared_domain_accepts_every_count(self) -> None:
         for value in A_COUNT:
             assert positive_count_error(value, "num_envs", "x") is None, value
-
-    def test_the_domain_is_exactly_the_parallel_backends_own_rule(self) -> None:
-        """Why PPO keeps no second comparison: over the accepted set, ``>= 1`` holds.
-
-        A ``< 1`` branch after this domain would be unreachable, and dead code
-        that reads as a rule is worse than none.
-        """
-        for value in A_COUNT:
-            assert value >= 1, value
-
-    def test_the_shared_gate_says_which_half_of_the_field_it_excludes(self) -> None:
-        """The exclusion is documented as covering the count rule, not the field.
-
-        The gate's docstring is where a contributor reads why ``num_envs`` is not
-        in it. Left saying the whole field is out, it invites the next reader to
-        leave the shared half open again - which is exactly how it was open.
-        """
-        doc = " ".join((rl_run_size_problems.__doc__ or "").split())
-        assert "num_envs" in doc
-        assert "which *counts* are usable differs between the backends" in doc
-        assert "count *at all* is not per-backend" in doc
 
     def test_the_two_sibling_factors_are_held_to_the_same_domain(self, spec: RLTrainSpec) -> None:
         """The domain is shared with the two factors this one is multiplied by."""

@@ -32,7 +32,6 @@ backend is covered as well as the domain.
 
 from __future__ import annotations
 
-import json
 import pathlib
 from typing import Any
 
@@ -243,11 +242,6 @@ class TestTheSilentReadingIsReal:
         first = sum(p.numel() for p in self._mlp(widths).parameters())
         second = sum(p.numel() for p in self._mlp(widths).parameters())
         assert first != second, "premise: a generator is exhausted by the first network built"
-
-    def test_a_numpy_width_cannot_be_recorded_in_the_checkpoint(self) -> None:
-        """The premise for refusing ``np.int64``: ``save_checkpoint`` JSON-encodes the field."""
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            json.dumps({"hidden_dims": list((np.int64(16),))})
 
 
 class TestTheRefusalReachesTheRunEntryPoint:

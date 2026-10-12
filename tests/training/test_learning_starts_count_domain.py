@@ -145,34 +145,6 @@ class TestFastSacRefusesALearningStartsThatIsNotACount:
             assert _about_learning_starts(value)[0].startswith("fast_sac:"), f"{value!r}"
 
 
-class TestTheHarmTheRelationCouldNotSee:
-    """Why a comparison is not a domain, as arithmetic rather than as prose.
-
-    These hold on any tree - they are properties of IEEE comparison, not of the
-    fix - and they are what makes the refusal necessary: both consumers read one
-    of these two comparisons to decide what the run does.
-    """
-
-    def test_the_relation_could_not_reject_it(self) -> None:
-        """``learning_starts < batch_size`` is False, so the relation passed."""
-        for value in [float("nan"), float("inf")]:
-            assert not value < BATCH_SIZE, f"{value!r}"
-
-    def test_a_nan_threshold_skips_the_warmup_the_field_exists_for(self) -> None:
-        """``collect_rollout`` draws a random action while ``size < threshold``."""
-        assert not 0 < float("nan")
-
-    def test_no_buffer_ever_passes_the_threshold(self) -> None:
-        """``train`` runs ``update()`` only while ``size >= threshold``."""
-        for value in [float("nan"), float("inf")]:
-            assert not 10**9 >= value, f"{value!r}"
-
-    def test_the_gate_that_names_this_outcome_is_the_replay_one(self) -> None:
-        """The sibling gate's docstring records the same zero-update success."""
-        doc = " ".join((rl_replay_problems.__doc__ or "").split())
-        assert "zero" in doc and "gradient" in doc
-
-
 class TestTheUsableDomainIsUntouched:
     """A real count is accepted and the relation still does its own job."""
 

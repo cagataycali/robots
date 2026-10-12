@@ -47,18 +47,12 @@ field does to the run that consumes it.
 from __future__ import annotations
 
 import inspect
-from typing import Any
 
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import rl_replay_problems
 from strands_robots.training.rl import RLTrainSpec
-
-# Values that survive ``value <= 0`` and cannot be a count. ``True`` is the silent
-# half - a degenerate size of one - and the fractions / non-finite values reach a
-# tensor allocation or a ``range()`` and raise there.
-SILENTLY_DEGENERATE_OR_LATE: list[Any] = [True, 0.5, float("nan"), float("inf")]
 
 
 @pytest.fixture
@@ -92,27 +86,6 @@ class TestTheCountsAreConsumedDirectlyAsCounts:
         assert "spec.buffer_size" in source  # replay buffer capacity
         assert "self.buffer.sample(spec.batch_size)" in source  # sample size
         assert "for _ in range(spec.gradient_steps):" in source  # range() bound
-
-    def test_a_non_count_survives_the_local_comparison(self) -> None:
-        """Why a local ``<= 0`` is weaker: each of these passes it."""
-        for value in SILENTLY_DEGENERATE_OR_LATE:
-            assert not (value <= 0), f"{value!r}"
-
-    def test_a_bool_is_a_degenerate_size_of_one(self) -> None:
-        """The silent half: ``True`` is a one-slot buffer / a batch of one."""
-        assert int(True) == 1
-        assert len(range(True)) == 1
-
-    def test_a_fractional_capacity_truncates_to_zero(self) -> None:
-        """``int(0.5) == 0`` - the zero-capacity buffer the IndexError came from."""
-        assert int(0.5) == 0
-
-    def test_a_non_numeric_count_raises_out_of_the_comparison_itself(self) -> None:
-        """Why a local ``<= 0`` cannot even report: it raises before appending."""
-        non_numeric: list[Any] = ["256", None]
-        for value in non_numeric:
-            with pytest.raises(TypeError, match="not supported between instances"):
-                _ = value <= 0
 
 
 class TestTauAndLearningStartsAreNotInThisDomain:

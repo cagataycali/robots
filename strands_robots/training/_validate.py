@@ -352,7 +352,12 @@ def learning_rate_problems(spec: TrainSpec, *, context: str) -> list[str]:
 
 
 def seed_problems(spec: TrainSpec, *, context: str) -> list[str]:
-    """Report ``seed`` when supplied: a non-negative count. Empty when ``None``."""
+    """Report ``seed`` when supplied: a non-negative count. Empty when ``None``.
+
+    The appliers cannot judge it: ``torch.manual_seed`` reduces a negative seed
+    modulo ``2**64`` (silently another seed), and lerobot's ``set_seed`` reseeds
+    ``random`` before NumPy refuses a negative or a float.
+    """
     if spec.seed is None:
         return []
     error = non_negative_count_error(spec.seed, "seed", context)

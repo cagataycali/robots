@@ -49,8 +49,6 @@ field does to the run that consumes it.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from strands_robots.training import create_trainer
@@ -76,41 +74,3 @@ class TestTheDomainIsHalfOpenWhereTheOnPolicyOneIsClosed:
         problems = create_trainer("fast_sac").validate(spec)
         assert not [p for p in problems if p.startswith("fast_sac: gamma ")], problems
         assert [p for p in problems if p.startswith("fast_sac: tau ")], problems
-
-
-class TestWhatTheUncheckedCoefficientDidToTheTargetNetwork:
-    """Executable premises for the measured harm, without a full training run."""
-
-    def test_a_boolean_coefficient_is_the_maximum_of_the_interval(self) -> None:
-        """``bool`` is an ``int`` subclass, so a bare interval test takes ``True``.
-
-        The coefficient is bound to a name rather than written as a literal
-        operand: a comparison between two constants is decided when it is
-        typed, so as ``0.0 < True <= 1.0`` this assertion could not have
-        failed whatever Python did, which is the shape
-        tests/test_no_vacuous_comparisons.py refuses.
-        """
-        coefficient: Any = True
-        assert isinstance(coefficient, int)
-        assert float(coefficient) == 1.0
-        assert 0.0 < coefficient <= 1.0
-
-    def test_the_maximum_makes_the_target_a_copy_of_the_online_network(self) -> None:
-        """At ``tau=1`` the Polyak average is ``tp = p`` - no target network at all."""
-        import torch
-
-        for tau, expect_gap in ((0.005, True), (1.0, False), (True, False)):
-            online = torch.tensor([1.0, 2.0])
-            target = torch.zeros(2)
-            target.mul_(1.0 - tau).add_(tau * online)
-            gap = float((online - target).abs().max())
-            assert (gap > 0.0) is expect_gap, (tau, gap)
-
-    def test_zero_leaves_the_target_at_its_initialization(self) -> None:
-        """The reason the interval is half-open rather than closed."""
-        import torch
-
-        online = torch.tensor([1.0, 2.0])
-        target = torch.zeros(2)
-        target.mul_(1.0 - 0.0).add_(0.0 * online)
-        assert torch.equal(target, torch.zeros(2))

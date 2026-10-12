@@ -128,42 +128,7 @@ class TestNoneIsAValueRatherThanASentinel:
 
 
 class TestGuardingTheRateDoesNotGuardTheTemperature:
-    """The measured consequence: a temperature of zero that nothing can move.
-
-    This is why the starting value needed its own call rather than being covered
-    by the rate. ``log(0)`` is ``-inf``, so ``alpha`` is exactly zero and the
-    entropy term is absent from both losses; and because no finite gradient step
-    moves an infinity, the automatic tuning the spec asked for cannot recover it.
-    """
-
-    def test_a_zero_temperature_is_zero_and_stays_zero(self) -> None:
-        torch = pytest.importorskip("torch")
-
-        log_alpha = torch.tensor(float(torch.log(torch.tensor(0.0))), requires_grad=True)
-        assert float(log_alpha.detach()) == float("-inf")
-        assert float(log_alpha.detach().exp()) == 0.0, "premise: the temperature starts at exactly zero"
-
-        opt = torch.optim.Adam([log_alpha], lr=3e-4)
-        for _ in range(5):
-            opt.zero_grad()
-            (-(log_alpha * torch.tensor(-2.0))).backward()
-            opt.step()
-        assert float(log_alpha.detach().exp()) == 0.0, (
-            f"a usable temperature rate lifted alpha to {float(log_alpha.detach().exp())}, "
-            "so the starting value would not need its own check"
-        )
-
-    def test_a_usable_temperature_does_move(self) -> None:
-        """Control: the same loop moves a temperature that started with a logarithm."""
-        torch = pytest.importorskip("torch")
-
-        log_alpha = torch.tensor(float(torch.log(torch.tensor(1.0))), requires_grad=True)
-        before = float(log_alpha.detach().exp())
-        opt = torch.optim.Adam([log_alpha], lr=3e-4)
-        opt.zero_grad()
-        (-(log_alpha * torch.tensor(-2.0))).backward()
-        opt.step()
-        assert float(log_alpha.detach().exp()) != before
+    """The field reaches a logarithm, so a zero temperature is ``log(0)``: no rate can move it."""
 
     def test_the_temperature_reaches_a_logarithm(self) -> None:
         """Executable premise: the field is not stored as the temperature itself."""

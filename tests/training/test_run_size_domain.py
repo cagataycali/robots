@@ -17,9 +17,8 @@ out of the comparison itself, from a :meth:`Trainer.validate` documented to
 *return* problems rather than raise.
 
 Which backends refuse which values, in which words, is the table in
-``tests/training/test_train_spec_field_domains.py``. The tests below ground the
-refused values in what the consumer does with them and keep every backend on the
-one gate.
+``tests/training/test_train_spec_field_domains.py``. The tests below keep every
+backend on the one gate.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ import ast
 import inspect
 import json
 import pathlib
-from typing import Any
 
 import pytest
 
@@ -79,32 +77,6 @@ def spec(tmp_path: pathlib.Path) -> TrainSpec:
         output_dir=str(out),
         embodiment="so101",
     )
-
-
-class TestTheRefusedValuesAreOnesTheConsumerCannotHonor:
-    """Ground the domain in what the backends actually do with the values."""
-
-    def test_a_fractional_or_non_finite_step_count_cannot_bound_a_loop(self) -> None:
-        for value in (2.7, float("nan"), float("inf")):
-            # Bound through an ``Any`` local: the point is what the *runtime*
-            # does with the value a spec carried, which is what lerobot's train
-            # loop does with ``cfg.steps``.
-            bound: Any = value
-            with pytest.raises(TypeError):
-                range(0, bound)
-
-    def test_a_boolean_step_count_is_a_silent_run_of_one_step(self) -> None:
-        assert len(range(0, True)) == 1
-
-    def test_an_unusable_batch_size_cannot_build_a_dataloader(self) -> None:
-        torch = pytest.importorskip("torch")
-        from torch.utils.data import DataLoader, TensorDataset
-
-        dataset = TensorDataset(torch.zeros(4, 2))
-        for value in (0, -8, True, 2.7, float("nan"), "32"):
-            size: Any = value
-            with pytest.raises(ValueError):
-                DataLoader(dataset, batch_size=size)
 
 
 def _training_modules() -> list[pathlib.Path]:

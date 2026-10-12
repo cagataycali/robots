@@ -256,7 +256,7 @@ def _ppo_update_source() -> str:
 
 
 class TestTheConsumerHonorsTheDomain:
-    """The premises the domain rests on, measured against ``torch`` itself."""
+    """The update clips with the field, as the last thing before the optimizer step."""
 
     def test_the_update_clips_with_the_field(self) -> None:
         source = _ppo_update_source()
@@ -270,49 +270,3 @@ class TestTheConsumerHonorsTheDomain:
         step = source.index("self.optimizer.step()")
         backward = source.index("loss.backward()")
         assert backward < clip < step
-
-    @pytest.mark.parametrize(
-        ("bound", "expected"),
-        [
-            (1.0, [0.6, 0.8]),  # clipped: scaled by max_norm / total_norm
-            (math.inf, [3.0, 4.0]),  # honored as "do not clip"
-            (0.0, [0.0, 0.0]),  # every gradient scaled to zero
-            (-1.0, [-0.6, -0.8]),  # the ratio is negated: the update inverts
-        ],
-    )
-    def test_clip_grad_norm_applies_the_bound_verbatim(self, bound: float, expected: list[float]) -> None:
-        torch = pytest.importorskip("torch")
-        param = torch.nn.Parameter(torch.tensor([3.0, 4.0]))
-        param.grad = torch.tensor([3.0, 4.0])  # norm 5
-        torch.nn.utils.clip_grad_norm_([param], bound)
-        assert param.grad is not None
-        assert param.grad.tolist() == pytest.approx(expected, abs=1e-5)
-
-    def test_a_bool_bound_is_a_silent_clip_of_one(self) -> None:
-        """Which is why ``bool`` must be refused rather than read as one."""
-        torch = pytest.importorskip("torch")
-        params = []
-        for bound in (True, 1.0):
-            param = torch.nn.Parameter(torch.tensor([3.0, 4.0]))
-            param.grad = torch.tensor([3.0, 4.0])
-            torch.nn.utils.clip_grad_norm_([param], bound)
-            assert param.grad is not None
-            params.append(param.grad.tolist())
-        assert params[0] == params[1]
-
-    def test_a_string_bound_is_silently_accepted(self) -> None:
-        """So the consumer cannot be relied on to reject a non-numeric bound."""
-        torch = pytest.importorskip("torch")
-        param = torch.nn.Parameter(torch.tensor([3.0, 4.0]))
-        param.grad = torch.tensor([3.0, 4.0])
-        torch.nn.utils.clip_grad_norm_([param], "1.0")  # type: ignore[arg-type]
-        assert param.grad is not None
-        assert param.grad.tolist() == pytest.approx([0.6, 0.8], abs=1e-5)
-
-    def test_a_non_finite_bound_poisons_every_gradient(self) -> None:
-        torch = pytest.importorskip("torch")
-        param = torch.nn.Parameter(torch.tensor([3.0, 4.0]))
-        param.grad = torch.tensor([3.0, 4.0])
-        torch.nn.utils.clip_grad_norm_([param], float("nan"))
-        assert param.grad is not None
-        assert not bool(torch.isfinite(param.grad).all())

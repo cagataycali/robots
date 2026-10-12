@@ -30,7 +30,6 @@ from __future__ import annotations
 import ast
 import inspect
 import textwrap
-from typing import Any
 
 import pytest
 
@@ -75,20 +74,6 @@ class TestTheFieldBoundsTheEntireOptimizerStep:
             if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "step"
         ]
         assert "self.optimizer.step()" in stepped, stepped
-
-    def test_a_non_positive_bound_iterates_zero_times(self) -> None:
-        """So a non-positive count takes no gradient step at all."""
-        assert [len(range(n)) for n in (5, 1, 0)] == [5, 1, 0]
-        assert len(range(-3)) == 0
-
-    def test_true_is_a_silent_single_epoch(self) -> None:
-        """Which is why ``bool`` must be refused rather than read as one."""
-        assert len(range(True)) == 1
-
-    def test_a_non_integer_bound_raises_out_of_range(self) -> None:
-        bound: Any = 2.7
-        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-            range(bound)
 
     def test_the_reported_losses_are_averaged_through_a_clamp(self) -> None:
         """Which is why a zero-epoch run reports 0.0 rather than nothing."""

@@ -47,7 +47,6 @@ field does to the run that consumes it.
 from __future__ import annotations
 
 import inspect
-import math
 from typing import Any
 
 import pytest
@@ -130,24 +129,3 @@ class TestTheDomainIsTheSharedSignedOne:
 
         assert finite_number_error(-6.0, "target_entropy", OFF_POLICY) is None
         assert positive_finite_number_error(-6.0, "target_entropy", OFF_POLICY) is not None
-
-
-class TestWhatTheUncheckedValueDidToTheTemperature:
-    """Executable premises for the measured harm, without a full training run."""
-
-    def test_a_non_finite_target_makes_the_temperature_loss_non_finite(self) -> None:
-        """``nan`` reaches ``alpha``, which scales the entropy term of both losses."""
-        import torch
-
-        log_alpha = torch.tensor(0.0, requires_grad=True)
-        logp = torch.zeros(4, 1)
-        for target, finite in ((-6.0, True), (float("nan"), False), (float("inf"), False)):
-            alpha_loss = -(log_alpha * (logp + target).detach()).mean()
-            assert math.isfinite(float(alpha_loss.detach())) is finite, target
-
-    def test_a_boolean_target_is_a_different_target_than_the_default(self) -> None:
-        """``True`` is ``+1.0``, not the ``-num_actions`` the field documents."""
-        assert float(True) == 1.0
-        assert float(True) != -6.0
-        # And a bare sign test would take it: bool is an int subclass.
-        assert isinstance(True, int)

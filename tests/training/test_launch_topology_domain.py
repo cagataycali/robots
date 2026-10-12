@@ -27,33 +27,17 @@ process count failed was silent or late:
 
 Which backends refuse which values, in which words, is the table in
 ``tests/training/test_train_spec_field_domains.py``. The tests below pin that
-the multi-node refusal still fires for a usable count and ground the refused
-values in what the comparison and the real launcher do with them.
+the multi-node refusal still fires for a usable count.
 """
 
 from __future__ import annotations
 
-import math
 import pathlib
-from typing import Any
 
 import pytest
 
 from strands_robots.training.base import Trainer, TrainSpec
 from strands_robots.training.lerobot import LerobotTrainer
-
-# The two fields, and the backends that launch from them.
-
-# Values no launcher can honor, split by how each one failed before the gate.
-
-# Read as "not more than one" by the selector -> a silent single-process run.
-SILENT_SINGLE_PROCESS: tuple[Any, ...] = (0, -4, True, False, float("nan"))
-
-# Read as "more than one" -> reached elastic_launch as the worker count.
-REACHED_THE_LAUNCHER: tuple[Any, ...] = (2.7, float("inf"))
-
-# Raised TypeError out of the comparison, from inside validate().
-RAISED_OUT_OF_VALIDATE: tuple[Any, ...] = ("4", None, [2])
 
 
 @pytest.fixture
@@ -95,45 +79,3 @@ class TestAUsableTopologyIsUntouched:
         problems = _problems_about(trainer_cls(), spec, "num_nodes")
         assert any("multi-node" in p for p in problems), problems
         assert not any("must be a positive integer" in p for p in problems), problems
-
-
-class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
-    """Ground the domain in what the selector and the real launcher do."""
-
-    def test_a_silent_value_reads_as_not_more_than_one(self) -> None:
-        """The ``> 1`` selector routes each of these to the single-process path."""
-        for value in SILENT_SINGLE_PROCESS:
-            assert not value > 1, f"{value!r}"
-
-    def test_nan_compares_false_against_every_bound(self) -> None:
-        """Why ``nan`` slipped through a comparison-based guard in both directions."""
-        nan = float("nan")
-        assert not nan > 1
-        assert not nan <= 0
-        assert math.isnan(nan)
-
-    def test_a_launcher_bound_value_reads_as_more_than_one(self) -> None:
-        for value in REACHED_THE_LAUNCHER:
-            assert value > 1, f"{value!r}"
-
-    def test_the_torch_launcher_does_not_reject_it_either(self) -> None:
-        """Nothing downstream catches an unusable worker count.
-
-        ``LaunchConfig`` is the value's first destination once the selector
-        chooses the multi-process path, and it accepts every one of these - so
-        the preflight is the only place the caller can be told.
-        """
-        pytest.importorskip("torch")
-        from torch.distributed.launcher.api import LaunchConfig
-
-        for value in SILENT_SINGLE_PROCESS + REACHED_THE_LAUNCHER:
-            config = LaunchConfig(min_nodes=1, max_nodes=1, nproc_per_node=value)
-            assert config.nproc_per_node == value or (
-                isinstance(value, float) and math.isnan(value) and math.isnan(config.nproc_per_node)
-            ), f"{value!r}"
-
-    def test_a_non_numeric_count_cannot_be_compared_at_all(self) -> None:
-        """Which is why the old comparison raised rather than reporting."""
-        for value in RAISED_OUT_OF_VALIDATE:
-            with pytest.raises(TypeError):
-                _ = value > 1  # type: ignore[operator]

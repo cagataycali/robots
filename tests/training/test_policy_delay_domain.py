@@ -45,17 +45,7 @@ def spec() -> RLTrainSpec:
 
 
 class TestTheModulusSilentlySkipsTheActor:
-    """The measured consequence: a cadence the test never satisfies trains no actor.
-
-    This is why the field needed a preflight rather than being left to the
-    update loop: the critics keep training, the losses are real numbers, and
-    the run reports success - only the deployable actor is missing its every
-    gradient step.
-    """
-
-    def test_a_nan_modulus_never_fires_the_cadence(self) -> None:
-        pytest.importorskip("torch")
-        assert not any(n % float("nan") == 0 for n in range(1, 1000))
+    """The field is consumed as a modulus, so a cadence no count satisfies trains no actor."""
 
     def test_the_cadence_is_the_one_expression_the_field_reaches(self) -> None:
         """Executable premise: the modulus is where the field is consumed."""

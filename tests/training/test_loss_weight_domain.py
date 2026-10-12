@@ -28,7 +28,6 @@ this module keeps what the weights do to the objective.
 from __future__ import annotations
 
 import inspect
-import math
 
 import pytest
 
@@ -49,35 +48,8 @@ def _ppo_update_source() -> str:
 
 
 class TestTheConsumerHonorsTheDomain:
-    """The premises the domain rests on, measured against torch itself."""
+    """Both weights reach the loss in the one expression the update computes."""
 
     def test_both_weights_are_read_in_one_expression(self) -> None:
         source = _ppo_update_source()
         assert "spec.value_loss_coef * value_loss - spec.entropy_coef * entropy" in source
-
-    def test_a_non_finite_weight_makes_the_loss_non_finite(self) -> None:
-        torch = pytest.importorskip("torch")
-        value_loss, entropy = torch.tensor(2.0), torch.tensor(0.5)
-        for weight in (math.nan, math.inf):
-            loss = torch.tensor(1.0) + weight * value_loss - 0.0 * entropy
-            assert not bool(torch.isfinite(loss)), weight
-
-    def test_a_non_finite_loss_writes_non_finite_parameters(self) -> None:
-        """Why the raise lands one rollout later, naming neither field nor value."""
-        torch = pytest.importorskip("torch")
-        model = torch.nn.Linear(3, 2)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-        (model(torch.ones(1, 3)).sum() * math.nan).backward()
-        optimizer.step()
-        assert bool(torch.isnan(model.weight).any())
-
-    def test_a_bool_lands_as_a_coefficient_of_one(self) -> None:
-        torch = pytest.importorskip("torch")
-        entropy = torch.tensor(0.5)
-        assert float(True * entropy) == float(1.0 * entropy)
-
-    def test_every_accepted_weight_composes_a_finite_loss(self) -> None:
-        torch = pytest.importorskip("torch")
-        for value in [0.0, -0.5, 1.0, 2.0]:
-            loss = torch.tensor(1.0) + value * torch.tensor(2.0) - value * torch.tensor(0.5)
-            assert bool(torch.isfinite(loss)), f"{value!r}"

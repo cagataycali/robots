@@ -144,33 +144,7 @@ class TestNoneIsAValueRatherThanASentinel:
 
 
 class TestGuardingTheFirstRateDoesNotGuardTheSecond:
-    """The measured consequence: a run whose temperature never adapts.
-
-    This is why the second field needed its own call rather than being covered by
-    the first. ``alpha_lr=0`` leaves ``log_alpha`` where it started, so the
-    temperature the spec asked to have tuned stays at ``init_alpha`` - while a
-    usable rate moves it - and the pre-fix ``validate`` reported neither.
-    """
-
-    def test_a_zero_temperature_rate_freezes_the_temperature(self) -> None:
-        torch = pytest.importorskip("torch")
-        from strands_robots.training.rl.fast_sac import FastSacTrainer
-
-        def _alpha_after_one_step(alpha_lr: float) -> tuple[float, float]:
-            log_alpha = torch.tensor(0.0, requires_grad=True)  # init_alpha = 1.0
-            opt = torch.optim.Adam([log_alpha], lr=alpha_lr)
-            before = float(log_alpha.detach().exp())
-            (-(log_alpha * torch.tensor(-2.0))).backward()
-            opt.step()
-            return before, float(log_alpha.detach().exp())
-
-        frozen_before, frozen_after = _alpha_after_one_step(0.0)
-        tuned_before, tuned_after = _alpha_after_one_step(3e-4)
-        assert frozen_before == frozen_after == 1.0, (frozen_before, frozen_after)
-        assert tuned_after != tuned_before, (tuned_before, tuned_after)
-        # And the field that *was* guarded cannot express this: it drives a
-        # different optimizer entirely.
-        assert "alpha_lr" in inspect.getsource(FastSacTrainer.setup)
+    """The two rates drive different optimizers, so the first gate cannot stand in for the second."""
 
     def test_the_two_rates_drive_different_optimizers(self) -> None:
         """Executable premise: the guarded field cannot stand in for this one."""

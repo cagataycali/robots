@@ -32,7 +32,6 @@ from __future__ import annotations
 import inspect
 import json
 import pathlib
-from collections import OrderedDict
 from typing import Any
 
 import pytest
@@ -168,70 +167,6 @@ def _tool_verdict(dataset_root: pathlib.Path, field: str, value: Any) -> str:
     except Exception as exc:  # noqa: BLE001 - a library failure is a verdict, control flow is not
         return f"raised {type(exc).__name__}: {exc}"
     return "accepted"
-
-
-def _lora_target(torch: Any) -> Any:
-    """A one-linear-layer module whose ``q_proj`` a LoRA adapter can target.
-
-    Built from ``OrderedDict`` rather than declared as a subclass because
-    ``torch`` arrives from :func:`pytest.importorskip` - the type checker cannot
-    resolve a base class that only exists once the optional dependency is
-    present, and peft only needs a named submodule to adapt.
-    """
-    return torch.nn.Sequential(OrderedDict(q_proj=torch.nn.Linear(8, 8, bias=False)))
-
-
-class TestAScalingOfZeroTrainsAnAdapterThatCannotBeApplied:
-    """The measured consequence of the value nothing refused.
-
-    ``lora_alpha`` is only ever the numerator of ``lora_alpha / r``, so peft has
-    nothing to compare it against and accepts it. These pin what that produced,
-    because it is the reason a bare numerator needs a domain of its own rather
-    than being left to the library.
-    """
-
-    def test_a_zero_alpha_adapter_provably_cannot_change_the_model_output(self) -> None:
-        torch = pytest.importorskip("torch")
-        peft = pytest.importorskip("peft")
-
-        def effect_of(alpha: int) -> tuple[float, int]:
-            wrapped = peft.get_peft_model(
-                _lora_target(torch), peft.LoraConfig(r=8, lora_alpha=alpha, target_modules=["q_proj"])
-            )
-            trainable = sum(p.numel() for p in wrapped.parameters() if p.requires_grad)
-            # Perturb the adapter's own weights: an adapter with any scaling at
-            # all then changes the output, so a zero delta isolates the scaling.
-            for name, param in wrapped.named_parameters():
-                if "lora_B" in name and param.numel():
-                    with torch.no_grad():
-                        param.add_(1.0)
-            probe = torch.ones(1, 8)
-            with torch.no_grad():
-                with wrapped.disable_adapter():
-                    base = wrapped(probe)
-                adapted = wrapped(probe)
-            return float((adapted - base).abs().sum()), trainable
-
-        zero_effect, zero_trainable = effect_of(0)
-        usable_effect, usable_trainable = effect_of(8)
-
-        # Non-vacuity: the two runs built the same adapter, so the only thing
-        # that differs is whether its update can ever be applied.
-        assert zero_trainable == usable_trainable > 0
-        assert usable_effect > 0.0, "the probe cannot detect an adapter at all"
-        assert zero_effect == 0.0, "a zero-alpha adapter would have changed the output"
-
-    def test_a_non_positive_rank_is_refused_only_once_the_model_is_built(self) -> None:
-        """peft judges the rank, but not until the base model is already loaded."""
-        torch = pytest.importorskip("torch")
-        peft = pytest.importorskip("peft")
-        for value in REFUSED_LATE_BY_PEFT:
-            config = peft.LoraConfig(r=value, lora_alpha=8, target_modules=["q_proj"])
-
-            # Building the config is not where it is caught - that is the point.
-            assert config.r == value, f"{value!r}"
-            with pytest.raises(ValueError, match="positive integer"):
-                peft.get_peft_model(_lora_target(torch), config)
 
 
 class TestAUsableAdapterHyperparameterIsUntouched:

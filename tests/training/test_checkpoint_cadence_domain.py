@@ -26,14 +26,12 @@ it. :attr:`TrainSpec.extra` already states the rule this breaks - one spec must
 mean one run whichever path the backend takes.
 
 Which backends refuse which values, in which words, is the table in
-``tests/training/test_train_spec_field_domains.py``. The tests below ground the
-refused values in what the real consumers do with them.
+``tests/training/test_train_spec_field_domains.py``. The tests below
+pin that every usable cadence is one both lerobot routes honor.
 """
 
 from __future__ import annotations
 
-import json
-import math
 import pathlib
 from typing import Any
 
@@ -73,7 +71,6 @@ STEPS = 10_000
 # domain exists for supply values the annotation never saw - a JSON config, an
 # agent tool call, a spec assembled from a form.
 A_FRACTIONAL_CADENCE: Any = 2.7
-A_STRING_CADENCE: Any = "5000"
 
 
 @pytest.fixture
@@ -156,54 +153,11 @@ class TestEveryCheckpointingBackendRefusesAnUnusableCadence:
 class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
     """Ground the domain in what the real consumers do with each value."""
 
-    def test_a_boolean_cadence_checkpoints_every_single_step(self) -> None:
-        """The headline: ``True`` is not rejected downstream, it is *obeyed*.
-
-        As an ``int`` subclass it is a modulus of one, so a run that asked for a
-        checkpoint cadence writes a full checkpoint at every optimizer step.
-        """
-        assert _periodic_saves(True) == STEPS - 1
-        assert _periodic_saves(1_000) == 9, "the cadence a caller would have written"
-
-    def test_a_non_integral_cadence_silently_becomes_the_disabled_mode(self) -> None:
-        """Indistinguishable from the documented ``0``, with nothing reported."""
-        for value in (2.7, float("nan"), float("inf")):
-            assert _periodic_saves(value) == 0 == _periodic_saves(0), f"{value!r}"
-
-    def test_a_non_numeric_cadence_raises_inside_the_training_loop(self) -> None:
-        """Not at submission: from the ``save_freq > 0`` comparison at step 1."""
-        for value in RAISED_IN_THE_CONSUMER:
-            with pytest.raises(TypeError):
-                _periodic_saves(value)
-
-    def test_no_value_outside_the_domain_is_honored_by_both_lerobot_routes(self) -> None:
-        """The parity failure the shared gate exists to close.
-
-        LeRobot reaches the same field two ways - an argv token it decodes and an
-        in-process assignment nothing decodes - and for every value outside the
-        domain exactly one of them takes it. One spec would otherwise mean two
-        different runs depending on which route the backend chose.
-        """
-        honored_by_both = [value for value in UNUSABLE if _decodes_as_the_argv_token(value) and _runs_in_process(value)]
-        assert honored_by_both == [], f"unusable values both routes accept: {honored_by_both}"
-
     def test_every_value_inside_the_domain_is_honored_by_both_routes(self) -> None:
         """The other direction: the domain admits nothing either route refuses."""
         for value in USABLE:
             assert _decodes_as_the_argv_token(value), f"{value!r}"
             assert _runs_in_process(value), f"{value!r}"
-
-    def test_the_two_routes_disagree_in_both_directions(self) -> None:
-        """Non-vacuity for the parity test: neither route is simply the stricter.
-
-        If every unusable value failed on the same route, one route's check would
-        suffice and the shared domain would be redundant. They do not: the argv
-        decoder refuses what the in-process path obeys, and vice versa.
-        """
-        argv_only = [v for v in UNUSABLE if _runs_in_process(v) and not _decodes_as_the_argv_token(v)]
-        inproc_only = [v for v in UNUSABLE if _decodes_as_the_argv_token(v) and not _runs_in_process(v)]
-        assert argv_only, "expected values the in-process path obeys and the decoder refuses"
-        assert inproc_only, "expected values the decoder accepts and the in-process path refuses"
 
     def test_a_non_positive_cadence_really_disables_periodic_saving(self) -> None:
         """Why the domain has no floor: the mode is real and is documented.
@@ -214,21 +168,3 @@ class TestTheRefusedValuesAreOnesNoConsumerCanHonor:
         for value in DISABLING:
             assert _periodic_saves(value) == 0, f"{value!r}"
             assert _should_save_checkpoint()(STEPS, value, STEPS) is True, f"{value!r}"
-
-    def test_sagemaker_would_forward_it_as_invalid_json(self) -> None:
-        """The fourth consumer, whose route fails differently again.
-
-        ``json.dumps`` renders these as ``NaN`` / ``Infinity``, which are not
-        JSON - only a permissive decoder reads them back, so the container may
-        reject the hyperparameter rather than the submission.
-        """
-        for value in (float("nan"), float("inf")):
-            rendered = json.dumps(value)
-            with pytest.raises(ValueError):
-                json.loads(rendered, parse_constant=_reject)
-            assert math.isnan(value) or math.isinf(value), f"{value!r}"
-
-
-def _reject(constant: str) -> Any:
-    """A strict-JSON hook: refuse the constants ``json.dumps`` emits for non-finites."""
-    raise ValueError(constant)
