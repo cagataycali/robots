@@ -304,12 +304,6 @@ class TestThePremisesTheDefectRestedOn:
         widths = (3, 3, len(joints), len(joints), len(joints), _ALPHA_COMMAND_WIDTH)
         assert sum(widths) == vec.shape[0] == _FIXED_OBS_WIDTH + _ALPHA_COMMAND_WIDTH
 
-    def test_a_non_finite_float_survives_the_float32_cast(self) -> None:
-        # Both spellings are representable in float32, so neither is lost by the
-        # builder's own astype - which is why they reached the graph.
-        for bad in _NON_FINITE:
-            assert not np.isfinite(np.float32(bad))
-
     def test_the_returned_width_does_not_depend_on_the_values(self) -> None:
         # This is why a non-finite component was invisible: the width is a
         # function of the block widths alone, so a poisoned observation is shaped

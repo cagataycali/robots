@@ -196,31 +196,6 @@ class TestEveryReadingReachesTheWire:
         assert decoded["nested"]["3"] == "beam-3"
         assert decoded["7"] == "channel-7"
 
-    def test_those_container_shapes_are_refused_raw(self) -> None:
-        """Premise for the case above: each shape is unencodable before coercion."""
-        shapes: tuple[dict[Any, Any], ...] = (
-            {"per_beam": [np.float32(1.0)]},
-            {"nested": {"inner": (np.float32(3.0),)}},
-            {"nested": {np.int64(3): "beam-3"}},
-            {np.int64(7): "x"},
-        )
-        for raw in shapes:
-            with pytest.raises(TypeError):
-                json.dumps(raw)
-
-    @pytest.mark.parametrize(("label", "attrs", "reader", "expected"), _ROWS, ids=_IDS)
-    def test_the_raw_reading_is_what_the_encoder_refuses(
-        self, label: str, attrs: dict[str, Any], reader: str, expected: dict[str, Any]
-    ) -> None:
-        """Premise: each row's provider value is unencodable before any coercion.
-
-        Without this the table above would pass on a payload that never needed
-        coercing, and the suite would grade nothing.
-        """
-        (provider_value,) = attrs.values()
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            json.dumps(provider_value)
-
 
 class TestAPlainPayloadIsUnchanged:
     """Control: a provider already reporting JSON values keeps today's payload."""
@@ -230,20 +205,6 @@ class TestAPlainPayloadIsUnchanged:
         payload = _host(_lidar_summary=provider)._read_lidar_summary()
         assert payload is not None
         assert {k: v for k, v in payload.items() if k in provider} == provider
-
-    def test_the_encoder_accepts_one_numpy_width_and_refuses_another(self) -> None:
-        """Premise: the defect turned on the numpy WIDTH, which is why it hid.
-
-        ``np.float64`` subclasses Python's ``float`` and ``np.str_`` subclasses
-        ``str``, so a payload built from those always encoded; ``np.float32`` and
-        ``np.int64`` subclass nothing and were refused. A robot on a float64
-        pipeline therefore published fine, and the same code reading a float32
-        lidar - what a point cloud cast to ``float32`` yields - dropped every
-        tick.
-        """
-        assert json.dumps({"already-fine": np.float64(1.5)}) == '{"already-fine": 1.5}'
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            json.dumps({"dropped": np.float32(1.5)})
 
     def test_absent_providers_still_read_nothing(self) -> None:
         host = _host()

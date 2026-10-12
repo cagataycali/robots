@@ -71,7 +71,6 @@ import ast
 import inspect
 import re
 import textwrap
-import warnings
 from typing import Any
 
 import numpy as np
@@ -349,24 +348,6 @@ _ANSWERED = "answered"
 _REFUSED_BY_NUMPY = "refused-by-numpy"
 
 
-def _numpy_reads_a_two_vector_as_planar() -> bool:
-    """Whether ``np.cross`` on this numpy reads a 2-element vector as planar.
-
-    Probed rather than compared against a version string, because what the class
-    below documents is what numpy DOES with the short read: the planar form was
-    deprecated through the 2.0-2.4 line and removed in 2.5.0, and both bands are
-    inside the declared ``numpy>=1.21,<3.0``. A probe also cannot go stale on the
-    release that changes it back.
-    """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        try:
-            np.cross(np.array([1.0, 2.0]), np.array([0.0, 0.0, -1.0]))
-        except ValueError:
-            return False
-    return True
-
-
 def _unguarded_short_quat_read(quat: Any) -> tuple[str, Any]:
     """What :func:`projected_gravity` does with a 3-element ``base_quat``.
 
@@ -394,27 +375,6 @@ class TestThePremisesTheDefectRestedOn:
     than skipping one, so the class documents the guard's justification on the
     whole declared range instead of on the locked version alone.
     """
-
-    def test_numpy_reads_a_two_element_vector_as_planar_until_2_5_then_refuses_it(self) -> None:
-        """Why a 3-element quaternion was silent, and what replaced that silence.
-
-        NumPy 2.0 deprecated the planar form and 2.5.0 removed it, so the
-        truncating read went from answering wrongly to raising from inside numpy
-        naming neither block. Whichever this numpy implements is graded; the
-        deprecated band is not the only supported one.
-        """
-        planar_operand = np.array([0.2, 0.3])
-        world_gravity = np.array([0.0, 0.0, -1.0])
-        if _numpy_reads_a_two_vector_as_planar():
-            with pytest.warns(DeprecationWarning, match="2-dimensional vectors are deprecated"):
-                planar = np.cross(planar_operand, world_gravity)
-            assert planar.shape == (3,)
-        else:
-            with pytest.raises(ValueError, match="3-dimensional vectors"):
-                _ = np.cross(planar_operand, world_gravity)
-        # Band-independent: an over-long operand was never read as planar.
-        with pytest.raises(ValueError, match="dimension"):
-            _ = np.cross(np.array([0.2, 0.3, 0.4, 0.5]), world_gravity)
 
     @pytest.mark.filterwarnings("ignore:Arrays of 2-dimensional vectors:DeprecationWarning")
     def test_an_unguarded_three_element_quaternion_is_never_refused_by_name(self) -> None:

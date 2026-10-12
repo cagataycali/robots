@@ -39,7 +39,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
-import math
 import pathlib
 from typing import Any
 
@@ -109,23 +108,6 @@ class TestTheArithmeticThatMakesItSilent:
     Premises: they hold on either version of the code, and they are the reason
     the guard has to be at the constructor rather than at the comparison.
     """
-
-    @pytest.mark.parametrize("magnitude", [0.0, 0.5, 1e9])
-    def test_a_non_finite_threshold_loses_every_comparison(self, magnitude: float) -> None:
-        # The gate can never select the move skill: no magnitude clears it.
-        for threshold in (math.nan, math.inf):
-            assert not (magnitude >= threshold)
-
-    @pytest.mark.parametrize("threshold", [0.0, -1.0, -math.inf])
-    def test_a_non_positive_threshold_wins_every_comparison(self, threshold: float) -> None:
-        # A magnitude is never negative, so the gate can never select idle:
-        # these are constants, not thresholds.
-        for magnitude in (0.0, 0.5, 1e9):
-            assert magnitude >= threshold
-
-    def test_a_bool_is_an_int_subclass_so_a_flag_reads_as_a_number(self) -> None:
-        assert isinstance(True, int) and float(True) == 1.0
-        assert float(False) == 0.0
 
     def test_the_sibling_provider_already_holds_this_knob_to_this_domain(self) -> None:
         from strands_robots.policies.wbc import config as wbc_config

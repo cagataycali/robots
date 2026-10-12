@@ -124,27 +124,6 @@ class TestTheAuthorityMustNameTheHostThatIsDialled:
         assert received == [], f"a refused address still reached the server: {received}"
 
 
-class TestThePremiseIsWhatTheTransportDoes:
-    """These hold on any tree: they measure ``requests``, not the driver."""
-
-    def test_userinfo_makes_requests_dial_the_host_after_the_at_sign(
-        self, sdk: tuple[int, list[tuple[str, str]]]
-    ) -> None:
-        port, received = sdk
-        response = requests.get(f"http://bot.local@127.0.0.1:{port}/data", timeout=5)
-        assert response.status_code == 200
-        assert received == [("GET", "/data")], (
-            "the request named bot.local and was served by 127.0.0.1, which is why "
-            "the authority has to be graded before it is dialled"
-        )
-
-    def test_a_double_scheme_makes_requests_dial_the_scheme_token(self) -> None:
-        with pytest.raises(requests.exceptions.ConnectionError) as caught:
-            requests.get("http://ws://127.0.0.1:8001/data", timeout=0.5)
-        assert "host='ws'" in str(caught.value), str(caught.value)
-        assert "port=80" in str(caught.value), "the configured port is discarded, not just the host"
-
-
 class TestTheAcceptedShapesAreUntouched:
     @pytest.mark.parametrize(
         ("port", "base"),

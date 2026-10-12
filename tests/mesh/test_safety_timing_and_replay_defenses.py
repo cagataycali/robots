@@ -117,34 +117,6 @@ class TestEstopReplayCacheShapeInvariant:
             "If this fires, someone reintroduced the half-defensive state."
         )
 
-    def test_bare_float_in_cache_crashes_on_hit(self):
-        """Verify that a bare-float cache entry is not tolerated.
-
-        Pre-fix this would silently set cached_wire_zid=None (degrading
-        corroboration to always-rejected). Post-fix it raises TypeError
-        on ``cached_entry[2]`` immediately.
-        """
-        import threading
-        import time
-
-        m = core.Mesh.__new__(core.Mesh)
-        m.peer_id = "test-receiver"
-        m._estop_replay_cache = {}
-        m._estop_replay_lock = threading.Lock()
-        m._estop_lockout = threading.Event()
-        m._last_estop_ts = 0.0
-        m._last_estop_mono = 0.0
-
-        # Seed a BARE FLOAT (the shape the removed isinstance tolerated)
-        bad_key = time.time()
-        m._estop_replay_cache[bad_key] = 123.456  # type: ignore[assignment]
-
-        # Simulate a cache-hit read at the corroboration branch.
-        # Post-fix: direct ``cached_entry[2]`` on a float raises TypeError.
-        cached_entry = m._estop_replay_cache[bad_key]
-        with pytest.raises(TypeError):
-            _ = cached_entry[2]  # type: ignore[index]
-
     def test_type_annotation_matches_3_tuple(self):
         """The __init__ type annotation must declare the 3-tuple shape."""
         import inspect

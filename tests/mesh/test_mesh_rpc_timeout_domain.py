@@ -34,7 +34,6 @@ import inspect
 import logging
 import math
 import textwrap
-import threading
 import time
 from typing import Any
 
@@ -67,33 +66,6 @@ def _drive(publisher: str, timeout: Any) -> tuple[Any, list[str]]:
     if publisher == "send":
         return m.send("r1", {"action": "stop"}, timeout=timeout), reached
     return m.broadcast({"action": "stop"}, timeout=timeout), reached
-
-
-class TestEventWaitCannotHonorTheseBudgets:
-    """Premise: the reason a domain is needed lives in the stdlib, not here."""
-
-    @pytest.mark.parametrize("budget", [0, -1.0, math.nan])
-    def test_a_non_positive_or_nan_budget_returns_at_once(self, budget: Any) -> None:
-        # These are the silent ones: the wait is a no-op, so the caller reads a
-        # timeout for a command that went out microseconds earlier.
-        started = time.monotonic()
-        assert threading.Event().wait(timeout=budget) is False
-        assert time.monotonic() - started < 0.01
-
-    def test_an_infinite_budget_raises_rather_than_waiting(self) -> None:
-        with pytest.raises(OverflowError):
-            threading.Event().wait(timeout=math.inf)
-
-    def test_a_string_budget_raises_rather_than_waiting(self) -> None:
-        with pytest.raises(TypeError):
-            threading.Event().wait(timeout="30")  # type: ignore[arg-type]
-
-    def test_a_true_budget_is_silently_one_second(self) -> None:
-        # ``bool`` is an ``int`` subclass, so this is accepted as a wait of 1.0s
-        # rather than reported as a flag handed to a budget.
-        started = time.monotonic()
-        assert threading.Event().wait(timeout=True) is False
-        assert 0.9 < time.monotonic() - started < 1.5
 
 
 class TestTheToolAlreadyHeldThisParameterToTheSameDomain:

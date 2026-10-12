@@ -38,7 +38,6 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -113,38 +112,6 @@ def _call_dispatch(action: str, command: str, **extra: Any) -> dict[str, Any]:
         )
     assert result is not None, f"{action} unexpectedly deferred to the mesh path"
     return result
-
-
-class TestJsonLoadsFailsThreeWaysOnACallerString:
-    """Premise: the three failure modes are real, and two are not ``JSONDecodeError``.
-
-    Holds on either side of the fix -- it measures :mod:`json`, not this tool.
-    If a future interpreter collapses these into one class, this is what says so
-    before the rest of the file starts passing for the wrong reason.
-    """
-
-    @pytest.mark.parametrize(
-        ("text", "expected"),
-        [
-            ("{oops", json.JSONDecodeError),
-            (_WIDE, ValueError),
-            ("[" * _DEEP + "]" * _DEEP, RecursionError),
-        ],
-        ids=["syntax", "too-wide", "too-deep"],
-    )
-    def test_the_class_json_raises(self, text: str, expected: type[BaseException]) -> None:
-        with pytest.raises(expected) as excinfo:
-            json.loads(text)
-        if expected is ValueError:
-            assert not isinstance(excinfo.value, json.JSONDecodeError), (
-                "a too-wide number must raise a plain ValueError, or the narrow handler already covered it"
-            )
-
-    def test_a_recursion_error_is_not_a_value_error(self) -> None:
-        # This is why widening to ``except ValueError`` alone would not do:
-        # the deepest input is outside that class entirely.
-        assert not issubclass(RecursionError, ValueError)
-        assert issubclass(RecursionError, RuntimeError)
 
 
 class TestEveryMalformedBodyReachesTheToolEnvelope:

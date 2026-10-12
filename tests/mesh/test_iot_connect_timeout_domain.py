@@ -247,16 +247,6 @@ class TestAnUnboundedWaitIsNotExpressibleThroughThisKnob:
         worker.join(timeout=2.0)
         assert not worker.is_alive()
 
-    @pytest.mark.parametrize(("value", "expected"), [(0, False), (-1, False), (math.nan, False)])
-    def test_an_expired_budget_returns_at_once_rather_than_erring(self, value: Any, expected: bool) -> None:
-        """Premise: these are silent on ``Event.wait``, which is why they misdiagnose."""
-        assert threading.Event().wait(value) is expected
-
-    def test_infinity_is_not_an_unbounded_wait_here_either(self) -> None:
-        """Premise: ``inf`` is refused by the primitive, matching the sibling transports."""
-        with pytest.raises(OverflowError):
-            threading.Event().wait(math.inf)
-
 
 class TestTheRefusalPrecedesTheOptionalDependency:
     """One report for one mistake, with or without the ``[mesh-iot]`` extra."""

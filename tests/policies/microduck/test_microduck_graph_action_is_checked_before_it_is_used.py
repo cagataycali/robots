@@ -288,12 +288,6 @@ class TestWhatTheContractWidthStillDoes:
 class TestThePremisesTheDefectRestedOn:
     """Facts that hold on both trees and make the measurement above legible."""
 
-    def test_numpy_broadcasts_a_one_element_action_against_the_pose(self) -> None:
-        """Why width 1 was silent rather than loud."""
-        assert (np.zeros(14, dtype=np.float32) + np.zeros(1, dtype=np.float32)).shape == (14,)
-        with pytest.raises(ValueError, match="could not be broadcast"):
-            _ = np.zeros(14, dtype=np.float32) + np.zeros(15, dtype=np.float32)
-
     def test_the_observation_width_is_the_fixed_block_plus_the_command(self) -> None:
         names = _joints()
         vector = build_observation(

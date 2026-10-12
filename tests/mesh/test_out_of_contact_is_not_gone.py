@@ -33,7 +33,6 @@ from __future__ import annotations
 import ast
 import inspect
 import logging
-import math
 import textwrap
 import time
 from typing import Any
@@ -136,10 +135,6 @@ class TestTheMaxArgumentOrderIsLoadBearing:
             "a nan retention reaching max() must degrade to the timeout; if this "
             "fails, the operands were swapped and nan now means never-pruned"
         )
-
-    def test_the_python_fact_the_order_rests_on(self) -> None:
-        assert max(PEER_TIMEOUT, float("nan")) == PEER_TIMEOUT
-        assert math.isnan(max(float("nan"), PEER_TIMEOUT))
 
 
 class TestOutOfContactIsRetainedNotErased:

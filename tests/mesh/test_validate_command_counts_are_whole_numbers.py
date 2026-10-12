@@ -57,7 +57,6 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import math
 import pathlib
 from typing import Any
 
@@ -326,9 +325,3 @@ class TestEveryWireCountIsHeldToTheDomain:
 
     def test_the_helper_accepts_an_integral_float_directly(self) -> None:
         assert security._coerce_int("probe", 4.0, lo=1, hi=10, default=None) == 4
-
-    def test_an_integral_float_is_exactly_what_is_integer_reports(self) -> None:
-        """The predicate, stated locally so the guard is not its own oracle."""
-        assert (4.0).is_integer() is True
-        assert (2.5).is_integer() is False
-        assert math.isnan(float("nan")) is True

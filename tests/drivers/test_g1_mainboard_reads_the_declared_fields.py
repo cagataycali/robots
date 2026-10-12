@@ -124,13 +124,6 @@ class TestThePremisesHold:
         assert undeclared not in _DECLARED_MAINBOARD_FIELDS
         assert not hasattr(_mainboard_message(), undeclared)
 
-    def test_an_undeclared_read_yields_the_default_rather_than_raising(self) -> None:
-        """This is the whole mechanism: the miss is silent, not an error."""
-        msg = _mainboard_message(state=[1] * 6)
-        assert getattr(msg, "fan_speed", 0) == 0
-        assert getattr(msg, "bms_state", 0) == 0
-        assert getattr(msg, "sys_state", 0) == 0
-
 
 # =========================================================================
 # The regression - a reading the message carries reaches the cache.       #

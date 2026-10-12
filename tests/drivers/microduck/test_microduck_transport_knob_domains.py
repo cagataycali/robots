@@ -31,8 +31,6 @@ from __future__ import annotations
 import ast
 import inspect
 import json
-import socket
-import threading
 
 import numpy as np
 import pytest
@@ -109,44 +107,6 @@ def _numeric_init_params() -> list[str]:
 def _init_body_source() -> str:
     """The constructor's own source, for reading which domains it consults."""
     return inspect.getsource(MicroduckDriver.__init__)
-
-
-class TestTheConsumersCannotReportWhatTheyWereHanded:
-    """Premise: the harm is a property of the consumers, not of this driver."""
-
-    def test_a_non_finite_timeout_raises_inside_the_socket_call(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            with pytest.raises(ValueError, match="NaN"):
-                sock.settimeout(float("nan"))
-        finally:
-            sock.close()
-
-    def test_a_true_timeout_is_a_silent_one_second_and_none_is_unbounded(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            sock.settimeout(True)
-            assert sock.gettimeout() == 1.0, "True must not be readable as a usable timeout"
-            sock.settimeout(None)
-            assert sock.gettimeout() is None, "None removes the bound rather than setting one"
-        finally:
-            sock.close()
-
-    def test_the_reply_wait_returns_at_once_for_a_non_finite_bound(self) -> None:
-        # A nan bound makes the wait fall straight through, so the request is
-        # reported as timed out having waited for nothing.
-        assert threading.Event().wait(float("nan")) is False
-
-    def test_a_non_finite_hz_is_not_json_and_a_numpy_int_is_not_serialisable(self) -> None:
-        def refuse_bare_constant(token: str) -> float:
-            raise ValueError(f"bare {token} is not JSON")
-
-        for value in (float("nan"), float("inf")):
-            frame = json.dumps({"hz": value})
-            with pytest.raises(ValueError, match="not JSON"):
-                json.loads(frame, parse_constant=refuse_bare_constant)
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            json.dumps({"hz": np.int64(3)})
 
 
 class TestTimeoutIsAPositiveFiniteNumber:

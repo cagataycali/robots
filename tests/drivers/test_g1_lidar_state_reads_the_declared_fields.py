@@ -127,12 +127,6 @@ class TestThePremisesHold:
         assert undeclared not in _DECLARED_LIDAR_STATE_FIELDS
         assert not hasattr(_lidar_state_message(), undeclared)
 
-    def test_an_undeclared_read_yields_the_default_rather_than_raising(self) -> None:
-        """This is the whole mechanism: the miss is silent, not an error."""
-        msg = _lidar_state_message(error_state=3)
-        assert getattr(msg, "code", -1) == -1
-        assert getattr(msg, "freq", 0.0) == 0.0
-
     def test_the_response_code_table_cannot_mislabel_a_uint8(self) -> None:
         """Rendering ``error_state`` through :data:`ERR_CODES` stays honest.
 

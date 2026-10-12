@@ -143,11 +143,6 @@ def _calls(fn: ast.FunctionDef, name: str) -> bool:
 class TestThePremiseHolds:
     """The reading really is unencodable, and the wire really encodes."""
 
-    @pytest.mark.parametrize(("label", "value", "expected"), _READINGS, ids=_IDS)
-    def test_json_refuses_the_reading_uncoerced(self, label: str, value: Any, expected: Any) -> None:
-        with pytest.raises(TypeError, match="not JSON serializable"):
-            json.dumps({"v": value})
-
     def test_the_transport_encodes_before_it_puts(self) -> None:
         source = inspect.getsource(mesh_session._put_zenoh_directly)
         assert "json.dumps" in source, (

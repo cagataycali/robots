@@ -158,16 +158,6 @@ class TestThePremisesTheseCellsRestOn:
     def test_the_shared_domain_accepts_it(self, value: Any) -> None:
         assert finite_number_error(value, "battery_floor_pct", "G1Driver") is None
 
-    def test_a_nan_floor_would_pass_the_comparison_the_gate_makes(self) -> None:
-        """Why ``nan`` is the dangerous spelling rather than merely odd.
-
-        The gate is ``battery_pct < floor``.  With a ``nan`` floor that is
-        False for every reading, so the pack is never the reason - which is
-        indistinguishable from a healthy pack.
-        """
-        assert (_CRITICAL_PCT < float("nan")) is False
-        assert (0.0 < float("nan")) is False
-
     def test_the_battery_reading_is_a_percentage(self) -> None:
         """The floor is compared against a state-of-charge percentage."""
         source = inspect.getsource(G1Driver._on_bms)

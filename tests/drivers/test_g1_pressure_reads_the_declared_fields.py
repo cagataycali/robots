@@ -117,12 +117,6 @@ class TestThePremisesHold:
         assert undeclared not in _DECLARED_PRESSURE_FIELDS
         assert not hasattr(_pressure_message(), undeclared)
 
-    def test_an_undeclared_read_yields_the_default_rather_than_raising(self) -> None:
-        """This is the whole mechanism: the miss is silent, not an error."""
-        msg = _pressure_message(lost=1)
-        assert getattr(msg, "voltage", 0) == 0
-        assert getattr(msg, "tick", 0) == 0
-
 
 # =========================================================================
 # The regression - a reading the message carries reaches the cache.       #

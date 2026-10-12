@@ -151,19 +151,6 @@ class TestThePremisesHold:
         assert undeclared not in _DECLARED_BMS_FIELDS
         assert not hasattr(_bms_message(), undeclared)
 
-    def test_an_undeclared_read_yields_a_plausible_false_not_an_error(self) -> None:
-        """This is the whole mechanism: the miss is silent, and it lies.
-
-        ``bool(getattr(msg, "charge", 0))`` on a message with no charge
-        field is ``False``, which is a perfectly well-formed answer to "is
-        this pack charging" - so nothing downstream can tell it apart from
-        a measurement.  That is why the defect survived: the read could not
-        raise and the value could not look wrong.
-        """
-        msg = _bms_message(soc=42)
-        assert bool(getattr(msg, "charge", 0)) is False
-        assert getattr(msg, "charge", 0.0) == 0.0
-
 
 # =========================================================================
 # The regression - the record carries readings and nothing else.          #

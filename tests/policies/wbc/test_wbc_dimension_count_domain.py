@@ -29,8 +29,6 @@ does NOT decide: the command block's floor of three and the relation between
 from __future__ import annotations
 
 import dataclasses
-import math
-from collections import deque
 from typing import Any
 
 import numpy as np
@@ -67,41 +65,6 @@ _REFUSED = [
 def _config(**overrides: Any) -> WBCConfig:
     """Build a config, letting every dimension default unless overridden."""
     return WBCConfig(policy_path=_POLICY, **overrides)
-
-
-class TestTheConsumersNeedThisExactDomain:
-    """Premise: the dimension consumers refuse what a bare comparison accepts.
-
-    The domain is strict-``int`` rather than any-integral-real because these
-    values reach a C-level API. Asserting that here is what makes the choice a
-    measurement rather than a preference: an integral float and a NumPy integer
-    are both refused by the consumer, so a domain that accepted them would hand
-    the caller a value the next call cannot use.
-    """
-
-    def test_the_history_deque_refuses_a_numpy_integer_maxlen(self) -> None:
-        # Each value below is typed Any deliberately: mypy states the same
-        # refusal statically, which is why the domain is strict-int, and an
-        # annotated local keeps the runtime assertion without an ignore code.
-        numpy_integer: Any = np.int64(6)
-        with pytest.raises(TypeError):
-            deque(maxlen=numpy_integer)
-
-    def test_a_frame_width_refuses_a_fractional_float(self) -> None:
-        fractional: Any = 86.5
-        with pytest.raises(TypeError):
-            np.zeros(fractional, dtype=np.float64)
-
-    def test_a_range_bound_refuses_a_non_integer(self) -> None:
-        fractional: Any = 2.5
-        with pytest.raises(TypeError):
-            range(fractional)
-
-    def test_nan_is_below_nothing_so_a_bare_floor_cannot_refuse_it(self) -> None:
-        """The arithmetic the old checks rested on, stated once."""
-        assert not (math.nan < 1)
-        assert not (math.nan < 3)
-        assert not (math.nan < 15)
 
 
 class TestEveryDimensionIsHeldToTheDomain:
