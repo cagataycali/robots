@@ -32,44 +32,22 @@ the third factor of this product is held to what its two siblings are held to.
 ``test_rl_env_count_domain.py`` pins the shared half.
 
 Which backends refuse which values, in which words, is graded for every backend
-in ``test_rl_spec_field_domains.py``; this file pins why the domain exists.
+in ``test_rl_spec_field_domains.py``, and that every backend inheriting the loop
+routes the two fields through the one gate is a row of
+``test_every_shared_domain_has_one_owner.py``; this file pins why the domain exists.
 """
 
 from __future__ import annotations
 
-import ast
 import inspect
-import pathlib
 from typing import Any
 
-import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
 from strands_robots.training._validate import rl_run_size_problems
-from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_count_error
-from tests._package_ast import parse_source, walk_tree
-from tests.training._spec_field_reads import reads_spec_field
-
-# The backends that size a training loop from these two fields.
-RL_BACKENDS = ("ppo", "fast_sac", "fast_td3")
-
-
-# The two factors, and the field the domain deliberately excludes.
-RUN_SIZE_FIELDS = ("total_timesteps", "rollout_steps")
-
-
-# Values that survive ``value <= 0`` and cannot bound the loop. The first four
-# are the silent half - ``max(1, ...)`` reads each as a single iteration, because
-# ``True // n`` is ``0``, ``0.5 // n`` is ``0.0``, and both ``nan // n`` and
-# ``inf // n`` are ``nan``, which compares false against everything.
-SILENTLY_ONE_ITERATION: list[Any] = [True, 0.5, float("nan"), float("inf")]
-
-# Values that reach the loop and raise there, or raise out of the comparison.
-NOT_A_COUNT: list[Any] = [*SILENTLY_ONE_ITERATION, False, 100.5, 4.0, "16", None, [16], {"total_timesteps": 16}]
-
 
 # The two values PPO's divisibility relation used to mishandle. Annotated ``Any``
 # because they are deliberately outside the field's declared type - which is the
@@ -114,29 +92,6 @@ class TestTheLoopBoundIsDerivedThroughAClamp:
         assert "num_iters = max(1, spec.total_timesteps // steps_per_iter)" in source
         assert "for it in range(num_iters):" in source
 
-    def test_the_clamp_reads_a_non_count_as_a_single_iteration(self) -> None:
-        """The silent half: no exception, one iteration, a successful report."""
-        for value in SILENTLY_ONE_ITERATION:
-            assert len(range(max(1, value // 4))) == 1, f"{value!r}"
-
-    def test_a_fraction_above_one_iteration_raises_out_of_range_instead(self) -> None:
-        """The late half: a float bound, raised only once the loop is reached."""
-        assert 100.5 // 4 == 25.0
-        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-            range(max(1, 100.5 // 4))  # type: ignore[call-overload]
-
-    def test_an_infinite_budget_is_silent_rather_than_unbounded(self) -> None:
-        """``inf // n`` is ``nan``, and ``nan`` loses every comparison to ``1``."""
-        assert np.isnan(float("inf") // 4)
-        assert max(1, float("inf") // 4) == 1
-
-    def test_a_non_numeric_budget_raises_out_of_the_comparison_itself(self) -> None:
-        """Why a local ``<= 0`` cannot even report: it raises before appending."""
-        non_numeric: list[Any] = ["16", None]
-        for value in non_numeric:
-            with pytest.raises(TypeError, match="not supported between instances"):
-                _ = value <= 0
-
 
 class TestNumEnvsIsNotInTheSharedDomain:
     """The scope line, pinned: the third factor is per-backend by necessity.
@@ -149,35 +104,6 @@ class TestNumEnvsIsNotInTheSharedDomain:
     def test_the_gate_reports_nothing_about_it(self, spec: RLTrainSpec) -> None:
         spec.num_envs = 0
         assert rl_run_size_problems(spec, context="ppo") == []
-
-    def test_the_backends_disagree_about_its_accepted_set(self, spec: RLTrainSpec) -> None:
-        """Two envs: usable for the parallel backend, refused by the single-env one."""
-        spec.num_envs = 2
-        assert not [p for p in create_trainer("ppo").validate(spec) if "num_envs" in p]
-        assert [p for p in create_trainer("fast_sac").validate(spec) if "num_envs" in p]
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_each_backend_still_refuses_a_non_positive_count(self, provider: str, spec: RLTrainSpec) -> None:
-        """Non-vacuity: excluding the count rule did not leave the field unchecked.
-
-        ``0`` is the one unusable value a bare comparison already caught, so it
-        cannot carry this claim on its own - the values that survive such a
-        comparison are graded in ``test_rl_env_count_domain.py``, which is where
-        this class's scope line stops.
-        """
-        spec.num_envs = 0
-        assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p]
-
-    @pytest.mark.parametrize("provider", RL_BACKENDS)
-    def test_the_shared_half_reaches_it_on_both_backends(self, provider: str, spec: RLTrainSpec) -> None:
-        """The half that IS shared: a non-count is refused wherever it is read.
-
-        The per-backend line is about which counts are usable. It is not about
-        whether the value is a count, so no backend gets to leave that open.
-        """
-        for value in NOT_A_COUNT:
-            spec.num_envs = value
-            assert [p for p in create_trainer(provider).validate(spec) if "num_envs" in p], f"{value!r}"
 
 
 class TestTheDivisibilityRelationIsAskedOnlyOfACount:
@@ -210,107 +136,3 @@ class TestTheDivisibilityRelationIsAskedOnlyOfACount:
         spec.rollout_steps = 24
         spec.num_mini_batches = 4
         assert not [p for p in create_trainer("ppo").validate(spec) if "divisible by num_mini_batches" in p]
-
-
-# --- one owner for the domain ------------------------------------------------
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module except the one that owns the gate."""
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(rl_run_size_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_run_size(source: str) -> bool:
-    """Does *source* read either factor, by name or through a forwarding table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read - a transport-only provider reads every field it
-    forwards through ``getattr(spec, field)`` and names none in an attribute
-    access.
-    """
-    return reads_spec_field(source, RUN_SIZE_FIELDS)
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_rl_run_size_problems"
-        for node in walk_tree(parse_source(source))
-    )
-
-
-def _defines_validate(source: str) -> bool:
-    """Does *source* implement the preflight the biconditional is about?
-
-    The rule a shared domain states is about ``validate``: a backend whose
-    preflight reads the field must route it through the gate. The abstract base
-    that *consumes* the field in the shared training loop has no preflight of its
-    own to route anything through, so scoping the scan to modules that implement
-    ``validate`` is what keeps the rule a statement about preflights rather than
-    about every mention of the field.
-    """
-    return any(
-        isinstance(node, ast.FunctionDef) and node.name == "validate" for node in walk_tree(parse_source(source))
-    )
-
-
-class TestOneOwnerForTheRlRunSizeDomain:
-    """No RL backend may skip the domain, and none may re-implement it.
-
-    The set of backends in scope is derived from the tree rather than listed, so a
-    third RL trainer that starts sizing its loop from these fields fails this
-    test until it routes through the gate.
-    """
-
-    def test_every_preflight_that_reads_them_routes_through_the_shared_gate(self) -> None:
-        adrift = [
-            p.name
-            for p in _training_modules()
-            if _defines_validate(p.read_text())
-            and _reads_the_run_size(p.read_text())
-            and not _calls_the_gate(p.read_text())
-        ]
-        assert adrift == [], f"preflights read the run-size factors without the shared gate: {adrift}"
-
-    def test_the_preflight_set_is_the_expected_one(self) -> None:
-        """Non-vacuity: a mis-rooted scan cannot report a clean sweep over nothing."""
-        gated = {
-            p.name
-            for p in _training_modules()
-            if _defines_validate(p.read_text()) and _reads_the_run_size(p.read_text())
-        }
-        assert gated == {"fast_sac.py", "fast_td3.py", "ppo.py"}, gated
-
-    def test_the_shared_loop_reads_the_fields_and_has_no_preflight_to_gate(self) -> None:
-        """Why the scan is scoped to preflights, pinned rather than asserted in prose.
-
-        ``base_algo.py`` is where the two factors are *consumed* - it derives the
-        loop bound from them - and it implements no ``validate``, so it is the one
-        reader with nothing to route. A future ``validate`` there must gate, which
-        the scan above then requires.
-        """
-        readers = {p.name for p in _training_modules() if _reads_the_run_size(p.read_text())}
-        assert "base_algo.py" in readers
-        base_algo = next(p for p in _training_modules() if p.name == "base_algo.py")
-        assert not _defines_validate(base_algo.read_text())
-
-    def test_the_scanner_detects_a_planted_preflight(self) -> None:
-        """A preflight reading a factor without the gate is really reported."""
-        planted = "def validate(self, spec):\n    return [] if spec.total_timesteps else []\n"
-        assert _defines_validate(planted)
-        assert _reads_the_run_size(planted)
-        assert not _calls_the_gate(planted)
-
-    @pytest.mark.parametrize("field", RUN_SIZE_FIELDS)
-    def test_no_backend_re_implements_the_bound(self, field: str) -> None:
-        """A local copy of the bound would drift from the shared rule."""
-        offenders = [
-            p.name
-            for p in _training_modules()
-            if f"spec.{field} <" in p.read_text() or f"spec.{field} >" in p.read_text()
-        ]
-        assert offenders == [], f"modules compare spec.{field} locally: {offenders}"

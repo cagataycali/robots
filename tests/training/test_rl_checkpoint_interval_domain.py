@@ -38,31 +38,27 @@ without training again.
 
 The tests below pin the contract in both directions, against the same value sets
 the supervised half uses - imported from that guard rather than restated, so the
-two fields cannot drift on to two domains.
+two fields cannot drift on to two domains. That every backend inheriting the
+loop routes the field through the one gate is a row of
+``test_every_shared_domain_has_one_owner.py``.
 """
 
 from __future__ import annotations
 
-import ast
-import inspect
 import pathlib
-import textwrap
 from typing import Any
 
 import pytest
 
 from strands_robots.training._validate import rl_checkpoint_interval_problems
-from strands_robots.training.base import Trainer, TrainSpec
-from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
+from strands_robots.training.base import TrainSpec
+from strands_robots.training.rl.base_algo import RLTrainSpec
 from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.fast_td3 import FastTd3Trainer
 from strands_robots.training.rl.ppo import PpoTrainer
-from tests._package_ast import parse_source, walk_tree
 
 # The smallest legal BaseRLAlgo, reused rather than copied: its stubbed hooks let
 # the *inherited* train loop run, which is the consumer this cadence reaches.
-from tests.training._spec_field_reads import reads_spec_field
-
 # One domain, so one value set: imported from the supervised guard rather than
 # restated, which is what stops the two fields drifting on to two rules.
 from tests.training.test_checkpoint_cadence_domain import (
@@ -174,110 +170,6 @@ class TestWhatTheLoopDoesWithAnUnusableInterval:
         """
         assert _checkpoint_iterations(0) == [RL_ITERS]
         assert _checkpoint_iterations(-A_REQUESTED_CADENCE) == THE_REQUESTED_SCHEDULE
-
-
-def _training_modules() -> list[pathlib.Path]:
-    """Every training module, minus the one that defines the shared gate.
-
-    Rooted at the module that defines :class:`Trainer` rather than at the RL
-    package, so a supervised module that starts reading the field is in scope
-    too. The module that *defines* the gate is excluded - derived from the gate
-    itself rather than named, so the exclusion cannot drift - because it reads
-    the field as its owner, not as a consumer.
-    """
-    root = pathlib.Path(inspect.getfile(Trainer)).parent
-    owner = pathlib.Path(inspect.getfile(rl_checkpoint_interval_problems)).resolve()
-    return sorted(p for p in root.rglob("*.py") if p.name != "__init__.py" and p.resolve() != owner)
-
-
-def _reads_the_interval(source: str) -> bool:
-    """Does *source* read ``spec.log_interval``, by name or through a table?
-
-    Delegated to the shared rule so this guard and its siblings cannot disagree
-    about what counts as a read.
-    """
-    return reads_spec_field(source, ("log_interval",))
-
-
-def _calls_the_gate(source: str) -> bool:
-    """Does *source* route through the shared gate?"""
-    return any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_rl_checkpoint_interval_problems"
-        for node in walk_tree(parse_source(source))
-    )
-
-
-def _concrete_rl_backends() -> set[type[BaseRLAlgo]]:
-    """Every shipped :class:`BaseRLAlgo` subclass, discovered rather than listed.
-
-    The subclasses are only ever read here (their ``validate`` source is
-    inspected, never instantiated), which is why holding the abstract base's
-    ``type`` is sound.
-    """
-    # type-abstract: the base is an ABC, and these are held rather than called.
-    shipped = [c for c in BaseRLAlgo.__subclasses__() if c.__module__.startswith("strands_robots.")]
-    return set(shipped)  # type: ignore[type-abstract]
-
-
-class TestOneOwnerForTheRLCheckpointInterval:
-    """No RL backend may skip the domain, and none may re-implement it.
-
-    Scope is derived from the class hierarchy, not from the text, because a
-    *textual* read is not what puts a backend in scope here: FastSAC and FastTD3
-    override ``train`` and so name the field, while PPO inherits
-    :meth:`BaseRLAlgo.train` and never mentions it - yet PPO runs the identical
-    loop over the identical field. A scan keyed on the attribute access would
-    report a clean sweep with PPO's interval ungated. What every backend in scope
-    shares is that it *is* a ``BaseRLAlgo``, so that is the derivation, and a
-    fourth RL backend fails these tests until its ``validate`` routes through the
-    gate.
-    """
-
-    def test_the_discovery_finds_every_shipped_rl_backend(self) -> None:
-        """Non-vacuity, and the agreement cell: a new backend cannot arrive unpinned."""
-        assert sorted(c.__name__ for c in _concrete_rl_backends()) == sorted(c.__name__ for c in RL_BACKENDS)
-
-    def test_every_rl_backend_routes_through_the_shared_gate(self) -> None:
-        adrift = sorted(
-            cls.__name__
-            for cls in _concrete_rl_backends()
-            if not _calls_the_gate(textwrap.dedent(inspect.getsource(cls.validate)))
-        )
-        assert adrift == [], f"RL backends whose validate skips the shared gate: {adrift}"
-
-    def test_the_loop_that_consumes_the_interval_is_the_inherited_one(self) -> None:
-        """Why the hierarchy is the right scope: every backend reads the field by inheriting.
-
-        Pins the shape the derivation is built on, so a refactor that moves
-        the loop cannot quietly invalidate it.
-        """
-        readers = {p.name for p in _training_modules() if _reads_the_interval(p.read_text())}
-        assert readers == {"base_algo.py"}
-        assert all(cls.train is BaseRLAlgo.train for cls in _concrete_rl_backends())
-
-    def test_no_backend_re_implements_the_domain(self) -> None:
-        offenders: list[str] = []
-        for path in _training_modules():
-            for line in path.read_text().splitlines():
-                if "spec.log_interval" in line and ("int(" in line or "isinstance" in line):
-                    offenders.append(f"{path.name}: {line.strip()}")
-        assert offenders == [], f"local domain checks on spec.log_interval: {offenders}"
-
-    def test_the_scanners_detect_a_planted_defect(self) -> None:
-        """A scanner that silently matched nothing would look like a clean tree."""
-        planted = "def validate(self, spec):\n    return [f'--log_every={spec.log_interval}']\n"
-        assert _reads_the_interval(planted)
-        assert not _calls_the_gate(planted)
-
-    def test_the_scanners_detect_a_table_driven_defect(self) -> None:
-        """A backend that forwards the field by name is a reader too."""
-        planted = (
-            'FIELDS = ("log_interval",)\ndef validate(self, spec):\n    return [getattr(spec, f) for f in FIELDS]\n'
-        )
-        assert _reads_the_interval(planted)
-        assert not _calls_the_gate(planted)
 
 
 class TestTheSharedDomainSurface:

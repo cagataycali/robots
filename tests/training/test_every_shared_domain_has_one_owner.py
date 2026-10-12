@@ -62,6 +62,12 @@ class SharedDomain:
             serialize or build with the value after the gate has admitted it.
         gates_without_reading: Modules that call the gate for a field they do not
             themselves read, e.g. because an inherited loop is the reader.
+        inherited_from: The one module that reads the fields in a shared loop
+            every backend inherits and implements no ``validate`` of its own.
+            It is the only reader allowed to skip the gate, and the set that
+            must call the gate is then derived from the class hierarchy - every
+            module subclassing a class it defines - so a backend that reads the
+            fields only by inheriting the loop is in scope without naming them.
     """
 
     gate: str
@@ -70,6 +76,7 @@ class SharedDomain:
     comparisons: frozenset[str] = field(default_factory=frozenset)
     conversions: frozenset[str] = field(default_factory=frozenset)
     gates_without_reading: frozenset[str] = field(default_factory=frozenset)
+    inherited_from: str | None = None
 
 
 def _domain(
@@ -78,6 +85,8 @@ def _domain(
     *readers: str,
     comparisons: tuple[str, ...] = (),
     conversions: tuple[str, ...] = (),
+    gates_without_reading: tuple[str, ...] = (),
+    inherited_from: str | None = None,
 ) -> SharedDomain:
     return SharedDomain(
         gate=gate,
@@ -85,11 +94,25 @@ def _domain(
         readers=frozenset(readers),
         comparisons=frozenset(comparisons),
         conversions=frozenset(conversions),
+        gates_without_reading=frozenset(gates_without_reading),
+        inherited_from=inherited_from,
     )
+
+
+# The RL backends, which inherit ``BaseRLAlgo.train`` and with it every field that
+# loop reads: PPO never names the run-size factors, and none names ``log_interval``.
+_RL_BACKENDS = ("fast_sac.py", "fast_td3.py", "ppo.py")
 
 
 #: One row per shared gate, in ``Trainer``'s own declaration order.
 DOMAINS: tuple[SharedDomain, ...] = (
+    _domain(
+        "_rl_run_size_problems",
+        ("total_timesteps", "rollout_steps"),
+        "base_algo.py",
+        *_RL_BACKENDS,
+        inherited_from="base_algo.py",
+    ),
     _domain("_rl_replay_problems", ("buffer_size", "batch_size", "gradient_steps"), "fast_sac.py", "fast_td3.py"),
     _domain(
         "_launch_topology_problems",
@@ -136,6 +159,13 @@ DOMAINS: tuple[SharedDomain, ...] = (
         comparisons=("spec.save_freq > 0",),
         # The admitted cadence as Isaac Lab's agent.save_interval override value.
         conversions=("int(spec.save_freq)",),
+    ),
+    _domain(
+        "_rl_checkpoint_interval_problems",
+        ("log_interval",),
+        "base_algo.py",
+        gates_without_reading=_RL_BACKENDS,
+        inherited_from="base_algo.py",
     ),
     _domain(
         "_validation_episodes_problems",
@@ -185,10 +215,6 @@ GATES_GRADED_ELSEWHERE: dict[str, str] = {
     # field has a default, so every backend is a reader.
     "_learning_rate_problems": "tests/training/test_learning_rate_domain.py",
     "_run_size_problems": "tests/training/test_run_size_domain.py",
-    # Scoped to the RL class hierarchy, because PPO reads the field by inheriting
-    # the loop that consumes it rather than by naming it.
-    "_rl_run_size_problems": "tests/training/test_rl_run_size_domain.py",
-    "_rl_checkpoint_interval_problems": "tests/training/test_rl_checkpoint_interval_domain.py",
     # A relation between two fields, so the offending shape is a comparison of
     # one field against the other rather than against a literal.
     "_rl_warmup_batch_problems": "tests/training/test_learning_starts_count_domain.py",
@@ -270,6 +296,27 @@ def conversions_of_the_field(source: str, fields: tuple[str, ...]) -> list[str]:
     ]
 
 
+def defines_validate(source: str) -> bool:
+    """Does *source* implement a ``validate`` preflight anywhere?"""
+    return any(
+        isinstance(node, ast.FunctionDef) and node.name == "validate" for node in walk_tree(parse_source(source))
+    )
+
+
+def subclasses_of_a_class_in(sources: dict[str, str], parent: str) -> set[str]:
+    """Modules defining a class whose base is a class *parent* defines."""
+    defined = {node.name for node in walk_tree(parse_source(sources[parent])) if isinstance(node, ast.ClassDef)}
+    return {
+        name
+        for name, source in sources.items()
+        if any(
+            isinstance(node, ast.ClassDef)
+            and any(getattr(base, "id", getattr(base, "attr", None)) in defined for base in node.bases)
+            for node in walk_tree(parse_source(source))
+        )
+    } - {parent}
+
+
 _IDS = [domain.gate.strip("_").removesuffix("_problems") for domain in DOMAINS]
 
 
@@ -286,9 +333,14 @@ def test_the_readers_and_the_gate_are_the_same_set(domain: SharedDomain) -> None
     readers = {name for name, source in sources.items() if reads_spec_field(source, domain.fields)}
     gated = {name for name, source in sources.items() if calls_the_gate(source, domain.gate)}
     assert readers == set(domain.readers)
-    assert sorted(readers - gated) == [], (
-        f"modules read {domain.fields} without {domain.gate}: {sorted(readers - gated)}"
+    inherited = {domain.inherited_from} if domain.inherited_from else set()
+    assert sorted(readers - gated) == sorted(inherited), (
+        f"modules read {domain.fields} without {domain.gate}: {sorted(readers - gated - inherited)}"
     )
+    if domain.inherited_from:
+        # The loop has no preflight to route through, so every backend inheriting it must.
+        assert not defines_validate(sources[domain.inherited_from])
+        assert gated == subclasses_of_a_class_in(sources, domain.inherited_from)
     assert sorted(gated - readers) == sorted(domain.gates_without_reading), (
         f"modules call {domain.gate} without reading {domain.fields}: {sorted(gated - readers)}"
     )
