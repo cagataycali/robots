@@ -14,14 +14,11 @@ math are ported directly. Selected via ``create_trainer("ppo")``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from strands_robots.training.base import TrainSpec
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.utils import positive_count_error, require_optional
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    import torch
 
 
 def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
