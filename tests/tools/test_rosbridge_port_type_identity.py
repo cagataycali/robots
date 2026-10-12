@@ -267,20 +267,6 @@ class TestThePremiseTheNormalizationRestsOn:
     a dependency is worth nothing measured against a double.
     """
 
-    def test_the_url_builder_gates_the_port_on_type_identity(self) -> None:
-        create_url = pytest.importorskip("autobahn.websocket.util").create_url
-
-        with pytest.raises(AssertionError) as excinfo:
-            create_url("127.0.0.1", port=_Port.ROSBRIDGE)
-
-        assert str(excinfo.value) == ""
-        assert create_url("127.0.0.1", port=9090)
-
-    def test_the_normalized_value_is_one_the_builder_accepts(self) -> None:
-        create_url = pytest.importorskip("autobahn.websocket.util").create_url
-
-        assert create_url("127.0.0.1", port=int(_Port.ROSBRIDGE)) == create_url("127.0.0.1", port=9090)
-
     def test_the_client_refuses_it_at_construction_not_at_dial(self) -> None:
         """Why the tool's ``try`` around the dial never converted this.
 

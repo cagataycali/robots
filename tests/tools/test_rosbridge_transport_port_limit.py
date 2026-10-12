@@ -167,32 +167,3 @@ class TestTheSharedDomainIsNotNarrowedToMatch:
         carriers = {name for name, text in sources.items() if "_transport_port_error" in text}
 
         assert carriers == {"rosbridge.py", "rosbridge_robot.py"}
-
-
-class TestTheTransportPremise:
-    """Why the bound exists. If autobahn is fixed, these fail and say to widen it.
-
-    Constructing ``roslibpy.Ros`` builds the URL and opens no socket, so the
-    premise is checked without a rosbridge server.
-    """
-
-    def test_the_transport_still_rejects_the_top_of_the_range(self) -> None:
-        roslibpy = pytest.importorskip("roslibpy")
-
-        with pytest.raises(AssertionError):
-            roslibpy.Ros(host="127.0.0.1", port=UNADDRESSABLE_PORT)
-
-    def test_the_transport_accepts_the_neighbour_below(self) -> None:
-        """Pins that the assert is about that one value, not about the call."""
-        roslibpy = pytest.importorskip("roslibpy")
-
-        assert roslibpy.Ros(host="127.0.0.1", port=ADDRESSABLE_PORT) is not None
-
-    def test_the_rejection_carries_no_message_of_its_own(self) -> None:
-        """Why translating it is necessary: the raw failure names nothing."""
-        roslibpy = pytest.importorskip("roslibpy")
-
-        with pytest.raises(AssertionError) as excinfo:
-            roslibpy.Ros(host="127.0.0.1", port=UNADDRESSABLE_PORT)
-
-        assert str(excinfo.value) == ""

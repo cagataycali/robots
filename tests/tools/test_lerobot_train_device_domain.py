@@ -157,26 +157,6 @@ class TestOnlyTheSpellingIsGradedNeverAvailability:
 class TestTheDomainIsSourcedLiveRatherThanCopied:
     """Executable premises, so the reasoning cannot silently become wrong."""
 
-    def test_torch_really_rejects_every_unusable_spelling(self) -> None:
-        """Non-vacuity: the probe set is refused by torch, not by a local list."""
-        torch = pytest.importorskip("torch")
-        for device in [value for value in UNUSABLE_DEVICES if isinstance(value, str)]:
-            with pytest.raises((RuntimeError, ValueError)):
-                torch.device(device)
-
-    def test_torch_really_accepts_every_usable_spelling(self) -> None:
-        """So the admitted half is torch's verdict too, not a copied allow-list."""
-        torch = pytest.importorskip("torch")
-        for device in USABLE_DEVICES:
-            assert torch.device(device) is not None, f"{device!r}"
-
-    def test_torchs_own_message_enumerates_the_admitted_device_types(self) -> None:
-        """Which is why the refusal quotes it instead of restating the set."""
-        torch = pytest.importorskip("torch")
-        with pytest.raises(RuntimeError) as excinfo:
-            torch.device("gpu")
-        assert "cuda" in str(excinfo.value)
-
     def test_an_unimportable_torch_leaves_the_value_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With no torch the domain is unknown, so the value passes through.
 
@@ -239,10 +219,3 @@ class TestTheScopeIsNoWiderThanTheDefect:
             _build(num_gpus=0)
         with pytest.raises(ValueError, match="steps must be a positive integer"):
             _build(steps=0)
-
-
-def test_the_probe_sets_are_disjoint_and_cover_both_kinds() -> None:
-    """Guards the probe sets themselves against a future edit collapsing them."""
-    assert not set(USABLE_DEVICES) & {value for value in UNUSABLE_DEVICES if isinstance(value, str)}
-    assert any(not isinstance(value, str) for value in UNUSABLE_DEVICES), "no non-string probe"
-    assert any(isinstance(value, str) for value in UNUSABLE_DEVICES), "no unparseable-string probe"

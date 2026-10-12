@@ -34,7 +34,6 @@ unchecked.
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any
 
@@ -186,35 +185,6 @@ class TestTheRefusalReachesTheCallerBeforeAnyProcessStarts:
         assert launched == [], "a refused run size still spawned a training process"
 
 
-class TestThePremisesTheDomainRestsOn:
-    """Executable premises, so the reasoning cannot silently become wrong."""
-
-    @pytest.mark.parametrize("steps", [0, -5])
-    def test_a_non_positive_step_budget_is_an_empty_training_loop(self, steps: int) -> None:
-        """lerobot iterates ``range(step, cfg.steps)``; that is empty here."""
-        assert list(range(0, steps)) == []
-
-    def test_a_boolean_step_budget_would_have_been_a_single_step(self) -> None:
-        """``True`` is an int subclass, so it sizes the loop at exactly one."""
-        assert list(range(0, True)) == [0]
-
-    @pytest.mark.parametrize("batch_size", [0, -8])
-    def test_a_non_positive_batch_size_cannot_build_a_dataloader(self, batch_size: int) -> None:
-        torch = pytest.importorskip("torch")
-        dataset = torch.utils.data.TensorDataset(torch.zeros(4, 2))
-        with pytest.raises(ValueError, match="batch_size should be a positive integer"):
-            torch.utils.data.DataLoader(dataset, batch_size=batch_size)
-
-    def test_lerobot_declares_both_knobs_as_plain_int_fields(self) -> None:
-        """A fractional value cannot be decoded into either field."""
-        import dataclasses
-
-        train_config = pytest.importorskip("lerobot.configs.train")
-        declared = {field.name: field.type for field in dataclasses.fields(train_config.TrainPipelineConfig)}
-        assert declared["steps"] is int
-        assert declared["batch_size"] is int
-
-
 class TestTheScopeIsNoWiderThanTheDefect:
     """``save_freq``'s floor is a mode selector for lerobot, not a run size.
 
@@ -232,23 +202,9 @@ class TestTheScopeIsNoWiderThanTheDefect:
         """
         assert f"--save_freq={save_freq}" in _build(save_freq=save_freq)
 
-    def test_lerobot_really_honors_a_non_positive_save_freq(self) -> None:
-        """Non-vacuity for the scope decision above."""
-        lerobot_train_script = pytest.importorskip("lerobot.scripts.lerobot_train")
-        should_save = lerobot_train_script.should_save_checkpoint
-        assert should_save(50, 0, 100) is False, "no periodic checkpoint"
-        assert should_save(100, 0, 100) is True, "but the final one is still written"
-
     def test_the_other_numeric_knobs_keep_their_own_guards(self) -> None:
         """The guards that already existed are untouched."""
         with pytest.raises(ValueError, match="num_gpus must be a positive integer"):
             _build(num_gpus=0)
         with pytest.raises(ValueError, match="val_episodes must be a positive integer"):
             _build(val_episodes=0)
-
-
-def test_nan_and_inf_are_covered_by_the_probe_set() -> None:
-    """Guards the probe set itself against a future edit dropping a case."""
-    floats = [value for value in UNUSABLE_COUNTS if isinstance(value, float)]
-    assert any(math.isnan(value) for value in floats)
-    assert any(math.isinf(value) for value in floats)

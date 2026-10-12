@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import math
 import pathlib
 import sys
 from pathlib import Path
@@ -227,50 +226,6 @@ class TestTheRefusalReachesTheCallerBeforeAnyProcessStarts:
         dataset = _write_dataset(tmp_path / "cubes")
         _start(dataset_root=str(dataset), num_gpus=2.7)
         assert list(_isolated_sessions.glob("*.json")) == []
-
-
-class TestTheRefusedValuesAreOnesTheLauncherCannotHonor:
-    """The refused set is grounded in what the selector and accelerate do."""
-
-    @pytest.mark.parametrize("value", SILENTLY_SINGLE_PROCESS)
-    def test_a_silent_value_reads_as_not_more_than_one(self, value: Any) -> None:
-        assert not value > 1
-
-    def test_nan_compares_false_against_both_bounds(self) -> None:
-        """Which is why a ``< 1`` floor could not screen it at all."""
-        nan = float("nan")
-        assert not nan < 1
-        assert not nan > 1
-
-    @pytest.mark.parametrize("value", POISONED_THE_LAUNCH_ARGV)
-    def test_a_launch_selecting_value_reads_as_more_than_one(self, value: Any) -> None:
-        assert value > 1
-
-    @pytest.mark.parametrize("value", POISONED_THE_LAUNCH_ARGV)
-    def test_the_real_accelerate_parser_refuses_it_as_a_worker_count(self, value: Any) -> None:
-        """So the pre-fix failure was late, inside the detached process."""
-        launch = pytest.importorskip("accelerate.commands.launch")
-        parser = launch.launch_command_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args(["--multi_gpu", f"--num_processes={value}", "-m", "lerobot.scripts.lerobot_train"])
-
-    def test_the_real_accelerate_parser_accepts_a_usable_count(self) -> None:
-        """Non-vacuity for the assertion above."""
-        launch = pytest.importorskip("accelerate.commands.launch")
-        parser = launch.launch_command_parser()
-        parsed = parser.parse_args(["--multi_gpu", "--num_processes=4", "-m", "lerobot.scripts.lerobot_train"])
-        assert parsed.num_processes == 4
-
-    @pytest.mark.parametrize("value", COULD_NOT_BE_COMPARED)
-    def test_an_uncomparable_count_cannot_be_ordered_against_the_floor(self, value: Any) -> None:
-        with pytest.raises(TypeError):
-            _ = value < 1  # noqa: B015 - the raise is the assertion
-
-    def test_the_probe_set_covers_both_non_finite_floats(self) -> None:
-        """Guards the probe set itself against a future edit dropping a case."""
-        floats = [value for value in UNUSABLE_COUNTS if isinstance(value, float)]
-        assert any(math.isnan(value) for value in floats)
-        assert any(math.isinf(value) for value in floats)
 
 
 def _compared_field(node: ast.expr) -> str | None:

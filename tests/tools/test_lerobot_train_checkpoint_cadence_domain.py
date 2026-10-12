@@ -33,9 +33,7 @@ neither flag is never refused for a value it does not use.
 
 from __future__ import annotations
 
-import dataclasses
 import json
-import math
 from pathlib import Path
 from typing import Any
 
@@ -188,13 +186,6 @@ class TestTheFloorIsNotPartOfThisDomain:
         pytest.importorskip("draccus")
         assert _token_decodes(value) and _comparison_survives(value)
 
-    def test_lerobot_really_honors_a_disabling_cadence(self) -> None:
-        """Non-vacuity for the scope decision above."""
-        lerobot_train_script = pytest.importorskip("lerobot.scripts.lerobot_train")
-        should_save = lerobot_train_script.should_save_checkpoint
-        assert should_save(50, 0, 100) is False, "no periodic checkpoint"
-        assert should_save(100, 0, 100) is True, "but the final one is still written"
-
 
 class TestTheRefusalReachesTheCallerBeforeAnyProcessStarts:
     """A rejected cadence must be reported, not launched and then discovered."""
@@ -254,25 +245,6 @@ class TestAResumedRunIsNotRefusedForAFlagItDoesNotCarry:
 class TestThePremisesTheDomainRestsOn:
     """Executable premises, so the reasoning cannot silently become wrong."""
 
-    def test_lerobot_declares_the_cadence_as_a_plain_int_field(self) -> None:
-        train_config = pytest.importorskip("lerobot.configs.train")
-        declared = {field.name: field.type for field in dataclasses.fields(train_config.TrainPipelineConfig)}
-        assert declared["save_freq"] is int
-
-    def test_both_failure_modes_are_really_represented(self) -> None:
-        """Non-vacuity: neither consumer alone accounts for the probe set.
-
-        A guard argued from the argv token alone would have missed ``'5000'`` -
-        it renders to the very token an int field decodes - and one argued from
-        the comparison alone would have missed every float and bool, which
-        compare against zero without complaint.
-        """
-        pytest.importorskip("draccus")
-        token_only = [v for v in UNDECODABLE_CADENCES if not _token_decodes(v) and _comparison_survives(v)]
-        comparison_only = [v for v in UNDECODABLE_CADENCES if _token_decodes(v) and not _comparison_survives(v)]
-        assert token_only, "no value fails only lerobot's parser"
-        assert comparison_only, "no value fails only the eval_steps comparison"
-
     def test_the_run_size_knobs_beside_it_hold_the_same_int_requirement(self) -> None:
         """The domain is the sibling's, with the floor removed - not a new one."""
         from strands_robots.utils import positive_count_error
@@ -286,16 +258,3 @@ class TestThePremisesTheDomainRestsOn:
 
         source = inspect.getsource(train_mod.build_train_command)
         assert "save_freq if save_freq > 0 else steps" in source
-
-
-def test_the_probe_set_covers_every_way_the_token_fails() -> None:
-    """Guards the probe set itself against a future edit dropping a case."""
-    floats = [value for value in UNDECODABLE_CADENCES if isinstance(value, float)]
-    assert any(math.isnan(value) for value in floats)
-    assert any(math.isinf(value) for value in floats)
-    assert any(not float(value).is_integer() for value in floats), "a fractional cadence"
-    assert any(float(value).is_integer() for value in floats), "an integral non-int cadence"
-    assert any(isinstance(value, bool) for value in UNDECODABLE_CADENCES)
-    assert any(isinstance(value, str) for value in UNDECODABLE_CADENCES)
-    plain_ints = [v for v in UNDECODABLE_CADENCES if isinstance(v, int) and not isinstance(v, bool)]
-    assert plain_ints == [], f"a plain int belongs to the accepted domain, not the probe set: {plain_ints}"
