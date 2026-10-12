@@ -15,9 +15,9 @@ one table here:
   and setting every field of a group unusable at once reports each in one pass;
 * every backend that does not read the field reports nothing about it.
 
-What each refused value does to the run that consumes it (a rate of zero that
-updates no weight, a cadence that checkpoints every step, a split that holds out a
-count nobody asked for) is pinned beside the consumer, in the field's own
+What each refused value does to the run that consumes it (a cadence that
+checkpoints every step, a split that holds out a count nobody asked for) is
+pinned beside the consumer, in the field's own
 ``test_<field>_domain.py``. The RL-only hyperparameters have the same table in
 ``test_rl_spec_field_domains.py``.
 """

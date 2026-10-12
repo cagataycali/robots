@@ -115,6 +115,21 @@ DOMAINS: tuple[SharedDomain, ...] = (
     ),
     _domain("_rl_replay_problems", ("buffer_size", "batch_size", "gradient_steps"), "fast_sac.py", "fast_td3.py"),
     _domain(
+        "_learning_rate_problems",
+        ("learning_rate",),
+        "cosmos3.py",
+        "isaaclab.py",
+        "lerobot.py",
+        "rsl_rl.py",
+        "sagemaker.py",
+        *_RL_BACKENDS,
+        # The mock backend trains nothing, and still refuses the rate a real
+        # backend would, so a dry run fails where the real one would.
+        gates_without_reading=("mock.py",),
+        # The admitted rate as rsl_rl's agent.algorithm.learning_rate override.
+        conversions=("float(spec.learning_rate)",),
+    ),
+    _domain(
         "_launch_topology_problems",
         ("num_gpus", "num_nodes"),
         "cosmos3.py",
@@ -205,6 +220,7 @@ DOMAINS: tuple[SharedDomain, ...] = (
     ),
     _domain("_network_width_problems", ("hidden_dims",), "ppo.py", "fast_sac.py", "fast_td3.py"),
     _domain("_polyak_coefficient_problems", ("tau",), "fast_sac.py", "fast_td3.py"),
+    _domain("_spec_device_problems", ("device",), *_RL_BACKENDS),
 )
 
 #: Gates whose owner guard is a different shape, graded by the file named here
@@ -213,14 +229,11 @@ DOMAINS: tuple[SharedDomain, ...] = (
 GATES_GRADED_ELSEWHERE: dict[str, str] = {
     # Scoped to the CONCRETE Trainer subclasses rather than to field reads: the
     # field has a default, so every backend is a reader.
-    "_learning_rate_problems": "tests/training/test_learning_rate_domain.py",
     "_run_size_problems": "tests/training/test_run_size_domain.py",
     # A relation between two fields, so the offending shape is a comparison of
     # one field against the other rather than against a literal.
     "_rl_warmup_batch_problems": "tests/training/test_learning_starts_count_domain.py",
     "_rl_warmup_reachability_problems": "tests/training/test_learning_starts_count_domain.py",
-    # Graded against torch's own device vocabulary, as a row of the RL table.
-    "_spec_device_problems": "tests/training/test_rl_spec_field_domains.py",
     # Not a field domain: the remote-code / credential posture of a whole spec.
     "_security_problems": "tests/training/test_call_time_dependency_preflight.py",
 }
