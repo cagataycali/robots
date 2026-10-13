@@ -54,9 +54,11 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from strands_robots.policies.wbc import WBCConfig, WBCPolicy, WBCTorqueController
+from strands_robots.policies.wbc import WBCTorqueController
 from strands_robots.policies.wbc.sim_control import _CONTROL_DECIMATION, _SIM_DT
 from strands_robots.utils import positive_whole_number_error
+
+from ._stand_ins import g1_policy
 
 #: Counts no rollout can be held for, and what the clamp turned each into.
 _UNUSABLE = [
@@ -86,25 +88,6 @@ _FIRST_CLASS = [
 ]
 
 
-class _StubSession:
-    """Minimal onnxruntime session stand-in - no SONIC weights needed."""
-
-    class _In:
-        name = "obs"
-
-    def get_inputs(self) -> list[Any]:
-        return [self._In()]
-
-    def run(self, output_names: Any, feed: Any) -> list[np.ndarray]:
-        return [np.zeros((1, 15), dtype=np.float32)]
-
-
-def _g1_policy() -> WBCPolicy:
-    policy = WBCPolicy(config=WBCConfig(policy_path="x.onnx"), walk=False, allow_missing_models=True)
-    policy.policy_session = _StubSession()
-    return policy
-
-
 def _controller(substeps: Any, **overrides: Any) -> WBCTorqueController:
     """Construct the controller with an empty actuator set.
 
@@ -124,7 +107,7 @@ def _controller(substeps: Any, **overrides: Any) -> WBCTorqueController:
         "physics_substeps_per_control": substeps,
     }
     kwargs.update(overrides)
-    return WBCTorqueController(_g1_policy(), **kwargs)
+    return WBCTorqueController(g1_policy(), **kwargs)
 
 
 class TestACountNoRolloutCanBeHeldForIsRefused:
@@ -159,7 +142,7 @@ class TestACadenceACallerMayAskForStaysFirstClass:
     def test_the_default_is_the_upstream_sonic_decimation(self) -> None:
         """Omitting the count keeps the 50 Hz cadence at the 0.005 s timestep."""
         controller = WBCTorqueController(
-            _g1_policy(),
+            g1_policy(),
             leg_waist_actuator_ids=[],
             arm_actuator_ids=[],
             leg_waist_qpos_addrs=[],
@@ -244,7 +227,7 @@ class TestTheAcceptedCountIsThePhysicsActuallyAdvanced:
             def __init__(self) -> None:
                 self._world = _World()
 
-        resolved = install_wbc_torque_control(cast(SimEngine, _Sim()), _g1_policy(), "unitree_g1")
+        resolved = install_wbc_torque_control(cast(SimEngine, _Sim()), g1_policy(), "unitree_g1")
         policy = resolved.policy
         controller = WBCTorqueController(
             policy,

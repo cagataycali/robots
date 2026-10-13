@@ -30,7 +30,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBCConfig, WBCPolicy
+from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS
 from strands_robots.policies.wbc.policy import (
     _G1_SONIC_DEFAULT_ANGLES,
     _G1_SONIC_KDS,
@@ -39,24 +39,7 @@ from strands_robots.policies.wbc.policy import (
 from strands_robots.policies.wbc.sim_control import _CONTROL_DECIMATION
 from strands_robots.simulation.base import SimEngine
 
-
-class _StubSession:
-    class _In:
-        name = "obs"
-
-    def get_inputs(self):  # type: ignore[no-untyped-def]
-        return [self._In()]
-
-    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
-        return [np.zeros((1, 15), dtype=np.float32)]
-
-
-def _g1_policy(**cfg_kwargs) -> WBCPolicy:  # type: ignore[no-untyped-def]
-    cfg = WBCConfig(policy_path="x.onnx", **cfg_kwargs)
-    p = WBCPolicy(config=cfg, walk=False, allow_missing_models=True)
-    p.policy_session = _StubSession()
-    return p
-
+from ._stand_ins import g1_policy
 
 # ---------------------------------------------------------------------------
 # G1 default-fill (config normalisation)
@@ -66,7 +49,7 @@ def _g1_policy(**cfg_kwargs) -> WBCPolicy:  # type: ignore[no-untyped-def]
 class TestG1DefaultFill:
     def test_onnx_only_g1_fills_sonic_gains_and_stance(self) -> None:
         # num_actions defaults to 15 (the G1); no per-joint vectors given.
-        p = _g1_policy()
+        p = g1_policy()
         assert p.config.kps == list(_G1_SONIC_KPS)
         assert p.config.kds == list(_G1_SONIC_KDS)
         assert p.config.default_angles == list(_G1_SONIC_DEFAULT_ANGLES)
@@ -77,20 +60,20 @@ class TestG1DefaultFill:
     def test_observation_builder_sees_filled_defaults(self) -> None:
         # The qj block subtracts default_angles; with the fill, config.default_angles
         # is non-empty so the offset is applied (was the ONNX-only gait bug).
-        p = _g1_policy()
+        p = g1_policy()
         assert p.config.default_angles  # non-empty
         assert len(p.config.default_angles) == p.config.num_actions
 
     def test_explicit_values_are_preserved(self) -> None:
         custom_kps = [10.0] * 15
-        p = _g1_policy(kps=custom_kps)
+        p = g1_policy(kps=custom_kps)
         assert p.config.kps == custom_kps  # explicit wins
         # the unspecified vectors still get the G1 fill
         assert p.config.kds == list(_G1_SONIC_KDS)
 
     def test_non_g1_config_is_not_filled(self) -> None:
         # A 6-DOF embodiment must not receive the G1's 15-length gains.
-        p = _g1_policy(num_actions=6, single_obs_dim=200, n_obs_joints=6)
+        p = g1_policy(num_actions=6, single_obs_dim=200, n_obs_joints=6)
         assert p.config.kps == []
         assert p.config.kds == []
         assert p.config.default_angles == []
@@ -149,7 +132,7 @@ class TestWBCTorqueController:
         model, data = _build_min_g1()
         ns = _namespace_for(model)
         sim = _FakeSim(_FakeWorld(model, data, ns))
-        policy = _g1_policy()
+        policy = g1_policy()
 
         # Pre-install: the stock scene uses position-servo actuators (biastype
         # AFFINE). Capture one driven actuator's original gains.
@@ -177,7 +160,7 @@ class TestWBCTorqueController:
         model, data = _build_min_g1()
         ns = _namespace_for(model)
         sim = _FakeSim(_FakeWorld(model, data, ns))
-        policy = _g1_policy()
+        policy = g1_policy()
         ctrl = install_wbc_torque_control(cast(SimEngine, sim), policy, "unitree_g1")
 
         t0 = float(data.time)
@@ -211,7 +194,7 @@ class TestWBCTorqueController:
         model, data = _build_min_g1()
         ns = _namespace_for(model)
         sim = _FakeSim(_FakeWorld(model, data, ns))
-        policy = _g1_policy()
+        policy = g1_policy()
         ctrl = install_wbc_torque_control(cast(SimEngine, sim), policy, "unitree_g1")
 
         stance = {name: float(policy.default_angles[i]) for i, name in enumerate(WBC_G1_LEG_WAIST_JOINTS)}
@@ -252,7 +235,7 @@ class TestArmJointsFollowTheCommandedTarget:
 
         model, data = _build_min_g1()
         sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
-        policy = _g1_policy()
+        policy = g1_policy()
         ctrl = install_wbc_torque_control(cast(SimEngine, sim), policy, "unitree_g1")
         if not ctrl.arm_actuator_ids:
             pytest.skip("scene resolves no arm actuators for WBC to hold")
@@ -364,7 +347,7 @@ class TestWBCTorqueControllerFailFast:
 
         sim = _FakeSim(None)  # no compiled world/model on the sim
         with pytest.raises(RuntimeError, match="no compiled world/model"):
-            WBCTorqueController.from_sim(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+            WBCTorqueController.from_sim(cast(SimEngine, sim), g1_policy(), "unitree_g1")
 
     def test_from_sim_unresolvable_joint_raises(self) -> None:
         from strands_robots.policies.wbc import WBCTorqueController
@@ -372,7 +355,7 @@ class TestWBCTorqueControllerFailFast:
         model = _model_from_xml(_XML_NO_WBC_JOINTS)
         sim = _FakeSim(_FakeWorld(model, mujoco.MjData(model), ""))
         with pytest.raises(RuntimeError, match="not found in the model"):
-            WBCTorqueController.from_sim(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+            WBCTorqueController.from_sim(cast(SimEngine, sim), g1_policy(), "unitree_g1")
 
     def test_from_sim_joint_without_actuator_raises(self) -> None:
         from strands_robots.policies.wbc import WBCTorqueController
@@ -380,7 +363,7 @@ class TestWBCTorqueControllerFailFast:
         model = _model_from_xml(_XML_JOINT_WITHOUT_ACTUATOR)
         sim = _FakeSim(_FakeWorld(model, mujoco.MjData(model), ""))
         with pytest.raises(RuntimeError, match="no driving actuator"):
-            WBCTorqueController.from_sim(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+            WBCTorqueController.from_sim(cast(SimEngine, sim), g1_policy(), "unitree_g1")
 
     def test_hold_target_falls_back_to_zeros_on_shape_mismatch(self) -> None:
         # The hold target must have length num_actions so the PD law never sees
@@ -417,7 +400,7 @@ class TestWbcUsesPositionServo:
 
         model = _model_from_xml(_XML_NO_WBC_JOINTS)
         sim = _FakeSim(_FakeWorld(model, mujoco.MjData(model), ""))
-        assert wbc_uses_position_servo(cast(SimEngine, sim), _g1_policy(), "unitree_g1") is False
+        assert wbc_uses_position_servo(cast(SimEngine, sim), g1_policy(), "unitree_g1") is False
 
 
 class TestUninstallReleasesBothHalvesOfTheInstall:
@@ -434,7 +417,7 @@ class TestUninstallReleasesBothHalvesOfTheInstall:
 
         model, data = _build_min_g1()
         sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
-        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), g1_policy(), "unitree_g1")
         assert sim._world._backend_state["action_controller"] is ctrl
 
         ctrl.uninstall()
@@ -455,7 +438,7 @@ class TestUninstallReleasesBothHalvesOfTheInstall:
 
         model, data = _build_min_g1()
         sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
-        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), g1_policy(), "unitree_g1")
 
         seen: list[bool] = []
         saved = ctrl._saved_actuator_gains
@@ -482,7 +465,7 @@ class TestUninstallReleasesBothHalvesOfTheInstall:
 
         model, data = _build_min_g1()
         sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
-        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), g1_policy(), "unitree_g1")
         newer = object()
         sim._world._backend_state["action_controller"] = newer
 
@@ -496,7 +479,7 @@ class TestUninstallReleasesBothHalvesOfTheInstall:
 
         model, data = _build_min_g1()
         sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
-        ctrl = WBCTorqueController.from_sim(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        ctrl = WBCTorqueController.from_sim(cast(SimEngine, sim), g1_policy(), "unitree_g1")
         assert "action_controller" not in sim._world._backend_state
 
         ctrl.uninstall()  # must not raise

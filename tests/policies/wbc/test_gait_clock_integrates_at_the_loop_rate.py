@@ -21,22 +21,10 @@ from strands_robots.policies.wbc import GaitClock, WBCGaitPolicy
 from strands_robots.policies.wbc.gait import _GAIT_CONTROL_DT
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
 
+from ._stand_ins import StubSession
+
 _COMMANDED_STEPS_PER_S = 1.5
 _WALL_SECONDS = 4.0
-
-
-class _StubInput:
-    name = "obs"
-
-
-class _StubSession:
-    """Minimal onnxruntime.InferenceSession stand-in returning a fixed action."""
-
-    def get_inputs(self) -> list[_StubInput]:
-        return [_StubInput()]
-
-    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
-        return [np.full((1, 15), 0.03, dtype=np.float32)]
 
 
 def _observation() -> dict[str, object]:
@@ -51,7 +39,7 @@ def _observation() -> dict[str, object]:
 def _walk(control_frequency: float | None, wall_seconds: float = _WALL_SECONDS) -> list[float]:
     """Drive a gait policy for a wall-clock span; return the gait-phase trace."""
     policy = WBCGaitPolicy(allow_missing_models=True)
-    policy.policy_session = _StubSession()
+    policy.policy_session = StubSession(fill=0.03)
     policy.set_robot_state_keys(list(WBC_G1_ALL_JOINTS))
     if control_frequency is not None:
         policy.set_control_frequency(control_frequency)

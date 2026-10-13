@@ -79,8 +79,8 @@ import pytest
 
 from strands_robots.policies.wbc import WBCGaitPolicy
 
+from ._stand_ins import StubSession, g1_keys, make_policy
 from .test_gait import _full_g1_obs
-from .test_policy import _g1_keys, _make_policy, _StubSession
 
 # Instructions that state a goal in words. The first is the spelling every
 # pre-existing WBC call used, so it is the baseline the rest are compared to; the
@@ -118,7 +118,7 @@ def _tick_wbc(instruction: str, **goal: Any) -> tuple[np.ndarray, dict[str, floa
     the two sessions runs per tick, so the flag is the whole session-choice
     channel and the fed array is read from whichever ran.
     """
-    p = _make_policy(walk=True)
+    p = make_policy(walk=True)
     actions = p.get_actions_sync(_full_g1_obs(), instruction, **goal)
     assert len(actions) == 1, "WBC is a per-tick controller: exactly one action dict"
 
@@ -131,8 +131,8 @@ def _tick_wbc(instruction: str, **goal: Any) -> tuple[np.ndarray, dict[str, floa
 def _tick_gait(instruction: str, **goal: Any) -> tuple[np.ndarray, dict[str, float]]:
     """One :class:`WBCGaitPolicy` tick on a fresh policy (single session)."""
     p = WBCGaitPolicy(allow_missing_models=True)
-    p.policy_session = _StubSession()
-    p.set_robot_state_keys(_g1_keys())
+    p.policy_session = StubSession(fill=0.04)
+    p.set_robot_state_keys(g1_keys())
     actions = p.get_actions_sync(_full_g1_obs(), instruction, **goal)
     assert len(actions) == 1
     return np.asarray(p.policy_session.calls[0]), actions[0]

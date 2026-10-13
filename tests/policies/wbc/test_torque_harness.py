@@ -23,12 +23,13 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 pytest.importorskip("mujoco", reason="mujoco not installed - pip install 'strands-robots[sim-mujoco]'")
 
 from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBCConfig, WBCPolicy  # noqa: E402
+
+from ._stand_ins import StubSession
 
 # Import the example module by path (examples/ is not an installed package).
 _HARNESS_PATH = Path(__file__).resolve().parents[3] / "examples" / "wbc" / "wbc_g1_torque_deploy.py"
@@ -41,22 +42,6 @@ def _load_harness():  # type: ignore[no-untyped-def]
     sys.modules.setdefault("wbc_g1_torque_deploy", mod)
     spec.loader.exec_module(mod)
     return mod
-
-
-class _StubSession:
-    """ONNX stand-in: returns a tiny constant 15-dim raw action."""
-
-    class _In:
-        name = "obs"
-
-    def __init__(self, fill: float = 0.0) -> None:
-        self.fill = fill
-
-    def get_inputs(self):  # type: ignore[no-untyped-def]
-        return [self._In()]
-
-    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
-        return [np.full((1, 15), self.fill, dtype=np.float32)]
 
 
 def _stub_policy(fill: float = 0.0) -> WBCPolicy:
@@ -73,7 +58,7 @@ def _stub_policy(fill: float = 0.0) -> WBCPolicy:
         kds=[2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2, 5, 5, 5],
     )
     p = WBCPolicy(config=cfg, walk=False, allow_missing_models=True)
-    p.policy_session = _StubSession(fill=fill)
+    p.policy_session = StubSession(fill=fill)
     return p
 
 

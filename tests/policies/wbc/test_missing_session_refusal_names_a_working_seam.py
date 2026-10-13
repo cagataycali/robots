@@ -23,41 +23,23 @@ import inspect
 import re
 from typing import Any
 
-import numpy as np
 import pytest
 
-from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBCPolicy
+from strands_robots.policies.wbc import WBCPolicy
+
+from ._stand_ins import StubSession, g1_keys
 
 _NUM_ACTIONS = 15
 
 
-class _StubInput:
-    name = "obs"
-
-
-class _StubSession:
-    """Minimal stand-in for ``onnxruntime.InferenceSession``."""
-
-    def get_inputs(self) -> list[_StubInput]:
-        return [_StubInput()]
-
-    def run(self, output_names: Any, feed: dict[str, Any]) -> list[np.ndarray]:
-        return [np.zeros((1, _NUM_ACTIONS), dtype=np.float32)]
-
-
-def _g1_keys() -> list[str]:
-    """Joint key order as ``robot_joint_names`` reports it for the MuJoCo G1."""
-    return ["floating_base_joint", *WBC_G1_ALL_JOINTS]
-
-
 def _observation() -> dict[str, float]:
-    return {k: 0.0 for k in _g1_keys()}
+    return {k: 0.0 for k in g1_keys()}
 
 
 def _policy_with_no_session(**init_kwargs: Any) -> WBCPolicy:
     """A policy whose sessions were never loaded, ready to run one step."""
     policy = WBCPolicy(allow_missing_models=True, **init_kwargs)
-    policy.set_robot_state_keys(_g1_keys())
+    policy.set_robot_state_keys(g1_keys())
     return policy
 
 
@@ -102,7 +84,7 @@ class TestTheMissingSessionRefusalNamesAWorkingSeam:
         policy = _policy_with_no_session()
         for attribute in named:
             assert hasattr(policy, attribute), f"WBCPolicy has no {attribute!r} attribute"
-            setattr(policy, attribute, _StubSession())
+            setattr(policy, attribute, StubSession())
 
         actions = policy.get_actions_sync(_observation(), "", target_velocity=[0.5, 0.0, 0.0])
         assert len(actions) == 1
@@ -116,7 +98,7 @@ class TestTheMissingSessionRefusalNamesAWorkingSeam:
 
     def test_a_session_handed_to_the_constructor_is_still_dropped(self) -> None:
         """Pins the fact the message states, so the two cannot drift apart."""
-        policy = _policy_with_no_session(policy_session=_StubSession(), walk_session=_StubSession())
+        policy = _policy_with_no_session(policy_session=StubSession(), walk_session=StubSession())
         assert policy.policy_session is None
         assert policy.walk_session is None
 

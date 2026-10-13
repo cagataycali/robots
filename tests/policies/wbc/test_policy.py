@@ -45,79 +45,10 @@ from strands_robots.policies.wbc.policy import (
     _WALK_POLICY_FILENAME,
 )
 
-# ---------------------------------------------------------------------------
-# Stub ONNX session
-# ---------------------------------------------------------------------------
+from ._stand_ins import StubSession, g1_keys, make_config, make_policy
 
 _N = 15  # leg + waist DOFs (controlled / action dim)
 _NO = 29  # observed joints (legs + waist + arms) - the qj/dqj block width
-
-
-class _StubInput:
-    name = "obs"
-
-
-class _StubSession:
-    """Minimal stand-in for ``onnxruntime.InferenceSession``.
-
-    Records the observation width it was fed and returns a fixed-shape
-    ``(1, num_actions)`` output so the policy's unpack path is exercised
-    without onnxruntime installed.
-    """
-
-    def __init__(self, num_actions: int = _N, fill: float = 0.04) -> None:
-        self.num_actions = num_actions
-        self.fill = fill
-        self.calls: list[np.ndarray] = []
-
-    def get_inputs(self) -> list[_StubInput]:
-        return [_StubInput()]
-
-    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
-        (arr,) = feed.values()
-        self.calls.append(np.asarray(arr))
-        return [np.full((1, self.num_actions), self.fill, dtype=np.float32)]
-
-
-def _g1_keys() -> list[str]:
-    """Real MuJoCo G1 joint key order, as ``robot_joint_names`` returns it.
-
-    Verified against the actual robot_descriptions ``g1_mj_description`` model:
-    MuJoCo prepends the free/floating-base joint, so the list is
-    ``["floating_base_joint", <15 leg+waist>, <14 arm>]`` (the real arm joint
-    NAMES, since set_robot_state_keys now resolves the whole-body observed set
-    by name). The leg+waist joints are at indices [1:16], NOT [0:15].
-    """
-    return ["floating_base_joint", *WBC_G1_ALL_JOINTS]
-
-
-def _make_config(**overrides) -> WBCConfig:  # type: ignore[no-untyped-def]
-    # Default to the real G1 layout: 29 observed joints, 15 controlled, 86-wide
-    # frame (7 cmd + 3 omega + 3 grav + 29 qj + 29 dqj + 15 action). Tests that
-    # want a faster/smaller layout override n_obs_joints + single_obs_dim.
-    base = dict(
-        policy_path="policy.onnx",
-        num_actions=_N,
-        n_obs_joints=_NO,
-        command_dim=7,
-        single_obs_dim=86,
-        obs_history_len=1,
-        default_angles=[0.1] * _N,
-        kps=[100.0] * _N,
-        kds=[2.0] * _N,
-        action_scale=0.25,
-    )
-    base.update(overrides)
-    return WBCConfig(**base)  # type: ignore[arg-type]
-
-
-def _make_policy(walk: bool = True, **cfg_overrides) -> WBCPolicy:  # type: ignore[no-untyped-def]
-    p = WBCPolicy(config=_make_config(**cfg_overrides), walk=walk, allow_missing_models=True)
-    p.policy_session = _StubSession()
-    if walk:
-        p.walk_session = _StubSession()
-    p.set_robot_state_keys(_g1_keys())
-    return p
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +131,7 @@ class TestControlMath:
 
 class TestObservationLayout:
     def test_exact_86_dim_layout(self) -> None:
-        cfg = _make_config()  # n_obs_joints=29, num_actions=15
+        cfg = make_config()  # n_obs_joints=29, num_actions=15
         frame = build_single_frame(
             cfg,
             command=np.array([0.5, 0.0, 0.0]),  # short -> zero-padded to 7
@@ -231,7 +162,7 @@ class TestObservationLayout:
         assert frame.shape[0] == 86
 
     def test_command_overflow_raises(self) -> None:
-        cfg = _make_config(command_dim=3)
+        cfg = make_config(command_dim=3)
         with pytest.raises(ValueError, match="exceeds command_dim"):
             build_single_frame(
                 cfg,
@@ -251,7 +182,7 @@ class TestObservationLayout:
         # command_dim + 6 + 2*n_obs_joints + num_actions = 3+6+2+1 = 12 slots,
         # but the config declares only 10, so it must raise rather than write
         # past the frame or silently drop the action block.
-        cfg = _make_config(
+        cfg = make_config(
             num_actions=1,
             n_obs_joints=1,
             command_dim=3,
@@ -276,7 +207,7 @@ class TestObservationLayout:
         # mismatch is a caller wiring bug (e.g. feeding a quaternion where an
         # angular velocity is expected). _require_len rejects it by name rather
         # than mis-slotting the value into the frame.
-        cfg = _make_config()
+        cfg = make_config()
         with pytest.raises(ValueError, match="base_ang_vel must have length 3, got 2"):
             build_single_frame(
                 cfg,
@@ -293,7 +224,7 @@ class TestObservationLayout:
         # subset (num_actions=15). Passing 15-wide qj is the exact mistake the
         # module docstring warns about ("Using 15 for qj/dqj would populate only
         # 58 and misplace the data"); it must raise, not silently truncate.
-        cfg = _make_config()
+        cfg = make_config()
         with pytest.raises(ValueError, match=f"qj must have length {_NO}, got {_N}"):
             build_single_frame(
                 cfg,
@@ -310,7 +241,7 @@ class TestObservationLayout:
         # frame that is not exactly single_obs_dim wide would desync the stacked
         # layout for every subsequent tick. Reject at push time rather than
         # producing a mis-shaped num_obs vector downstream.
-        hist = ObservationHistory(_make_config())
+        hist = ObservationHistory(make_config())
         with pytest.raises(ValueError, match="frame must have length single_obs_dim=86, got 85"):
             hist.push(np.zeros(85))
 
@@ -318,7 +249,7 @@ class TestObservationLayout:
         """Upstream warm-start: the deque is pre-filled with ZERO frames, so the
         first push yields [zeros .. zeros, frame] (oldest-first), NOT copies of
         the first frame. Matches run_mujoco_gear_wbc.py:47-50."""
-        cfg = _make_config(obs_history_len=3)
+        cfg = make_config(obs_history_len=3)
         assert cfg.num_obs == 86 * 3
         hist = ObservationHistory(cfg)
         # Buffer is always full (zero-warm-started) even before any push.
@@ -333,7 +264,7 @@ class TestObservationLayout:
         assert np.allclose(stacked[172:258], frame)
 
     def test_history_reset_restores_zero_warm_start(self) -> None:
-        hist = ObservationHistory(_make_config(obs_history_len=2))
+        hist = ObservationHistory(make_config(obs_history_len=2))
         # Always full (zero-warm-started) - never empties.
         assert len(hist) == 2
         hist.push(np.full(86, 5.0))
@@ -353,8 +284,8 @@ class TestObservationLayout:
         frame. Distinguishes the two by using a NONZERO tick-0 qj."""
         # Zero default_angles so the frame's qj block equals the raw qj (no
         # offset), isolating the warm-start/rolling-window from default subtraction.
-        p = _make_policy(walk=False, obs_history_len=3, default_angles=[0.0] * _N)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False, obs_history_len=3, default_angles=[0.0] * _N)
+        obs = {k: 0.0 for k in g1_keys()}
         for t in range(4):
             for nm in WBC_G1_LEG_WAIST_JOINTS:
                 obs[nm] = float(t + 1)  # tick0 qj=1 (NONZERO, so != zero warm-start)
@@ -380,7 +311,7 @@ class TestObservationLayout:
 
 class TestWBCConfig:
     def test_num_obs(self) -> None:
-        assert _make_config(single_obs_dim=86, obs_history_len=4).num_obs == 344
+        assert make_config(single_obs_dim=86, obs_history_len=4).num_obs == 344
 
     def test_wrong_vector_length_raises(self) -> None:
         with pytest.raises(ValueError, match="kps has length"):
@@ -458,14 +389,14 @@ class TestWBCConfig:
 
 class TestWBCPolicy:
     def test_requires_images_false(self) -> None:
-        assert _make_policy().requires_images is False
+        assert make_policy(walk=True).requires_images is False
 
     def test_provider_name(self) -> None:
-        assert _make_policy().provider_name == "wbc"
+        assert make_policy(walk=True).provider_name == "wbc"
 
     def test_get_actions_returns_single_15dim_dict(self) -> None:
-        p = _make_policy()
-        obs = {k: 0.2 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.2 for k in g1_keys()}
         actions = asyncio.run(p.get_actions(obs, "", target_velocity=[0.5, 0.0, 0.0]))
         assert len(actions) == 1  # closed-loop per-tick, not a chunk
         a = actions[0]
@@ -474,45 +405,45 @@ class TestWBCPolicy:
         assert np.isclose(a["left_hip_pitch_joint"], 0.11)
 
     def test_action_keys_in_wbc_order(self) -> None:
-        p = _make_policy()
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.0 for k in g1_keys()}
         actions = asyncio.run(p.get_actions(obs, "", target_velocity=[0.1, 0.0, 0.0]))
         assert list(actions[0].keys()) == list(WBC_G1_LEG_WAIST_JOINTS)
 
     def test_walk_session_used_for_nonzero_command(self) -> None:
-        p = _make_policy(walk=True)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.5, 0.0, 0.0]))
         assert p.walk_session.calls, "walk session should run for a nonzero command"
         assert not p.policy_session.calls, "main session should not run when walking"
 
     def test_main_session_used_for_zero_command(self) -> None:
-        p = _make_policy(walk=True)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
         assert p.policy_session.calls, "main session should run when standing"
         assert not p.walk_session.calls
 
     def test_constructor_default_velocity_used_when_no_kwarg(self) -> None:
-        p = WBCPolicy(config=_make_config(), walk=True, target_velocity=[0.3, 0.0, 0.0], allow_missing_models=True)
-        p.policy_session = _StubSession()
-        p.walk_session = _StubSession()
-        p.set_robot_state_keys(_g1_keys())
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = WBCPolicy(config=make_config(), walk=True, target_velocity=[0.3, 0.0, 0.0], allow_missing_models=True)
+        p.policy_session = StubSession(fill=0.04)
+        p.walk_session = StubSession(fill=0.04)
+        p.set_robot_state_keys(g1_keys())
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, ""))  # no per-call velocity
         assert p.walk_session.calls, "constructor default_command should drive the walk session"
 
     def test_observation_width_fed_to_session(self) -> None:
-        p = _make_policy(walk=False, obs_history_len=2)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False, obs_history_len=2)
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
         fed = p.policy_session.calls[0]
         assert fed.shape == (1, 86 * 2)
         assert fed.dtype == np.float32
 
     def test_reset_clears_history_and_prev_action(self) -> None:
-        p = _make_policy()
-        obs = {k: 0.2 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.2 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.5, 0.0, 0.0]))
         assert not np.allclose(p._prev_action, 0.0)
         p.reset()
@@ -528,8 +459,8 @@ class TestWBCPolicy:
 
     def test_prev_action_feeds_back(self) -> None:
         """The previous raw action lands in the next frame's prev-action slot."""
-        p = _make_policy(walk=False)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False)
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
         # second call: the frame's prev-action block should equal the stub's
         # raw output (0.04), proving feedback. The block sits at
@@ -541,9 +472,9 @@ class TestWBCPolicy:
         assert np.allclose(prev_block, 0.04)
 
     def test_no_session_raises_not_silent_zeros(self) -> None:
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
-        p.set_robot_state_keys(_g1_keys())
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
+        p.set_robot_state_keys(g1_keys())
+        obs = {k: 0.0 for k in g1_keys()}
         with pytest.raises(RuntimeError, match="no ONNX session"):
             asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
 
@@ -563,31 +494,31 @@ class TestActuatorMapping:
         """REGRESSION: the real sim joint list leads with 'floating_base_joint',
         so the leg+waist joints are at [1:16], not [0:15]. set_robot_state_keys
         must resolve them by name and still accept the list."""
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
-        p.set_robot_state_keys(_g1_keys())  # ["floating_base_joint", <15>, <14 arm>]
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
+        p.set_robot_state_keys(g1_keys())  # ["floating_base_joint", <15>, <14 arm>]
         assert tuple(p._wbc_joint_names) == WBC_G1_LEG_WAIST_JOINTS
         # The free-base joint and arm joints are excluded from what WBC drives.
         assert "floating_base_joint" not in p._wbc_joint_names
 
     def test_missing_joint_raises_listing_missing(self) -> None:
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         with pytest.raises(ValueError, match="missing expected G1"):
             p.set_robot_state_keys([f"wrong_{i}" for i in range(20)])
 
     def test_partial_leg_waist_raises(self) -> None:
         # Only the first 10 leg+waist joints present -> the other 5 are reported.
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         with pytest.raises(ValueError, match="missing expected G1"):
             p.set_robot_state_keys(list(WBC_G1_LEG_WAIST_JOINTS[:10]))
 
     def test_all_29_joints_accepted(self) -> None:
         # The default config observes 29 joints, so the whole-body set is required.
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         p.set_robot_state_keys(list(WBC_G1_ALL_JOINTS))  # exactly the 29, any surrounding order
 
     def test_missing_arm_joints_raises_for_observed_set(self) -> None:
         # Only the 15 leg+waist joints (no arms) is insufficient when n_obs_joints=29.
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         with pytest.raises(ValueError, match="missing observed G1 joints"):
             p.set_robot_state_keys(list(WBC_G1_LEG_WAIST_JOINTS))
 
@@ -595,8 +526,8 @@ class TestActuatorMapping:
         """qj is read from the named joints even when a free-base joint precedes
         them in the observation (so a positional slice would be wrong). qj spans
         the 29 observed joints in WBC_G1_ALL_JOINTS order."""
-        p = _make_policy()  # uses _g1_keys() ordering with floating_base first
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=True)  # uses g1_keys() ordering with floating_base first
+        obs = {k: 0.0 for k in g1_keys()}
         # Give each observed joint a distinct value; floating_base gets a
         # sentinel that must NOT appear in qj.
         for i, name in enumerate(WBC_G1_ALL_JOINTS):
@@ -615,7 +546,7 @@ class TestActuatorMapping:
 
 class TestComputeTorques:
     def test_pd_law(self) -> None:
-        p = _make_policy()
+        p = make_policy(walk=True)
         tau = p.compute_torques(
             np.array([0.11] * _N),
             np.array([0.2] * _N),
@@ -633,11 +564,11 @@ class TestComputeTorques:
 class TestErrorPaths:
     def test_bad_target_velocity_raises(self) -> None:
         with pytest.raises(ValueError, match="finite"):
-            WBCPolicy(config=_make_config(), target_velocity=[float("nan"), 0, 0], allow_missing_models=True)
+            WBCPolicy(config=make_config(), target_velocity=[float("nan"), 0, 0], allow_missing_models=True)
 
     def test_short_target_velocity_raises(self) -> None:
         with pytest.raises(ValueError, match="at least 3"):
-            WBCPolicy(config=_make_config(), target_velocity=[0.5], allow_missing_models=True)
+            WBCPolicy(config=make_config(), target_velocity=[0.5], allow_missing_models=True)
 
     def test_missing_checkpoint_or_dep_raises_runtime_error(self) -> None:
         """Either onnxruntime is absent (ImportError->RuntimeError) or the
@@ -646,7 +577,7 @@ class TestErrorPaths:
         with pytest.raises(RuntimeError):
             WBCPolicy(
                 checkpoint="/nonexistent/checkpoint/dir",
-                config=_make_config(policy_path="/nonexistent/policy.onnx"),
+                config=make_config(policy_path="/nonexistent/policy.onnx"),
                 allow_missing_models=False,
             )
 
@@ -947,8 +878,8 @@ class TestRegressionFixes:
         """REGRESSION #1: a long target_orientation overflowed the 7-wide
         command block and raised on every tick. The command is now truncated
         to command_dim instead of crashing."""
-        p = _make_policy(walk=False)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False)
+        obs = {k: 0.0 for k in g1_keys()}
         # velocity(3) + orientation(6) = 9 > command_dim(7): previously crashed.
         actions = asyncio.run(
             p.get_actions(
@@ -965,8 +896,8 @@ class TestRegressionFixes:
 
     def test_target_orientation_fits_within_command_dim(self) -> None:
         """A velocity(3) + orientation(4) = 7 command fits exactly and is used."""
-        p = _make_policy(walk=False)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False)
+        obs = {k: 0.0 for k in g1_keys()}
         actions = asyncio.run(
             p.get_actions(obs, "", target_velocity=[0.5, 0.0, 0.0], target_orientation=[0.0, 0.0, 0.0, 1.0])
         )
@@ -978,8 +909,8 @@ class TestRegressionFixes:
         silently pretend dqj converges."""
         import logging
 
-        p = _make_policy(walk=False)
-        obs = {k: 0.0 for k in _g1_keys()}  # positions only, no .vel / base_ang_vel
+        p = make_policy(walk=False)
+        obs = {k: 0.0 for k in g1_keys()}  # positions only, no .vel / base_ang_vel
         with caplog.at_level(logging.WARNING):
             asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
             asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
@@ -989,8 +920,8 @@ class TestRegressionFixes:
     def test_no_velocity_warning_when_base_ang_vel_present(self, caplog) -> None:  # type: ignore[no-untyped-def]
         import logging
 
-        p = _make_policy(walk=False)
-        obs: dict[str, Any] = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False)
+        obs: dict[str, Any] = {k: 0.0 for k in g1_keys()}
         obs["base_ang_vel"] = [0.0, 0.0, 0.1]  # a real velocity signal
         with caplog.at_level(logging.WARNING):
             asyncio.run(p.get_actions(obs, "", target_velocity=[0.0, 0.0, 0.0]))
@@ -999,8 +930,8 @@ class TestRegressionFixes:
     def test_per_joint_velocity_read_by_name(self) -> None:
         """When the observation DOES expose '<name>.vel' keys, dqj reads them
         for all 29 observed joints in WBC_G1_ALL_JOINTS order."""
-        p = _make_policy(walk=False)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=False)
+        obs = {k: 0.0 for k in g1_keys()}
         for i, name in enumerate(WBC_G1_ALL_JOINTS):
             obs[f"{name}.vel"] = 0.01 * (i + 1)
         dqj = p._read_joint_vector(obs, "velocity", p._obs_joint_names)
@@ -1010,9 +941,7 @@ class TestRegressionFixes:
     def test_num_actions_exceeding_mapping_table_rejected(self) -> None:
         """REGRESSION #8: num_actions > 15 silently truncated the 15-entry
         mapping table everywhere and failed late. Now rejected at construction."""
-        cfg = _make_config(
-            num_actions=20, single_obs_dim=200, default_angles=[0.0] * 20, kps=[1.0] * 20, kds=[0.0] * 20
-        )
+        cfg = make_config(num_actions=20, single_obs_dim=200, default_angles=[0.0] * 20, kps=[1.0] * 20, kds=[0.0] * 20)
         with pytest.raises(ValueError, match="exceeds the 15-entry"):
             WBCPolicy(config=cfg, allow_missing_models=True)
 
@@ -1021,7 +950,7 @@ class TestRegressionFixes:
         when set_robot_state_keys was never called - not silently zeroed. Matches
         the positional observation.state contract of cuRobo / MoveIt2. Consumed
         in the observed-joint order (29 entries by default)."""
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)  # no set_robot_state_keys
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)  # no set_robot_state_keys
         state = [0.1 * (i + 1) for i in range(29)]
         qj = p._read_joint_vector({"observation.state": state}, "position", p._obs_joint_names)
         assert np.allclose(qj, state), "flat observation.state must be consumed positionally without keys"
@@ -1029,7 +958,7 @@ class TestRegressionFixes:
     def test_flat_state_name_resolved_first_occurrence_wins(self) -> None:
         """REGRESSION (review #8): a duplicated joint name in the key list must
         not shift the resolved slot - first occurrence wins."""
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         # floating_base first, then all 29 observed joints, then a DUP of the
         # first joint at the end (which must NOT win the slot).
         keys = ["floating_base_joint", *WBC_G1_ALL_JOINTS, "left_hip_pitch_joint"]
@@ -1101,7 +1030,7 @@ class TestSessionLoading:
         class _FakeORT:
             InferenceSession = _FakeSession
 
-        policy = WBCPolicy(config=_make_config(), walk=True, allow_missing_models=True)
+        policy = WBCPolicy(config=make_config(), walk=True, allow_missing_models=True)
         monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _FakeORT())
         policy._load_sessions(str(ckpt))
         assert policy.policy_session.path == str(ckpt / _MAIN_POLICY_FILENAME)
@@ -1117,7 +1046,7 @@ class TestSessionLoading:
         def _no_ort(*a, **k):  # type: ignore[no-untyped-def]
             raise ImportError("no onnxruntime")
 
-        policy = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        policy = WBCPolicy(config=make_config(), allow_missing_models=True)
         monkeypatch.setattr(wbc_policy, "require_optional", _no_ort)
         with pytest.raises(RuntimeError, match=r"onnxruntime.*\[wbc\] extra"):
             policy._load_sessions(str(ckpt))
@@ -1128,19 +1057,19 @@ class TestSessionLoading:
 
 class TestFactoryResolution:
     def test_create_policy_by_canonical_name(self) -> None:
-        p = create_policy("wbc", config=_make_config(), allow_missing_models=True)
+        p = create_policy("wbc", config=make_config(), allow_missing_models=True)
         assert isinstance(p, WBCPolicy)
         assert isinstance(p, Policy)
 
     def test_create_policy_by_sonic_shorthand(self) -> None:
-        p = create_policy("sonic", config=_make_config(), allow_missing_models=True)
+        p = create_policy("sonic", config=make_config(), allow_missing_models=True)
         assert isinstance(p, WBCPolicy)
 
     def test_wbc_in_list_providers(self) -> None:
         assert "wbc" in list_providers()
 
     def test_requires_images_false_via_factory(self) -> None:
-        p = create_policy("wbc", config=_make_config(), allow_missing_models=True)
+        p = create_policy("wbc", config=make_config(), allow_missing_models=True)
         assert p.requires_images is False
 
     def test_policy_config_path_sets_static_walk_command(self) -> None:
@@ -1150,7 +1079,7 @@ class TestFactoryResolution:
         is given). This is how a command reaches WBC without policy_kwargs."""
         p = create_policy(
             "wbc",
-            config=_make_config(),
+            config=make_config(),
             walk=True,
             target_velocity=[0.4, 0.0, 0.0],
             allow_missing_models=True,
@@ -1205,7 +1134,7 @@ class TestUpstreamFidelity:
 
     def test_command_layout_matches_compute_observation(self) -> None:
         """command[0:3] = vel*cmd_scale; command[3] = height; command[4:7] = rpy."""
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         cmd, raw_vel = p._resolve_command(
             {"target_velocity": [0.5, -0.25, 2.0], "target_orientation": [0.1, 0.2, 0.3], "height": 0.8}
         )
@@ -1217,7 +1146,7 @@ class TestUpstreamFidelity:
         assert np.allclose(raw_vel, [0.5, -0.25, 2.0])
 
     def test_height_defaults_to_config_when_not_supplied(self) -> None:
-        p = WBCPolicy(config=_make_config(), allow_missing_models=True)
+        p = WBCPolicy(config=make_config(), allow_missing_models=True)
         cmd, _ = p._resolve_command({"target_velocity": [0.0, 0.0, 0.0]})
         assert np.isclose(cmd[3], 0.74)  # upstream default height_cmd
 
@@ -1225,13 +1154,13 @@ class TestUpstreamFidelity:
         """Upstream: norm(loco_cmd) <= 0.05 -> main (standing) policy; above -> walk.
         The threshold is tested on the RAW (unscaled) velocity, not the
         cmd_scale'd command block."""
-        obs = {k: 0.0 for k in _g1_keys()}
+        obs = {k: 0.0 for k in g1_keys()}
         # vel norm 0.04 < 0.05 -> main policy (standing)
-        p1 = _make_policy(walk=True)
+        p1 = make_policy(walk=True)
         asyncio.run(p1.get_actions(obs, "", target_velocity=[0.04, 0.0, 0.0]))
         assert p1.policy_session.calls and not p1.walk_session.calls
         # vel norm 0.06 > 0.05 -> walk policy
-        p2 = _make_policy(walk=True)
+        p2 = make_policy(walk=True)
         asyncio.run(p2.get_actions(obs, "", target_velocity=[0.06, 0.0, 0.0]))
         assert p2.walk_session.calls and not p2.policy_session.calls
 
@@ -1239,8 +1168,8 @@ class TestUpstreamFidelity:
         """A velocity of 0.03 scales to 0.06 under cmd_scale=2.0, but the walk
         decision must use the RAW 0.03 (< 0.05 -> standing), not the scaled 0.06.
         Guards against regressing to testing the scaled command block."""
-        p = _make_policy(walk=True)
-        obs = {k: 0.0 for k in _g1_keys()}
+        p = make_policy(walk=True)
+        obs = {k: 0.0 for k in g1_keys()}
         asyncio.run(p.get_actions(obs, "", target_velocity=[0.03, 0.0, 0.0]))
         assert p.policy_session.calls, "raw 0.03 < 0.05 -> standing/main, despite scaling to 0.06"
         assert not p.walk_session.calls

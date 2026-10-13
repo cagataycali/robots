@@ -27,7 +27,8 @@ import pytest
 
 import strands_robots.policies.wbc.policy as wbc_policy
 from strands_robots.policies.wbc.policy import WBCPolicy
-from tests.policies.wbc.test_policy import _make_config
+
+from ._stand_ins import make_config
 
 _HUB_ID = "nepyope/GR00T-WholeBodyControl_g1"
 
@@ -83,7 +84,7 @@ class TestTheIdIsResolvedBeforeTheConfig:
         snapshot = tmp_path / "snapshot"
         snapshot.mkdir()
         (snapshot / "policy.onnx").touch()
-        shipped = _make_config(action_scale=0.125)
+        shipped = make_config(action_scale=0.125)
         (snapshot / "config.json").write_text(json.dumps(dataclasses.asdict(shipped)), encoding="utf-8")
         policy, _hub, _loads = _build_with_hub(monkeypatch, snapshot)
         assert policy._config.action_scale == 0.125
@@ -110,7 +111,7 @@ class TestTheIdIsResolvedBeforeTheConfig:
     def test_an_explicit_config_still_gets_the_local_directory(
         self, monkeypatch: pytest.MonkeyPatch, canonical_snapshot: Path
     ) -> None:
-        policy, hub, loads = _build_with_hub(monkeypatch, canonical_snapshot, config=_make_config())
+        policy, hub, loads = _build_with_hub(monkeypatch, canonical_snapshot, config=make_config())
         assert hub.calls == [_HUB_ID]
         assert loads == [str(canonical_snapshot)]
         assert policy._config.policy_path == "policy.onnx"
@@ -135,7 +136,7 @@ class TestWhatDoesNotChange:
                 raise AssertionError("the stub seam must not reach the hub")
 
         monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _Boom())
-        policy = WBCPolicy(checkpoint=_HUB_ID, config=_make_config(), allow_missing_models=True)
+        policy = WBCPolicy(checkpoint=_HUB_ID, config=make_config(), allow_missing_models=True)
         assert policy.policy_session is None
 
     def test_a_hub_failure_is_still_the_actionable_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -34,29 +34,10 @@ from strands_robots.policies.wbc import (
 )
 from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOINTS
 
+from ._stand_ins import StubSession
+
 _N = 15  # leg + waist DOFs (action dim)
 _NO = 29  # observed whole-body joints (qj/dqj block width)
-
-
-class _StubInput:
-    name = "obs"
-
-
-class _StubSession:
-    """Minimal onnxruntime.InferenceSession stand-in returning a fixed action."""
-
-    def __init__(self, num_actions: int = _N, fill: float = 0.03) -> None:
-        self.num_actions = num_actions
-        self.fill = fill
-        self.calls: list[np.ndarray] = []
-
-    def get_inputs(self) -> list[_StubInput]:
-        return [_StubInput()]
-
-    def run(self, output_names, feed):  # type: ignore[no-untyped-def]
-        (arr,) = feed.values()
-        self.calls.append(np.asarray(arr))
-        return [np.full((1, self.num_actions), self.fill, dtype=np.float32)]
 
 
 def _gait_config(**overrides) -> WBCConfig:
@@ -345,7 +326,7 @@ def test_gait_policy_defaults_to_gait_layout():
 
 def test_gait_policy_emits_leg_waist_targets_and_feeds_570_obs():
     p = WBCGaitPolicy(allow_missing_models=True)
-    stub = _StubSession()
+    stub = StubSession(fill=0.03)
     p.policy_session = stub
     obs = _full_g1_obs()
     p.set_robot_state_keys(list(WBC_G1_ALL_JOINTS))
@@ -413,7 +394,7 @@ def test_gait_policy_resolve_command_defaults_to_zero_velocity():
 
 def test_gait_policy_reset_clears_clock():
     p = WBCGaitPolicy(allow_missing_models=True)
-    p.policy_session = _StubSession()
+    p.policy_session = StubSession(fill=0.03)
     obs = _full_g1_obs()
     p.set_robot_state_keys(list(WBC_G1_ALL_JOINTS))
     for _ in range(20):
