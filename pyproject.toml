@@ -11,16 +11,18 @@ license = "Apache-2.0"
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
+    "robot_descriptions>=1.12",
 ]
 
 [project.optional-dependencies]
+mujoco = ["mujoco>=3.2"]
 dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
-features = ["dev"]
+features = ["dev", "mujoco"]
 
 [tool.hatch.envs.default.scripts]
 lint = [
@@ -46,3 +48,4 @@ check_untyped_defs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 timeout = 300
+markers = ["network: talks to the internet (GitHub / Hugging Face); deselect with -m 'not network'"]
