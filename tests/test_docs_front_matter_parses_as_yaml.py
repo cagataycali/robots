@@ -16,8 +16,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _SCALAR = re.compile(r"^(?P<key>[A-Za-z_][\w-]*):\s*(?P<value>.*?)\s*$")
 
@@ -40,17 +38,16 @@ def _breaks_yaml(value: str) -> bool:
     return ": " in value or " #" in value or value.endswith(":")
 
 
-@pytest.mark.parametrize("page", _pages(), ids=lambda p: str(p.relative_to(_DOCS)))
-def test_front_matter_scalars_are_quoted_when_they_carry_a_colon(page: Path) -> None:
-    block = _front_matter(page)
-    if block is None:
-        return
+def test_front_matter_scalars_are_quoted_when_they_carry_a_colon() -> None:
+    blocks = {page: block for page in _pages() if (block := _front_matter(page)) is not None}
+    assert blocks, f"no page under {_DOCS} has front matter; the grade below reads nothing"
     offenders = []
-    for line in block:
-        match = _SCALAR.match(line)
-        if match and _breaks_yaml(match["value"]):
-            offenders.append(f"{match['key']}: {match['value'][:60]}")
+    for page, block in blocks.items():
+        for line in block:
+            match = _SCALAR.match(line)
+            if match and _breaks_yaml(match["value"]):
+                offenders.append(f"{page.relative_to(_DOCS)}: {match['key']}: {match['value'][:60]}")
     assert not offenders, (
-        f"{page.relative_to(_DOCS)}: front matter value(s) YAML reads as a nested mapping or a comment, "
+        "front matter value(s) YAML reads as a nested mapping or a comment, "
         f"so Material renders the block as an H2 and titles the page Index: {offenders}. Quote the value."
     )

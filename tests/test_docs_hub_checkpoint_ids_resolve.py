@@ -99,16 +99,18 @@ def test_every_verified_row_is_still_named_somewhere() -> None:
     assert not unused, f"VERIFIED names ids no docs page uses: {unused}"
 
 
-@pytest.mark.parametrize("page", _pages(), ids=lambda p: str(p.relative_to(DOCS)))
-def test_every_hub_id_on_the_page_is_verified(page: Path) -> None:
+def test_every_hub_id_on_the_page_is_verified() -> None:
     """An id in a fence is a promise that the line runs; every one is in the table."""
+    pages = _pages()
+    assert pages, f"no docs page under {DOCS}; the grade below reads nothing"
     unknown = sorted(
-        token
+        f"{page.relative_to(DOCS)}: {token}"
+        for page in pages
         for token in hub_ids_in(page.read_text(encoding="utf-8"))
         if token not in VERIFIED and token not in NOT_HUB_IDS and token.partition("/")[0] != PLACEHOLDER_OWNER
     )
     assert not unknown, (
-        f"{page.relative_to(DOCS)} names Hub ids that are not in VERIFIED: {unknown}. "
+        f"docs pages name Hub ids that are not in VERIFIED: {unknown}. "
         "Check each with HfApi().model_info (STRANDS_DOCS_HUB_LIVE=1 runs the check) and add the row, "
         "or add a string that is not a repository id to NOT_HUB_IDS."
     )

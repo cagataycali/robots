@@ -260,20 +260,23 @@ def test_the_module_map_covers_every_top_level_member() -> None:
 # --- action counts, wherever a page states one --------------------------------
 
 
-@pytest.mark.parametrize("path", _docs_pages(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
-def test_a_documented_simulation_action_count_is_the_published_enum(path: Path) -> None:
+def test_a_documented_simulation_action_count_is_the_published_enum() -> None:
     """Every action count any page states is the count a model is offered.
 
     Graded wherever a number qualifies "actions" rather than at fixed pages, so a
     fresh claim added anywhere in the site is held to the same enum.
     """
     expected = _published_action_count()
-    text = path.read_text(encoding="utf-8")
-    stated = {int(n) for n in re.findall(r"\b(\d+)\s+(?:\*\*)?(?:Simulation |sim )?actions\b", text)}
-    wrong = sorted(n for n in stated if n != expected)
-    assert not wrong, (
-        f"{path.relative_to(REPO_ROOT)} states {wrong} Simulation actions; tool_spec.json publishes {expected}"
+    wrong = sorted(
+        f"{path.relative_to(REPO_ROOT)}: {n}"
+        for path in _docs_pages()
+        for n in {
+            int(n)
+            for n in re.findall(r"\b(\d+)\s+(?:\*\*)?(?:Simulation |sim )?actions\b", path.read_text(encoding="utf-8"))
+        }
+        if n != expected
     )
+    assert not wrong, f"pages state Simulation action counts {wrong}; tool_spec.json publishes {expected}"
 
 
 def test_some_page_states_the_action_count() -> None:

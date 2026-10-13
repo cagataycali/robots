@@ -86,13 +86,16 @@ def _import_dotted(dotted: str) -> Any:
     return None
 
 
-@pytest.mark.parametrize(("page", "dotted", "members"), _directives(), ids=lambda v: v if isinstance(v, str) else "")
-def test_every_directive_resolves_and_every_member_exists(page: str, dotted: str, members: list[str]) -> None:
+def test_every_directive_resolves_and_every_member_exists() -> None:
     """A ``::: path`` names an importable object and each ``members:`` name is one of its attributes."""
-    target = _import_dotted(dotted)
-    assert target is not None, f"{page}: `::: {dotted}` resolves to nothing importable"
-    absent = [m for m in members if not hasattr(target, m)]
-    assert not absent, f"{page}: `::: {dotted}` lists members the object lacks: {absent}"
+    problems = []
+    for page, dotted, members in _directives():
+        target = _import_dotted(dotted)
+        if target is None:
+            problems.append(f"{page}: `::: {dotted}` resolves to nothing importable")
+        elif absent := [m for m in members if not hasattr(target, m)]:
+            problems.append(f"{page}: `::: {dotted}` lists members the object lacks: {absent}")
+    assert not problems, "\n".join(problems)
 
 
 def _documented_params(arglist: str) -> list[str]:
