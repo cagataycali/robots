@@ -159,28 +159,24 @@ def documented_surfaces(root: Path) -> list[tuple[str, list[str], frozenset[str]
 _SURFACES = documented_surfaces(_PACKAGE_ROOT)
 
 
-@pytest.mark.parametrize(
-    ("surface", "params", "documented"),
-    _SURFACES,
-    ids=[surface for surface, _, _ in _SURFACES],
-)
-def test_every_parameter_has_an_args_entry(surface: str, params: list[str], documented: frozenset[str]) -> None:
+def test_every_parameter_has_an_args_entry() -> None:
     """A parameter with no entry is undiscoverable, even where a guard enforces it."""
-    missing = [name for name in params if name not in documented]
-    assert not missing, f"{surface} accepts {missing} with no Args: entry"
+    missing = [
+        f"{surface} accepts {absent} with no Args: entry"
+        for surface, params, documented in _SURFACES
+        if (absent := [name for name in params if name not in documented])
+    ]
+    assert not missing, "\n".join(missing)
 
 
-@pytest.mark.parametrize(
-    ("surface", "params", "documented"),
-    _SURFACES,
-    ids=[surface for surface, _, _ in _SURFACES],
-)
-def test_no_args_entry_names_a_parameter_the_signature_lacks(
-    surface: str, params: list[str], documented: frozenset[str]
-) -> None:
+def test_no_args_entry_names_a_parameter_the_signature_lacks() -> None:
     """The other direction: an entry for a removed parameter is a false promise."""
-    phantom = sorted(name for name in documented if name not in params)
-    assert not phantom, f"{surface} documents {phantom}, which it does not accept"
+    phantom = [
+        f"{surface} documents {extra}, which it does not accept"
+        for surface, params, documented in _SURFACES
+        if (extra := sorted(name for name in documented if name not in params))
+    ]
+    assert not phantom, "\n".join(phantom)
 
 
 class TestTheScanIsNonVacuous:

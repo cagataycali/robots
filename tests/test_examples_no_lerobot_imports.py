@@ -14,8 +14,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _EXAMPLES_DIR = _REPO_ROOT / "examples"
 
@@ -31,17 +29,17 @@ def _example_scripts() -> list[Path]:
     return sorted(_EXAMPLES_DIR.rglob("*.py"))
 
 
-@pytest.mark.parametrize(
-    "script",
-    _example_scripts(),
-    ids=[p.name for p in _example_scripts()],
-)
-def test_no_direct_lerobot_import(script: Path):
+def test_no_direct_lerobot_import() -> None:
     """Top-level example scripts must not import lerobot directly."""
-    content = script.read_text(encoding="utf-8")
-    matches = _LEROBOT_IMPORT_RE.findall(content)
-    assert not matches, (
-        f"{script.name} imports lerobot directly: {matches}. "
+    scripts = _example_scripts()
+    assert scripts, f"no example script under {_EXAMPLES_DIR}; the sweep graded nothing"
+    offenders = [
+        f"{script.relative_to(_EXAMPLES_DIR)}: {matches}"
+        for script in scripts
+        if (matches := _LEROBOT_IMPORT_RE.findall(script.read_text(encoding="utf-8")))
+    ]
+    assert not offenders, (
+        f"example(s) import lerobot directly: {offenders}. "
         f"Examples should use strands_robots.Robot / strands_robots.policies.create_policy "
         f"instead. Move lerobot usage behind the strands_robots abstraction."
     )

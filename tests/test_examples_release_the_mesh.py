@@ -129,16 +129,18 @@ def test_the_factory_assigns_exactly_one_public_mesh_attribute():
     assert _factory_mesh_attributes() == {"mesh"}
 
 
-@pytest.mark.parametrize("script", _example_scripts(), ids=[p.name for p in _example_scripts()])
-def test_examples_only_read_the_mesh_attribute_the_factory_sets(script: Path):
+def test_examples_only_read_the_mesh_attribute_the_factory_sets():
     """An example must not read a mesh attribute the SDK never assigns."""
     known = _factory_mesh_attributes()
-    offenders = _unknown_mesh_reads(script.read_text(encoding="utf-8"), known)
+    offenders = [
+        f"{script.relative_to(_REPO_ROOT)}: {reads}"
+        for script in _example_scripts()
+        if (reads := _unknown_mesh_reads(script.read_text(encoding="utf-8"), known))
+    ]
     assert not offenders, (
-        f"{script.relative_to(_REPO_ROOT)} reads a mesh attribute the Robot factory "
-        f"never assigns: {offenders}. The factory sets {sorted(known)} (see "
-        f"strands_robots/robot.py), so this read returns None and any "
-        f"`if mesh:` cleanup silently does nothing - leaving the Zenoh session's "
+        f"example(s) read a mesh attribute the Robot factory never assigns: {offenders}. "
+        f"The factory sets {sorted(known)} (see strands_robots/robot.py), so this read returns "
+        f"None and any `if mesh:` cleanup silently does nothing - leaving the Zenoh session's "
         f"non-daemon threads running and the example unable to exit."
     )
 

@@ -55,8 +55,6 @@ import inspect
 import pathlib
 import textwrap
 
-import pytest
-
 import strands_robots
 from tests._package_ast import parse_source
 
@@ -134,14 +132,17 @@ class TestNoFunctionRepeatsAModuleScopeImport:
         assert _PACKAGE_ROOT / "hardware_robot.py" in modules
         assert len(modules) > 100
 
-    @pytest.mark.parametrize("path", _package_modules(), ids=_module_id)
-    def test_no_function_scope_import_repeats_a_module_scope_binding(self, path: pathlib.Path) -> None:
-        findings = repeated_imports(path.read_text(encoding="utf-8"))
-        assert not findings, (
-            f"{_module_id(path)} imports inside a function a name it already binds at module scope; "
+    def test_no_function_scope_import_repeats_a_module_scope_binding(self) -> None:
+        offenders = [
+            f"{_module_id(path)} line {line}: {spelling}"
+            for path in _package_modules()
+            for line, spelling in repeated_imports(path.read_text(encoding="utf-8"))
+        ]
+        assert not offenders, (
+            "a function imports a name its module already binds at module scope; "
             "delete the function-scope import (the module is already loaded and bound), "
-            "or if the module-scope binding is the one that should go, defer it with a documented reason:\n"
-            + "\n".join(f"  line {line}: {spelling}" for line, spelling in findings)
+            "or if the module-scope binding is the one that should go, defer it with a documented reason:\n  "
+            + "\n  ".join(offenders)
         )
 
 

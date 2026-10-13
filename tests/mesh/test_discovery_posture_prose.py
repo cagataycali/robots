@@ -54,8 +54,6 @@ import inspect
 import re
 from pathlib import Path
 
-import pytest
-
 import strands_robots.mesh as mesh_pkg
 from tests._package_ast import parse_source, walk_tree
 
@@ -161,14 +159,12 @@ _SURFACES = _prose_surfaces()
 _ARCHITECTURE_SVG = _REPO_ROOT / "examples" / "lerobot" / "architecture.svg"
 
 
-@pytest.mark.parametrize("path", _SURFACES, ids=lambda p: str(p.relative_to(_REPO_ROOT)))
-def test_no_prose_presents_multicast_as_the_standing_posture(path: Path) -> None:
+def test_no_prose_presents_multicast_as_the_standing_posture() -> None:
     """Every block naming multicast must say it is off, or name the opt-in flag."""
-    offenders = unmarked_blocks(path)
+    offenders = [f"{path.relative_to(_REPO_ROOT)}: {blocks}" for path in _SURFACES if (blocks := unmarked_blocks(path))]
     assert not offenders, (
-        f"{path.relative_to(_REPO_ROOT)} presents multicast as the discovery default. "
-        "scouting_block() ships multicast OFF and gossip ON; say so, or name "
-        f"STRANDS_MESH_MULTICAST as the opt-in: {offenders}"
+        "prose presents multicast as the discovery default. scouting_block() ships multicast "
+        "OFF and gossip ON; say so, or name STRANDS_MESH_MULTICAST as the opt-in:\n  " + "\n  ".join(offenders)
     )
 
 

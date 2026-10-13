@@ -50,8 +50,6 @@ from __future__ import annotations
 import ast
 import pathlib
 
-import pytest
-
 from tests._package_ast import parse_file, parse_source, walk_tree
 from tests.tools.test_agent_tool_parameter_descriptions import _BOUND_TOOLS, _declared_parameters
 
@@ -86,7 +84,6 @@ def _agent_tools() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDe
 
 
 _AGENT_TOOLS = _agent_tools()
-_IDS = [f"{module}::{name}" for module, name, _ in _AGENT_TOOLS]
 
 
 def _names_the_body_reads(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
@@ -112,16 +109,17 @@ def _dead_parameters(func: ast.FunctionDef | ast.AsyncFunctionDef) -> list[str]:
 class TestEveryAdvertisedParameterReachesTheBody:
     """The model's knob must be able to act."""
 
-    @pytest.mark.parametrize(("module_path", "func_name", "func"), _AGENT_TOOLS, ids=_IDS)
-    def test_no_parameter_is_declared_and_never_read(
-        self, module_path: str, func_name: str, func: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> None:
-        dead = _dead_parameters(func)
-        assert dead == [], (
-            f"{module_path}:{func.lineno} {func_name} advertises parameters its body never "
-            f"reads: {dead}. The model is shown each one in the tool schema and can spend a "
-            f"call setting it, and the value reaches nothing. Either read the parameter or "
-            f"remove it from the signature and from the Args: section."
+    def test_no_parameter_is_declared_and_never_read(self) -> None:
+        offenders = [
+            f"{module_path}:{func.lineno} {func_name}: {dead}"
+            for module_path, func_name, func in _AGENT_TOOLS
+            if (dead := _dead_parameters(func))
+        ]
+        assert offenders == [], (
+            f"tool(s) advertise parameters their body never reads: {offenders}. The model is "
+            f"shown each one in the tool schema and can spend a call setting it, and the value "
+            f"reaches nothing. Either read the parameter or remove it from the signature and "
+            f"from the Args: section."
         )
 
 

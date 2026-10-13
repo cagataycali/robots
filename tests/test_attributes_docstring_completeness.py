@@ -190,17 +190,22 @@ def documented_dataclasses(root: Path) -> list[tuple[str, list[str], frozenset[s
 _DATACLASSES = documented_dataclasses(_PACKAGE_ROOT)
 
 
-@pytest.mark.parametrize(
-    ("surface", "fields", "documented"),
-    _DATACLASSES,
-    ids=[surface for surface, _, _ in _DATACLASSES],
-)
-def test_every_field_has_an_attributes_entry(surface: str, fields: list[str], documented: frozenset[str]) -> None:
+def omitted_fields(surfaces: list[tuple[str, list[str], frozenset[str]]]) -> list[str]:
+    """``"<surface> omits [names]"`` for each surface whose Attributes: block misses a field."""
+    return [
+        f"{surface} omits {absent}"
+        for surface, fields, documented in surfaces
+        if (absent := [name for name in fields if name not in documented])
+    ]
+
+
+def test_every_field_has_an_attributes_entry() -> None:
     """A dataclass documenting its attributes documents every field it declares."""
-    missing = [name for name in fields if name not in documented]
+    missing = omitted_fields(_DATACLASSES)
     assert not missing, (
-        f"{surface} has an Attributes: block that omits {missing}. A caller "
-        "building this config reads that block for the keys it may set, so an "
+        "Attributes: block(s) omit declared fields:\n  "
+        + "\n  ".join(missing)
+        + "\nA caller building this config reads that block for the keys it may set, so an "
         "omitted field is one they do not know exists - and its default decides "
         "the behaviour instead. Document it, or document it on a base class."
     )
@@ -381,9 +386,7 @@ class TestTheScannerDetectsAPlantedDefect:
         )
         surfaces = TestABaseClassEntryCounts._scan(source)
         assert len(surfaces) == 1
-        _, fields, documented = surfaces[0]
-        with pytest.raises(AssertionError, match="unnamed"):
-            test_every_field_has_an_attributes_entry(surfaces[0][0], fields, documented)
+        assert omitted_fields(surfaces) == [f"{surfaces[0][0]} omits ['unnamed']"]
 
     def test_a_class_that_is_not_a_dataclass_is_out_of_scope(self) -> None:
         """The field list of a plain class is not an annotation list."""

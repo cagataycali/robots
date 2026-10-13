@@ -167,20 +167,27 @@ def _example_scripts() -> list[Path]:
     return sorted(_EXAMPLES_DIR.rglob("*.py"))
 
 
-@pytest.mark.parametrize("script", _example_scripts(), ids=[p.name for p in _example_scripts()])
-def test_sim_example_uses_sim_embodiment(script: Path) -> None:
+def test_sim_example_uses_sim_embodiment() -> None:
     """Sim examples must not pass a hardware (``*_real``) embodiment."""
-    source = script.read_text(encoding="utf-8")
-    tree = parse_source(source)
-    if not _is_sim_robot_example(tree):
-        pytest.skip(f"{script.name} is not a sim example")
     hardware = _hardware_embodiments()
-    offending = [f"{name!r} in {where}" for name, where in _create_policy_embodiments(source, tree) if name in hardware]
+    graded: list[str] = []
+    offending: list[str] = []
+    for script in _example_scripts():
+        source = script.read_text(encoding="utf-8")
+        tree = parse_source(source)
+        if not _is_sim_robot_example(tree):
+            continue
+        graded.append(script.name)
+        offending += [
+            f"{script.name}: {name!r} in {where}"
+            for name, where in _create_policy_embodiments(source, tree)
+            if name in hardware
+        ]
+    assert graded, f"no example under {_EXAMPLES_DIR} builds a sim robot; the sweep graded nothing"
     assert not offending, (
-        f"{script.name} builds a sim robot but passes hardware embodiment(s) "
-        f"{offending} to create_policy. Hardware ('*_real') embodiments declare "
-        f"'<motor>.pos' joint keys that never match the MuJoCo bare-numeric joint "
-        f"names; observation.state ends up empty. Use the sim embodiment (e.g. "
+        f"sim example(s) pass hardware embodiment(s) to create_policy: {offending}. Hardware "
+        f"('*_real') embodiments declare '<motor>.pos' joint keys that never match the MuJoCo "
+        f"bare-numeric joint names; observation.state ends up empty. Use the sim embodiment (e.g. "
         f'"so101"/"so100") for MuJoCo.'
     )
 

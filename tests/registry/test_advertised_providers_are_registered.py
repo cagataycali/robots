@@ -56,8 +56,6 @@ import pathlib
 import re
 from typing import Any
 
-import pytest
-
 from strands_robots.policies import list_aliases, list_providers
 from strands_robots.registry.policies import resolve_policy
 from tests._package_ast import parse_file, walk_tree
@@ -219,36 +217,43 @@ def test_every_provider_schema_advertises_examples_in_a_readable_form() -> None:
     )
 
 
-@pytest.mark.parametrize(("site", "name"), _ADVERTISED)
-def test_every_advertised_provider_example_is_registered_and_resolves_to_itself(site: str, name: str) -> None:
+def _misresolved(entries: list[tuple[str, str]]) -> list[str]:
+    """``site: name`` for each entry not registered, or registered but resolving elsewhere."""
+    registered = _registered_spellings()
+    wrong = []
+    for site, name in entries:
+        if name not in registered:
+            wrong.append(f"{site}: {name!r} is not registered")
+        elif (provider := resolve_policy(name)[0]) != name:
+            wrong.append(f"{site}: {name!r} resolves to {provider!r}")
+    return wrong
+
+
+def test_every_advertised_provider_example_is_registered_and_resolves_to_itself() -> None:
     """Every provider a schema names as an example is registered and resolves to itself.
 
     ``resolve_policy`` redirects an unrecognised string to ``lerobot_local``,
     so a phantom name "resolves" and misdirects rather than refusing. Asserting
     the resolved provider equals the advertised name is what separates the two.
     """
-    registered = _registered_spellings()
-    assert name in registered, f"{site} advertises unregistered provider {name!r}; registered={sorted(registered)}"
-    provider, _ = resolve_policy(name)
-    assert provider == name, f"{site} advertises {name!r}, which resolves to {provider!r} (phantom/misdirecting)"
+    wrong = _misresolved(_ADVERTISED)
+    assert not wrong, (
+        f"schemas advertise phantom/misdirecting providers: {wrong}; registered={sorted(_registered_spellings())}"
+    )
 
 
-@pytest.mark.parametrize(("site", "name"), _SCHEMA_DEFAULTS)
-def test_every_provider_schema_default_resolves_to_itself(site: str, name: str) -> None:
+def test_every_provider_schema_default_resolves_to_itself() -> None:
     """A schema ``default`` is what the model sends when it says nothing.
 
     It is written by hand beside the signature default it mirrors rather than
     derived from it, so the two go stale independently: a Python caller reads
     the signature and an agent reads the schema.
     """
-    registered = _registered_spellings()
-    assert name in registered, f"{site} defaults to unregistered provider {name!r}; registered={sorted(registered)}"
-    provider, _ = resolve_policy(name)
-    assert provider == name, f"{site} defaults to {name!r}, which resolves to {provider!r}"
+    wrong = _misresolved(_SCHEMA_DEFAULTS)
+    assert not wrong, f"schema defaults name no provider of their own: {wrong}"
 
 
-@pytest.mark.parametrize(("site", "name"), _SIGNATURE_DEFAULTS)
-def test_every_policy_provider_signature_default_resolves_to_itself(site: str, name: str) -> None:
+def test_every_policy_provider_signature_default_resolves_to_itself() -> None:
     """A ``policy_provider=`` default must name a registered provider.
 
     This is the half #3075 names: the defaults are reached by exactly the calls
@@ -257,10 +262,8 @@ def test_every_policy_provider_signature_default_resolves_to_itself(site: str, n
     argument. Deriving the population means a provider-dialing entry point
     added later is held to the rule on arrival.
     """
-    registered = _registered_spellings()
-    assert name in registered, f"{site} defaults to unregistered provider {name!r}; registered={sorted(registered)}"
-    provider, _ = resolve_policy(name)
-    assert provider == name, f"{site} defaults to {name!r}, which resolves to {provider!r}"
+    wrong = _misresolved(_SIGNATURE_DEFAULTS)
+    assert not wrong, f"policy_provider= signature defaults name no provider of their own: {wrong}"
 
 
 def test_the_signature_default_sweep_reaches_the_entry_points() -> None:
