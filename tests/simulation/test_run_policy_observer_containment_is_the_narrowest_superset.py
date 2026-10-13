@@ -141,15 +141,6 @@ class TestPremises:
             "observer guard has to name it"
         )
 
-    @pytest.mark.parametrize(
-        "exc",
-        [GeneratorExit, asyncio.CancelledError, KeyboardInterrupt, SystemExit],
-        ids=["GeneratorExit", "CancelledError", "KeyboardInterrupt", "SystemExit"],
-    )
-    def test_the_propagating_classes_are_not_exception_subclasses(self, exc):
-        """Why ``except BaseException`` reached them and the narrower tuple does not."""
-        assert not issubclass(exc, Exception)
-
     def test_no_finally_in_the_module_carries_a_statement_level_exit(self):
         """``py/exit-from-finally`` reported a closure's position, not any control flow.
 

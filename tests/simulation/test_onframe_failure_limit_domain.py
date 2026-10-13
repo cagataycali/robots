@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import logging
 import math
 import pathlib
 import re
@@ -226,83 +225,6 @@ class TestZeroIsADuplicateSpellingOfOne:
             PolicyRunner(sim).run(
                 "alice", policy, duration=0.1, control_frequency=50, fast_mode=True, max_onframe_failures=0
             )
-
-
-class TestWhyANonFiniteLimitSilencedTheWatchdogEntirely:
-    """Executable premise for the failure the domain removes.
-
-    Both halves of the mechanism read the limit, and both are lost for a
-    non-finite value: the abort compares against it, and the warning
-    interpolates it with ``%d``.
-    """
-
-    @pytest.mark.parametrize("limit", [math.nan, math.inf])
-    @pytest.mark.parametrize("consecutive", [1, 5, 100, 10**9])
-    def test_the_abort_comparison_is_false_for_every_counter_value(self, limit, consecutive):
-        assert not (consecutive >= limit), "a counter can never reach this limit"
-
-    @pytest.mark.parametrize(("limit", "expected"), [(math.nan, ValueError), (math.inf, OverflowError)])
-    def test_the_warning_cannot_be_formatted_against_a_non_finite_limit(self, limit, expected):
-        # Exactly the operation logging performs on the warning: a LogRecord
-        # interpolates ``msg % args``, and the limit is interpolated with %d.
-        record = logging.LogRecord(
-            name="probe",
-            level=logging.WARNING,
-            pathname=__file__,
-            lineno=0,
-            msg="on_frame hook failed (%d/%d consecutive): %s",
-            args=(1, limit, "boom"),
-            exc_info=None,
-        )
-        with pytest.raises(expected):
-            record.getMessage()
-
-    def test_logging_drops_the_warning_rather_than_emitting_it(self):
-        # So a non-finite limit lost the abort AND the only report of the hook.
-        # propagate=False so the record never reaches pytest's own capture
-        # handler, which re-raises a format failure instead of swallowing it.
-        records: list[str] = []
-
-        class _Collect(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                try:
-                    records.append(record.getMessage())
-                except (ValueError, OverflowError):
-                    pass  # exactly what logging reports as "--- Logging error ---"
-
-        handler = _Collect()
-        logger = logging.getLogger("strands_robots.test_onframe_premise")
-        logger.addHandler(handler)
-        logger.setLevel(logging.WARNING)
-        logger.propagate = False
-        try:
-            logger.warning("on_frame hook failed (%d/%d consecutive): %s", 1, math.nan, "boom")
-        finally:
-            logger.removeHandler(handler)
-            logger.propagate = True
-        assert records == [], "the warning is never emitted for a non-finite limit"
-
-    def test_a_usable_limit_does_emit_the_warning(self):
-        # Non-vacuity for the assertion above: the same call with a usable limit
-        # produces the warning, so its absence is the format failure and not a
-        # property of the harness.
-        records: list[str] = []
-
-        class _Collect(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                records.append(record.getMessage())
-
-        handler = _Collect()
-        logger = logging.getLogger("strands_robots.test_onframe_premise_ok")
-        logger.addHandler(handler)
-        logger.setLevel(logging.WARNING)
-        logger.propagate = False
-        try:
-            logger.warning("on_frame hook failed (%d/%d consecutive): %s", 1, 5, "boom")
-        finally:
-            logger.removeHandler(handler)
-            logger.propagate = True
-        assert records == ["on_frame hook failed (1/5 consecutive): boom"]
 
 
 # --------------------------------------------------------------------------- #

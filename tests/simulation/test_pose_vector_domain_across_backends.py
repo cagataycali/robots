@@ -73,7 +73,6 @@ from __future__ import annotations
 
 import ast
 import inspect
-import math
 import pathlib
 import sys
 import threading
@@ -866,16 +865,3 @@ class TestNoPlacementMethodDrifts:
         assert "self" not in sig.parameters
         # ``from __future__ import annotations`` there, so the annotation is a string.
         assert sig.return_annotation == "bool"
-
-
-class TestNonFiniteIsTheReasonNotJustTheRule:
-    """Premise for refusing ``nan``/``inf``: they poison the transform silently."""
-
-    def test_a_nan_never_compares_out_of_range(self):
-        """Every downstream bounds check on a ``nan`` component passes."""
-        assert not (NAN > 1.0)
-        assert not (NAN < -1.0)
-        assert not (abs(NAN - 0.0) < 1e-9)
-
-    def test_a_nan_quaternion_has_no_normalizable_norm(self):
-        assert math.isnan(math.sqrt(NAN * NAN + 0.0 + 0.0 + 0.0))

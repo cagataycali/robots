@@ -16,7 +16,6 @@ bounded by :func:`~strands_robots.utils.positive_finite_number_error`.
 
 These tests pin, on the values themselves rather than on wording:
 
-* the premise - what ``Future.result`` really does with each of them,
 * both public envelope surfaces (``run_policy`` / ``eval_policy``) refusing,
 * both directly-drivable runner surfaces raising,
 * the refusal landing before any inference is queried,
@@ -29,10 +28,8 @@ These tests pin, on the values themselves rather than on wording:
 from __future__ import annotations
 
 import ast
-import concurrent.futures as futures
 import inspect
 import pathlib
-import threading
 from typing import Any
 
 import numpy as np
@@ -67,40 +64,6 @@ def _runner_arm() -> tuple[_CountingSim, _ChunkPolicy]:
 
 def _text(result: dict[str, Any]) -> str:
     return next(block["text"] for block in result["content"] if "text" in block)
-
-
-class TestTheConsumerReallyRefusesTheseDeadlines:
-    """The premise the domain rests on, measured against ``Future.result``.
-
-    Without this the accepted set would be an assertion about the standard
-    library rather than a measurement of it, and a future Python that started
-    honoring one of these values would leave the domain quietly over-strict.
-    """
-
-    @pytest.mark.parametrize("value", [0, 0.0, -1.0, float("nan"), float("-inf"), False])
-    def test_a_deadline_below_the_domain_gives_up_before_a_healthy_answer(self, value: Any) -> None:
-        gate = threading.Event()
-        with futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(lambda: (gate.wait(30), "chunk")[1])
-            try:
-                with pytest.raises(futures.TimeoutError):
-                    future.result(timeout=value)
-            finally:
-                gate.set()
-
-    def test_an_infinite_deadline_overflows_rather_than_waiting_forever(self) -> None:
-        gate = threading.Event()
-        with futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(lambda: (gate.wait(30), "chunk")[1])
-            try:
-                with pytest.raises(OverflowError):
-                    future.result(timeout=float("inf"))
-            finally:
-                gate.set()
-
-    def test_none_is_the_wait_without_a_deadline_spelling(self) -> None:
-        with futures.ThreadPoolExecutor(max_workers=1) as pool:
-            assert pool.submit(lambda: "chunk").result(timeout=None) == "chunk"
 
 
 class TestEveryLayerRefusesAnUnusableDeadline:

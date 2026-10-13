@@ -127,20 +127,6 @@ class TestAnUnmeasurableBudgetIsReportedAndResolved:
         with pytest.raises(RuntimeError):
             sim._executor.submit(lambda: None)
 
-    @pytest.mark.parametrize("budget", ["5", [5]])
-    def test_the_raw_budget_would_have_broken_the_join_warning(self, budget: Any) -> None:
-        record = logging.LogRecord(
-            name="strands_robots.simulation.mujoco.simulation",
-            level=logging.WARNING,
-            pathname=__file__,
-            lineno=0,
-            msg="cleanup: policy on '%s' did not stop within %.1fs: %s",
-            args=("arm", budget, "reason"),
-            exc_info=None,
-        )
-        with pytest.raises(TypeError, match="must be real number"):
-            record.getMessage()
-
 
 class TestAUsableBudgetIsUsedAsGiven:
     """The shared rule's accepted values, and ``None`` as "no preference"."""

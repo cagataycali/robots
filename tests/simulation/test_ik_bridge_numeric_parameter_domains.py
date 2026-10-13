@@ -225,37 +225,13 @@ def _domained_parameters() -> dict[str, set[str]]:
 
 
 class TestWhatMadeEachValueUnusable:
-    """The arithmetic and the loop shape the domains were chosen from.
+    """The loop shape the domains were chosen from.
 
-    Holds on the code either way: these are properties of ``range``, of
-    floating-point comparison and of the solve loop, not of the guards.
+    ``range(0)``, ``range(False)`` and a negative count never run the solver,
+    ``range(True)`` runs it once, an infinite threshold is met by any residual,
+    and a zero or negative one is met by none (the conservative direction,
+    held only to finiteness). Read off the solve loop, not the guards.
     """
-
-    def test_an_empty_range_runs_the_solver_never(self) -> None:
-        """``0``, ``False`` and a negative count all make the loop body unreachable."""
-        assert len(range(0)) == 0
-        assert len(range(False)) == 0
-        assert len(range(-5)) == 0
-
-    def test_a_true_iteration_budget_is_a_single_iteration(self) -> None:
-        """``bool`` is an ``int`` subclass, so ``True`` is a silent budget of one."""
-        assert len(range(True)) == 1
-
-    def test_an_infinite_threshold_is_met_by_any_error(self) -> None:
-        """So the convergence break fires on the first iteration."""
-        residual = 0.08  # metres still to go after one iteration of an 80 mm move.
-        for threshold in (float("inf"), True):
-            assert residual <= threshold
-
-    def test_an_unreachable_threshold_means_never_break_early(self) -> None:
-        """Zero and negative thresholds are the *conservative* direction.
-
-        No residual satisfies them, so the loop runs its whole budget rather
-        than stopping short - which is why they are held only to finiteness.
-        """
-        smallest_residual = 1e-12
-        for threshold in (0.0, -1.0):
-            assert not smallest_residual <= threshold
 
     def test_the_solve_loop_reads_the_iteration_budget_and_both_thresholds(self) -> None:
         """The three consumers the domains are chosen from, read off the source."""

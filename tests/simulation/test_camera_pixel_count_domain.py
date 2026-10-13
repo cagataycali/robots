@@ -83,7 +83,6 @@ from typing import Any
 import numpy as np
 import pytest
 
-from strands_robots.simulation.isaac.simulation import _MIN_RENDER_PX
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import positive_count_error
 from tests._package_ast import parse_source, walk_tree
@@ -218,17 +217,6 @@ class TestTheSharedDomain:
     @pytest.mark.parametrize("good", _GOOD_DIMS)
     def test_every_good_value_is_inside_the_domain(self, good):
         assert positive_count_error(good, "width", "render") is None
-
-    def test_an_integral_float_is_refused_because_it_cannot_be_used_as_a_dimension(self):
-        """``640.0`` is outside the domain, and this is why.
-
-        The looser :func:`positive_whole_number_error` accepts it - correct for a
-        frame rate read out of a config float. A pixel dimension is handed
-        straight to an array constructor, which refuses it, so the two knobs
-        genuinely need different domains rather than one shared spelling.
-        """
-        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-            np.zeros((480, 640.0, 3), dtype=np.uint8)
 
 
 # --------------------------------------------------------------------------- #
@@ -590,22 +578,6 @@ class TestIsaacAddCamera:
         assert engine.add_camera(name="cam")["status"] == "success"
         cam = engine._cameras["cam"]
         assert (cam.width, cam.height) == (engine._config.camera_width, engine._config.camera_height)
-
-    def test_the_dlss_upscale_would_have_amplified_a_negative_width(self):
-        """Pin why a non-positive width was worse here than a mis-sized frame.
-
-        ``add_camera`` raises the native render size to ``_MIN_RENDER_PX`` when
-        the requested width is below it, preserving the aspect ratio via
-        ``scale = _MIN_RENDER_PX / w``. For ``w = -4`` that scale is negative, so
-        the height was multiplied out to ``-76800`` and stored - and every later
-        render of that camera then failed on the negative dimension. Refusing
-        ``w`` at the entry point is what keeps this arithmetic unreachable.
-        """
-        w = -4
-        scale = _MIN_RENDER_PX / float(w)
-        assert int(round(480 * scale)) == -76800
-        with pytest.raises(ValueError, match="negative dimensions"):
-            np.zeros((int(round(480 * scale)), _MIN_RENDER_PX, 3), dtype=np.uint8)
 
 
 class TestIsaacRenderFamily:

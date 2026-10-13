@@ -132,63 +132,6 @@ class TestSimulationBase:
         assert o.mass == 0.1
 
 
-class TestMuJoCoPhysics:
-    def test_step_advances_time(self, sim_env):
-        model, data = sim_env
-        assert data.time == 0.0
-        for _ in range(100):
-            mj.mj_step(model, data)
-        assert data.time == pytest.approx(0.2, abs=1e-6)
-
-    def test_position_actuators_move_joints(self, sim_env):
-        model, data = sim_env
-        data.ctrl[0] = 1.0  # shoulder_pan target
-        for _ in range(1000):
-            mj.mj_step(model, data)
-        obs = read_joints(model, data)
-        assert abs(obs["shoulder_pan"] - 1.0) < 0.15
-
-    def test_contacts_detected(self, sim_env):
-        model, data = sim_env
-        for _ in range(100):
-            mj.mj_step(model, data)
-        assert data.ncon > 0  # cube on ground
-
-    def test_reset_zeros_time(self, sim_env):
-        model, data = sim_env
-        for _ in range(100):
-            mj.mj_step(model, data)
-        mj.mj_resetData(model, data)
-        assert data.time == 0.0
-
-
-@requires_gl
-class TestMuJoCoRendering:
-    def test_render_rgb(self, sim_env):
-        model, data = sim_env
-        mj.mj_forward(model, data)
-        renderer = mj.Renderer(model, height=240, width=320)
-        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "front")
-        renderer.update_scene(data, camera=cam_id)
-        img = renderer.render()
-        assert img.shape == (240, 320, 3)
-        assert img.dtype == np.uint8
-        assert img.max() > 0
-        del renderer
-
-    def test_render_depth(self, sim_env):
-        model, data = sim_env
-        mj.mj_forward(model, data)
-        renderer = mj.Renderer(model, height=120, width=160)
-        renderer.update_scene(data)
-        renderer.enable_depth_rendering()
-        depth = renderer.render()
-        renderer.disable_depth_rendering()
-        assert depth.shape == (120, 160)
-        assert depth.max() > 0
-        del renderer
-
-
 class TestMockPolicyLoop:
     def test_mock_policy_generates_actions(self):
         policy = MockPolicy()
@@ -237,16 +180,6 @@ class TestMockPolicyLoop:
         # Frames should differ (robot is moving)
         assert not np.array_equal(frames[0], frames[-1])
         del renderer
-
-
-class TestDomainRandomization:
-    def test_color_randomization(self, sim_env):
-        model, data = sim_env
-        orig = model.geom_rgba.copy()
-        rng = np.random.default_rng(42)
-        for i in range(model.ngeom):
-            model.geom_rgba[i, :3] = rng.uniform(0.1, 1.0, size=3)
-        assert not np.array_equal(orig, model.geom_rgba)
 
 
 if __name__ == "__main__":

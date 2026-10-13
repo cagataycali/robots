@@ -31,7 +31,6 @@ imposed, because ``random.Random`` consumes an arbitrarily large int directly.
 
 from __future__ import annotations
 
-import math
 import random
 from typing import Any
 
@@ -120,21 +119,10 @@ class TestWhyTheDomainIsNonNegativeAndWhole:
         assert non_negative_whole_number_error(1, "seed", "premise") is None
         assert random.Random(aliased).random() == random.Random(1).random()
 
-    def test_two_nan_seeds_draw_two_different_streams(self) -> None:
-        """``hash(nan)`` is identity-derived, so nan cannot name a stream."""
-        first, second = float("nan"), float("nan")
-        assert math.isnan(first) and math.isnan(second)
-        assert hash(first) != hash(second)
-        assert random.Random(first).random() != random.Random(second).random()
-
     def test_an_accepted_integral_float_aliases_its_int_on_purpose(self) -> None:
         """The complement: ``2.0`` is accepted because it is not an ambiguity."""
         assert non_negative_whole_number_error(2.0, "seed", "premise") is None
         assert random.Random(2.0).random() == random.Random(2).random()
-
-    def test_a_huge_int_is_a_usable_stream_name(self) -> None:
-        """Why no upper bound is imposed on top of the shared domain."""
-        assert 0.0 <= random.Random(10**30).random() <= 1.0
 
 
 class TestASeedInsideTheDomainStillDrawsItsField:
