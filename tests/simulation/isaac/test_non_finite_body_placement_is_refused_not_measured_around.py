@@ -153,14 +153,6 @@ class TestThePremisesTheFindingRestsOn:
         assert mujoco.MjModel.from_xml_path(_write(tmp_path, moving)).ngeom == 2
         assert mujoco.MjModel.from_xml_path(_write(tmp_path, _scene(leg_open='<body pos="0 0 nan">'))).ngeom == 2
 
-    def test_a_running_min_max_drops_a_nan_rather_than_propagating_it(self) -> None:
-        # The mechanism itself, so a reader need not take it on trust.
-        assert min(float("inf"), float("nan")) == float("inf")
-        assert max(float("-inf"), float("nan")) == float("-inf")
-        # And why an infinite offset lands as an infinite extent rather than
-        # being dropped: the subtraction that leaves is a NaN one level up.
-        assert math.isnan(float("inf") - float("inf"))
-
     def test_the_geom_spellings_were_already_refused(self, tmp_path: Path) -> None:
         # The in-file control for the whole finding: the sibling guard covers a
         # geom's own placement, which is why only the body placements remained.

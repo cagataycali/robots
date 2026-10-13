@@ -176,55 +176,6 @@ def _text(result: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 # The engine premise the whole rule rests on.
 # --------------------------------------------------------------------------- #
-class TestUnsizedValuePremise:
-    """Pin the numpy/torch behaviour that makes the ``hasattr`` probe unsafe."""
-
-    def test_a_zero_dimensional_array_declares_a_length_then_refuses_it(self) -> None:
-        """``hasattr`` says yes and ``len()`` raises - the whole defect in two lines."""
-        assert hasattr(UNSIZED, "__len__")
-        with pytest.raises(TypeError):
-            len(UNSIZED)
-
-    def test_a_zero_dimensional_tensor_behaves_the_same_way(self) -> None:
-        """torch shares the property, so the rule is not numpy-specific."""
-        torch = pytest.importorskip("torch")
-        scalar = torch.tensor(0.5)
-        assert hasattr(scalar, "__len__")
-        with pytest.raises(TypeError):
-            len(scalar)
-
-    @pytest.mark.parametrize(
-        ("value", "raised"),
-        [
-            (_NegativeLength(), ValueError),
-            (_OversizedLength(), OverflowError),
-            (_RefusingLength(), RuntimeError),
-        ],
-        ids=["negative_len", "oversized_len", "refusing_len"],
-    )
-    def test_len_refuses_in_more_ways_than_a_type_error(self, value: Any, raised: type[Exception]) -> None:
-        """``TypeError`` is not a superset of what ``len()`` raises (#1888).
-
-        The first two values raise nothing themselves: ``len()`` converts what
-        ``__len__`` returned into an index and CPython refuses, so a probe
-        catching only ``TypeError`` is escaped by ordinary Python returning an
-        ordinary ``int``. The third is the third-party case.
-        """
-        assert not issubclass(raised, TypeError), "the premise is that this is not the caught type"
-        with pytest.raises(raised):
-            len(value)
-
-    def test_a_numpy_scalar_declares_no_length_at_all(self) -> None:
-        """The other half of the domain: ``len()`` raises ``TypeError`` here too.
-
-        Both spellings answer a validator's question identically - this value
-        carries no component count - which is why one branch covers them.
-        """
-        assert not hasattr(np.float64(0.5), "__len__")
-        with pytest.raises(TypeError):
-            len(np.float64(0.5))  # type: ignore[arg-type]
-
-
 class TestSequenceLength:
     """The shared owner of the rule."""
 

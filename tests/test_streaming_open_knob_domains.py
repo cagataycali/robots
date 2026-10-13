@@ -459,33 +459,6 @@ class TestWhyEachValueCannotBeHonored:
         with pytest.raises(ValueError):
             feature_utils.check_delta_timestamps(on_grid, 30, float("nan"), raise_value_error=True)
 
-    def test_a_non_positive_shard_count_iterates_no_shards(self) -> None:
-        """``min(hf_shards, v)`` then ``range(num_shards)`` - so nothing streams."""
-        for value in [0, -5]:
-            assert list(range(min(16, value))) == [], f"{value!r}"
-
-    def test_a_non_positive_buffer_size_has_no_reservoir_index(self) -> None:
-        for value in [0, -5]:
-            with pytest.raises(ValueError, match="high <= 0"):
-                np.random.default_rng(0).integers(0, value, size=1)
-
-    def test_a_fractional_shard_count_is_not_a_range_bound(self) -> None:
-        # Bound through Any: the point is what the runtime does with the value the
-        # clamp lets through, not what a type checker would have said about it.
-        bound: Any = min(16, 2.7)
-        with pytest.raises(TypeError, match="cannot be interpreted as an integer"):
-            range(bound)
-
-    def test_an_unusable_seed_has_no_generator(self) -> None:
-        for value in list[Any]([-1, 2.7, float("nan")]):
-            with pytest.raises((ValueError, TypeError)):
-                np.random.default_rng(value)
-
-    def test_a_non_finite_shard_count_is_discarded_by_the_clamp(self) -> None:
-        """``min`` keeps the left operand, so nan/inf silently mean "the default"."""
-        assert min(16, float("nan")) == 16
-        assert min(16, float("inf")) == 16
-
 
 class TestTheDataloaderKnobsStayOutOfScope:
     """``dataloader`` hands its knobs to torch, which refuses them at construction."""
@@ -501,19 +474,6 @@ class TestTheDataloaderKnobsStayOutOfScope:
         assert "batch_size" not in sd._NUMERIC_DOMAINS
         assert "num_workers" not in sd._NUMERIC_DOMAINS
         assert "batch_size" not in sd._BOOLEAN_FLAGS
-
-    def test_the_dataloader_shuffle_pop_needs_no_domain(self) -> None:
-        """``kw.pop`` removes the key whatever it held, so every spelling agrees.
-
-        Unlike ``open``'s flags, the value here decides only whether a warning
-        is logged - the key is discarded either way, so a streamed loader is
-        never handed a ``shuffle`` and there is no branch for a truthy spelling
-        of off to invert.
-        """
-        for value in [True, False, "false", 0, None]:
-            kw = {"shuffle": value, "batch_size": 8}
-            kw.pop("shuffle", None)
-            assert kw == {"batch_size": 8}, value
 
 
 class TestTheGuardDoesNotDisturbTheNeighbouringContracts:

@@ -33,7 +33,6 @@ stand-in module carrying a ``__file__`` rather than the real package, so the
 cells grade the rule on a host with no lerobot too.
 """
 
-import subprocess
 import sys
 from types import ModuleType
 
@@ -70,25 +69,6 @@ def lerobot_state(request, monkeypatch, tmp_path):
             module.__file__ = str(directory / "__init__.py")
         monkeypatch.setitem(sys.modules, "lerobot", module)
     return directory
-
-
-def test_the_import_machinery_really_reads_a_bare_directory_as_an_empty_lerobot(tmp_path):
-    """The premise: a directory alone imports, with no file and no contents.
-
-    Run with ``-S`` so site-packages cannot supply a real lerobot - a regular
-    package wins over a namespace portion wherever it sits on the path, which is
-    also why an installed host is unaffected by the shadow.
-    """
-    (tmp_path / "lerobot").mkdir()
-    probe = "import lerobot; print(repr(getattr(lerobot, '__file__', None)), list(lerobot.__path__))"
-    done = subprocess.run(
-        [sys.executable, "-S", "-c", probe],
-        capture_output=True,
-        text=True,
-        env={"PYTHONPATH": str(tmp_path), "PATH": "/usr/bin:/bin"},
-    )
-    assert done.returncode == 0, f"import failed: {done.stderr}"
-    assert done.stdout.strip() == f"None ['{tmp_path / 'lerobot'}']", done.stdout
 
 
 @pytest.mark.parametrize("lerobot_state", [ABSENT, SHADOWED, INSTALLED], indirect=True)

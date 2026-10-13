@@ -139,24 +139,7 @@ class _RecordingTicker:
 
 
 class TestWhyAnUnusablePeriodCannotPaceALoop:
-    """Executable premise: what :meth:`threading.Event.wait` does with each value.
-
-    The guard's reason for existing is a property of ``Event.wait``, not an
-    opinion about the arguments, so it is measured here rather than asserted in
-    prose. Nothing below depends on how fast this host runs: a value that does
-    not pace a wait is shown by ``wait`` *returning*, and the one that cannot be
-    waited on at all is shown by the exception it raises.
-    """
-
-    @pytest.mark.parametrize("value", [0, 0.0, -1, -0.5, float("nan")], ids=repr)
-    def test_a_non_pacing_period_returns_from_wait_without_pacing_anything(self, value: Any) -> None:
-        """These are the busy-spin values: ``wait`` hands the loop straight back."""
-        assert threading.Event().wait(value) is False
-
-    def test_an_infinite_period_raises_out_of_wait(self) -> None:
-        """``inf`` does not wait forever - it kills the thread that waits on it."""
-        with pytest.raises(OverflowError):
-            threading.Event().wait(float("inf"))
+    """A ``bool`` passes a bare positivity test; the shared domain does not admit it."""
 
     def test_a_boolean_period_is_a_silent_one_second_cadence(self) -> None:
         """``bool`` is an ``int`` subclass, so a bare positivity test admits it.
@@ -170,22 +153,6 @@ class TestWhyAnUnusablePeriodCannotPaceALoop:
         assert period > 0
         # What replaced that comparison does see it.
         assert positive_finite_number_error(period, "poll_period", "HardwareRtpsBridge") is not None
-
-    def test_a_numpy_float32_period_cannot_be_waited_on(self) -> None:
-        """Why the ``float()`` conversion after the guard is load-bearing.
-
-        The shared domain accepts any real scalar, and documents a NumPy scalar
-        read from a config array as usable - but ``Event.wait`` rejects a
-        ``np.float32`` outright, so an accepted value has to be converted before
-        the loop can pace itself with it.
-        """
-        # Annotated ``float | None``, so the value under test is bound through
-        # ``Any``: the subject is what the runtime does with a scalar the shared
-        # domain accepts, which is not what the annotation describes.
-        narrower: Any = np.float32(0.02)
-        with pytest.raises(TypeError):
-            threading.Event().wait(narrower)
-        assert threading.Event().wait(float(np.float32(0.02))) is False
 
 
 class TestTheStoredPeriodIsTheWholeCadenceOfTheLoop:

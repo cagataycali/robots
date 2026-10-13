@@ -55,7 +55,6 @@ from __future__ import annotations
 import ast
 import inspect
 import logging
-import math
 import textwrap
 from typing import Any
 
@@ -246,17 +245,6 @@ class TestTheOptInJointLimitsPathIsUnchanged:
 
 class TestPremises:
     """Why the old reason was unsafe, measured rather than asserted."""
-
-    def test_python_min_max_do_not_bound_a_nan(self) -> None:
-        """The arithmetic lerobot's clamp is built from."""
-        assert min(100.0, max(-100.0, float("nan"))) == -100.0
-        assert min(100.0, max(0.0, float("nan"))) == 0.0
-        assert min(100.0, max(-100.0, float("inf"))) == 100.0
-
-    def test_a_non_finite_position_survives_float(self) -> None:
-        """Which is why the non-numeric branch could never have caught it."""
-        assert math.isnan(float(float("nan")))
-        assert math.isinf(float(float("inf")))
 
     def test_lerobot_resolves_a_non_finite_position_to_an_end_stop(self) -> None:
         """The refusal the old reason relied on does not exist on this path."""

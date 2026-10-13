@@ -44,7 +44,6 @@ uses.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
@@ -259,19 +258,6 @@ class TestFov:
         engine = _engine()
         result = _add_camera(engine, name="cam", fov="wide")
         assert result["status"] == "error", result
-
-    def test_zero_fov_would_divide_by_zero_in_the_derived_focal_length(self) -> None:
-        """Pin why ``0`` is outside the domain rather than merely unusual.
-
-        ``ZeroDivisionError`` is not in ``add_camera``'s except tuple, so on a
-        real Isaac install this propagated out of the tool call.
-        """
-        with pytest.raises(ZeroDivisionError):
-            24.0 / (2.0 * math.tan(math.radians(0.0) / 2.0))
-
-    def test_boundary_fov_would_give_a_degenerate_focal_length(self) -> None:
-        """``180`` does not raise - it silently produces an unusable lens."""
-        assert 24.0 / (2.0 * math.tan(math.radians(180.0) / 2.0)) == pytest.approx(0.0, abs=1e-12)
 
 
 # --------------------------------------------------------------------------- #

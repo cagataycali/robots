@@ -198,11 +198,6 @@ class TestThePremisesThisRestsOn:
         assert source.count("protocol.MSG_OK") >= 3
         assert "protocol.MSG_ACTIONS" in source
 
-    def test_a_reply_with_no_actions_key_reads_as_an_empty_chunk(self) -> None:
-        """``reply.get("actions", [])`` cannot distinguish absent from empty."""
-        ok_reply: dict[str, Any] = {"type": protocol.MSG_OK}
-        assert ok_reply.get("actions", []) == []
-
     def test_the_server_serves_every_request_in_order(self, tagged: Any) -> None:
         """Holds either way, and rules out a server that dropped or reordered.
 

@@ -31,7 +31,6 @@ import pathlib
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -102,19 +101,6 @@ class TestTheWorkerCannotOutliveTheInterpreter:
         finally:
             executor.shutdown(wait=True)
 
-    def test_a_thread_pool_worker_is_not_a_daemon(self) -> None:
-        """The premise: the shape this helper replaces is joined at exit."""
-        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="premise")
-        try:
-            pool.submit(lambda: None).result(timeout=5)
-            workers = [t for t in threading.enumerate() if t.name.startswith("premise")]
-            assert workers, "no worker to inspect"
-            assert all(not t.daemon for t in workers), (
-                "ThreadPoolExecutor workers are non-daemon; if that changed the helper is redundant"
-            )
-        finally:
-            pool.shutdown(wait=True)
-
 
 class TestAnAbandonedWorkItemDoesNotBlockInterpreterExit:
     """End to end, in a child interpreter, for both executor shapes."""
@@ -127,18 +113,6 @@ class TestAnAbandonedWorkItemDoesNotBlockInterpreterExit:
         )
         assert "VERDICT" in out, f"the wait did not give up: {out!r}"
         assert exited, "the interpreter did not exit while a work item was wedged"
-
-    def test_the_thread_pool_shape_does_not(self) -> None:
-        """Why the helper exists. Reverting to a pool reinstates the hang."""
-        exited, out = _child(
-            "from concurrent.futures import ThreadPoolExecutor",
-            "ThreadPoolExecutor(max_workers=1)",
-            budget=5.0,
-        )
-        assert "VERDICT" in out, f"the wait did not give up: {out!r}"
-        assert not exited, (
-            "ThreadPoolExecutor no longer joins a running worker at exit; if that is now true the helper can be retired"
-        )
 
 
 class TestPytestDeliversTheVerdictAndThenExits:

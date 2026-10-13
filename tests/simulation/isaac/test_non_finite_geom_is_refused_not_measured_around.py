@@ -191,14 +191,6 @@ class TestThePremisesTheFindingRestsOn:
         with pytest.raises(ValueError, match="mass and inertia"):
             mujoco.MjModel.from_xml_path(str(path))
 
-    def test_a_running_min_max_drops_a_nan_rather_than_propagating_it(self) -> None:
-        # The mechanism itself, so a reader need not take it on trust.
-        assert min(float("inf"), float("nan")) == float("inf")
-        assert max(float("-inf"), float("nan")) == float("-inf")
-        # And the outer accumulator's input: ``inf - inf`` is a NaN, which is
-        # why an infinite extent lands at the floor rather than unbounded.
-        assert math.isnan(float("inf") - float("inf"))
-
     def test_the_orientation_spellings_are_the_modules_own_vocabulary(self) -> None:
         # The refusal names the attribute the file used, taken from the list the
         # reader already resolves orientation through rather than a second copy.

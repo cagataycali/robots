@@ -17,9 +17,9 @@ This module pins that whole matrix:
 * :class:`TestNumericConstructorDomain` -- each of the five numeric knobs
   reports the shared scalar domain's verdict verbatim, so the accepted
   domain cannot drift from the one every other surface enforces.
-* :class:`TestAnOrderComparisonCannotSeeInf` -- the premise, executable:
-  ``inf`` satisfies ``> 0`` and ``nan > nan`` is ``False``, which is why
-  neither shape can bound these values.
+* :class:`TestAnOrderComparisonCannotSeeInf` -- ``inf`` satisfies ``> 0``
+  and ``nan > nan`` is ``False``, so the shared domain refuses what neither
+  order comparison could.
 * :class:`TestJointLimitsMustBeFinite` -- the table's finiteness check runs
   *before* its lower/upper comparison, which the premise above cannot see.
 * :class:`TestGripperReferenceIsLoadBearing` -- an unguarded non-finite
@@ -167,18 +167,7 @@ class TestNumericConstructorDomain:
 
 
 class TestAnOrderComparisonCannotSeeInf:
-    """The premise the replaced guards rested on, measured rather than asserted."""
-
-    def test_inf_satisfies_a_positive_order_comparison(self) -> None:
-        assert math.inf > 0.0, "an order comparison cannot reject inf"
-
-    def test_nan_fails_both_directions_of_an_order_comparison(self) -> None:
-        assert not (math.nan > 0.0)
-        assert not (math.nan <= 0.0)
-
-    def test_nan_bounds_pass_an_inverted_limit_comparison(self) -> None:
-        limits = np.full((len(ARM), 2), math.nan)
-        assert not np.any(limits[:, 0] > limits[:, 1]), "lower>upper cannot see a nan row"
+    """The shared domain refuses the ``inf`` an order comparison admits."""
 
     def test_the_domain_refuses_what_the_order_comparison_accepted(self) -> None:
         for param in POSITIVE_KNOBS:

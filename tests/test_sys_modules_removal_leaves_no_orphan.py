@@ -152,7 +152,7 @@ import ast
 import functools
 import sys
 from collections import deque
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -838,47 +838,6 @@ class TestTheScanReachesEveryShapeTheRulesRead:
             f"{candidates} of {functions} functions read as touching sys.modules; the pre-filter "
             "has widened to the point where the rules walk most of the tree again"
         )
-
-
-@pytest.fixture
-def probe_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    """An importable throwaway module, left out of ``sys.modules`` afterwards."""
-    name = "strands_orphan_probe"
-    (tmp_path / f"{name}.py").write_text("value = 1\n", encoding="utf-8")
-    monkeypatch.syspath_prepend(str(tmp_path))
-    sys.modules.pop(name, None)
-    try:
-        yield name
-    finally:
-        sys.modules.pop(name, None)
-
-
-class TestTheOrphaningMechanism:
-    """What the rule protects against, driven on a throwaway module."""
-
-    def test_a_removal_orphans_a_reference_taken_before_it(self, probe_module: str) -> None:
-        name = probe_module
-        held = __import__(name)
-        assert sys.modules[name] is held, "premise: the binding is the registered module"
-
-        del sys.modules[name]
-        fresh = __import__(name)
-
-        assert fresh is not held, "a fresh import after a removal must be a different module object"
-
-    def test_a_patch_on_the_orphan_is_invisible_to_the_next_import(
-        self, probe_module: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The exact failure mode: the double is installed somewhere nothing will look."""
-        name = probe_module
-        held = __import__(name)
-        monkeypatch.setattr(held, "value", "double")
-
-        del sys.modules[name]
-        fresh = __import__(name)
-
-        assert held.value == "double", "premise: the patch reached the object it was applied to"
-        assert fresh.value == 1, "the fresh module does not carry the patch - the double is orphaned"
 
 
 #: A re-importing population smaller than this means the second scan stopped

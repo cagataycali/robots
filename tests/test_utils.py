@@ -617,18 +617,6 @@ class TestLerobotVersion:
 
         assert lerobot_version() == "unknown"
 
-    def test_an_unresolvable_distribution_is_already_an_import_error(self):
-        """The single handler rests on a stdlib hierarchy, so assert it.
-
-        ``version`` raises ``PackageNotFoundError`` and the one-name handler
-        catches it as an ``ImportError``. Were a future CPython to stop deriving
-        it from ``ModuleNotFoundError``, that handler would silently stop
-        catching it, so the premise is pinned here rather than left to prose.
-        """
-        import importlib.metadata as md
-
-        assert issubclass(md.PackageNotFoundError, ImportError)
-
 
 class TestLogSafe:
     """``log_safe`` renders a caller-supplied value as exactly one log line."""

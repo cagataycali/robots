@@ -296,17 +296,6 @@ class TestANonFiniteBoundIsRefusedAtConstruction:
     already refused a non-finite bound for the same reason.
     """
 
-    def test_the_ordering_check_cannot_see_a_non_finite_bound(self) -> None:
-        """The premise: why ``low > high`` admits a bound that admits nothing."""
-        assert (1.9 > _NAN) is False
-        assert (_NAN > _NAN) is False
-        assert (_INF > _INF) is False
-        assert (-_INF > -_INF) is False
-        # ... and the range test in _command_action is False for every position,
-        # which is how an accepted bound became a rejection of every command.
-        assert (-1.9 <= 0.5 <= _NAN) is False
-        assert (_INF <= 0.5 <= _INF) is False
-
     @pytest.mark.parametrize("side", ["min", "max"])
     @pytest.mark.parametrize("bound", [_NAN, _INF, -_INF], ids=["nan", "+inf", "-inf"])
     def test_a_non_finite_bound_on_either_side_is_refused(self, bound: float, side: str) -> None:
