@@ -8,7 +8,7 @@ committed under ``docs/assets/sim/<id>.png`` (and optionally ``<id>.webm``) by
 ``docs/hooks/sim_frames.py``. A shot is a screenshot of the real dashboard, taken in
 both of its colour schemes and committed under ``docs/assets/dashboard/<id>.paper.png``
 and ``<id>.dark.png``. Either way the page writes one token, so a picture costs one word
-against the site ceiling, and this hook writes the ``<figure>``:
+against the page budget, and this hook writes the ``<figure>``:
 
     {{drawing:d01_what_is}}
     {{sim:first-robot-1|what the code above built}}
