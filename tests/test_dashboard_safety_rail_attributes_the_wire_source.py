@@ -11,7 +11,9 @@ Now the dashboard applies the SDK's binding rule. A mismatched envelope of eithe
 dropped and written to the trail. An estop is still applied when the wire carried no identity
 (stopping never gets harder), marked unverified. A resume the dashboard cannot attribute does not
 touch the lockout: the fleet stays locked until a peer proves it clear, and the trail says why.
-An attributed resume still lands on "unknown", never "clear".
+An attributed resume still lands on "unknown", never "clear". On a transport with no wire identity
+(AWS IoT Core) the resume is attributed by its signed assertion instead, checked the way every robot
+checks it, against the ``estop_id`` the dashboard recorded for the lockout.
 """
 
 from __future__ import annotations
@@ -181,3 +183,86 @@ def test_the_binding_rule_is_the_sdks_own() -> None:
     assert bind_safety_sample(_sample("estop", {}), {"source_zid": ZID})[0] == "refused"
     assert bind_safety_sample(_sample("estop", {}, wire_zid=ZID), {})[0] == "refused"
     assert bind_safety_sample(_sample("estop", {}, wire_zid=ZID), {"source_zid": 12})[0] == "refused"
+
+
+# --- a resume with no wire identity, attributed by its signature (AWS IoT Core) -------------------
+
+EPOCH = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def operator_key(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from strands_robots.mesh import resume_authority
+
+    key = Ed25519PrivateKey.generate()
+    monkeypatch.setenv(resume_authority.PUBLIC_KEY_ENV, resume_authority.public_key_text(key.public_key()))
+    monkeypatch.delenv("STRANDS_MESH_BACKEND", raising=False)
+    return key
+
+
+def _tamper(assertion: dict[str, Any]) -> dict[str, Any]:
+    sig = assertion["sig"]
+    return {**assertion, "sig": ("B" if sig[0] == "A" else "A") + sig[1:]}
+
+
+@pytest.mark.parametrize(
+    ("case", "epoch", "age_s", "keyed", "refused"),
+    [
+        ("fresh, current epoch", EPOCH, 0.0, True, None),
+        ("tampered signature", EPOCH, 0.0, True, "signature does not verify"),
+        ("another lockout's epoch", "f" * 32, 0.0, True, "different lockout"),
+        ("replayed 120 s later", EPOCH, 120.0, True, "s old"),
+        ("no verify key configured", EPOCH, 0.0, False, "no resume verification key"),
+    ],
+)
+def test_a_resume_without_wire_identity_is_applied_only_when_its_signature_admits_it(
+    bridge: MeshBridge,
+    operator_key: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    epoch: str,
+    age_s: float,
+    keyed: bool,
+    refused: str | None,
+) -> None:
+    """Before: every MQTT resume came back unbound, so the badge stayed LOCKED after the robots cleared."""
+    from strands_robots.mesh import resume_authority
+
+    bridge._on_safety(_sample("estop", {"source": "op", "estop_id": EPOCH, "t": time.time()}))
+    assert bridge._lockout.state == "locked" and bridge._lockout.epoch == EPOCH
+    assertion = resume_authority.sign_assertion(
+        operator_key, epoch=epoch, targets=[bridge.rail_peer_id, "arm-1"], t=time.time() - age_s
+    )
+    if case == "tampered signature":
+        assertion = _tamper(assertion)
+    if not keyed:
+        monkeypatch.delenv(resume_authority.PUBLIC_KEY_ENV)
+    bridge._on_safety(_sample("resume", {"peer_id": "op", "t": time.time(), "assertion": assertion}))
+    if refused is None:
+        assert bridge._lockout.state == "unknown", case
+        (entry,) = _trail(bridge, "resume")
+        assert entry["detail"]["attributed_by"] == "signed assertion"
+        assert bridge._lockout.epoch is None, "an applied resume drops the epoch, so a replay finds none"
+        bridge._on_safety(_sample("estop", {"source": "op", "estop_id": "e" * 32, "t": time.time()}))
+        bridge._on_safety(_sample("resume", {"peer_id": "op", "t": time.time(), "assertion": assertion}))
+        assert bridge._lockout.state == "locked", "the same assertion cannot clear the next lockout"
+    else:
+        assert bridge._lockout.state == "locked", case
+        (entry,) = _trail(bridge, "resume_unattributed")
+        assert refused in entry["detail"]["assertion_refused"]
+        assert _trail(bridge, "resume") == []
+
+
+def test_an_estop_without_an_id_leaves_no_epoch_so_no_signed_resume_can_clear_it(
+    bridge: MeshBridge, operator_key: Any
+) -> None:
+    from strands_robots.mesh import resume_authority
+
+    bridge._on_safety(_sample("estop", {"source": "op", "t": time.time()}))
+    assertion = resume_authority.sign_assertion(operator_key, epoch=EPOCH, targets=[bridge.rail_peer_id])
+    bridge._on_safety(_sample("resume", {"peer_id": "op", "assertion": assertion}))
+    assert bridge._lockout.state == "locked"
+    (entry,) = _trail(bridge, "resume_unattributed")
+    assert entry["detail"]["assertion_refused"] == "no lockout epoch to resume"

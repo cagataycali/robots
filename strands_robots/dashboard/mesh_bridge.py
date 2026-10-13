@@ -1405,7 +1405,9 @@ class MeshBridge:
         The envelope is bound to the session that carried it first
         (:func:`bind_safety_sample`); a mismatched one is dropped whatever it
         says. An estop is applied even when the wire carried no identity, since
-        stopping must never get harder, and is marked unverified. A resume the
+        stopping must never get harder, and is marked unverified. A resume with
+        no wire identity (AWS IoT Core carries none) is attributed by its signed
+        assertion instead (:meth:`_signed_resume_refusal`). A resume the
         dashboard cannot attribute does not touch the lockout: the fleet stays
         as it was until a peer proves it clear (``confirm_resume``, or a command
         a peer accepts), and the trail says why. An attributed resume lands on
@@ -1446,10 +1448,30 @@ class MeshBridge:
             return
         if binding == "bound":
             trail["wire_zid"] = detail
+        signed_epoch: str | None = None
+        if kind == "resume" and binding == "unbound":
+            # A transport with no Zenoh source_info (AWS IoT Core over MQTT) never
+            # binds, so the operator's signature is the only identity there is: the
+            # same check every robot runs before it clears.
+            with self._peers_lock:
+                signed_epoch = self._lockout.epoch
+            why = self._signed_resume_refusal(data, epoch=signed_epoch)
+            if why is None:
+                binding = "bound"
+                trail["attributed"] = True
+                trail["attributed_by"] = "signed assertion"
+            else:
+                trail["assertion_refused"] = why
         # A five-second flash in the header was the ONLY representation of a lockout in
         # this product, so a reload erased it while two arms stayed locked for ten hours.
         now = time.time()
         with self._peers_lock:
+            if kind == "resume" and signed_epoch is not None and self._lockout.epoch != signed_epoch:
+                # A newer e-stop landed while the signature was checked: it is not this resume's lockout.
+                binding = "unbound"
+                trail["attributed"] = False
+                trail.pop("attributed_by", None)
+                trail["assertion_refused"] = "assertion is for a different lockout"
             if kind == "resume" and binding != "bound":
                 # Not applied: whoever this was, nothing on the wire vouches for them.
                 # The note is appended once: an unbound resume can arrive at wire
@@ -1473,6 +1495,33 @@ class MeshBridge:
         else:
             self.record_activity("safety", "resume_unattributed", detail=trail, ok=False)
         self._emit({"type": "safety", "kind": kind, "data": data, "applied": applied, "attributed": binding == "bound"})
+
+    def _signed_resume_refusal(self, data: Mapping[str, Any], *, epoch: str | None) -> str | None:
+        """Why the resume *data* carries may not clear lockout *epoch* on this dashboard, or ``None``.
+
+        The robots' own gate (``Mesh._admit_resume``) without the nonce cache:
+        :func:`~strands_robots.mesh.resume_authority.check_assertion` against
+        ``STRANDS_MESH_RESUME_PUBLIC_KEY`` for this dashboard's rail peer id and
+        the ``estop_id`` the lockout recorded, then ``t`` inside the same
+        freshness window and forward skew. Fail closed: no key, no epoch, or any
+        refused field keeps the resume unattributed. A replay finds no epoch,
+        since applying a resume drops it.
+        """
+        from strands_robots.mesh import resume_authority
+        from strands_robots.mesh.core import _resume_forward_skew_s, _resume_freshness_window_s
+
+        assertion = data.get("assertion")
+        why = resume_authority.check_assertion(
+            assertion, keys=resume_authority.verify_keys(), peer_id=self.rail_peer_id, epoch=epoch
+        )
+        if why is not None:
+            return why
+        assert isinstance(assertion, dict)  # check_assertion admitted it
+        age = time.time() - float(assertion["t"])
+        window_s, skew_s = _resume_freshness_window_s(), _resume_forward_skew_s()
+        if age > window_s or -age > skew_s:
+            return f"assertion is {age:.1f}s old (window {window_s:.0f}s, forward skew {skew_s:.0f}s)"
+        return None
 
     # ------------------------------------------------------------------ Commands (dashboard ->
     # robot).

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from strands_robots.mesh import resume_authority as _resume_authority
 from strands_robots.mesh import security as _security
 
 
@@ -22,6 +23,9 @@ class Lockout:
     arrived: float | None = None
     by: str | None = None
     reason: str = "no e-stop or resume seen since this dashboard started"
+    #: The ``estop_id`` of the e-stop holding the lockout, the epoch a signed
+    #: resume must name; ``None`` when the e-stop carried none or nothing is locked.
+    epoch: str | None = None
 
     def as_fields(self) -> dict[str, Any]:
         """The lockout as flat log fields, omitting the ones this dashboard was never told."""
@@ -96,12 +100,14 @@ def apply_event(current: Lockout, *, kind: str, data: dict[str, Any], now: float
     when = t_val if isinstance(t_val, (int, float)) and not isinstance(t_val, bool) else now
     who = _source_of(data)
     if kind == "estop":
+        estop_id = data.get("estop_id")
         return Lockout(
             state="locked",
             since=float(when),
             arrived=now,
             by=who,
             reason=(f"an e-stop from {who} locked the fleet" if who else "an e-stop locked the fleet"),
+            epoch=estop_id if _resume_authority.is_epoch(estop_id) else None,
         )
     if kind == "resume":
         # NOT clear: every peer verifies the signed resume on its own and may refuse.
