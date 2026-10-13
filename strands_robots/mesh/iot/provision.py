@@ -376,7 +376,9 @@ OPERATOR_OBSERVE_POLICY_NAME = "strands-operator-observe"
 #: these grants the broker accepted the SUBSCRIBE and delivered nothing, so a
 #: robot reached over IoT showed joints and a health row and never a stream, a
 #: pose, a lidar summary or a camera. Every topic here is telemetry a robot
-#: publishes about itself; commands, responses and teleop input stay out.
+#: publishes about itself, plus the two command topics ``Mesh.start()``
+#: subscribes every peer to; another peer's commands and responses and teleop
+#: input stay out.
 _OPERATOR_OBSERVE_POLICY_DOC: dict[str, Any] = {
     "Version": "2012-10-17",
     "Statement": [
@@ -412,6 +414,24 @@ _OPERATOR_OBSERVE_POLICY_DOC: dict[str, Any] = {
             "Resource": [
                 "arn:aws:iot:*:*:topic/strands/*/camera/*",
                 "arn:aws:iot:*:*:topicfilter/strands/+/camera/#",
+            ],
+        },
+        {
+            # ``Mesh.start()`` subscribes every peer to its own ``cmd`` and to
+            # ``strands/broadcast``, operators included. AWS IoT answers one
+            # unauthorized filter with SUBACK 135 and closes the whole session,
+            # so without this grant an operator's mesh never came alive and the
+            # dashboard's safety rail reported "safety mesh unavailable". Its
+            # own address only: another peer's ``cmd`` stays unreadable, and
+            # ``broadcast`` is the channel this credential may already publish.
+            "Sid": "OperatorReceiveOwnCommands",
+            "Effect": "Allow",
+            "Action": ["iot:Subscribe", "iot:Receive"],
+            "Resource": [
+                "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/cmd",
+                "arn:aws:iot:*:*:topicfilter/strands/${iot:Connection.Thing.ThingName}/cmd",
+                "arn:aws:iot:*:*:topic/strands/broadcast",
+                "arn:aws:iot:*:*:topicfilter/strands/broadcast",
             ],
         },
     ],
@@ -722,6 +742,7 @@ _OWNED_POLICY_DOCUMENTS: dict[str, Callable[[], dict[str, Any]]] = {
     ROBOT_NO_ESTOP_POLICY_NAME: lambda: _robot_policy_doc(allow_estop_publish=False),
     ROBOT_CHILDREN_POLICY_NAME: lambda: _ROBOT_CHILDREN_POLICY_DOC,
     OPERATOR_POLICY_NAME: lambda: _OPERATOR_POLICY_DOC,
+    OPERATOR_OBSERVE_POLICY_NAME: lambda: _OPERATOR_OBSERVE_POLICY_DOC,
 }
 
 #: The robot policies; a certificate carrying one also carries
@@ -741,7 +762,6 @@ def _fleet_topic_segments() -> frozenset[str]:
     the moment a policy grants it.
     """
     documents = [build() for build in _OWNED_POLICY_DOCUMENTS.values()]
-    documents.append(_OPERATOR_OBSERVE_POLICY_DOC)
     segments: set[str] = set()
     for document in documents:
         for st in document.get("Statement", []):
@@ -1231,7 +1251,7 @@ def reprovision_thing(
     a warning) and ``False`` rotates the identity onto the no-estop policy.
 
     The policies this module owns (``strands-robot``, ``strands-robot-no-estop``,
-    ``strands-robot-children``, ``strands-operator``) are re-published on the
+    ``strands-robot-children``, ``strands-operator``, ``strands-operator-observe``) are re-published on the
     way when the account's default version differs from the document here, and
     a robot certificate provisioned before the child key space grant existed
     gets ``strands-robot-children`` attached next to its robot policy, so this

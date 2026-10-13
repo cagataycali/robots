@@ -627,6 +627,23 @@ def _suback_refusal(suback: Any) -> int | None:
     return code if code >= 128 else None
 
 
+#: MQTT 5 reason code for "not authorized": the certificate's policies grant no
+#: ``iot:Subscribe`` on the filter. AWS IoT Core then closes the whole session.
+_SUBACK_NOT_AUTHORIZED = 135
+
+
+def _suback_refusal_text(code: int) -> str:
+    """What a refused SUBACK means, with the remedy for the one code a policy causes."""
+    text = f"broker refused it, SUBACK reason code {code}"
+    if code == _SUBACK_NOT_AUTHORIZED:
+        text += (
+            " (not authorized: no policy on this certificate grants iot:Subscribe on the filter, and AWS IoT "
+            "closes the whole session over it; republish the shipped policies with `strands-robots iot "
+            "reprovision <thing>`)"
+        )
+    return text
+
+
 def _session_was_resumed(data: Any) -> bool:
     """True only when the CONNACK says the broker kept the previous session.
 
@@ -1402,7 +1419,7 @@ class IotMqttTransport:
                 ).result(timeout=5)
                 refused = _suback_refusal(suback)
                 if refused is not None:
-                    raise RuntimeError(f"broker refused it, SUBACK reason code {refused}")
+                    raise RuntimeError(_suback_refusal_text(refused))
             except Exception as exc:
                 # Roll back the handler registration so a retry works cleanly.
                 with self._lock:
@@ -1496,7 +1513,7 @@ class IotMqttTransport:
                     ).result(timeout=5)
                     refused = _suback_refusal(suback)
                     if refused is not None:
-                        raise RuntimeError(f"broker refused it, SUBACK reason code {refused}")
+                        raise RuntimeError(_suback_refusal_text(refused))
                     reissued.append(topic_filter)
                 except Exception as exc:
                     logger.error(
