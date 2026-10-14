@@ -27,11 +27,11 @@ features = ["dev", "mujoco"]
 
 [tool.hatch.envs.default.scripts]
 lint = [
-    "ruff check strands_robots tests",
-    "ruff format --check strands_robots tests",
+    "ruff check strands_robots tests tests_integ",
+    "ruff format --check strands_robots tests tests_integ",
     "mypy strands_robots",
 ]
-format = ["ruff check --fix strands_robots tests", "ruff format strands_robots tests"]
+format = ["ruff check --fix strands_robots tests tests_integ", "ruff format strands_robots tests tests_integ"]
 test = "pytest {args}"
 
 [tool.ruff]

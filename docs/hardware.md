@@ -34,6 +34,12 @@ the twin, `act()` mirrors the targets. `set_pose` raises on hardware; `real.twin
 LeRobot's procedure (middle pose, then a sweep) and writes the same file. Without one, joints map the
 full turn of counts (2048 is 0 rad).
 
+**On your arm.** `STRANDS_SO101_PORT=/dev/ttyACM0 pytest tests_integ/acceptance` runs acceptance check 9
+on a physical SO-101: `observe()`, a refused `confirm_act()` that writes nothing, an allowed hold the twin
+mirrors, and `calibrate(interactive=False)` against LeRobot's file. Without an arm it skips and says why.
+
+{{drawing:d05_bench}}
+
 **The operator gate.** `act()` in your own code is the developer's call. `confirm_act()` is what an
 agent tool or a dashboard calls: on a real body it asks `confirm(action)` and refuses on `False`; with
 no `confirm=` it raises `PermissionError` and says `pass confirm=`. A refusal writes nothing to the bus. Only a real body
