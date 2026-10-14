@@ -95,7 +95,7 @@ class MuJoCoBackend(Backend):
     # --- build ---------------------------------------------------------------------------------
 
     def load(self, scene: Scene) -> None:
-        carried = self._snapshot()
+        carried, t = self._snapshot(), (self.data.time if self.data is not None else 0.0)
         spec = mujoco.MjSpec()
         spec.option.timestep = scene.timestep
         spec.option.gravity = list(scene.gravity)
@@ -131,6 +131,7 @@ class MuJoCoBackend(Backend):
         self._renderers.clear()
         self._apply_keyframes(scene)
         self._restore(carried)
+        data.time = t  # a scene change is not a reset: world time carries over like joint state
         mujoco.mj_forward(model, data)
 
     def _attach_robot(self, spec: mujoco.MjSpec, r: SceneRobot) -> None:
@@ -349,9 +350,7 @@ class MuJoCoBackend(Backend):
             if zero_velocity:
                 d.qvel[va : va + 6] = 0.0
         else:  # fixed base: the caller has recorded the new pose in the scene; rebuild it the way every change is
-            t = d.time
             self.load(self._scene)
-            self.data.time = t
         mujoco.mj_forward(self.model, self.data)
 
     def render(self, camera: str) -> np.ndarray:

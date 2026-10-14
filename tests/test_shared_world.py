@@ -191,6 +191,18 @@ def test_state_survives_add_object_and_remove(pair):
     assert arm.joint("elbow_flex") == pytest.approx(before, abs=1e-6)
 
 
+def test_world_time_survives_every_scene_change(pair):
+    arm, g1 = pair
+    sim = arm.sim
+    sim.step(50)
+    t = sim.time
+    sim.add_object("box", shape="box", position=[0.3, 0, 0.1])
+    sim.camera("cam", position=[1, -1, 1], target=[0, 0, 0.2])
+    sim.randomize(friction=1.2)
+    sim.remove(g1)
+    assert t > 0 and sim.time == t
+
+
 def test_revision_bumps_on_every_scene_change_and_not_on_motion(pair):
     arm, g1 = pair
     sim = arm.sim

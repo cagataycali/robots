@@ -28,8 +28,8 @@ in it and the time. Every scene change (`add`, `remove`, `add_object`, `camera`,
 world, and every body that survives keeps its joint state. `sim.lock` is one re-entrant lock around
 the world, so a reader and a stepping loop never see a half-built world.
 
-`set_pose` moves a fixed base by rebuilding the world where it lands (joint state and time carried
-over). A floating base is teleported in place and keeps its spawn frame, so `reset()` stands it back
+`set_pose` moves a fixed base by moving its spawn frame in the scene and rebuilding, the path every
+scene change takes: joint state, time and randomised physics carry over. A floating base is teleported in place and keeps its spawn frame, so `reset()` stands it back
 on its keyframe at the spawn position.
 
 `Simulation()` refuses what it cannot be: an unknown backend, `physics=` other than `native`,
@@ -39,8 +39,8 @@ on its keyframe at the spawn position.
 
 `Backend` is an abstract class: `load`, `step`, `reset`, `time`, `joint_state`, `set_targets`,
 `body_pose`, `set_pose`, `set_gains`, `render`, `contacts`, `physics` and `close`. `mujoco` is the
-first backend: one `MjSpec`, each robot attached under an `id/` prefix, recompiled on every scene
-change with state carried by joint name. `mujoco` is imported when the first world is made, not by
+first backend (MuJoCo 3.3.4 or newer): one `MjSpec`, each robot attached under an `id/` prefix,
+rebuilt on every scene change with time kept and joint state carried by joint name. `mujoco` is imported when the first world is made, not by
 `import strands_robots`. Rendering uses EGL when no display is present (`MUJOCO_GL` is respected).
 
 Measured headless: 2000 physics steps of so101 plus unitree_g1 take 85 us each (MuJoCo 3.15, one CPU core).
