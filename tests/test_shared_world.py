@@ -102,6 +102,16 @@ def test_set_pose_lands_for_a_floating_and_a_fixed_base(pair):
         sim.set_pose("ghost", position=[0, 0, 0])
 
 
+def test_a_fixed_teleport_keeps_the_randomized_physics():
+    with Simulation() as sim:
+        arm = Member("so101", sim=sim)
+        base_friction, base_mass = sim.backend.model.geom_friction[:, 0].copy(), sim.backend.model.body_mass.copy()
+        sim.randomize(friction=1.5, mass=2.0)
+        sim.set_pose(arm, position=[0, 0.5, 0])
+        assert np.allclose(sim.backend.model.geom_friction[:, 0], 1.5 * base_friction)
+        assert np.allclose(sim.backend.model.body_mass, 2.0 * base_mass)
+
+
 @pytest.mark.parametrize(
     ("spawn", "target"),
     [

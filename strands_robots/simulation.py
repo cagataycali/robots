@@ -183,7 +183,8 @@ class Backend(ABC):
     def body_pose(self, body: str) -> Pose: ...
 
     @abstractmethod
-    def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None: ...  # teleport
+    # teleport; a fixed body's new pose is already recorded in the scene, so the backend rebuilds it there
+    def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None: ...
 
     def set_gains(self, body: str, kp: np.ndarray, kd: np.ndarray) -> None:
         """Actuator PD gains for one robot (``action_keys`` order). Engines that cannot say so."""
@@ -440,18 +441,15 @@ class Simulation:
                 cur.position if position is None else np.asarray(position, dtype=float),
                 cur.orientation if orientation is None else np.asarray(orientation, dtype=float),
             )
-            self.backend.set_pose(name, pose, zero_velocity=True)
-            self.revision += 1
-            if name in self._robots:
-                if self._robots[name].description.floating:
-                    return
-                sr = self.scene.robot(name)  # the next reload rebuilds the fixed base where it now is
+            if name in self._robots and not self._robots[name].description.floating:
+                sr = self.scene.robot(name)  # a fixed base is rebuilt from the scene, so the scene moves first
                 f = _moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
                 sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # type: ignore[assignment]
-            else:
-                for o in self.scene.objects:
-                    if o.name == name:
-                        o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
+            for o in self.scene.objects:
+                if o.name == name and not o.free:
+                    o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
+            self.backend.set_pose(name, pose, zero_velocity=True)
+            self.revision += 1
 
     def camera(
         self,

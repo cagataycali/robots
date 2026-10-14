@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mujoco = ["mujoco>=3.2"]
+mujoco = ["mujoco>=3.3.4"]
 dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10"]
 
 [tool.hatch.build.targets.wheel]

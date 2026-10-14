@@ -89,7 +89,6 @@ class MuJoCoBackend(Backend):
         self.spec: mujoco.MjSpec | None = None
         self._scene: Scene = Scene()
         self._robots: dict[str, Description] = {}
-        self._frames: dict[str, Any] = {}  # robot id -> the spec frame it is attached under (its spawn pose)
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
         self._gl_failed: str | None = None
 
@@ -111,7 +110,6 @@ class MuJoCoBackend(Backend):
                 name="ground", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0, 0, 0.05], rgba=[0.75, 0.78, 0.82, 1]
             )
         spec.worldbody.add_light(pos=[0.5, -1.0, 3.0], dir=[-0.2, 0.4, -1.0], diffuse=[0.8 * scene.light_scale] * 3)
-        self._frames = {}
         for r in scene.robots:
             self._attach_robot(spec, r)
         for o in scene.objects:
@@ -145,7 +143,6 @@ class MuJoCoBackend(Backend):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # "attach conflict: integrator" — the world's option wins
             spec.attach(rs, prefix=f"{r.id}/", frame=frame)
-        self._frames[r.id] = frame
 
     def _add_object(self, spec: mujoco.MjSpec, o: SceneObject) -> None:
         body = spec.worldbody.add_body(name=o.name, pos=list(o.position), quat=list(o.orientation))
@@ -351,21 +348,9 @@ class MuJoCoBackend(Backend):
             d.qpos[qa + 3 : qa + 7] = pose.orientation
             if zero_velocity:
                 d.qvel[va : va + 6] = 0.0
-        else:  # fixed base: move its spawn frame (or a plain body) in the spec, recompile with state carried over
-            sb = self.spec.body(m.body(b).name)
-            frame = self._frames.get(body)
-            if frame is None:  # an object: a child of the world, so its spec pose is a world pose
-                sb.pos, sb.quat = pose.position.tolist(), pose.orientation.tolist()
-            else:  # a robot: world = frame * body, so the frame lands at pose * body^-1, body untouched
-                inv_pos, inv_quat, pos, quat = np.zeros(3), np.zeros(4), np.zeros(3), np.zeros(4)
-                mujoco.mju_negPose(inv_pos, inv_quat, np.asarray(sb.pos, dtype=float), np.asarray(sb.quat, dtype=float))
-                mujoco.mju_mulPose(pos, quat, pose.position, pose.orientation, inv_pos, inv_quat)
-                frame.pos, frame.quat = pos.tolist(), quat.tolist()
-            carried = self._snapshot()
+        else:  # fixed base: the caller has recorded the new pose in the scene; rebuild it the way every change is
             t = d.time
-            self.model, self.data = self.spec.recompile(m, d)
-            self._renderers.clear()
-            self._restore(carried)
+            self.load(self._scene)
             self.data.time = t
         mujoco.mj_forward(self.model, self.data)
 
