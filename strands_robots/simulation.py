@@ -28,6 +28,30 @@ _PHYSICS = ("native",)
 _IDENTITY_QUAT = (1.0, 0.0, 0.0, 0.0)
 
 
+def _qmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    return np.array(
+        [
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ]
+    )
+
+
+def _rotate(q: np.ndarray, v: np.ndarray) -> np.ndarray:
+    return _qmul(_qmul(q, np.r_[0.0, v]), q * [1, -1, -1, -1])[1:]
+
+
+def _moved_frame(frame: Pose, old: Pose, new: Pose) -> Pose:
+    """The spawn frame that puts a body at ``new`` when it was at ``old`` under ``frame``: new * old^-1 * frame."""
+    q = _qmul(new.orientation, old.orientation * [1, -1, -1, -1])
+    q = q / np.linalg.norm(q)
+    return Pose(new.position + _rotate(q, frame.position - old.position), _qmul(q, frame.orientation))
+
+
 class Member(Protocol):
     """What a world needs from a robot it holds: an id, a Description, a hook for when it is removed.
 
@@ -335,13 +359,14 @@ class Simulation:
             raise ValueError("position must have 3 values and orientation 4 (w, x, y, z)")
         if keyframe is not None and keyframe not in robot.description.keyframes:
             raise ValueError(f"keyframe {keyframe!r} not in {robot.description.name}: {robot.description.keyframes}")
-        self.scene.robots.append(SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
-        try:
-            self._reload()
-        except Exception:
-            self.scene.robots.pop()
-            raise
-        self._robots[robot.id] = robot
+        with self.lock:  # scene, backend and registry change together: a locked reader never sees them disagree
+            self.scene.robots.append(SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
+            try:
+                self._reload()
+            except Exception:
+                self.scene.robots.pop()
+                raise
+            self._robots[robot.id] = robot
         return robot
 
     def _reload(self) -> None:
@@ -353,10 +378,12 @@ class Simulation:
         rid = robot if isinstance(robot, str) else robot.id
         if rid not in self._robots:
             raise KeyError(f"no robot {rid!r} in this world; robots are {list(self._robots)}")
-        self.scene.robots = [r for r in self.scene.robots if r.id != rid]
-        self.scene.cameras = [c for c in self.scene.cameras if c.attach != rid]
-        self._reload()
-        self._robots.pop(rid)._detached()
+        with self.lock:
+            self.scene.robots = [r for r in self.scene.robots if r.id != rid]
+            self.scene.cameras = [c for c in self.scene.cameras if c.attach != rid]
+            self._reload()
+            gone = self._robots.pop(rid)
+        gone._detached()
 
     def add_object(
         self,
@@ -388,12 +415,13 @@ class Simulation:
             color=tuple(float(x) for x in color) if color is not None else (0.6, 0.6, 0.6, 1.0),  # type: ignore[arg-type]
             free=free,
         )
-        self.scene.objects.append(obj)
-        try:
-            self._reload()
-        except Exception:
-            self.scene.objects.pop()
-            raise
+        with self.lock:
+            self.scene.objects.append(obj)
+            try:
+                self._reload()
+            except Exception:
+                self.scene.objects.pop()
+                raise
         return Object(self, obj)
 
     def set_pose(self, body: Member | Object | str, position: Any = None, orientation: Any = None) -> None:
@@ -414,15 +442,16 @@ class Simulation:
             )
             self.backend.set_pose(name, pose, zero_velocity=True)
             self.revision += 1
-        if name in self._robots:
-            if self._robots[name].description.floating:
-                return
-            sr = self.scene.robot(name)  # the next reload rebuilds the fixed base where it now is
-            sr.position, sr.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
-        else:
-            for o in self.scene.objects:
-                if o.name == name:
-                    o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
+            if name in self._robots:
+                if self._robots[name].description.floating:
+                    return
+                sr = self.scene.robot(name)  # the next reload rebuilds the fixed base where it now is
+                f = _moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
+                sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # type: ignore[assignment]
+            else:
+                for o in self.scene.objects:
+                    if o.name == name:
+                        o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
 
     def camera(
         self,
@@ -449,12 +478,13 @@ class Simulation:
             size=tuple(size) if size else self.render_size,  # type: ignore[arg-type]
             attach=att,
         )
-        self.scene.cameras.append(cam)
-        try:
-            self._reload()
-        except Exception:
-            self.scene.cameras.pop()
-            raise
+        with self.lock:
+            self.scene.cameras.append(cam)
+            try:
+                self._reload()
+            except Exception:
+                self.scene.cameras.pop()
+                raise
         return cam
 
     def render(self, camera: str | SceneCamera | None = None) -> np.ndarray:
@@ -497,10 +527,11 @@ class Simulation:
                 return float(v)
             return float(rng.uniform(*v))
 
-        self.scene.friction_scale = pick(friction, self.scene.friction_scale)
-        self.scene.mass_scale = pick(mass, self.scene.mass_scale)
-        self.scene.light_scale = pick(lighting, self.scene.light_scale)
-        self._reload()
+        with self.lock:
+            self.scene.friction_scale = pick(friction, self.scene.friction_scale)
+            self.scene.mass_scale = pick(mass, self.scene.mass_scale)
+            self.scene.light_scale = pick(lighting, self.scene.light_scale)
+            self._reload()
 
     def contacts(self) -> list[Contact]:
         return self.backend.contacts()
@@ -508,7 +539,11 @@ class Simulation:
     # agents
 
     def describe(self) -> dict[str, Any]:
-        """Robots, objects, cameras, physics, time — JSON-safe; the dashboard reads THIS."""
+        """Robots, objects, cameras, physics, time — JSON-safe; the dashboard reads THIS (under the world lock)."""
+        with self.lock:
+            return self._describe()
+
+    def _describe(self) -> dict[str, Any]:
         p = self.physics
         return {
             "backend": self.backend_name,

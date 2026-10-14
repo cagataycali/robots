@@ -102,6 +102,46 @@ def test_set_pose_lands_for_a_floating_and_a_fixed_base(pair):
         sim.set_pose("ghost", position=[0, 0, 0])
 
 
+@pytest.mark.parametrize(
+    ("spawn", "target"),
+    [
+        ({"position": [1, 0, 0]}, [0, 0.5, 0]),  # an offset spawn frame
+        ({"position": [0.2, 0, 0], "orientation": [0.7071068, 0, 0, 0.7071068]}, [0.5, 0, 0]),  # a yawed one
+    ],
+)
+def test_a_fixed_base_teleport_lands_in_world_coordinates_and_survives_a_reload(spawn, target):
+    with Simulation() as sim:
+        arm = Member("so101", sim=sim, **spawn)
+        sim.set_pose(arm, position=target)
+        assert np.allclose(sim.backend.body_pose(arm.id).position, target, atol=1e-6)
+        sim.add_object("box", shape="box", position=[0.3, 0, 0.1])  # an unrelated rebuild does not move it
+        assert np.allclose(sim.backend.body_pose(arm.id).position, target, atol=1e-6)
+
+
+def test_a_locked_reader_never_sees_a_half_added_or_half_removed_robot():
+    with Simulation() as sim:
+        Member("so101", sim=sim)
+        stop, errors = threading.Event(), []
+
+        def reader() -> None:
+            try:
+                while not stop.is_set():
+                    with sim.lock:
+                        sim.describe()
+            except BaseException as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=reader, daemon=True) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for _ in range(15):
+            sim.remove(Member("so101", sim=sim))
+        stop.set()
+        for t in threads:
+            t.join(2)
+        assert not errors, errors[:3]
+
+
 def test_one_render_shows_both_bodies(pair):
     arm, _ = pair
     img = arm.sim.render()
