@@ -77,6 +77,8 @@ def test_background_task_error_surfaces_in_result():
     assert task.status == "error"
     with pytest.raises(RuntimeError, match="policy exploded"):
         _ = task.result
+    arm.close()  # teardown does not re-raise the task's error, and the body leaves the world
+    assert arm.sim is None and "so101" not in Simulation.default().robots
 
 
 def test_set_gains_takes_one_kp_and_kd_per_actuator():

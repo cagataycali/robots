@@ -84,6 +84,14 @@ def test_requirements_refuse_naming_what_is_missing(obs, refusal):
         _THREE_CAMERAS.check(obs)
 
 
+# Robot.run and Simulation.run bind a policy the same way: one table, both loops.
+LOOPS = {
+    "robot.run": lambda arm, pol, steps: arm.run(pol, steps=steps),
+    "sim.run": lambda arm, pol, steps: arm.sim.run({arm: pol}, steps=steps),
+}
+loops = pytest.mark.parametrize("loop", LOOPS.values(), ids=LOOPS.keys())
+
+
 @pytest.fixture
 def arm():
     with Simulation() as sim:
@@ -91,7 +99,7 @@ def arm():
 
 
 class _HoldInLerobotUnits(Policy):
-    """A policy that speaks lerobot_so10x: it sees -100..100 and asks for the gripper fully open (100)."""
+    """A policy that speaks lerobot_so10x: it sees -100..100 and asks for the gripper half open (50)."""
 
     units = "lerobot_so10x"
 
@@ -101,16 +109,17 @@ class _HoldInLerobotUnits(Policy):
     def act(self, obs, *, instruction=None):
         self.seen.append(obs.joints.positions.copy())
         a = obs.joints.positions.copy()
-        a[-1] = 100.0
+        a[-1] = 50.0
         return a
 
 
-def test_run_converts_both_directions_when_the_policy_declares_units(arm):
+@loops
+def test_run_converts_both_directions_when_the_policy_declares_units(arm, loop):
     pol = _HoldInLerobotUnits()
-    arm.run(pol, steps=3)
+    loop(arm, pol, 3)
     assert all(abs(s[:-1]).max() <= 100 for s in pol.seen) and 0 <= pol.seen[0][-1] <= 100  # it saw bus units
-    arm.run(pol, steps=20)
-    assert abs(arm.observe()["gripper"] - arm.description.limits["gripper"][1]) < 0.15  # the arm got radians
+    loop(arm, pol, 20)
+    assert abs(arm.observe()["gripper"] - 0.785) < 0.15  # the arm got radians: 50 is half of 0..1.745 rad, not 50 rad
 
 
 class _Needs(Policy):
@@ -121,22 +130,27 @@ class _Needs(Policy):
         return self.req
 
     def act(self, obs, *, instruction=None):
+        self.saw = sorted(obs.images)
         return obs.joints.positions
 
 
-def test_run_refuses_before_inference_naming_the_missing_camera(arm):
+@loops
+def test_run_refuses_before_inference_naming_the_missing_camera(arm, loop):
     with pytest.raises(ValueError, match=r"needs camera\(s\) \['camera1', 'camera2', 'camera3'\]"):
-        arm.run(_Needs(_THREE_CAMERAS), steps=1)
+        loop(arm, _Needs(_THREE_CAMERAS), 1)
     for i, size in ((1, (256, 256)), (2, (320, 240)), (3, (64, 64))):
         arm.sim.camera(f"camera{i}", size=size, attach=arm)
     with pytest.raises(ValueError, match="camera2: has 320x240, needs 256x256"):
-        arm.run(_Needs(_THREE_CAMERAS), steps=1)
+        loop(arm, _Needs(_THREE_CAMERAS), 1)
 
 
-def test_run_passes_when_the_requirements_are_met(arm):
+@loops
+def test_run_passes_when_the_requirements_are_met_and_the_policy_sees_the_cameras(arm, loop):
     for i in (1, 2, 3):
         arm.sim.camera(f"camera{i}", size=(256, 256), attach=arm)
-    assert arm.run(_Needs(_THREE_CAMERAS), steps=2).steps == 2
+    pol = _Needs(_THREE_CAMERAS)
+    loop(arm, pol, 2)
+    assert pol.saw == ["camera1", "camera2", "camera3"]
 
 
 def test_run_names_a_state_length_mismatch():

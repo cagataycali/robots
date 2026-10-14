@@ -15,7 +15,7 @@ arm.observe()                               # Observation: joints, base pose, im
 arm.act({"shoulder_pan": 0.3})              # write targets for THIS body, then one control step for the world
 res = arm.run(lambda obs: {"elbow_flex": 0.4}, hz=50, steps=60)   # RunResult(steps, seconds, ..., final)
 task = arm.start(my_policy, seconds=30)     # the same loop in the background; arm.stop() returns its RunResult
-arm.sim.run({arm: p1, g1: p2}, steps=20)    # many robots, many policies, lock-step
+arm.sim.run({arm: p1, g1: p2}, steps=20)    # many robots in lock-step, each policy bound as run() binds it
 ```
 
 `Robot(name)` loads the `Description` and joins `Simulation.default()`, or the world passed as `sim=`;

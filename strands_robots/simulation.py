@@ -548,30 +548,31 @@ class Simulation:
         seconds: float | None = None,
         steps: int | None = None,
         instruction: str | None = None,
+        units: str | None = "auto",
     ) -> dict[str, RunResult]:
-        """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once."""
-        from .policy import as_policy
+        """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once.
 
+        Each policy is bound exactly as ``Robot.run`` binds it: gains, ``units``, ``requirements()`` checked against
+        a real observation, ``reset()``; and it sees the robot's attached cameras every step.
+        """
         if seconds is None and steps is None:
             raise ValueError("Simulation.run needs seconds= or steps=")
-        pol = {r: as_policy(p) for r, p in policies.items()}
-        for r in pol:
+        for r in policies:
             if r.sim is not self:
                 raise ValueError(f"robot {r.id!r} is not in this world")
+        bound = {r: r._bind(p, units) for r, p in policies.items()}
         dt = self.physics.control_dt if hz is None else 1.0 / hz
         per = max(1, round(dt / self.physics.timestep))
         total = steps if steps is not None else int(round(float(seconds or 0.0) / dt))
         t0 = self.time
-        for p in pol.values():
-            p.reset()
         with self.manual_time():
             for _ in range(total):
-                for r, p in pol.items():
-                    r.act(p.act(r.observe(images=False), instruction=instruction))
+                for r, (p, conv) in bound.items():
+                    r.act(r._decide(p, conv, r.observe(), instruction))
                 self.step(per)
         el = self.time - t0
         return {
-            r.id: RunResult(total, el, 1.0 / dt, total / el if el else 0.0, "steps", None, r.observe()) for r in pol
+            r.id: RunResult(total, el, 1.0 / dt, total / el if el else 0.0, "steps", None, r.observe()) for r in bound
         }
 
     # agents

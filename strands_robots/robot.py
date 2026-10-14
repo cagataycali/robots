@@ -21,6 +21,7 @@ from .types import Action, JointState, Observation, Pose, RunResult
 if TYPE_CHECKING:
     from .policy import PolicyLike
     from .simulation import Simulation
+    from .units import Units
 
 
 @runtime_checkable
@@ -97,9 +98,13 @@ class Task:
             self._error = exc
 
     def stop(self, timeout: float = 5.0) -> RunResult | None:
+        self.halt(timeout)
+        return self.result
+
+    def halt(self, timeout: float = 5.0) -> None:
+        """Stop and join without reading ``result``, so teardown never re-raises the task's error."""
         self._stop.set()
         self._thread.join(timeout)
-        return self.result
 
     @property
     def running(self) -> bool:
@@ -265,6 +270,31 @@ class Robot:
 
     # the loop, written once
 
+    def _bind(
+        self, policy: PolicyLike | Callable[[Observation], Any], units: str | None
+    ) -> tuple[PolicyLike, Units | None]:
+        """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
+        from .policy import as_policy
+        from .units import resolve_units
+
+        pol = as_policy(policy)
+        gains = getattr(pol, "gains", None)
+        if gains is not None and self.sim is not None:  # the policy's PD is part of the policy, not of the world
+            self.set_gains(*gains)
+        conv = resolve_units(pol, units, self.description)
+        req = getattr(pol, "requirements", None)
+        if req is not None:
+            req().check(self.observe(), who=repr(pol))
+        pol.reset()
+        return pol, conv
+
+    def _decide(self, pol: PolicyLike, conv: Units | None, obs: Observation, instruction: str | None) -> Any:
+        """One inference in the policy's units, returned as an action in the robot's radians."""
+        if conv is None:
+            return self.coerce(pol.act(obs, instruction=instruction))
+        seen = obs.with_joints(conv.from_rad(obs.joints.positions))
+        return self.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)))
+
     def run(
         self,
         policy: PolicyLike | Callable[[Observation], Any],
@@ -286,22 +316,11 @@ class Robot:
         (``policy.units``); ``"rad"`` disables, a name (``"lerobot_so10x"``) forces. Before the first inference
         ``policy.requirements()`` is checked against a real observation, so a missing camera is refused by name.
         """
-        from .policy import as_policy
-        from .units import resolve_units
-
         if seconds is None and steps is None and stop_when is None:
             raise ValueError("run needs seconds=, steps= or stop_when=")
         if hz <= 0:
             raise ValueError(f"hz must be > 0, got {hz}")
-        pol = as_policy(policy)
-        gains = getattr(pol, "gains", None)
-        if gains is not None and self.sim is not None:  # the policy's PD is part of the policy, not of the world
-            self.set_gains(*gains)
-        conv = resolve_units(pol, units, self.description)
-        req = getattr(pol, "requirements", None)
-        if req is not None:
-            req().check(self.observe(), who=repr(pol))
-        pol.reset()
+        pol, conv = self._bind(policy, units)
         dt = 1.0 / hz
         sim_steps = max(1, round(dt / self.sim.physics.timestep)) if self.sim is not None else None
         max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
@@ -319,12 +338,7 @@ class Robot:
             if stop_when is not None and stop_when(obs):
                 why = "stop_when"
                 break
-            if conv is not None:
-                seen = obs.with_joints(conv.from_rad(obs.joints.positions))
-                action = self.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)))
-            else:
-                action = self.coerce(pol.act(obs, instruction=instruction))
-            self.act(action, steps=sim_steps)
+            self.act(self._decide(pol, conv, obs, instruction), steps=sim_steps)
             n += 1
             if self.sim is None or realtime:  # hardware (or a watched sim): pace in wall time
                 next_tick += dt
@@ -362,7 +376,8 @@ class Robot:
         return d
 
     def close(self) -> None:
-        self.stop()
+        if self._task is not None:
+            self._task.halt()
         if self.sim is not None:
             self.sim.remove(self)
         elif self._body is not None:
