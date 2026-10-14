@@ -77,13 +77,18 @@ def test_a_refused_hold_writes_nothing(arm):
 def test_an_allowed_hold_stays_put_and_the_twin_mirrors_it(arm):
     asked: list[np.ndarray] = []
 
-    def operator(action: np.ndarray) -> bool:
+    def operator(action: np.ndarray) -> bool:  # a hold at the measured pose, or nothing
         asked.append(np.array(action))
-        return True
+        return bool(np.allclose(action, measured.positions, atol=1e-6))
 
     real = arm(operator)
     before, measured = counts(real), real.observe(images=False).joints
-    real.confirm_act(measured)
+    try:
+        real.confirm_act(measured)
+    except PermissionError:  # a joint rests outside the model's limits, so the clipped target is not a hold
+        assert real.body.extras()["torque"] is False and np.abs(counts(real) - before).max() <= 1
+        outside = [k for k, a, m in zip(real.action_keys, asked[0], measured.positions, strict=True) if a != m]
+        pytest.skip(f"{outside} rest outside the model's limits: the hold was refused, nothing written")
     assert len(asked) == 1 and real.body.extras()["torque"] is True
     assert np.abs(counts(real) - before).max() <= HOLD_COUNTS
     twin = real.twin
