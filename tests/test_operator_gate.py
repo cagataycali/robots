@@ -11,7 +11,7 @@ import test_drivers
 from test_drivers import make_driver
 
 from strands_robots import Robot
-from strands_robots.drivers import feetech as ft
+from strands_robots.robot.drivers import feetech as ft
 
 
 def goal_writes(serial: object) -> list[bytes]:

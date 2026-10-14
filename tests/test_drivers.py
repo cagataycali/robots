@@ -10,10 +10,11 @@ import threading
 import numpy as np
 import pytest
 
-from strands_robots import Calibration, Description, Robot, Simulation
-from strands_robots.drivers import feetech as ft
-from strands_robots.drivers import microduck as md
-from strands_robots.drivers.unitree import G1_ORDER, H1_SLOTS, UnitreeDriver
+from strands_robots import Description, Robot, Simulation
+from strands_robots.robot.drivers import Calibration
+from strands_robots.robot.drivers import feetech as ft
+from strands_robots.robot.drivers import microduck as md
+from strands_robots.robot.drivers.unitree import G1_ORDER, H1_SLOTS, UnitreeDriver
 
 
 class FakeSerial:

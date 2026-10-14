@@ -8,7 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from strands_robots import Description, JointState, Observation, Policy, Requirements, Robot, Simulation
+from strands_robots import Description, JointState, Observation, Policy, Robot, Simulation
+from strands_robots.policy import Requirements
 from strands_robots.units import Units, declared_units, resolve_units
 
 
@@ -17,8 +18,8 @@ def so101():
     return Description.load("so101")
 
 
-def test_lerobot_so10x_units_round_trip_on_so101(so101):
-    u = Units.for_robot(so101, "lerobot_so10x")
+def test_lerobot_units_round_trip_on_so101(so101):
+    u = Units.for_robot(so101, "lerobot")
     lo = np.array([so101.limits[k][0] for k in so101.action_keys])
     hi = np.array([so101.limits[k][1] for k in so101.action_keys])
     # body joints map their limits onto -100..100, the gripper onto 0..100
@@ -42,12 +43,12 @@ class _Speaks:
 
 
 def test_resolve_units_follows_the_declaration_and_rad_or_none_disable_it(so101):
-    lerobot = _Speaks("lerobot_so10x")
+    lerobot = _Speaks("lerobot")
     assert resolve_units(lerobot, "rad", so101) is None
     assert resolve_units(lerobot, None, so101) is None
-    assert resolve_units(lerobot, "auto", so101).name == "lerobot_so10x"
+    assert resolve_units(lerobot, "auto", so101).name == "lerobot"
     assert resolve_units(_Speaks(), "auto", so101) is None  # cannot say -> radians
-    assert resolve_units(_Speaks(), "lerobot_so10x", so101).name == "lerobot_so10x"
+    assert resolve_units(_Speaks(), "lerobot", so101).name == "lerobot"
     with pytest.raises(ValueError, match="policy declares units 'furlongs'"):
         declared_units(_Speaks("furlongs"))
 
@@ -99,9 +100,9 @@ def arm():
 
 
 class _HoldInLerobotUnits(Policy):
-    """A policy that speaks lerobot_so10x: it sees -100..100 and asks for the gripper half open (50)."""
+    """A policy that speaks lerobot: it sees -100..100 and asks for the gripper half open (50)."""
 
-    units = "lerobot_so10x"
+    units = "lerobot"
 
     def __init__(self):
         self.seen = []

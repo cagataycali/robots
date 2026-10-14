@@ -3,7 +3,9 @@ import json
 import pytest
 
 from strands_robots import Description
-from strands_robots.description import _introspect_mujoco, _introspect_xml, normalize_name, registry, urdf_registry
+from strands_robots.description import normalize_name, registry, urdf_registry
+from strands_robots.description.introspect.mujoco import introspect_mujoco as _introspect_mujoco
+from strands_robots.description.introspect.xml import introspect_xml as _introspect_xml
 
 # The gate: every robot in the registry either loads a Description or refuses by name.
 _CANONICAL = sorted({e["name"] for e in registry().values()})
@@ -82,7 +84,7 @@ def test_describe_is_json_safe():
 
 def test_github_asset_is_fetched_once_into_the_cache(tmp_path, monkeypatch):
     """A registry robot whose asset lives in a GitHub subdir is downloaded into the cache and then reused."""
-    from strands_robots import assets
+    from strands_robots.description import assets
 
     calls: list[tuple[str, str]] = []
 
@@ -113,7 +115,7 @@ def test_github_asset_is_fetched_once_into_the_cache(tmp_path, monkeypatch):
 
 
 def test_github_asset_rejects_bad_repo_and_escaping_subdir(tmp_path, monkeypatch):
-    from strands_robots import assets
+    from strands_robots.description import assets
 
     monkeypatch.setenv("STRANDS_ROBOTS_CACHE", str(tmp_path))
     with pytest.raises(ValueError, match="repo"):
@@ -135,7 +137,7 @@ def test_github_asset_rejects_bad_repo_and_escaping_subdir(tmp_path, monkeypatch
 
 
 def test_lfs_pointer_is_recognised():
-    from strands_robots.assets import _lfs_pointer
+    from strands_robots.description.assets import _lfs_pointer
 
     oid = "a" * 64
     text = f"version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 42\n".encode()
@@ -148,7 +150,7 @@ def test_microduck_downloads_for_real_and_loads(tmp_path, monkeypatch):
     """Real network: the one measured download (size + time logged by the test)."""
     import time
 
-    from strands_robots import assets
+    from strands_robots.description import assets
 
     monkeypatch.setenv("STRANDS_ROBOTS_CACHE", str(tmp_path))
     t0 = time.perf_counter()
