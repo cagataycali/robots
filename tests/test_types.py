@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
 
-from strands_robots import Calibration, JointState, Observation, Pose
-from strands_robots.types import JointCalibration
+from strands_robots import JointState, Observation, Pose
+from strands_robots.robot.drivers import Calibration
+from strands_robots.robot.drivers.calibration import JointCalibration
 
 
 def test_joint_state_is_frozen_and_indexable():

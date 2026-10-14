@@ -2,8 +2,9 @@ import time
 
 import pytest
 
-from strands_robots import JointState, Robot, RunResult, Simulation
+from strands_robots import JointState, Robot, Simulation
 from strands_robots.policy import SequencePolicy
+from strands_robots.robot import RunResult
 
 
 def test_robot_is_a_class_and_a_body_in_the_default_world():

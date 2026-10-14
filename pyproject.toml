@@ -17,7 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 mujoco = ["mujoco>=3.3.4"]
 feetech = ["pyserial>=3.5"]
-dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10"]
+dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10", "import-linter>=2.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
@@ -30,6 +30,7 @@ lint = [
     "ruff check strands_robots tests",
     "ruff format --check strands_robots tests",
     "mypy strands_robots",
+    "lint-imports",
 ]
 format = ["ruff check --fix strands_robots tests", "ruff format strands_robots tests"]
 test = "pytest {args}"
@@ -50,3 +51,63 @@ check_untyped_defs = true
 testpaths = ["tests"]
 timeout = 300
 markers = ["network: talks to the internet (GitHub / Hugging Face); deselect with -m 'not network'"]
+
+[tool.importlinter]
+root_package = "strands_robots"
+
+[[tool.importlinter.contracts]]
+name = "types is a leaf: it imports nothing else in the package"
+type = "forbidden"
+source_modules = ["strands_robots.types"]
+forbidden_modules = [
+    "strands_robots.geometry",
+    "strands_robots.description",
+    "strands_robots.simulation",
+    "strands_robots.robot",
+    "strands_robots.policy",
+    "strands_robots.units",
+]
+
+[[tool.importlinter.contracts]]
+name = "description depends only on types, _gl, _extras"
+type = "forbidden"
+source_modules = ["strands_robots.description"]
+forbidden_modules = [
+    "strands_robots.geometry",
+    "strands_robots.simulation",
+    "strands_robots.robot",
+    "strands_robots.policy",
+    "strands_robots.units",
+]
+
+[[tool.importlinter.contracts]]
+name = "simulation does not import robot or policy (except the lazy Simulation.run edge)"
+type = "forbidden"
+source_modules = ["strands_robots.simulation"]
+forbidden_modules = ["strands_robots.robot", "strands_robots.policy"]
+ignore_imports = [
+    # Simulation.run delegates to the one run loop by a lazy import inside the method, and the two
+    # TYPE_CHECKING-only names it annotates with; none is a runtime module-level edge.
+    "strands_robots.simulation.simulation -> strands_robots.robot.run",
+    "strands_robots.simulation.simulation -> strands_robots.robot.run.result",
+    "strands_robots.simulation.simulation -> strands_robots.robot",
+    "strands_robots.simulation.simulation -> strands_robots.policy",
+]
+
+[[tool.importlinter.contracts]]
+name = "policy imports neither simulation nor the drivers"
+type = "forbidden"
+source_modules = ["strands_robots.policy"]
+forbidden_modules = ["strands_robots.simulation", "strands_robots.robot.drivers"]
+
+[[tool.importlinter.contracts]]
+name = "units depends only on types and description"
+type = "forbidden"
+source_modules = ["strands_robots.units"]
+forbidden_modules = [
+    "strands_robots.geometry",
+    "strands_robots.simulation",
+    "strands_robots.robot",
+    "strands_robots.policy",
+]
+
