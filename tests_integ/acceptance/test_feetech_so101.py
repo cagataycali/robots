@@ -15,8 +15,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from strands_robots import Calibration, Robot, Simulation
-from strands_robots.drivers import feetech as ft
+from strands_robots import Robot, Simulation
+from strands_robots.robot.drivers import Calibration
+from strands_robots.robot.drivers import feetech as ft
 
 PORT = os.environ.get("STRANDS_SO101_PORT", "")
 HOLD_COUNTS = 20  # a loaded servo holds within its deadband; 20 counts is 1.8 degrees
