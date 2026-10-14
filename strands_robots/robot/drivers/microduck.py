@@ -22,8 +22,9 @@ from typing import Any
 
 import numpy as np
 
-from ..description import Description
-from ..types import Calibration, JointState, Pose
+from ...description import Description
+from ...types import JointState, Pose
+from .calibration import Calibration
 
 DEFAULT_SOCKET = "/run/robotd.sock"
 API_VERSION = (

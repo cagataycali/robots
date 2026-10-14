@@ -1,7 +1,8 @@
 """A Driver is a hardware Body: a servo bus, a DDS link, a vendor SDK.
 
-``make_driver`` is the only place that maps a description + port to a driver
-class; drivers themselves live in ``drivers/`` and import their SDK lazily.
+Hardware bodies in 1.0: feetech (SO-100/101), unitree (G1/Go2/H1 over DDS), microduck (robotd).
+``make_driver`` is the only place that maps a description + port to a driver class; the driver is
+read from ``description.hardware.driver`` (registry data), and drivers import their SDK lazily.
 """
 
 from __future__ import annotations
@@ -12,21 +13,14 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from .description import Description
-from .types import Calibration, JointState, Pose
+from ...description import Description
+from ...types import JointState, Pose
+from .calibration import Calibration
 
 _DRIVERS: dict[str, str] = {
-    "feetech": "strands_robots.drivers.feetech:FeetechDriver",
-    "unitree": "strands_robots.drivers.unitree:UnitreeDriver",
-    "microduck": "strands_robots.drivers.microduck:MicroduckDriver",
-}
-_HARDWARE_DRIVER = {
-    "so100": "feetech",
-    "so101": "feetech",
-    "unitree_g1": "unitree",
-    "unitree_go2": "unitree",
-    "unitree_h1": "unitree",
-    "microduck": "microduck",
+    "feetech": "strands_robots.robot.drivers.feetech:FeetechDriver",
+    "unitree": "strands_robots.robot.drivers.unitree:UnitreeDriver",
+    "microduck": "strands_robots.robot.drivers.microduck:MicroduckDriver",
 }
 
 
@@ -52,15 +46,9 @@ class Driver(Protocol):
 
 
 def driver_kind(description: Description) -> str | None:
-    """Which driver family a registry entry implies (from its ``hardware`` block or its name)."""
-    hw = description.hardware
-    if hw.get("driver") in _DRIVERS:
-        return str(hw["driver"])
-    lt = str(hw.get("lerobot_type", ""))
-    for key, kind in _HARDWARE_DRIVER.items():
-        if description.name.startswith(key) or lt.startswith(key):
-            return kind
-    return None
+    """Which driver family a registry entry declares (``hardware.driver``), or None for no 1.0 driver."""
+    driver = description.hardware.driver
+    return driver if driver in _DRIVERS else None
 
 
 def make_driver(
@@ -85,3 +73,6 @@ def make_driver(
     mod_name, cls_name = _DRIVERS[kind].split(":")
     cls = getattr(importlib.import_module(mod_name), cls_name)
     return cls(description, port=port, cameras=cameras or {})
+
+
+__all__ = ["Driver", "Calibration", "make_driver", "driver_kind"]

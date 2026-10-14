@@ -1,10 +1,4 @@
-"""Feetech STS/SMS-series servo bus (SO-100 / SO-101 / LeKiwi): read Present_Position, write Goal_Position,
-torque on/off, calibration in LeRobot's JSON format so an arm calibrated by ``lerobot-calibrate`` loads unchanged.
-
-Wire: ``FF FF ID LEN INSTR params CHK``, ``CHK = ~sum(ID..params) & 0xFF``, 1 Mbaud, little-endian words,
-sign-magnitude values (bit 15 for positions/velocities, bit 10 for load, bit 11 for homing offset).
-``pyserial`` is imported lazily; any object with ``write``/``read``/``reset_input_buffer`` can be injected.
-"""
+"""The Feetech hardware Body: read Present_Position, write Goal_Position, torque, LeRobot-format calibration."""
 
 from __future__ import annotations
 
@@ -18,126 +12,20 @@ from typing import Any
 
 import numpy as np
 
-from .._extras import hint
-from ..description import Description
-from ..types import Calibration, JointCalibration, JointState, Pose
-
-HEADER = b"\xff\xff"
-BROADCAST = 0xFE
-RESOLUTION = 4096
-
-PING, READ, WRITE, SYNC_READ, SYNC_WRITE = 0x01, 0x02, 0x03, 0x82, 0x83
-REG_HOMING_OFFSET = 0x1F  # EEPROM, 2 bytes, sign bit 11
-REG_TORQUE_ENABLE = 0x28
-REG_GOAL_POSITION = 0x2A  # 2 bytes
-REG_LOCK = 0x37
-REG_PRESENT_POSITION = 0x38  # 2 bytes, then velocity 0x3A, load 0x3C (contiguous: one 6-byte read)
-
-
-class ProtocolError(ValueError):
-    pass
-
-
-def checksum(payload: bytes) -> int:
-    return (~sum(payload)) & 0xFF
-
-
-def frame(motor_id: int, instr: int, params: bytes = b"") -> bytes:
-    payload = bytes([motor_id, len(params) + 2, instr]) + params
-    return HEADER + payload + bytes([checksum(payload)])
-
-
-def word(value: int) -> bytes:
-    return int(value).to_bytes(2, "little")
-
-
-def decode_sm(raw: bytes, sign_bit: int) -> int:
-    """Sign-magnitude word: the named bit is direction, the bits below it magnitude."""
-    v = int.from_bytes(raw, "little")
-    mag = v & ((1 << sign_bit) - 1)
-    return -mag if v & (1 << sign_bit) else mag
-
-
-def encode_sm(value: int, sign_bit: int) -> bytes:
-    mag = min(abs(int(value)), (1 << sign_bit) - 1)
-    return word(mag | (1 << sign_bit) if value < 0 else mag)
-
-
-def parse_status(raw: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
-    i = raw.find(HEADER)
-    if i < 0:
-        raise ProtocolError(f"no FF FF header in {len(raw)} bytes from servo {expect_id}")
-    f = raw[i:]
-    if len(f) < 6 + nparams:
-        raise ProtocolError(f"servo {expect_id}: truncated reply ({len(f)} bytes, need {6 + nparams})")
-    mid, length, err = f[2], f[3], f[4]
-    if mid != expect_id:
-        raise ProtocolError(f"reply from servo {mid}, expected {expect_id}")
-    if length != nparams + 2:
-        raise ProtocolError(f"servo {expect_id}: LEN {length} != {nparams + 2}")
-    params = bytes(f[5 : 5 + nparams])
-    if f[5 + nparams] != checksum(f[2 : 5 + nparams]):
-        raise ProtocolError(f"servo {expect_id}: bad checksum")
-    return err, params
-
-
-class FeetechBus:
-    """Half-duplex serial bus. ``serial`` may be injected (tests); otherwise pyserial opens ``port``."""
-
-    def __init__(self, port: str, *, baud: int = 1_000_000, timeout: float = 0.05, serial: Any = None) -> None:
-        self.port = port
-        if serial is None:
-            try:
-                import serial as pyserial
-            except ImportError as exc:
-                raise ImportError(f"the feetech driver needs pyserial: {hint('feetech')}") from exc
-            serial = pyserial.Serial(port, baudrate=baud, timeout=timeout)
-        self.serial = serial
-
-    def _txrx(self, packet: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
-        self.serial.reset_input_buffer()
-        self.serial.write(packet)
-        raw = self.serial.read(6 + nparams + 2)  # + possible echoed byte(s)
-        return parse_status(raw, expect_id, nparams)
-
-    def ping(self, motor_id: int) -> bool:
-        try:
-            self._txrx(frame(motor_id, PING), motor_id, 0)
-            return True
-        except ProtocolError:
-            return False
-
-    def read(self, motor_id: int, reg: int, n: int) -> bytes:
-        _, params = self._txrx(frame(motor_id, READ, bytes([reg, n])), motor_id, n)
-        return params
-
-    def write(self, motor_id: int, reg: int, data: bytes) -> None:
-        self._txrx(frame(motor_id, WRITE, bytes([reg]) + data), motor_id, 0)
-
-    def sync_read(self, reg: int, n: int, ids: list[int]) -> dict[int, bytes]:
-        self.serial.reset_input_buffer()
-        self.serial.write(frame(BROADCAST, SYNC_READ, bytes([reg, n]) + bytes(ids)))
-        raw = self.serial.read((6 + n) * len(ids) + 2)
-        out: dict[int, bytes] = {}
-        pos = 0
-        for mid in ids:
-            i = raw.find(HEADER, pos)
-            if i < 0:
-                raise ProtocolError(f"sync_read: no reply from servo {mid} (got {len(out)} of {len(ids)})")
-            _, params = parse_status(raw[i : i + 6 + n], mid, n)
-            out[mid] = params
-            pos = i + 6 + n
-        return out
-
-    def sync_write(self, reg: int, per: int, items: Mapping[int, bytes]) -> None:
-        params = bytes([reg, per]) + b"".join(bytes([mid]) + data for mid, data in items.items())
-        self.serial.write(frame(BROADCAST, SYNC_WRITE, params))
-
-    def torque(self, ids: list[int], on: bool) -> None:
-        self.sync_write(REG_TORQUE_ENABLE, 1, {i: bytes([1 if on else 0]) for i in ids})
-
-    def close(self) -> None:
-        self.serial.close()
+from ....description import Description
+from ....types import JointState, Pose
+from ..calibration import Calibration, JointCalibration
+from .bus import (
+    REG_GOAL_POSITION,
+    REG_HOMING_OFFSET,
+    REG_LOCK,
+    REG_PRESENT_POSITION,
+    RESOLUTION,
+    FeetechBus,
+    decode_sm,
+    encode_sm,
+    word,
+)
 
 
 def lerobot_calibration_path(robot_type: str, robot_id: str) -> Path:
@@ -179,8 +67,6 @@ class FeetechDriver:
         if missing:
             raise ConnectionError(f"{description.name} on {self.bus.port}: no reply from servo id(s) {missing}")
 
-    # calibration
-
     def _load_calibration(self, cal: Any, robot_id: str | None) -> None:
         if isinstance(cal, Calibration):
             self.calibration, self.calibration_source = cal, "caller"
@@ -195,7 +81,7 @@ class FeetechDriver:
                 raise FileNotFoundError(f"calibration file not found: {path}")
 
     def default_calibration_path(self, robot_id: str | None = None) -> Path:
-        rtype = str(self.description.hardware.get("lerobot_type") or self.description.name)
+        rtype = str(self.description.hardware.lerobot_type or self.description.name)
         return lerobot_calibration_path(rtype, robot_id or rtype)
 
     def _span(self, name: str) -> tuple[float, float, float, float, bool]:
