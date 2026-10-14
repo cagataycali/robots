@@ -293,7 +293,9 @@ class MuJoCoBackend(Backend):
         m, d = self.model, self.data
         desc = self._robots[body]
         # one reading per action key, in actuator order: the driven joint's, or, for an actuator that
-        # drives a tendon or a site (panda's gripper), its transmission's length, velocity and force
+        # drives a tendon or a site (panda's gripper), the control that holds its transmission where it is
+        # (the servo inverse when the actuator has a position bias, else its control), so that
+        # act(observe().joints) is a hold for every key, with the transmission's velocity and force
         pos, vel, eff = (np.empty(len(desc.action_keys)) for _ in range(3))
         for i, (key, a) in enumerate(zip(desc.action_keys, self._actuator_ids(body), strict=True)):
             j = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{body}/{desc.unlabel(key)}")
@@ -304,7 +306,10 @@ class MuJoCoBackend(Backend):
                     d.qfrc_actuator[m.jnt_dofadr[j]],
                 )
             elif a >= 0:
-                pos[i], vel[i], eff[i] = d.actuator_length[a], d.actuator_velocity[a], d.actuator_force[a]
+                gain, bias = m.actuator_gainprm[a, 0], m.actuator_biasprm[a]
+                servo = m.actuator_biastype[a] == mujoco.mjtBias.mjBIAS_AFFINE and gain != 0 and bias[1] != 0
+                pos[i] = -(bias[0] + bias[1] * d.actuator_length[a]) / gain if servo else d.ctrl[a]
+                vel[i], eff[i] = d.actuator_velocity[a], d.actuator_force[a]
             else:
                 raise KeyError(f"{body}: no joint or actuator for action key {key!r} in the compiled world")
         return JointState(desc.action_keys, pos, vel, eff)

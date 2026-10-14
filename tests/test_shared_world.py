@@ -306,7 +306,38 @@ def test_an_actuator_that_drives_a_tendon_reads_its_transmission():
         panda = Member("panda", sim=sim)
         state = sim.backend.joint_state(panda.id)
         assert state.names[-1] == "actuator8" and len(state.names) == 8  # the gripper drives a tendon, not a joint
-        opened = state["actuator8"]  # the home keyframe holds the fingers open: 0.04 m of tendon
+        opened = state["actuator8"]  # the home keyframe holds the fingers open: 255, 0.04 m of tendon
         for _ in range(40):
             panda.act(actuator8=0.0)  # close
-        assert sim.backend.joint_state(panda.id)["actuator8"] < opened - 0.01
+        assert sim.backend.joint_state(panda.id)["actuator8"] < opened - 1.0
+
+
+TENDON_KEYS = [("panda", "actuator8"), ("robotiq_2f85", "fingers_actuator"), ("stretch3", "arm")]
+
+
+@pytest.mark.parametrize(("name", "key"), TENDON_KEYS)
+def test_a_tendon_actuator_key_reads_the_control_that_holds_it(name, key):
+    """A key naming a tendon actuator has no joint: it reads the control at which its servo pushes nothing."""
+    sim = Simulation()
+    try:
+        body = Member(name, sim)
+        body.act()
+        m, d = sim.backend.model, sim.backend.data
+        a = m.actuator(f"{body.id}/{key}").id
+        push = m.actuator_gainprm[a, 0] * body.joint(key) + m.actuator_biasprm[a, 0]
+        assert push + m.actuator_biasprm[a, 1] * d.actuator_length[a] == pytest.approx(0.0, abs=1e-9)
+    finally:
+        sim.close()
+
+
+def test_holding_what_the_panda_reads_keeps_its_hand_open():
+    sim = Simulation()
+    try:
+        panda = Member("panda", sim)
+        assert panda.joint("actuator8") == pytest.approx(255.0, abs=0.01)  # home: 0.04 m of tendon, fully open
+        for _ in range(50):
+            panda.act()
+        a = sim.backend.model.actuator(f"{panda.id}/actuator8").id
+        assert sim.backend.data.actuator_length[a] == pytest.approx(0.04, abs=1e-3)
+    finally:
+        sim.close()
