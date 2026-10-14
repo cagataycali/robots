@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from strands_robots import Robot, RunResult, Simulation
+from strands_robots import JointState, Robot, RunResult, Simulation
 from strands_robots.policy import SequencePolicy
 
 
@@ -101,3 +101,12 @@ def test_realtime_paces_a_sim_run_to_the_wall_clock():
     t0 = time.perf_counter()
     arm.run(SequencePolicy([{"shoulder_pan": 0.1}]), hz=20, steps=6)
     assert time.perf_counter() - t0 < 0.2
+
+
+def test_act_takes_the_joints_an_observation_measured():
+    arm = Robot("so101")
+    arm.act({"shoulder_pan": 0.4}, steps=200)
+    measured = arm.observe().joints
+    assert arm.coerce(measured) == pytest.approx(measured.positions)  # a hold at what was read
+    with pytest.raises(KeyError, match="unknown joint"):
+        arm.coerce(JointState.zeros(["shoulder_pan", "not_a_joint"]))

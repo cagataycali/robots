@@ -13,10 +13,6 @@ from typing import Any
 
 import numpy as np
 
-Action = np.ndarray | Mapping[str, float]
-"""Joint targets, either a vector in ``Description.action_keys`` order or a
-``{joint: target}`` mapping (missing joints hold their current position)."""
-
 
 def _ro(a: Any, dtype: Any = np.float64) -> np.ndarray:
     """A read-only float array (frozen dataclasses deserve frozen arrays)."""
@@ -58,6 +54,11 @@ class JointState:
     def zeros(cls, names: tuple[str, ...] | list[str]) -> JointState:
         z = np.zeros(len(names))
         return cls(tuple(names), z, z.copy(), z.copy())
+
+
+Action = np.ndarray | Mapping[str, float] | JointState
+"""Joint targets, either a vector in ``Description.action_keys`` order, a ``{joint: target}`` mapping
+(missing joints hold their current position) or the ``JointState`` an observation measured (a hold)."""
 
 
 @dataclass(frozen=True)

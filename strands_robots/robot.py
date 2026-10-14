@@ -238,6 +238,8 @@ class Robot:
     def coerce(self, action: Action) -> np.ndarray:
         """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits."""
         keys = self.description.action_keys
+        if isinstance(action, JointState):
+            action = action.as_dict()
         if isinstance(action, Mapping):
             unknown = [k for k in action if k not in keys]
             if unknown:
