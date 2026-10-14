@@ -120,7 +120,11 @@
         "robot_descriptions_module": "low_cost_robot_arm_mj_description"
       },
       "hardware": {
-        "lerobot_type": "koch_follower"
+        "lerobot_type": "koch_follower",
+        "lerobot_norm": {
+          "*": "range_m100_100",
+          "gripper": "range_0_100"
+        }
       },
       "aliases": [
         "koch_follower",
@@ -204,7 +208,7 @@
         "robot_descriptions_module": "panda_mj_description"
       },
       "gripper": {
-        "actuators": [
+        "keys": [
           "actuator8"
         ],
         "closed": "low",
@@ -274,11 +278,16 @@
         "robot_descriptions_module": "so_arm100_mj_description"
       },
       "hardware": {
-        "lerobot_type": "so100_follower"
+        "lerobot_type": "so100_follower",
+        "driver": "feetech",
+        "lerobot_norm": {
+          "*": "range_m100_100",
+          "gripper": "range_0_100"
+        }
       },
       "gripper": {
-        "actuators": [
-          "Jaw"
+        "keys": [
+          "gripper"
         ],
         "closed": "low",
         "open": "high"
@@ -318,11 +327,16 @@
         "robot_descriptions_module": "so_arm101_mj_description"
       },
       "hardware": {
-        "lerobot_type": "so101_follower"
+        "lerobot_type": "so101_follower",
+        "driver": "feetech",
+        "lerobot_norm": {
+          "*": "range_m100_100",
+          "gripper": "range_0_100"
+        }
       },
       "gripper": {
-        "actuators": [
-          "6"
+        "keys": [
+          "gripper"
         ],
         "closed": "low",
         "open": "high"
@@ -803,7 +817,7 @@
         "pollen_microduck"
       ],
       "hardware": {
-        "driver": "strands"
+        "driver": "microduck"
       }
     },
     "mujoco_humanoid": {
@@ -943,7 +957,7 @@
       },
       "hardware": {
         "lerobot_type": "unitree_g1",
-        "driver": "strands"
+        "driver": "unitree"
       },
       "legacy_urdf": "unitree_g1/g1.urdf",
       "aliases": [
@@ -971,7 +985,7 @@
         "h1"
       ],
       "hardware": {
-        "driver": "strands"
+        "driver": "unitree"
       }
     },
     "unitree_h1_2": {
@@ -1096,8 +1110,8 @@
         "Jaw": "gripper"
       },
       "gripper": {
-        "actuators": [
-          "Jaw"
+        "keys": [
+          "gripper"
         ],
         "closed": "low",
         "open": "high"
@@ -1113,7 +1127,11 @@
         }
       },
       "hardware": {
-        "lerobot_type": "lekiwi"
+        "lerobot_type": "lekiwi",
+        "lerobot_norm": {
+          "*": "range_m100_100",
+          "gripper": "range_0_100"
+        }
       }
     },
     "yahboom_m3pro": {
@@ -1131,8 +1149,8 @@
         }
       },
       "gripper": {
-        "actuators": [
-          "gripper"
+        "keys": [
+          "rlink1"
         ],
         "closed": "low",
         "open": "high"
@@ -1270,7 +1288,7 @@
         "go2"
       ],
       "hardware": {
-        "driver": "strands"
+        "driver": "unitree"
       }
     },
     "google_robot": {
