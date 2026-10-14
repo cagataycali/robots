@@ -299,3 +299,14 @@ def test_the_world_owns_the_lighting(name):
         sim.camera("c", **look)
         assert sim.backend.model.nlight == empty.backend.model.nlight
         assert sim.render("c")[-10:].mean() == pytest.approx(empty.render("c")[-10:].mean(), abs=5)  # the floor
+
+
+def test_an_actuator_that_drives_a_tendon_reads_its_transmission():
+    with Simulation() as sim:
+        panda = Member("panda", sim=sim)
+        state = sim.backend.joint_state(panda.id)
+        assert state.names[-1] == "actuator8" and len(state.names) == 8  # the gripper drives a tendon, not a joint
+        opened = state["actuator8"]  # the home keyframe holds the fingers open: 0.04 m of tendon
+        for _ in range(40):
+            panda.act(actuator8=0.0)  # close
+        assert sim.backend.joint_state(panda.id)["actuator8"] < opened - 0.01

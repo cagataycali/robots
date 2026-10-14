@@ -196,7 +196,7 @@ class MuJoCoBackend(Backend):
                 kid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_KEY, f"{r.id}/{key}")
                 if kid < 0:
                     continue
-                for j in self._joint_ids(r.id, all_joints=True):
+                for j in self._joint_ids(r.id):
                     adr, n = m.jnt_qposadr[j], (7 if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE else 1)
                     d.qpos[adr : adr + n] = m.key_qpos[kid, adr : adr + n]
                     if n == 7:  # attach leaves a keyframe's base pose in the robot frame: move it to the spawn frame
@@ -243,19 +243,10 @@ class MuJoCoBackend(Backend):
 
     # --- lookups ---------------------------------------------------------------------------------
 
-    def _joint_ids(self, rid: str, *, all_joints: bool = False) -> list[int]:
+    def _joint_ids(self, rid: str) -> list[int]:
         assert self.model is not None
         m = self.model
-        if all_joints:
-            return [j for j in range(m.njnt) if m.joint(j).name.startswith(f"{rid}/")]
-        desc = self._robots[rid]
-        ids = []
-        for key in desc.action_keys:
-            j = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{rid}/{desc.unlabel(key)}")
-            if j < 0:
-                raise KeyError(f"{rid}: joint for action key {key!r} not found in the compiled world")
-            ids.append(j)
-        return ids
+        return [j for j in range(m.njnt) if m.joint(j).name.startswith(f"{rid}/")]
 
     def _actuator_ids(self, rid: str) -> list[int]:
         assert self.model is not None
@@ -301,10 +292,21 @@ class MuJoCoBackend(Backend):
         assert self.model is not None and self.data is not None
         m, d = self.model, self.data
         desc = self._robots[body]
-        ids = self._joint_ids(body)
-        pos = np.array([d.qpos[m.jnt_qposadr[j]] for j in ids])
-        vel = np.array([d.qvel[m.jnt_dofadr[j]] for j in ids])
-        eff = np.array([d.qfrc_actuator[m.jnt_dofadr[j]] for j in ids])
+        # one reading per action key, in actuator order: the driven joint's, or, for an actuator that
+        # drives a tendon or a site (panda's gripper), its transmission's length, velocity and force
+        pos, vel, eff = (np.empty(len(desc.action_keys)) for _ in range(3))
+        for i, (key, a) in enumerate(zip(desc.action_keys, self._actuator_ids(body), strict=True)):
+            j = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{body}/{desc.unlabel(key)}")
+            if j >= 0:
+                pos[i], vel[i], eff[i] = (
+                    d.qpos[m.jnt_qposadr[j]],
+                    d.qvel[m.jnt_dofadr[j]],
+                    d.qfrc_actuator[m.jnt_dofadr[j]],
+                )
+            elif a >= 0:
+                pos[i], vel[i], eff[i] = d.actuator_length[a], d.actuator_velocity[a], d.actuator_force[a]
+            else:
+                raise KeyError(f"{body}: no joint or actuator for action key {key!r} in the compiled world")
         return JointState(desc.action_keys, pos, vel, eff)
 
     def set_targets(self, body: str, targets: np.ndarray) -> None:
