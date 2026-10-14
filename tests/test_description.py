@@ -158,3 +158,15 @@ def test_microduck_downloads_for_real_and_loads(tmp_path, monkeypatch):
     print(f"[measured] microduck github fetch: {size / 1e6:.1f} MB in {dt:.1f} s -> {d.model_path}")
     assert d.model_path.is_file() and d.dof == 14 and d.floating
     assert not any(assets._lfs_pointer(p.read_bytes()[:256]) for p in d.package_dir.rglob("*.stl"))
+
+
+@pytest.mark.network
+def test_microduck_stands_in_the_default_world():
+    """Robot("microduck") attaches to Simulation.default() like any registry robot (uses the real cache)."""
+    from strands_robots import Robot
+
+    duck = Robot("microduck")
+    obs = duck.observe(images=False)
+    assert len(obs.joints.positions) == 14 and duck.sim is not None and duck.sim.describe()["robots"]
+    duck.act(obs.joints.positions)
+    assert duck.sim.time > 0

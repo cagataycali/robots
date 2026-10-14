@@ -3,26 +3,34 @@ a Policy turns an Observation into an Action.
 
 This is the ``dev`` branch: v1 is built here part by part (strands-labs/robots#4749,
 schedule #3818). Part 1 is the data that flows between them and the ``Description`` of a robot;
-part 2 is the world they live in:
+part 2 is the world they live in; part 3 is the robot:
 
-    from strands_robots import Description, Simulation
+    from strands_robots import Robot
 
-    d = Description.load("so101")
-    d.action_keys   # ('shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll', 'gripper')
-    sim = Simulation.default()   # MuJoCo, headless, one per process; mujoco is imported here, not before
+    arm = Robot("so101")                    # joins Simulation.default(); mujoco is imported here, not before
+    g1 = Robot("g1", position=[1, 0, 0])    # the SAME world: arm.sim is g1.sim
+    arm.act({"shoulder_pan": 0.3})          # one control step for the world
+    arm.run(lambda obs: {"elbow_flex": 0.4}, hz=50, steps=60)   # -> RunResult
 """
 
 from __future__ import annotations
 
 from .description import Description
+from .policy import Policy
+from .robot import Body, Robot, SimBody, Task
 from .simulation import Backend, Object, Scene, Simulation
 from .types import Action, Calibration, Contact, JointState, Observation, Physics, Pose, Requirements, RunResult
 
 __version__ = "1.0.0.dev0"
 
 __all__ = [
+    "Robot",
     "Simulation",
+    "Policy",
     "Description",
+    "Body",
+    "SimBody",
+    "Task",
     "Backend",
     "Scene",
     "Object",

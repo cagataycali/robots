@@ -11,15 +11,19 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 import numpy as np
 
 from .description import Description
-from .types import Contact, JointState, Physics, Pose
+from .types import Contact, JointState, Observation, Physics, Pose, RunResult
+
+if TYPE_CHECKING:
+    from .policy import PolicyLike
+    from .robot import Robot
 
 _BACKENDS: dict[str, str] = {
     "mujoco": "strands_robots.backends.mujoco:MuJoCoBackend",
@@ -533,6 +537,42 @@ class Simulation:
 
     def contacts(self) -> list[Contact]:
         return self.backend.contacts()
+
+    # the lock-step loop
+
+    def run(
+        self,
+        policies: Mapping[Robot, PolicyLike | Callable[[Observation], Any]],
+        *,
+        hz: float | None = None,
+        seconds: float | None = None,
+        steps: int | None = None,
+        instruction: str | None = None,
+    ) -> dict[str, RunResult]:
+        """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once."""
+        from .policy import as_policy
+
+        if seconds is None and steps is None:
+            raise ValueError("Simulation.run needs seconds= or steps=")
+        pol = {r: as_policy(p) for r, p in policies.items()}
+        for r in pol:
+            if r.sim is not self:
+                raise ValueError(f"robot {r.id!r} is not in this world")
+        dt = self.physics.control_dt if hz is None else 1.0 / hz
+        per = max(1, round(dt / self.physics.timestep))
+        total = steps if steps is not None else int(round(float(seconds or 0.0) / dt))
+        t0 = self.time
+        for p in pol.values():
+            p.reset()
+        with self.manual_time():
+            for _ in range(total):
+                for r, p in pol.items():
+                    r.act(p.act(r.observe(images=False), instruction=instruction))
+                self.step(per)
+        el = self.time - t0
+        return {
+            r.id: RunResult(total, el, 1.0 / dt, total / el if el else 0.0, "steps", None, r.observe()) for r in pol
+        }
 
     # agents
 

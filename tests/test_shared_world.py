@@ -1,8 +1,4 @@
-"""Part 2 gate: one world, many robots. A control step is one control step, a teleport lands, one render shows both.
-
-``Robot`` is part 3; here a world member is the least the world asks for (an id, a Description, a
-detach hook), and ``act`` is what ``Robot.act`` does on a simulated body: write targets, step once.
-"""
+"""The thesis: two robots, one world. A control step is one control step, a teleport lands, one render shows both."""
 
 import json
 import threading
@@ -11,66 +7,45 @@ import time
 import numpy as np
 import pytest
 
-from strands_robots import Description, Simulation
+from strands_robots import Robot, Simulation
 
 ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 
 
-class Member:
-    def __init__(self, name: str, sim: Simulation | None = None, **at: object) -> None:
-        self.description = Description.load(name)
-        self.sim: Simulation | None = sim or Simulation.default()
-        self.id = self.sim._unique_id(self.description.name)
-        self.sim.add(self, **at)  # type: ignore[arg-type]
-
-    def _detached(self) -> None:
-        self.sim = None
-
-    def joint(self, key: str) -> float:
-        assert self.sim is not None
-        return self.sim.backend.joint_state(self.id)[key]
-
-    def act(self, **targets: float) -> None:
-        assert self.sim is not None
-        q = self.sim.backend.joint_state(self.id).as_dict() | targets
-        self.sim.backend.set_targets(self.id, np.array([q[k] for k in self.description.action_keys]))
-        self.sim.control_step()
-
-
 @pytest.fixture
 def pair():
-    return Member("so101"), Member("g1", position=[1, 0, 0])
+    return Robot("so101"), Robot("g1", position=[1, 0, 0])
 
 
 def test_two_robots_share_the_default_world(pair):
     arm, g1 = pair
     assert arm.sim is g1.sim is Simulation.default()
     assert list(arm.sim.robots) == ["so101", "unitree_g1"]
-    assert Member("so101", position=[0, -0.5, 0]).id == "so101_2"
+    assert Robot("so101", position=[0, -0.5, 0]).id == "so101_2"
     assert json.loads(json.dumps(arm.sim.describe()))["robots"]["unitree_g1"]["position"] == [1, 0, 0]
 
 
 def test_each_robot_reads_its_own_joints_and_pose(pair):
     arm, g1 = pair
-    a, g = arm.sim.backend.joint_state(arm.id), g1.sim.backend.joint_state(g1.id)
-    assert a.names == ARM_JOINTS
-    assert len(g.names) == 29 and g.names[0] == "left_hip_pitch_joint"
-    assert np.allclose(arm.sim.backend.body_pose(g1.id).position, [1, 0, 0.79], atol=1e-6)  # "stand", spawn frame
-    assert np.allclose(arm.sim.backend.body_pose(arm.id).position, [0, 0, 0], atol=1e-9)
+    a, g = arm.observe(), g1.observe()
+    assert a.joints.names == ARM_JOINTS
+    assert len(g.joints.names) == 29 and g.joints.names[0] == "left_hip_pitch_joint"
+    assert np.allclose(g.pose.position, [1, 0, 0.79], atol=1e-6)  # the "stand" keyframe, moved to the spawn frame
+    assert np.allclose(a.pose.position, [0, 0, 0], atol=1e-9)
 
 
 def test_act_advances_one_control_step_and_leaves_the_other_robot(pair):
     arm, g1 = pair
     sim = arm.sim
-    before_g1 = sim.backend.joint_state(g1.id).positions.copy()
+    before_g1 = g1.observe().joints.positions.copy()
     t0 = sim.time
-    arm.act(shoulder_pan=0.3)
+    arm.act({"shoulder_pan": 0.3})
     assert sim.physics.control_dt == pytest.approx(0.02)
     assert sim.time == pytest.approx(t0 + sim.physics.control_dt)
     for _ in range(49):
-        arm.act(shoulder_pan=0.3)
-    assert arm.joint("shoulder_pan") == pytest.approx(0.3, abs=0.02)
-    assert np.abs(sim.backend.joint_state(g1.id).positions - before_g1).max() < np.radians(1.0)
+        arm.act({"shoulder_pan": 0.3})
+    assert arm.observe()["shoulder_pan"] == pytest.approx(0.3, abs=0.02)
+    assert np.abs(g1.observe().joints.positions - before_g1).max() < np.radians(1.0)  # g1 holds its keyframe
 
 
 def test_manual_time_hands_stepping_to_the_caller(pair):
@@ -78,33 +53,33 @@ def test_manual_time_hands_stepping_to_the_caller(pair):
     sim = arm.sim
     t0 = sim.time
     with sim.manual_time():
-        arm.act(shoulder_pan=0.2)
+        arm.act({"shoulder_pan": 0.2})
         assert sim.time == t0 and sim.time_is_manual
         sim.step(10)
     assert sim.time == pytest.approx(t0 + 10 * sim.physics.timestep)
-    arm.act(shoulder_pan=0.2)
+    arm.act({"shoulder_pan": 0.2})
     assert sim.time == pytest.approx(t0 + 10 * sim.physics.timestep + sim.physics.control_dt)
 
 
 def test_set_pose_lands_for_a_floating_and_a_fixed_base(pair):
     arm, g1 = pair
     sim = arm.sim
-    sim.set_pose(g1, position=[2, 0, 0.8])
-    assert np.allclose(sim.backend.body_pose(g1.id).position, [2, 0, 0.8], atol=1e-9)
-    assert np.allclose(sim.backend.body_pose(g1.id).linear_velocity, 0.0)
+    g1.set_pose(position=[2, 0, 0.8])
+    assert np.allclose(g1.pose.position, [2, 0, 0.8], atol=1e-9)
+    assert np.allclose(g1.pose.linear_velocity, 0.0)
     for _ in range(5):
-        arm.act(shoulder_pan=0.3)
-    moved, t = arm.joint("shoulder_pan"), sim.time
-    sim.set_pose(arm, position=[0, 0.5, 0])  # fixed base: spec edit + recompile, joint state and time survive
-    assert np.allclose(sim.backend.body_pose(arm.id).position, [0, 0.5, 0], atol=1e-9)
-    assert arm.joint("shoulder_pan") == pytest.approx(moved, abs=1e-9) and sim.time == t
+        arm.act({"shoulder_pan": 0.3})
+    moved, t = arm.observe()["shoulder_pan"], sim.time
+    arm.set_pose(position=[0, 0.5, 0])  # fixed base: spec edit + recompile, joint state and time survive
+    assert np.allclose(arm.pose.position, [0, 0.5, 0], atol=1e-9)
+    assert arm.observe()["shoulder_pan"] == pytest.approx(moved, abs=1e-9) and sim.time == t
     with pytest.raises(KeyError, match="ghost"):
         sim.set_pose("ghost", position=[0, 0, 0])
 
 
 def test_a_fixed_teleport_keeps_the_randomized_physics():
     with Simulation() as sim:
-        arm = Member("so101", sim=sim)
+        arm = Robot("so101", sim=sim)
         base_friction, base_mass = sim.backend.model.geom_friction[:, 0].copy(), sim.backend.model.body_mass.copy()
         sim.randomize(friction=1.5, mass=2.0)
         sim.set_pose(arm, position=[0, 0.5, 0])
@@ -121,16 +96,16 @@ def test_a_fixed_teleport_keeps_the_randomized_physics():
 )
 def test_a_fixed_base_teleport_lands_in_world_coordinates_and_survives_a_reload(spawn, target):
     with Simulation() as sim:
-        arm = Member("so101", sim=sim, **spawn)
+        arm = Robot("so101", sim=sim, **spawn)
         sim.set_pose(arm, position=target)
-        assert np.allclose(sim.backend.body_pose(arm.id).position, target, atol=1e-6)
+        assert np.allclose(arm.pose.position, target, atol=1e-6)
         sim.add_object("box", shape="box", position=[0.3, 0, 0.1])  # an unrelated rebuild does not move it
-        assert np.allclose(sim.backend.body_pose(arm.id).position, target, atol=1e-6)
+        assert np.allclose(arm.pose.position, target, atol=1e-6)
 
 
 def test_a_locked_reader_never_sees_a_half_added_or_half_removed_robot():
     with Simulation() as sim:
-        Member("so101", sim=sim)
+        Robot("so101", sim=sim)
         stop, errors = threading.Event(), []
 
         def reader() -> None:
@@ -145,7 +120,7 @@ def test_a_locked_reader_never_sees_a_half_added_or_half_removed_robot():
         for t in threads:
             t.start()
         for _ in range(15):
-            sim.remove(Member("so101", sim=sim))
+            sim.remove(Robot("so101", sim=sim))
         stop.set()
         for t in threads:
             t.join(2)
@@ -181,14 +156,16 @@ def test_state_survives_add_object_and_remove(pair):
     arm, g1 = pair
     sim = arm.sim
     for _ in range(30):
-        arm.act(elbow_flex=0.4)
-    before = arm.joint("elbow_flex")
+        arm.act({"elbow_flex": 0.4})
+    before = arm.observe()["elbow_flex"]
     box = sim.add_object("box", shape="box", position=[0.3, 0, 0.1], size=[0.03, 0.03, 0.03])
-    assert arm.joint("elbow_flex") == pytest.approx(before, abs=1e-6)
+    assert arm.observe()["elbow_flex"] == pytest.approx(before, abs=1e-6)
     assert np.allclose(box.pose.position, [0.3, 0, 0.1])
     sim.remove(g1)
     assert list(sim.robots) == ["so101"] and g1.sim is None
-    assert arm.joint("elbow_flex") == pytest.approx(before, abs=1e-6)
+    with pytest.raises(RuntimeError, match="removed"):
+        g1.observe()
+    assert arm.observe()["elbow_flex"] == pytest.approx(before, abs=1e-6)
 
 
 def test_world_time_survives_every_scene_change(pair):
@@ -213,7 +190,7 @@ def test_revision_bumps_on_every_scene_change_and_not_on_motion(pair):
     sim.randomize(friction=1.2)
     sim.remove(g1)
     assert sim.revision == r0 + 5
-    arm.act(shoulder_pan=0.1)
+    arm.act({"shoulder_pan": 0.1})
     sim.step(5)
     assert sim.revision == r0 + 5
 
@@ -228,7 +205,7 @@ def test_the_world_lock_serialises_steps_and_reads_across_a_recompile(pair):
         try:
             while not stop.is_set():
                 with sim.lock:
-                    sim.backend.joint_state(arm.id)
+                    arm.observe(images=False)
                     sim.describe()
         except BaseException as e:  # noqa: BLE001
             errors.append(e)
@@ -236,8 +213,8 @@ def test_the_world_lock_serialises_steps_and_reads_across_a_recompile(pair):
     t = threading.Thread(target=reader, daemon=True)
     t.start()
     for _ in range(100):
-        arm.act(shoulder_pan=0.3)
-    Member("so101", position=[0, 0.5, 0])  # a recompile under the reader
+        arm.act({"shoulder_pan": 0.3})
+    Robot("so101", position=[0, 0.5, 0])  # a recompile under the reader
     stop.set()
     t.join(2)
     assert not errors
@@ -245,7 +222,7 @@ def test_the_world_lock_serialises_steps_and_reads_across_a_recompile(pair):
 
 def test_an_explicit_world_is_separate_and_closes():
     with Simulation(timestep=0.001, substeps=5) as sim:
-        arm = Member("so101", sim=sim)
+        arm = Robot("so101", sim=sim)
         assert arm.sim is sim and not sim.is_default and sim.physics.control_dt == pytest.approx(0.005)
     assert arm.sim is None and "so101" not in Simulation.default().robots
 
@@ -284,10 +261,10 @@ def test_contacts_name_both_bodies_and_reset_stands_a_teleported_g1_on_its_keyfr
     assert any(c.body_b.startswith("unitree_g1/") and c.force > 0 for c in feet), sim.contacts()[:3]
     sim.set_pose(g1, position=[2, 0, 0.8])
     sim.add_object("box", shape="box", position=[0.3, 0, 0.1])  # a reload keeps the teleported base where it is
-    assert np.allclose(sim.backend.body_pose(g1.id).position, [2, 0, 0.8], atol=1e-9)
+    assert np.allclose(g1.pose.position, [2, 0, 0.8], atol=1e-9)
     sim.reset()
     assert sim.time == 0.0
-    assert np.allclose(sim.backend.body_pose(g1.id).position, [1, 0, 0.79], atol=1e-6)
+    assert np.allclose(g1.pose.position, [1, 0, 0.79], atol=1e-6)
 
 
 @pytest.mark.parametrize("name", ["g1", "panda"])  # a directional and a spot scene light
@@ -295,21 +272,51 @@ def test_the_world_owns_the_lighting(name):
     look = {"position": [1.9, -2.1, 1.3], "target": [0.45, 0, 0.45], "size": (160, 100)}
     with Simulation() as empty, Simulation() as sim:
         empty.camera("c", **look)
-        Member(name, sim=sim)
+        Robot(name, sim=sim)
         sim.camera("c", **look)
         assert sim.backend.model.nlight == empty.backend.model.nlight
         assert sim.render("c")[-10:].mean() == pytest.approx(empty.render("c")[-10:].mean(), abs=5)  # the floor
 
 
+def test_duplicate_names_get_unique_ids_and_their_own_joints(pair):
+    arm, _ = pair
+    a2 = Robot("so101", position=[0, -0.5, 0])  # a duplicate AT the origin would collide with the first arm
+    assert a2.id == "so101_2" and Robot("so101", position=[0, 0.5, 0]).id == "so101_3"
+    for _ in range(10):
+        a2.act({"gripper": 0.5})
+    assert a2.observe()["gripper"] > 0.05
+    assert arm.observe()["gripper"] == pytest.approx(0.0, abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    ("action", "error", "match"),
+    [({"elbow": 1.0}, KeyError, "unknown joint"), (np.zeros(5), ValueError, "6 action keys")],
+)
+def test_an_action_the_body_cannot_take_is_refused(pair, action, error, match):
+    with pytest.raises(error, match=match):
+        pair[0].act(action)
+
+
+def test_lockstep_run_drives_both_robots_one_control_step_at_a_time(pair):
+    arm, g1 = pair
+    t0 = arm.sim.time
+    res = arm.sim.run({arm: lambda o: {"shoulder_pan": 0.3}, g1: lambda o: o.joints.positions}, steps=20)
+    assert set(res) == {"so101", "unitree_g1"} and res["so101"].steps == 20
+    assert arm.sim.time == pytest.approx(t0 + 20 * arm.sim.physics.control_dt)
+    assert res["so101"].final["shoulder_pan"] == pytest.approx(0.3, abs=0.03)
+    with Simulation() as other, pytest.raises(ValueError, match="not in this world"):
+        other.run({arm: lambda o: o.joints.positions}, steps=1)
+
+
 def test_an_actuator_that_drives_a_tendon_reads_its_transmission():
     with Simulation() as sim:
-        panda = Member("panda", sim=sim)
-        state = sim.backend.joint_state(panda.id)
-        assert state.names[-1] == "actuator8" and len(state.names) == 8  # the gripper drives a tendon, not a joint
-        opened = state["actuator8"]  # the home keyframe holds the fingers open: 255, 0.04 m of tendon
+        panda = Robot("panda", sim=sim)
+        joints = panda.observe().joints
+        assert joints.names[-1] == "actuator8" and len(joints.names) == 8  # the gripper drives a tendon, not a joint
+        opened = joints["actuator8"]  # the home keyframe holds the fingers open: 255, 0.04 m of tendon
         for _ in range(40):
-            panda.act(actuator8=0.0)  # close
-        assert sim.backend.joint_state(panda.id)["actuator8"] < opened - 1.0
+            panda.act({"actuator8": 0.0})  # close
+        assert panda.observe()["actuator8"] < opened - 1.0
 
 
 TENDON_KEYS = [("panda", "actuator8"), ("robotiq_2f85", "fingers_actuator"), ("stretch3", "arm")]
@@ -320,11 +327,11 @@ def test_a_tendon_actuator_key_reads_the_control_that_holds_it(name, key):
     """A key naming a tendon actuator has no joint: it reads the control at which its servo pushes nothing."""
     sim = Simulation()
     try:
-        body = Member(name, sim)
-        body.act()
+        body = Robot(name, sim=sim)
+        body.act(body.observe(images=False).joints.as_dict())
         m, d = sim.backend.model, sim.backend.data
         a = m.actuator(f"{body.id}/{key}").id
-        push = m.actuator_gainprm[a, 0] * body.joint(key) + m.actuator_biasprm[a, 0]
+        push = m.actuator_gainprm[a, 0] * body.observe(images=False)[key] + m.actuator_biasprm[a, 0]
         assert push + m.actuator_biasprm[a, 1] * d.actuator_length[a] == pytest.approx(0.0, abs=1e-9)
     finally:
         sim.close()
@@ -333,10 +340,12 @@ def test_a_tendon_actuator_key_reads_the_control_that_holds_it(name, key):
 def test_holding_what_the_panda_reads_keeps_its_hand_open():
     sim = Simulation()
     try:
-        panda = Member("panda", sim)
-        assert panda.joint("actuator8") == pytest.approx(255.0, abs=0.01)  # home: 0.04 m of tendon, fully open
+        panda = Robot("panda", sim=sim)
+        assert panda.observe(images=False)["actuator8"] == pytest.approx(
+            255.0, abs=0.01
+        )  # home: 0.04 m of tendon, fully open
         for _ in range(50):
-            panda.act()
+            panda.act(panda.observe(images=False).joints.as_dict())
         a = sim.backend.model.actuator(f"{panda.id}/actuator8").id
         assert sim.backend.data.actuator_length[a] == pytest.approx(0.04, abs=1e-3)
     finally:
