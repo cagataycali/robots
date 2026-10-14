@@ -1,9 +1,9 @@
-"""A Robot is a description plus a Body: observe() / act() / run().
+"""A Robot is a description plus a Body: observe() / act() / calibrate() / run().
 
 The Body is the only thing that differs between a simulated robot (``SimBody``,
-a handle into a ``Simulation``) and a real one (a driver on a bus, which lands
-with the drivers). Every loop - policy runs, recording, tools, transports - is
-written once against ``Robot`` and never knows which Body it has.
+a handle into a ``Simulation``) and a real one (a ``Driver`` on a bus). Every
+loop - policy runs, recording, tools, transports - is written once against
+``Robot`` and never knows which Body it has.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 import numpy as np
 
 from .description import Description
-from .types import Action, JointState, Observation, Pose, RunResult
+from .types import Action, Calibration, JointState, Observation, Pose, RunResult
 
 if TYPE_CHECKING:
     from .policy import PolicyLike
@@ -124,7 +124,7 @@ class Task:
 
 
 class Robot:
-    """A body in a world (``sim=``, or ``Simulation.default()``): observe, act, run."""
+    """A body in a world (``sim=``, or ``Simulation.default()``) or on a bus (``port=``/``driver=``): same verbs."""
 
     def __init__(
         self,
@@ -135,20 +135,49 @@ class Robot:
         orientation: Any = None,
         keyframe: str | None = None,
         id: str | None = None,
+        port: str | None = None,
+        driver: str | Any | None = None,
+        cameras: Mapping[str, int | str] | None = None,
+        twin: bool = True,
+        confirm: Callable[[np.ndarray], bool] | None = None,
     ) -> None:
         from .simulation import Simulation
 
         self.description: Description = Description.load(name)
         self.name = self.description.name
-        self.is_real = False
+        self.is_real = port is not None or driver is not None
+        if confirm is not None and not self.is_real:
+            raise TypeError("confirm= is the operator gate of a hardware Robot; a simulated body is never gated")
+        self.confirm = confirm
+        self.sim: Simulation | None = None
         self.twin: Robot | None = None  # on a hardware Robot: the simulated body that mirrors it
         self.twin_of: Robot | None = None  # on that twin: the hardware Robot it mirrors
         self._task: Task | None = None
+        self._body: Body | None = None
+
+        if self.is_real:
+            if sim is not None:
+                raise TypeError(
+                    "a hardware Robot takes port=/driver=, not sim= (its twin lives in Simulation.default())"
+                )
+            from .driver import make_driver
+
+            self.id = id or self.name
+            self._body = make_driver(self.description, port=port, driver=driver, cameras=cameras)
+            if twin:
+                self.twin = Robot(
+                    name, position=position, orientation=orientation, keyframe=keyframe, id=f"{self.id}_twin"
+                )
+                self.twin.twin_of = self
+            return
+
+        if cameras is not None:
+            raise TypeError("cameras= is a hardware argument; in a world use sim.camera(name, attach=robot)")
         world = sim if sim is not None else Simulation.default()
         self.id = world._unique_id(id or self.name)
-        self.sim: Simulation | None = world
+        self.sim = world
         world.add(self, position=position, orientation=orientation, keyframe=keyframe)
-        self._body: Body | None = SimBody(world, self.id, self.description.action_keys)
+        self._body = SimBody(world, self.id, self.description.action_keys)
 
     # identity
 
@@ -178,13 +207,13 @@ class Robot:
     def set_pose(self, position: Any = None, orientation: Any = None) -> None:
         """Teleport (sim only). A hardware robot raises; its twin can still be teleported."""
         if self.sim is None:
-            raise NotImplementedError(f"{self.id} is not in a world: only a simulated body can be teleported")
+            raise NotImplementedError(f"{self.id} is hardware: a real robot cannot be teleported (try .twin.set_pose)")
         self.sim.set_pose(self, position=position, orientation=orientation)
 
     def set_gains(self, kp: Any, kd: Any) -> None:
         """PD gains of this body's actuators, ``action_keys`` order (sim only; a servo bus keeps its own)."""
         if self.sim is None:
-            raise NotImplementedError(f"{self.id} is not in a world: its servo gains live in the firmware")
+            raise NotImplementedError(f"{self.id} is hardware: its servo gains live in the firmware")
         kp, kd = np.asarray(kp, dtype=float).reshape(-1), np.asarray(kd, dtype=float).reshape(-1)
         n = len(self.description.action_keys)
         if kp.shape != (n,) or kd.shape != (n,):
@@ -213,13 +242,21 @@ class Robot:
     def gate(self, action: Action, *, confirmed: bool = False) -> np.ndarray:
         """The operator gate for commands that did not come from the developer's own code (agent tool, dashboard).
 
-        A simulated body passes. A real body passes only when an operator already said yes (``confirmed=True``);
-        otherwise it refuses with ``PermissionError``: a real body never moves because of a default.
+        A simulated body passes. A real body passes when an operator already said yes (``confirmed=True``) or when
+        ``Robot(..., confirm=callable)`` answers ``True`` for these targets; otherwise it refuses with
+        ``PermissionError``: a real body never moves because of a default.
         """
         targets = self.coerce(action)
         if not self.is_real or confirmed:
             return targets
-        raise PermissionError(f"{self.id} is a real robot and this command came through an agent or dashboard")
+        if self.confirm is None:
+            raise PermissionError(
+                f"{self.id} is a real robot and this command came through an agent or dashboard: pass "
+                f"confirm=<callable(action) -> bool> to Robot(...) to allow it"
+            )
+        if not self.confirm(targets):
+            raise PermissionError(f"{self.id}: the operator gate refused this action")
+        return targets
 
     def confirm_act(self, action: Action, *, steps: int | None = None, confirmed: bool = False) -> Observation:
         """``act`` through the operator gate: what an agent tool and the dashboard call."""
@@ -239,6 +276,14 @@ class Robot:
             with self.twin.sim.lock:
                 self.twin.body.write(targets)
         return self.observe(images=False)
+
+    def calibrate(self, *, interactive: bool = True) -> Calibration:
+        """Read (or, at the arm, record) the bus calibration: LeRobot's calibration JSON, unchanged."""
+        from .driver import Driver
+
+        if not isinstance(self.body, Driver):
+            raise RuntimeError("calibrate() is for hardware; a simulated body needs no calibration")
+        return self.body.calibrate(interactive=interactive)
 
     def coerce(self, action: Action) -> np.ndarray:
         """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits."""
