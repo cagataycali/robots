@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 import numpy as np
 import pytest
+import test_drivers
 from test_drivers import make_driver
 
 from strands_robots import Robot
@@ -68,3 +72,48 @@ def test_confirmed_out_of_band_and_sim_bodies_are_ungated():
     Robot("so101").confirm_act({"shoulder_pan": 0.3})  # simulated: no gate
     with pytest.raises(TypeError, match="confirm"):
         Robot("so101", confirm=lambda a: True)  # a gate on a simulated body is a mistake worth naming
+
+
+class OneWire(test_drivers.FakeSerial):
+    """A half-duplex wire that notices a second request sent before the first reply was read."""
+
+    def __init__(self):
+        super().__init__()
+        self.waiting = False
+        self.collisions = 0
+
+    def write(self, data):
+        if self.waiting:
+            self.collisions += 1
+        super().write(data)
+        self.waiting = data[4] != ft.SYNC_WRITE
+        time.sleep(0.0005)  # the reply is on the wire for a moment
+
+    def read(self, n):
+        self.waiting = False
+        return super().read(n)
+
+
+def test_two_threads_on_one_hardware_robot_take_turns_on_the_bus():
+    d, s = make_driver(serial=OneWire())
+    real = Robot("so101", driver=d, confirm=lambda action: True, twin=False)
+    hold = real.observe().joints.positions
+    errors: list[BaseException] = []
+
+    def hammer(verb):
+        try:
+            for _ in range(40):
+                verb()
+        except Exception as exc:  # the test reports what a thread raised
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=hammer, args=(lambda: real.observe(images=False),)),
+        threading.Thread(target=hammer, args=(lambda: real.confirm_act({"shoulder_pan": hold[0]}),)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == [] and s.collisions == 0
+    real.close()

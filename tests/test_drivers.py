@@ -21,8 +21,7 @@ class FakeSerial:
 
     def __init__(self, ids=(1, 2, 3, 4, 5, 6)):
         self.regs = {i: bytearray(0x50) for i in ids}
-        for r in self.regs.values():
-            r[ft.REG_PRESENT_POSITION : ft.REG_PRESENT_POSITION + 2] = ft.word(2048)
+        self.actual = dict.fromkeys(ids, 2048)  # the encoder; the firmware reports Present = Actual - Homing_Offset
         self.rx = bytearray()
         self.frames = []
         self.closed = False
@@ -41,8 +40,14 @@ class FakeSerial:
         payload = bytes([mid, len(params) + 2, 0]) + params
         return ft.HEADER + payload + bytes([ft.checksum(payload)])
 
+    def _homing(self, i):
+        return ft.decode_sm(bytes(self.regs[i][ft.REG_HOMING_OFFSET : ft.REG_HOMING_OFFSET + 2]), 11)
+
     def write(self, data):
         self.frames.append(bytes(data))
+        for i, r in self.regs.items():
+            present = (self.actual[i] - self._homing(i)) % 4096
+            r[ft.REG_PRESENT_POSITION : ft.REG_PRESENT_POSITION + 2] = ft.word(present)
         mid, length, instr = data[2], data[3], data[4]
         params = data[5 : 5 + length - 2]
         assert data[5 + length - 2] == ft.checksum(data[2 : 5 + length - 2]), "host sent a bad checksum"
@@ -67,7 +72,7 @@ class FakeSerial:
                 i, chunk = body[k], body[k + 1 : k + 1 + per]
                 self.regs[i][reg : reg + per] = chunk
                 if reg == ft.REG_GOAL_POSITION:  # a perfect servo: it is where it was told to be
-                    self.regs[i][ft.REG_PRESENT_POSITION : ft.REG_PRESENT_POSITION + 2] = chunk
+                    self.actual[i] = (int.from_bytes(chunk, "little") + self._homing(i)) % 4096
 
 
 CAL = {
@@ -138,11 +143,14 @@ def test_calibrate_writes_lerobot_json(tmp_path, monkeypatch):
     d, s = make_driver(cal=None)
     with pytest.raises(RuntimeError, match="interactive=True"):
         d.calibrate(interactive=False)  # no file yet: recording one needs a human
-    for i in s.regs:  # the arm sits at 2100 counts at "middle"
-        s.regs[i][ft.REG_PRESENT_POSITION : ft.REG_PRESENT_POSITION + 2] = ft.word(2100)
+    for i in s.regs:  # the encoder reads 2100 at "middle"; the EEPROM still carries an old calibration's offset
+        s.actual[i] = 2100
+        s.regs[i][ft.REG_HOMING_OFFSET : ft.REG_HOMING_OFFSET + 2] = ft.encode_sm(-300, 11)
     cal = d.calibrate(interactive=True, prompt=lambda msg: None, sweep_seconds=0.05)
-    assert cal.joints["shoulder_pan"].homing_offset == 2048 - 2100
-    assert ft.decode_sm(bytes(s.regs[1][ft.REG_HOMING_OFFSET : ft.REG_HOMING_OFFSET + 2]), 11) == -52
+    # LeRobot's Feetech convention: Homing_Offset = middle - 2047, so the firmware then reports the middle at 2047
+    assert cal.joints["shoulder_pan"].homing_offset == 2100 - 2047 == s._homing(1)
+    assert ft.decode_sm(d.bus.read(1, ft.REG_PRESENT_POSITION, 2), 15) == 2047
+    assert (cal.joints["shoulder_pan"].range_min, cal.joints["shoulder_pan"].range_max) == (2047, 2047)
     saved = json.loads((tmp_path / "robots" / "so101_follower" / "so101_follower.json").read_text())
     assert saved["gripper"]["id"] == 6
     assert set(saved["gripper"]) == {"id", "drive_mode", "homing_offset", "range_min", "range_max"}

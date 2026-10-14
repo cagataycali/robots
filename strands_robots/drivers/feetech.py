@@ -25,7 +25,6 @@ from ..types import Calibration, JointCalibration, JointState, Pose
 HEADER = b"\xff\xff"
 BROADCAST = 0xFE
 RESOLUTION = 4096
-HALF_TURN = RESOLUTION // 2
 
 PING, READ, WRITE, SYNC_READ, SYNC_WRITE = 0x01, 0x02, 0x03, 0x82, 0x83
 REG_HOMING_OFFSET = 0x1F  # EEPROM, 2 bytes, sign bit 11
@@ -283,13 +282,14 @@ class FeetechDriver:
                 )
             return self.calibration
         self.torque(False)
+        for i in self.ids:  # the firmware reports Present = Actual - Homing_Offset: read the middle unshifted
+            self._write_homing(i, 0)
         prompt(f"Move {self.description.name} to the MIDDLE of every joint's range, then press Enter")
         mid = {i: decode_sm(self.bus.read(i, REG_PRESENT_POSITION, 2), 15) for i in self.ids}
-        homing = {i: HALF_TURN - m for i, m in mid.items()}
+        limit = (1 << 11) - 1  # sign-magnitude, bit 11: LeRobot clamps pos - 2047 the same way
+        homing = {i: max(-limit, min(limit, m - (RESOLUTION - 1) // 2)) for i, m in mid.items()}
         for i, h in homing.items():
-            self.bus.write(i, REG_LOCK, b"\x00")
-            self.bus.write(i, REG_HOMING_OFFSET, encode_sm(h, 11))
-            self.bus.write(i, REG_LOCK, b"\x01")
+            self._write_homing(i, h)
         prompt(f"Now move EVERY joint through its full range for {sweep_seconds:.0f} s (recording); Enter to start")
         lo = {i: RESOLUTION for i in self.ids}
         hi = {i: 0 for i in self.ids}
@@ -310,6 +310,11 @@ class FeetechDriver:
             path.write_text(json.dumps(cal.to_json(), indent=4))
             self.calibration_source = str(path)
         return cal
+
+    def _write_homing(self, motor_id: int, offset: int) -> None:
+        self.bus.write(motor_id, REG_LOCK, b"\x00")
+        self.bus.write(motor_id, REG_HOMING_OFFSET, encode_sm(offset, 11))
+        self.bus.write(motor_id, REG_LOCK, b"\x01")
 
     def close(self) -> None:
         if self._torque_on:

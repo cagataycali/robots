@@ -70,17 +70,6 @@ class SimBody:
         pass
 
 
-class _NoLock:
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, *exc: Any) -> None:
-        return None
-
-
-_NOLOCK = _NoLock()
-
-
 class Task:
     """A background ``Robot.run``: ``stop()``, ``status``, ``result``."""
 
@@ -154,6 +143,7 @@ class Robot:
         self.twin_of: Robot | None = None  # on that twin: the hardware Robot it mirrors
         self._task: Task | None = None
         self._body: Body | None = None
+        self._bus_lock = threading.RLock()  # a hardware body: one half-duplex bus shared by every thread
 
         if self.is_real:
             if sim is not None:
@@ -186,6 +176,11 @@ class Robot:
         if self._body is None:
             raise RuntimeError(f"robot {self.id!r} has been removed from its world")
         return self._body
+
+    @property
+    def _lock(self) -> Any:
+        """The world's lock in a world; on hardware, this body's own lock around its bus."""
+        return self.sim.lock if self.sim is not None else self._bus_lock
 
     def _detached(self) -> None:
         self._body = None
@@ -225,7 +220,7 @@ class Robot:
 
     def observe(self, *, images: bool = True) -> Observation:
         body = self.body
-        with self.sim.lock if self.sim is not None else _NOLOCK:
+        with self._lock:
             js = body.read()
             obs = Observation(
                 t=self.sim.time if self.sim is not None else _time.time(),
@@ -265,7 +260,7 @@ class Robot:
     def act(self, action: Action, *, steps: int | None = None) -> Observation:
         """Write targets for THIS body and advance its world one control step (unless manual time)."""
         targets = self.coerce(action)
-        with self.sim.lock if self.sim is not None else _NOLOCK:
+        with self._lock:
             self.body.write(targets)
             if self.sim is not None:
                 if steps is None:
@@ -294,7 +289,8 @@ class Robot:
             unknown = [k for k in action if k not in keys]
             if unknown:
                 raise KeyError(f"unknown joint(s) {unknown} for {self.id}; action_keys are {list(keys)}")
-            targets = np.array(self.body.read().positions, dtype=float)
+            with self._lock:
+                targets = np.array(self.body.read().positions, dtype=float)
             for k, v in action.items():
                 targets[keys.index(k)] = float(v)
         else:
