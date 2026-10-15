@@ -31,13 +31,15 @@ newton = ["mujoco-warp>=3.11", "warp-lang>=1.10"]
 mesh = ["eclipse-zenoh>=1.9.0,<1.10.0", "cryptography>=42"]
 # The mesh over AWS IoT Core (Direct Messaging for rpcs, MQTT for state).
 iot = ["awsiotsdk>=1.31", "boto3>=1.40"]
+# robot.tool / sim.tool: the strands agent tool generated from the manifest (pillow encodes the images it returns).
+tools = ["strands-agents>=1.0", "pillow>=10"]
 dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10", "import-linter>=2.1", "onnx>=1.16"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
-features = ["dev", "mujoco", "onnx", "mesh"]
+features = ["dev", "mujoco", "onnx", "mesh", "tools"]
 
 [tool.hatch.envs.default.scripts]
 lint = [
@@ -111,10 +113,12 @@ forbidden_modules = ["strands_robots.robot", "strands_robots.policy"]
 ignore_imports = [
     # Simulation.run delegates to the one run loop by a lazy import inside the method, and the two
     # TYPE_CHECKING-only names it annotates with; none is a runtime module-level edge.
-    "strands_robots.simulation.simulation -> strands_robots.robot.run",
+    "strands_robots.simulation.simulation -> strands_robots.robot.run.lockstep",
     "strands_robots.simulation.simulation -> strands_robots.robot.run.result",
     "strands_robots.simulation.simulation -> strands_robots.robot",
     "strands_robots.simulation.simulation -> strands_robots.policy",
+    # Simulation.tool builds the agent tool by a lazy import inside the property.
+    "strands_robots.simulation.simulation -> strands_robots.tools.agent",
 ]
 
 [[tool.importlinter.contracts]]
