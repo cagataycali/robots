@@ -65,14 +65,16 @@ def test_a_second_run_in_a_new_process_resumes_the_same_directory(tmp_path):
     print(f"[measured] resume: episodes {before['episodes']} -> {after['episodes']}, frames 9 -> {len(after['tasks'])}")
 
 
-def test_resume_refuses_a_different_fps_or_robot(tmp_path):
+def test_resume_refuses_a_different_fps_or_robot_before_the_robot_moves(tmp_path):
     target = tmp_path / "ds"
     arm = _arm()
     arm.run(SequencePolicy([{"shoulder_pan": 0.1}]), hz=20, steps=3, record=target)
-    with pytest.raises(ValueError, match="fps"):
-        arm.run(SequencePolicy([{"shoulder_pan": 0.1}]), hz=10, steps=3, record=target)
+    before = arm.observe(images=False)["shoulder_pan"]
+    with pytest.raises(ValueError, match="20 fps; this run records at 10"):
+        arm.run(SequencePolicy([{"shoulder_pan": 0.6}]), hz=10, steps=3, record=target)
+    assert arm.observe(images=False)["shoulder_pan"] == before
     g1 = Robot("g1", sim=Simulation("mujoco"), keyframe="stand")
-    with pytest.raises(ValueError, match="features"):
+    with pytest.raises(ValueError, match="robot"):
         g1.run(lambda o: o.joints.positions, hz=20, steps=3, record=target)
     g1.sim.close()
 
