@@ -28,6 +28,7 @@ class ZenohPolicy:
     """
 
     realtime = True  # LeRobot ages observations and paces chunks on time.monotonic()
+    requires_position_hold = True  # LeRobot admits only a robot that holds between motor ticks
 
     def __init__(self, *, endpoint: str, deployment: str, **settings: Any) -> None:
         self.endpoint, self.deployment, self.settings = endpoint, deployment, settings

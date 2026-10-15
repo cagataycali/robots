@@ -18,6 +18,8 @@ from ..types import Action, JointState, Observation, Pose
 from . import gate as _gate
 from . import twin as _twin
 from .body import Body, SimBody
+from .device import DeviceVerbs, Emitter, position_hold_of
+from .safety import Latch, Validator, guarded_write
 
 if TYPE_CHECKING:
     from ..policy import PolicyLike
@@ -27,7 +29,7 @@ if TYPE_CHECKING:
     from .run.task import Task
 
 
-class Robot:
+class Robot(DeviceVerbs):
     """A body in a world (``sim=``, or ``Simulation.default()``) or on a bus (``port=``/``driver=``): same verbs."""
 
     def __init__(
@@ -59,6 +61,9 @@ class Robot:
         self._task: Task | None = None
         self._body: Body | None = None
         self._bus_lock = threading.RLock()  # a hardware body: one half-duplex bus shared by every thread
+        self.estop_latch, self.events = Latch(), Emitter(self)
+        self.validators: list[Validator] = []  # extra checks on every agent/dashboard write, after the interlocks
+        self.interlocks: list[Validator] = []
 
         if self.is_real:
             if sim is not None:
@@ -69,6 +74,7 @@ class Robot:
 
             self.id = id or self.name
             self._body = make_driver(self.description, port=port, driver=driver, cameras=cameras)
+            self.supports_position_hold = position_hold_of(self.description, self._body)
             if twin:
                 self.twin = Robot(
                     name, position=position, orientation=orientation, keyframe=keyframe, id=f"{self.id}_twin"
@@ -83,6 +89,7 @@ class Robot:
         self.sim = world
         world.add(self, position=position, orientation=orientation, keyframe=keyframe)
         self._body = SimBody(world, self.id, self.description.action_keys)
+        self.supports_position_hold = True  # a simulated actuator keeps its last target
 
     @property
     def body(self) -> Body:
@@ -154,7 +161,7 @@ class Robot:
         """Write targets for THIS body and advance its world one control step (unless manual time)."""
         targets = self.coerce(action)
         with self._lock:
-            self.body.write(targets)
+            guarded_write(self, targets)
             if self.sim is not None:
                 if steps is None:
                     self.sim.control_step()
@@ -172,7 +179,7 @@ class Robot:
             raise RuntimeError("calibrate() is for hardware; a simulated body needs no calibration")
         return self.body.calibrate(interactive=interactive)
 
-    def coerce(self, action: Action) -> np.ndarray:
+    def coerce(self, action: Action, *, clip: bool = True) -> np.ndarray:
         """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits."""
         keys = self.description.action_keys
         if isinstance(action, JointState):
@@ -191,7 +198,7 @@ class Robot:
                 raise ValueError(
                     f"action has {targets.size} values; {self.id} has {len(keys)} action keys {list(keys)}"
                 )
-        return self._full_targets(targets)
+        return self._full_targets(targets) if clip else targets
 
     def _full_targets(self, targets: np.ndarray) -> np.ndarray:
         out = np.array(targets, dtype=float)
@@ -216,21 +223,8 @@ class Robot:
     def stop(self) -> RunResult | None:
         return self._task.stop() if self._task is not None else None
 
-    def describe(self) -> dict[str, Any]:
-        d = self.description.describe()
-        d.update(
-            {
-                "id": self.id,
-                "real": self.is_real,
-                "world": None if self.sim is None else self.sim.backend_name,
-                "twin": None if self.twin is None else self.twin.id,
-                "twin_of": None if self.twin_of is None else self.twin_of.id,
-                "task": None if self._task is None else self._task.status,
-            }
-        )
-        return d
-
     def close(self) -> None:
+        self.events.close()
         if self._task is not None:
             self._task.halt()
         if self.sim is not None:

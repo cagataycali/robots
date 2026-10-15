@@ -26,7 +26,11 @@ _DRIVERS: dict[str, str] = {
 
 @runtime_checkable
 class Driver(Protocol):
-    """Hardware Body: what a bus must offer. ``names`` are the description's action_keys, in order."""
+    """Hardware Body: what a bus must offer. ``names`` are the description's action_keys, in order.
+
+    A driver may also declare ``supports_position_hold`` (does the bus keep its last goal under torque);
+    registry ``hardware.position_hold`` wins over it, and absent both a body is taken not to hold.
+    """
 
     names: tuple[str, ...]
 
@@ -39,6 +43,10 @@ class Driver(Protocol):
     def images(self) -> Mapping[str, np.ndarray]: ...
 
     def extras(self) -> Mapping[str, Any]: ...
+
+    def hold(self) -> None: ...
+
+    def estop(self) -> None: ...
 
     def calibrate(self, *, interactive: bool = True) -> Calibration: ...
 

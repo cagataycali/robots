@@ -33,6 +33,10 @@ class Body(Protocol):
 
     def extras(self) -> Mapping[str, Any]: ...
 
+    def hold(self) -> None: ...
+
+    def estop(self) -> None: ...
+
     def close(self) -> None: ...
 
 
@@ -58,6 +62,14 @@ class SimBody:
 
     def extras(self) -> Mapping[str, Any]:
         return {}
+
+    def hold(self) -> None:
+        """Targets := the measured joint positions."""
+        self.sim.backend.set_targets(self.id, np.array(self.read().positions, dtype=float))
+
+    def estop(self) -> None:
+        """A simulated body's fastest stop is a hold; the latch lives on the Robot. Takes no lock."""
+        self.hold()
 
     def close(self) -> None:
         pass

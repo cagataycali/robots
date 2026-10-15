@@ -18,18 +18,25 @@ if TYPE_CHECKING:
 
 
 def gate(robot: Robot, action: Action, *, confirmed: bool = False) -> np.ndarray:
-    """Coerce ``action`` and, for a real body, require the operator's yes; otherwise raise ``PermissionError``."""
-    targets = robot.coerce(action)
+    """The whole safety chain for ``action``; the operator rule below is its last step."""
+    from .safety import SafetyChain
+
+    return SafetyChain().check(robot, action, confirmed=confirmed)
+
+
+def operator_gate(robot: Robot, targets: np.ndarray, *, confirmed: bool = False) -> None:
+    """A real body needs the operator's yes; raise ``RequestRefused`` (a ``PermissionError``) otherwise."""
+    from .safety import RequestRefused
+
     if not robot.is_real or confirmed:
-        return targets
+        return
     if robot.confirm is None:
-        raise PermissionError(
+        raise RequestRefused(
             f"{robot.id} is a real robot and this command came through an agent or dashboard: pass "
             f"confirm=<callable(action) -> bool> to Robot(...) to allow it"
         )
     if not robot.confirm(targets):
-        raise PermissionError(f"{robot.id}: the operator gate refused this action")
-    return targets
+        raise RequestRefused(f"{robot.id}: the operator gate refused this action")
 
 
 def confirm_act(robot: Robot, action: Action, *, steps: int | None = None, confirmed: bool = False) -> Observation:

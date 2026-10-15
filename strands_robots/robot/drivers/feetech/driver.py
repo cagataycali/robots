@@ -37,6 +37,9 @@ def lerobot_calibration_path(robot_type: str, robot_id: str) -> Path:
 class FeetechDriver:
     """A hardware Body for an SO-10x class arm. Joint values are radians, mapped through the calibration."""
 
+    supports_position_hold = True  # an STS servo keeps Goal_Position while torque is on
+    resolution = RESOLUTION  # encoder counts per turn
+
     def __init__(
         self,
         description: Description,
@@ -149,6 +152,15 @@ class FeetechDriver:
 
     def extras(self) -> Mapping[str, Any]:
         return {"torque": self._torque_on, "calibration": self.calibration_source or "none (raw full-turn counts)"}
+
+    def hold(self) -> None:
+        """Goal_Position := Present_Position, under torque (gravity-loaded joints keep their pose)."""
+        self.write(np.array(self.read().positions, dtype=float))
+
+    def estop(self) -> None:
+        """Fastest stop that does not drop the arm: a hold if torque is on; a limp arm is left limp."""
+        if self._torque_on:
+            self.hold()
 
     def torque(self, on: bool) -> None:
         self.bus.torque(self.ids, on)

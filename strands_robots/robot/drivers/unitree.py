@@ -2,7 +2,7 @@
 
 ``unitree_sdk2py`` is imported lazily and only when no ``subscriber`` is injected. Commanding joints
 (``rt/lowcmd`` with kp/kd) is deliberately not wired in v1 core: it needs a live robot to measure gains
-against, and this lane may not command one. ``write`` raises ``NotImplementedError`` saying so.
+against, and this release does not command one. ``write`` raises ``NotImplementedError`` saying so.
 """
 
 from __future__ import annotations
@@ -136,6 +136,8 @@ class DDSSubscriber:
 class UnitreeDriver:
     """Hardware Body for a Unitree robot: joints from ``rt/lowstate``, IMU + battery in ``extras``. Observe-only."""
 
+    supports_position_hold = False  # observe-only: nothing of ours writes a goal
+
     def __init__(
         self,
         description: Description,
@@ -196,6 +198,12 @@ class UnitreeDriver:
             if hasattr(s, f):
                 out[f] = float(getattr(s, f)) if f != "mode_machine" else int(getattr(s, f))
         return out
+
+    def hold(self) -> None:
+        """Observe-only: this driver never commands a joint, so there is nothing of ours to hold."""
+
+    def estop(self) -> None:
+        """Observe-only: nothing of ours is moving the body; the vendor's own stop stays in charge."""
 
     def calibrate(self, *, interactive: bool = True) -> Calibration:
         raise RuntimeError("unitree robots are factory-calibrated; nothing to calibrate")

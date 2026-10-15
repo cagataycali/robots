@@ -16,7 +16,7 @@ class RunResult:
     seconds: float
     hz_target: float
     hz_achieved: float
-    stopped_by: Literal["steps", "stop_when", "stopped", "fault"]
+    stopped_by: Literal["steps", "stop_when", "stopped", "fault", "estop"]
     recorded: str | None = None
     final: Observation | None = None
     fault: str | None = None  # why the policy could not go on (stopped_by == "fault")
