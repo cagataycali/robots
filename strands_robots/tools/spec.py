@@ -10,8 +10,9 @@ from typing import Any
 
 from .schema import parameters
 
-# Only the operator may approve these; a model never sees them (``resume`` after an e-stop).
-OPERATOR_ONLY = frozenset({"resume"})
+# Only the operator may call these; a model never sees them: ``resume`` after an e-stop, and ``calibrate``
+# (on a real bus it turns torque off and rewrites the servos' offsets).
+OPERATOR_ONLY = frozenset({"resume", "calibrate"})
 
 
 def rpc_names(device: Any) -> tuple[str, ...]:

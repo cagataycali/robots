@@ -125,3 +125,15 @@ def test_a_background_start_inside_an_agent_call_carries_the_gate_to_its_thread(
     with pytest.raises(RequestRefused, match="confirm="):
         task.stop()  # the refusal is loud: it re-raises where the task is collected
     assert len(goal_writes(serial)) == before
+
+
+@pytest.mark.parametrize("rpc", ["calibrate", "resume"])
+def test_calibrate_and_resume_are_the_operators_and_never_reach_the_bus(rpc):
+    from strands_robots import Robot
+
+    d, serial = make_driver()
+    real = Robot("so101", driver=d, twin=False)
+    frames = len(serial.frames)
+    (r,) = _turn(real, [("robot_so101", {"rpc": rpc})])
+    assert r["status"] == "error" and "operator" in r["content"][0]["text"]
+    assert len(serial.frames) == frames  # not a byte on the bus: no torque off, no offsets rewritten

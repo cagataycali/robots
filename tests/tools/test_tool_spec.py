@@ -94,7 +94,7 @@ def test_the_tool_offers_exactly_the_manifest_rpcs_an_agent_may_call():
     for r in arm.manifest.rpcs:
         assert "robot" not in r.params["properties"] and "self" not in r.params["properties"], r
     enum = _schema(tool_spec(arm))["properties"]["rpc"]["enum"]
-    assert enum == [n for n in declared if n != "resume"]  # resume needs the operator, never the model
+    assert enum == [n for n in declared if n not in ("resume", "calibrate")]  # the operator's, never the model's
     assert "estop" in enum and "hold" in enum
 
 
