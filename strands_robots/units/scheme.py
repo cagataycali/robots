@@ -40,6 +40,7 @@ class Units:
     hi: np.ndarray  # rad
     lo_u: np.ndarray  # policy units
     hi_u: np.ndarray  # policy units
+    modes: tuple[str, ...] = ()  # per key, when the scheme has modes (LeRobot's MotorNormMode)
 
     @classmethod
     def for_robot(cls, description: Description, name: str) -> Units:

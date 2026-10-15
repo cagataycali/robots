@@ -19,6 +19,8 @@ so it is one more pair of end points, ``rad2deg(lo - mid)`` and ``rad2deg(hi - m
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
+from typing import Any
 
 import numpy as np
 
@@ -42,9 +44,10 @@ def lerobot_units(description: Description, norm: Mapping[str, str] | None = Non
         raise ValueError(f"'lerobot' needs joint limits for every action key; {description.name} lacks {missing}")
     lo = np.array([description.limits[k][0] for k in keys])
     hi = np.array([description.limits[k][1] for k in keys])
-    lo_u, hi_u = [], []
+    lo_u, hi_u, modes = [], [], []
     for k, a, b in zip(keys, lo, hi, strict=True):
         mode = norm.get(k, norm.get("*"))
+        modes.append(str(mode))
         if mode == "degrees":
             mid = (a + b) / 2.0
             lo_u.append(float(np.rad2deg(a - mid)))
@@ -54,7 +57,26 @@ def lerobot_units(description: Description, norm: Mapping[str, str] | None = Non
             hi_u.append(_RANGE[mode][1])
         else:
             raise ValueError(f"{description.name}: joint {k!r} has unknown lerobot_norm mode {mode!r}; known: {MODES}")
-    return Units("lerobot", keys, lo, hi, np.array(lo_u), np.array(hi_u))
+    return Units("lerobot", keys, lo, hi, np.array(lo_u), np.array(hi_u), tuple(modes))
+
+
+def calibrated(units: Units, calibration: Any, *, resolution: int) -> Units:
+    """Exact hardware ``degrees``: LeRobot's ``(counts - mid) * 360 / (resolution - 1)`` at the calibrated ends.
+
+    ``calibration`` is a bus calibration (``.joints[name]`` with ``range_min``/``range_max``/``drive_mode``),
+    whose ``range_min..range_max`` the driver maps onto ``lo..hi``. LeRobot's degrees ignore ``drive_mode``,
+    so a reversed joint's end points swap. Range modes are already exact and are left as they are.
+    """
+    joints = getattr(calibration, "joints", None) or {}
+    if "degrees" not in units.modes or not joints:
+        return units
+    lo_u, hi_u = units.lo_u.copy(), units.hi_u.copy()
+    for i, (k, mode) in enumerate(zip(units.keys, units.modes, strict=True)):
+        c = joints.get(k)
+        if mode == "degrees" and c is not None:
+            half = (c.range_max - c.range_min) / 2 * 360 / (resolution - 1)
+            lo_u[i], hi_u[i] = (half, -half) if c.drive_mode else (-half, half)
+    return replace(units, lo_u=lo_u, hi_u=hi_u)
 
 
 @register("lerobot")
