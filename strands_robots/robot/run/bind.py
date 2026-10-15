@@ -10,7 +10,7 @@ import numpy as np
 
 from ...policy import PolicyLike, as_policy
 from ...types import Observation
-from ...units import Units, resolve_units
+from ...units import Units, calibrated, resolve_units
 
 if TYPE_CHECKING:
     from ..robot import Robot
@@ -27,6 +27,10 @@ class Bound:
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
     """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
     pol = as_policy(policy)
+    if getattr(pol, "requires_position_hold", False) and not robot.supports_position_hold:
+        from ..safety import RequestRefused
+
+        raise RequestRefused(f"{robot.id} cannot hold position between ticks, and {pol!r} requires a body that can")
     attach = getattr(pol, "attach", None)
     if callable(attach):  # connect / load / admit against THIS robot, before units and requirements
         attach(robot)
@@ -34,6 +38,9 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
     if gains is not None and robot.sim is not None:  # the policy's PD is part of the policy, not of the world
         robot.set_gains(*gains)
     conv = resolve_units(pol, units, robot.description)
+    cal, res = getattr(robot.body, "calibration", None), getattr(robot.body, "resolution", None)
+    if conv is not None and cal is not None and res is not None:  # a calibrated bus: exact hardware degrees
+        conv = calibrated(conv, cal, resolution=res)
     req = getattr(pol, "requirements", None)
     if req is not None:
         req().check(robot.observe(), who=repr(pol))

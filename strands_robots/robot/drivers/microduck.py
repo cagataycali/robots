@@ -125,6 +125,8 @@ class RobotdClient:
 class MicroduckDriver:
     """Hardware Body for a Microduck: joints from robotd's ``robot.state``. Observe-only by robotd's design."""
 
+    supports_position_hold = False  # observe-only: nothing of ours writes a goal
+
     def __init__(
         self,
         description: Description,
@@ -180,6 +182,12 @@ class MicroduckDriver:
     def extras(self) -> Mapping[str, Any]:
         s = self._state()
         return {k: s[k] for k in ("imu", "odom", "safety", "policy", "t") if k in s}
+
+    def hold(self) -> None:
+        """Observe-only: this driver never commands a joint, so there is nothing of ours to hold."""
+
+    def estop(self) -> None:
+        """Observe-only: nothing of ours is moving the body; the vendor's own stop stays in charge."""
 
     def calibrate(self, *, interactive: bool = True) -> Calibration:
         raise RuntimeError("microduck: robotd owns the servo calibration; nothing to calibrate from here")

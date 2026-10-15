@@ -7,6 +7,7 @@ sign-magnitude values (bit 15 for positions/velocities, bit 10 for load, bit 11 
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from typing import Any
 
@@ -83,11 +84,13 @@ class FeetechBus:
                 raise ImportError(f"the feetech driver needs pyserial: {hint('feetech')}") from exc
             serial = pyserial.Serial(port, baudrate=baud, timeout=timeout)
         self.serial = serial
+        self.wire = threading.RLock()  # one transaction at a time: an e-stop from any thread never collides
 
     def _txrx(self, packet: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
-        self.serial.reset_input_buffer()
-        self.serial.write(packet)
-        raw = self.serial.read(6 + nparams + 2)  # + possible echoed byte(s)
+        with self.wire:
+            self.serial.reset_input_buffer()
+            self.serial.write(packet)
+            raw = self.serial.read(6 + nparams + 2)  # + possible echoed byte(s)
         return parse_status(raw, expect_id, nparams)
 
     def ping(self, motor_id: int) -> bool:
@@ -105,9 +108,10 @@ class FeetechBus:
         self._txrx(frame(motor_id, WRITE, bytes([reg]) + data), motor_id, 0)
 
     def sync_read(self, reg: int, n: int, ids: list[int]) -> dict[int, bytes]:
-        self.serial.reset_input_buffer()
-        self.serial.write(frame(BROADCAST, SYNC_READ, bytes([reg, n]) + bytes(ids)))
-        raw = self.serial.read((6 + n) * len(ids) + 2)
+        with self.wire:
+            self.serial.reset_input_buffer()
+            self.serial.write(frame(BROADCAST, SYNC_READ, bytes([reg, n]) + bytes(ids)))
+            raw = self.serial.read((6 + n) * len(ids) + 2)
         out: dict[int, bytes] = {}
         pos = 0
         for mid in ids:
@@ -121,7 +125,8 @@ class FeetechBus:
 
     def sync_write(self, reg: int, per: int, items: Mapping[int, bytes]) -> None:
         params = bytes([reg, per]) + b"".join(bytes([mid]) + data for mid, data in items.items())
-        self.serial.write(frame(BROADCAST, SYNC_WRITE, params))
+        with self.wire:
+            self.serial.write(frame(BROADCAST, SYNC_WRITE, params))
 
     def torque(self, ids: list[int], on: bool) -> None:
         self.sync_write(REG_TORQUE_ENABLE, 1, {i: bytes([1 if on else 0]) for i in ids})
