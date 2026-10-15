@@ -13,7 +13,9 @@ def test_a_callable_is_a_policy_and_a_subclass_is_a_plain_constructor():
     assert type(CallablePolicy(lambda obs: 0)) is CallablePolicy
 
 
-@pytest.mark.parametrize("spec", ["holosoma?", "not a spec", "zenoh://host-without-port/x", "zenoh://h:7447/"])
+@pytest.mark.parametrize(
+    "spec", ["Not-A-Preset?", "act", "pi0", "not a spec", "zenoh://host-without-port/x", "zenoh://h:7447/"]
+)
 def test_an_unknown_form_is_refused_listing_the_forms(spec):
     with pytest.raises(ValueError, match=r"zenoh://"):
         Policy(spec)

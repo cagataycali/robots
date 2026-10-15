@@ -17,6 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 mujoco = ["mujoco>=3.3.4"]
 feetech = ["pyserial>=3.5"]
+# ONNX policies (holosoma, microduck presets): CPU inference, weights fetched from the Hugging Face Hub.
+onnx = ["onnxruntime>=1.18", "huggingface_hub>=0.24"]
 # LeRobot policies, local or over Zenoh. remote_inference is on LeRobot main only (0.6.1 on PyPI predates it),
 # so the extra pins a commit; LeRobot needs Python 3.12. zenoh <1.10: 1.10.0 regressed peer-mode liveliness.
 lerobot = [
@@ -32,7 +34,7 @@ allow-direct-references = true
 packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
-features = ["dev", "mujoco"]
+features = ["dev", "mujoco", "onnx"]
 
 [tool.hatch.envs.default.scripts]
 lint = [
