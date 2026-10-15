@@ -28,6 +28,25 @@ def require_lerobot() -> Any:
     return LeRobotDataset
 
 
+def check_target(ep: Episode) -> None:
+    """Refuse an existing dataset with another fps, robot or units before step one (no observation needed)."""
+    root = ep.root if ep.root is not None else _hub_cache(ep.repo_id)
+    info = root / "meta" / "info.json"
+    if not info.is_file():
+        return
+    have = json.loads(info.read_text())
+    if int(have.get("fps", ep.fps)) != ep.fps:
+        raise ValueError(f"{ep.target}: the dataset there is {have['fps']} fps; this run records at {ep.fps}")
+    robot = _robot_type(ep)
+    if have.get("robot_type") not in (None, robot):
+        raise ValueError(f"{ep.target}: the dataset there is robot {have['robot_type']!r}; this run is {robot!r}")
+    _same_units(ep, root, units_meta(ep.units, ep.description))
+
+
+def _robot_type(ep: Episode) -> str:
+    return ep.description.hardware.lerobot_type or ep.description.name
+
+
 def open_dataset(ep: Episode, first: Observation) -> tuple[Any, bool]:
     """``(dataset, created)``: resume the one already at the target (same features, fps, units) or create it."""
     LeRobotDataset = require_lerobot()
@@ -40,9 +59,8 @@ def open_dataset(ep: Episode, first: Observation) -> tuple[Any, bool]:
         ds = LeRobotDataset.resume(ep.repo_id, root=root)
         _same(ep, ds, features)
         return ds, False
-    robot_type = ep.description.hardware.lerobot_type or ep.description.name
     ds = LeRobotDataset.create(
-        ep.repo_id, fps=ep.fps, features=features, root=root, robot_type=robot_type, use_videos=True
+        ep.repo_id, fps=ep.fps, features=features, root=root, robot_type=_robot_type(ep), use_videos=True
     )
     (Path(ds.root) / "meta" / UNITS_FILE).write_text(json.dumps(said, indent=2) + "\n")
     return ds, True
