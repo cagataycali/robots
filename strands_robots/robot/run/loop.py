@@ -7,8 +7,9 @@ import time as _time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from ...policy.base import PolicyFault
 from ...types import Observation
-from .bind import bind, decide
+from .bind import Bound, bind, decide, release
 from .result import RunResult
 from .task import Task
 
@@ -25,7 +26,7 @@ def run(
     policy: PolicyLike | Callable[[Observation], Any],
     *,
     instruction: str | None = None,
-    hz: float = 30.0,
+    hz: float | None = None,
     seconds: float | None = None,
     steps: int | None = None,
     stop_when: Callable[[Observation], bool] | None = None,
@@ -33,17 +34,42 @@ def run(
     realtime: bool = False,
     stop_event: threading.Event | None = None,
 ) -> RunResult:
-    """observe -> policy -> act at ``hz`` until ``seconds``/``steps``/``stop_when``/``stop()``."""
+    """observe -> policy -> act at ``hz`` (default: the policy's ``hz``, else 30) until a limit or ``stop()``."""
     if seconds is None and steps is None and stop_when is None:
         raise ValueError("run needs seconds=, steps= or stop_when=")
-    if hz <= 0:
-        raise ValueError(f"hz must be > 0, got {hz}")
     bound = bind(robot, policy, units)
+    try:
+        return _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event)
+    finally:
+        release(bound)
+
+
+def _rate(bound: Bound, hz: float | None) -> float:
+    rate = hz if hz is not None else (getattr(bound.policy, "hz", None) or 30.0)
+    if rate <= 0:
+        raise ValueError(f"hz must be > 0, got {rate}")
+    return float(rate)
+
+
+def _loop(
+    robot: Robot,
+    bound: Bound,
+    instruction: str | None,
+    hz: float | None,
+    seconds: float | None,
+    steps: int | None,
+    stop_when: Callable[[Observation], bool] | None,
+    realtime: bool,
+    stop_event: threading.Event | None,
+) -> RunResult:
+    hz = _rate(bound, hz)
+    realtime = realtime or bool(getattr(bound.policy, "realtime", False))
     dt = 1.0 / hz
     sim_steps = max(1, round(dt / robot.sim.physics.timestep)) if robot.sim is not None else None
     max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
     n = 0
     why: str = "steps"
+    fault: str | None = None
     wall0 = _time.perf_counter()
     next_tick = wall0
     while True:
@@ -56,7 +82,12 @@ def run(
         if stop_when is not None and stop_when(obs):
             why = "stop_when"
             break
-        robot.act(decide(robot, bound, obs, instruction), steps=sim_steps)
+        try:
+            action = decide(robot, bound, obs, instruction)
+        except PolicyFault as e:
+            why, fault = "fault", str(e)
+            break
+        robot.act(action, steps=sim_steps)
         n += 1
         if robot.sim is None or realtime:  # hardware (or a watched sim): pace in wall time
             next_tick += dt
@@ -65,7 +96,8 @@ def run(
                 _time.sleep(sleep)
     wall = _time.perf_counter() - wall0
     elapsed = n * dt if robot.sim is not None else wall
-    return RunResult(n, elapsed, hz, (n / wall) if wall else 0.0, why, None, robot.observe(images=False))  # type: ignore[arg-type]
+    final = robot.observe(images=False)
+    return RunResult(n, elapsed, hz, (n / wall) if wall else 0.0, why, None, final, fault)  # type: ignore[arg-type]
 
 
 def start(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], **kw: Any) -> Task:
@@ -92,15 +124,49 @@ def lockstep(
     for r in policies:
         if r.sim is not sim:
             raise ValueError(f"robot {r.id!r} is not in this world")
-    bound = {r: bind(r, p, units) for r, p in policies.items()}
+    bound: dict[Robot, Bound] = {}
+    try:
+        for r, p in policies.items():
+            bound[r] = bind(r, p, units)
+        return _lockstep(sim, bound, hz, seconds, steps, instruction)
+    finally:
+        for b in bound.values():
+            release(b)
+
+
+def _lockstep(
+    sim: Simulation,
+    bound: Mapping[Robot, Bound],
+    hz: float | None,
+    seconds: float | None,
+    steps: int | None,
+    instruction: str | None,
+) -> dict[str, RunResult]:
     dt = sim.physics.control_dt if hz is None else 1.0 / hz
     per = max(1, round(dt / sim.physics.timestep))
     total = steps if steps is not None else int(round(float(seconds or 0.0) / dt))
-    t0 = sim.time
+    realtime = any(getattr(b.policy, "realtime", False) for b in bound.values())
+    faults: dict[str, str] = {}
+    t0, n, next_tick = sim.time, 0, _time.perf_counter()
     with sim.manual_time():
         for _ in range(total):
             for r, b in bound.items():
-                r.act(decide(r, b, r.observe(), instruction))
+                try:
+                    r.act(decide(r, b, r.observe(), instruction))
+                except PolicyFault as e:
+                    faults[r.id] = str(e)
+            if faults:
+                break
             sim.step(per)
+            n += 1
+            if realtime:
+                next_tick += dt
+                time_left = next_tick - _time.perf_counter()
+                if time_left > 0:
+                    _time.sleep(time_left)
     el = sim.time - t0
-    return {r.id: RunResult(total, el, 1.0 / dt, total / el if el else 0.0, "steps", None, r.observe()) for r in bound}
+    why = "fault" if faults else "steps"
+    return {
+        r.id: RunResult(n, el, 1.0 / dt, n / el if el else 0.0, why, None, r.observe(), faults.get(r.id))  # type: ignore[arg-type]
+        for r in bound
+    }

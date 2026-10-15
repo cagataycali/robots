@@ -27,6 +27,9 @@ class Bound:
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
     """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
     pol = as_policy(policy)
+    attach = getattr(pol, "attach", None)
+    if callable(attach):  # connect / load / admit against THIS robot, before units and requirements
+        attach(robot)
     gains = getattr(pol, "gains", None)
     if gains is not None and robot.sim is not None:  # the policy's PD is part of the policy, not of the world
         robot.set_gains(*gains)
@@ -36,6 +39,13 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
         req().check(robot.observe(), who=repr(pol))
     pol.reset()
     return Bound(pol, conv)
+
+
+def release(bound: Bound) -> None:
+    """After the last step: let the policy close what ``attach`` opened (a session, a server)."""
+    detach = getattr(bound.policy, "detach", None)
+    if callable(detach):
+        detach()
 
 
 def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None) -> Any:

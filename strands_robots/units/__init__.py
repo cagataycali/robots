@@ -11,6 +11,17 @@ scheme name forces it when the policy cannot say.
 from __future__ import annotations
 
 from . import lerobot, rad  # noqa: F401  (register the schemes)
+from .lerobot import lerobot_units
 from .scheme import SCHEMES, Units, declared_units, register, resolve_units
+from .semantics import semantics_for, units_for_semantics
 
-__all__ = ["Units", "SCHEMES", "register", "resolve_units", "declared_units"]
+__all__ = [
+    "Units",
+    "SCHEMES",
+    "register",
+    "resolve_units",
+    "declared_units",
+    "lerobot_units",
+    "units_for_semantics",
+    "semantics_for",
+]

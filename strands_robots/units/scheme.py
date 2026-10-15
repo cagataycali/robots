@@ -76,10 +76,14 @@ def declared_units(policy: Any) -> str | None:
 
 
 def resolve_units(policy: Any, requested: str | None, description: Description) -> Units | None:
-    """``requested`` = "auto" (use the policy's declaration, radians if it has none), "rad", a scheme name, or None."""
+    """``requested``: "auto" (``policy.units_for(d)``, its declaration, or radians), "rad", a scheme, or None."""
     if requested is None or requested == RAD:
         return None
     if requested == "auto":
+        units_for = getattr(policy, "units_for", None)
+        if callable(units_for):  # a policy whose units depend on the robot (a LeRobot checkpoint's semantics)
+            u = units_for(description)
+            return None if u is None or u.is_identity else u
         name = declared_units(policy)
         if name is None or name == RAD:
             return None

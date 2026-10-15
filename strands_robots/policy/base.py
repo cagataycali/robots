@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..types import Action, Observation
 from ..units import SCHEMES
@@ -16,8 +16,27 @@ class PolicyLike(Protocol):
     def reset(self) -> None: ...
 
 
-class Policy:
-    """Base class: override ``act``; ``units`` and ``requirements`` say what the policy speaks and needs."""
+class PolicyFault(RuntimeError):
+    """A policy can no longer produce safe actions (deadline, stale data, server lost): the run ends here."""
+
+
+class _Factory(type):
+    """``Policy("lerobot/smolvla_base")`` builds a provider; ``SomePolicy(...)`` is a plain constructor."""
+
+    def __call__(cls, *args: Any, **kw: Any) -> Any:
+        if cls is Policy and (args or kw):
+            from .factory import make
+
+            return make(*args, **kw)
+        return super().__call__(*args, **kw)
+
+
+class Policy(metaclass=_Factory):
+    """Base class: override ``act``; ``units`` and ``requirements`` say what the policy speaks and needs.
+
+    Optional hooks the run loop honours: ``attach(robot)`` before step one (connect, admit, load),
+    ``detach()`` after the last step, ``realtime`` (pace in wall time even in a sim) and ``hz``.
+    """
 
     units: str | None = None  # a scheme name in strands_robots.units (e.g. "rad", "lerobot") or None = cannot say
 

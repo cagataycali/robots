@@ -17,7 +17,16 @@ dependencies = [
 [project.optional-dependencies]
 mujoco = ["mujoco>=3.3.4"]
 feetech = ["pyserial>=3.5"]
+# LeRobot policies, local or over Zenoh. remote_inference is on LeRobot main only (0.6.1 on PyPI predates it),
+# so the extra pins a commit; LeRobot needs Python 3.12. zenoh <1.10: 1.10.0 regressed peer-mode liveliness.
+lerobot = [
+    "lerobot[remote] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe ; python_version >= '3.12'",
+    "eclipse-zenoh>=1.9.0,<1.10.0 ; python_version >= '3.12'",
+]
 dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10", "import-linter>=2.1"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
