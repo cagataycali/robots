@@ -31,6 +31,9 @@ class Hardware:
     driver: str | None = None
     lerobot_type: str | None = None
     lerobot_norm: Mapping[str, str] | None = None  # action key (or "*") -> LeRobot MotorNormMode value
+    safe: Mapping[str, tuple[float, float]] | None = None  # action key -> soft bound inside the hard limit
+    on_disconnect: str | None = None  # what every control does when the command path lapses
+    position_hold: bool | None = None  # the bus keeps its last goal under torque (None: ask the driver)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ class Description:
     model_path: Path
     format: str  # "mjcf" | "urdf"
     category: str = "unknown"
+    device_type: str | None = None  # registry ``device.type``: robot_arm, humanoid, quadruped, …
     joints: tuple[str, ...] = ()  # hinge/slide joints, model order, labelled
     actuators: tuple[str, ...] = ()  # actuator names, model order
     action_keys: tuple[str, ...] = ()  # the joint each actuator drives, labelled, actuator order
@@ -146,7 +150,15 @@ class Description:
             floating=facts["floating"],
             joint_labels=labels,
             spawn_position=(float(sp[0]), float(sp[1]), float(sp[2])),
-            hardware=Hardware(hw.get("driver"), hw.get("lerobot_type"), hw.get("lerobot_norm")),
+            device_type=(entry.get("device") or {}).get("type"),
+            hardware=Hardware(
+                hw.get("driver"),
+                hw.get("lerobot_type"),
+                hw.get("lerobot_norm"),
+                {k: (float(a), float(b)) for k, (a, b) in (hw.get("safe") or {}).items()} or None,
+                hw.get("on_disconnect"),
+                hw.get("position_hold"),
+            ),
             gripper=Gripper(tuple(g["keys"]), g["closed"], g["open"]) if g else None,
             scene_path=scene,
         )

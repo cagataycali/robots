@@ -33,5 +33,11 @@ def registry() -> dict[str, dict[str, Any]]:
 
 
 @lru_cache(maxsize=1)
+def device_types() -> tuple[str, ...]:
+    """The device-type vocabulary every registry entry's ``device.type`` is drawn from."""
+    return tuple(json.loads((_REGISTRY_DIR / "robots.json").read_text())["device_types"])
+
+
+@lru_cache(maxsize=1)
 def urdf_registry() -> dict[str, dict[str, Any]]:
     return json.loads((_REGISTRY_DIR / "urdf_robots.json").read_text())["robots"]

@@ -3,6 +3,6 @@
 from __future__ import annotations
 
 from .description import Description, Gripper, Hardware
-from .registry import normalize_name, registry, urdf_registry
+from .registry import device_types, normalize_name, registry, urdf_registry
 
-__all__ = ["Description", "Gripper", "Hardware", "normalize_name", "registry", "urdf_registry"]
+__all__ = ["Description", "Gripper", "Hardware", "device_types", "normalize_name", "registry", "urdf_registry"]
