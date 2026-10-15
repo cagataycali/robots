@@ -15,7 +15,7 @@ class ChunkedPolicy(Policy):
     """Wraps a policy with ``act_chunk(obs, instruction=) -> [H, n]``; asks again when the chunk runs out.
 
     ``replan_every`` (steps) asks earlier; ``None`` plays the whole chunk. A new instruction drops the
-    rest of the chunk. Lives here, never in the sim or the run loop. Every other attribute (``attach``,
+    rest of the chunk. Lives here, never in the sim or the run loop. Every other attribute (``units``, ``attach``,
     ``units_for``, ``requirements``, ``hz`` ...) is the inner policy's.
     """
 
@@ -25,6 +25,7 @@ class ChunkedPolicy(Policy):
         if replan_every is not None and replan_every < 1:
             raise ValueError(f"replan_every must be >= 1, got {replan_every}")
         self.inner = inner
+        self.units = getattr(inner, "units", None)  # Policy.units on the class would hide the inner's
         self.replan_every = replan_every
         self._queue: deque[np.ndarray] = deque()
         self._played = 0

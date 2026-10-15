@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from strands_robots import Policy, Robot
+from strands_robots import Policy, Robot, Simulation
 from strands_robots.policy import CallablePolicy
 from strands_robots.policy.chunked import ChunkedPolicy
 
@@ -50,3 +50,24 @@ def test_chunked_policy_plays_the_chunk_then_asks_again():
     inner2 = _Count()
     arm.run(ChunkedPolicy(inner2, replan_every=2), steps=8)
     assert inner2.calls == 4
+
+
+class _LeRobotUnits:
+    units = "lerobot"
+
+    def act_chunk(self, obs, *, instruction=None):
+        return np.full((4, 6), 50.0)
+
+    def act(self, obs, *, instruction=None):
+        return np.full(6, 50.0)
+
+    def reset(self):
+        pass
+
+
+def test_chunked_policy_speaks_the_units_its_inner_declares():
+    wrapped, bare = (Robot("so101", sim=Simulation()) for _ in range(2))
+    wrapped.run(ChunkedPolicy(_LeRobotUnits()), steps=50)
+    bare.run(_LeRobotUnits(), steps=50)
+    np.testing.assert_allclose(wrapped.observe().joints.positions, bare.observe().joints.positions, atol=1e-6)
+    assert ChunkedPolicy(_LeRobotUnits()).units == "lerobot"
