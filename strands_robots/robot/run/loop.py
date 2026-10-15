@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time as _time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from ...policy.base import PolicyFault
@@ -46,8 +46,21 @@ def run(
         release(bound)
 
 
+def _declared(bounds: Iterable[Bound], hz: float | None) -> float | None:
+    """The rate the policies declare (chunks are replayed at it), refusing a disagreement or an ``hz`` against it."""
+    rates = {float(r): b.policy for b in bounds if (r := getattr(b.policy, "hz", None))}
+    if len(rates) > 1:
+        said = ", ".join(f"{p!r} {r:g} Hz" for r, p in rates.items())
+        raise ValueError(f"these policies declare different rates: {said}; one world steps at one rate")
+    if rates and hz is not None and abs(hz - next(iter(rates))) > 1e-9:
+        rate, policy = next(iter(rates.items()))
+        raise ValueError(f"{policy!r} runs at {rate:g} Hz; hz={hz:g} would replay it at another rate (leave hz out)")
+    return next(iter(rates), None)
+
+
 def _rate(bound: Bound, hz: float | None) -> float:
-    rate = hz if hz is not None else (getattr(bound.policy, "hz", None) or 30.0)
+    declared = _declared([bound], hz)
+    rate = hz if hz is not None else (declared or 30.0)
     if rate <= 0:
         raise ValueError(f"hz must be > 0, got {rate}")
     return float(rate)
@@ -144,7 +157,9 @@ def _lockstep(
     steps: int | None,
     instruction: str | None,
 ) -> dict[str, RunResult]:
-    dt = sim.physics.control_dt if hz is None else 1.0 / hz
+    declared = _declared(bound.values(), hz)
+    rate = hz if hz is not None else declared
+    dt = sim.physics.control_dt if rate is None else 1.0 / rate
     per = max(1, round(dt / sim.physics.timestep))
     total = steps if steps is not None else int(round(float(seconds or 0.0) / dt))
     realtime = any(getattr(b.policy, "realtime", False) for b in bound.values())

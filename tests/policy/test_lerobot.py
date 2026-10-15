@@ -104,6 +104,22 @@ def _snap(frame):
     return ObservationSnapshot(frame, time.monotonic(), "", 0, "parity")
 
 
+def test_a_reused_zenoh_policy_sends_the_instruction_on_every_run(deployment, monkeypatch):
+    from lerobot.remote_inference import RemoteInferenceEngine
+
+    sent = []
+    set_task = RemoteInferenceEngine.set_task
+    monkeypatch.setattr(RemoteInferenceEngine, "set_task", lambda self, t: sent.append(t) or set_task(self, t))
+    cfg, server = deployment()
+    with server as url:
+        arm, p = _arm(), Policy(url)
+        for _ in range(2):
+            arm.run(p, steps=3, instruction="pick the cube")
+        assert sent == ["pick the cube", "pick the cube"]
+        with pytest.raises(ValueError, match="refused the instruction"):
+            arm.run(p, steps=3, instruction="x" * 100_000)
+
+
 def test_unknown_semantics_are_refused_naming_the_table(deployment):
     cfg, server = deployment(semantics="furlongs-v1")
     with server as url:

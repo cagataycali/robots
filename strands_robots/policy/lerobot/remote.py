@@ -95,7 +95,7 @@ class ZenohPolicy:
         elif self._client is not None:
             self._client.close()
         self._engine = self._client = None
-        self._last = None
+        self._last = self._task = None  # a new session starts with the engine's empty task
 
     def _need(self) -> Contract:
         if self.contract is None:
@@ -119,6 +119,8 @@ class ZenohPolicy:
 
         c, engine = self._need(), self._engine
         if instruction is not None and instruction != self._task:
+            if error := engine.text_input_error(instruction, instruction=True):
+                raise ValueError(f"{self!r} refused the instruction: {error}")
             engine.set_task(instruction)
             self._task = instruction
         engine.submit_observation(c.frame(obs), capture_time=time.monotonic())
