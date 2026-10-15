@@ -56,3 +56,22 @@ def test_newton_steps_two_robots_in_one_world(num_envs):
         )
     finally:
         sim.close()
+
+
+@gpu
+def test_newton_time_is_exact_across_load_reset_and_teleport():
+    sim = Simulation("mujoco", physics="newton")
+    try:
+        g1 = Robot("g1", sim=sim)
+        ts = sim.physics.timestep
+        assert sim.time == 0.0  # loading compiles and captures, it never steps
+        # GPU time is float32: 1e-6 is far below one step (2e-3), so one extra step would fail every assert below
+        sim.step(10)
+        assert sim.time == pytest.approx(10 * ts, abs=1e-6)
+        g1.set_pose(position=[0.5, 0, 0.8])  # a teleport re-uploads the world, it does not step it
+        assert sim.time == pytest.approx(10 * ts, abs=1e-6)
+        sim.reset()
+        sim.step(10)
+        assert sim.time == pytest.approx(10 * ts, abs=1e-6)
+    finally:
+        sim.close()

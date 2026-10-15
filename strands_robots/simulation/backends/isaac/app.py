@@ -8,12 +8,15 @@ Closing a world frees the stage; the next ``Simulation("isaac")`` reuses the sam
 from __future__ import annotations
 
 import atexit
+import importlib.util
 import os
 from typing import Any
 
 from ...._extras import hint
 
 HINT = f"Simulation('isaac') needs Isaac Sim: {hint('isaac')} (and OMNI_KIT_ACCEPT_EULA=YES)"
+
+EULA = "Simulation('isaac'): accept the NVIDIA Isaac Sim EULA yourself by setting OMNI_KIT_ACCEPT_EULA=YES"
 
 _APP: Any = None
 _OPEN: object | None = None
@@ -23,11 +26,12 @@ def simulation_app(headless: bool) -> Any:
     """The process-wide SimulationApp, created on first use and closed at exit."""
     global _APP
     if _APP is None:
-        os.environ.setdefault("OMNI_KIT_ACCEPT_EULA", "YES")
-        try:
-            from isaacsim import SimulationApp
-        except ImportError as exc:
-            raise ImportError(f"{HINT} ({exc})") from exc
+        if importlib.util.find_spec("isaacsim") is None:
+            raise ImportError(HINT)
+        if os.environ.get("OMNI_KIT_ACCEPT_EULA", "").upper() not in ("YES", "Y", "1", "TRUE"):
+            raise RuntimeError(EULA)  # before the import: importing isaacsim asks for the EULA on stdin
+        from isaacsim import SimulationApp
+
         _APP = SimulationApp({"headless": headless})
         atexit.register(_close_app)
         from isaacsim.core.utils.extensions import enable_extension
