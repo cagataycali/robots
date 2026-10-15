@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..robot.run.result import RunResult
     from ..types import Observation
 
-_PHYSICS = ("native",)
+_PHYSICS = ("native", "newton")
 
 
 class Simulation(_SceneOps):
@@ -60,8 +60,8 @@ class Simulation(_SceneOps):
             raise ValueError(f"substeps must be >= 1, got {substeps}")
         if num_envs < 1:
             raise ValueError(f"num_envs must be >= 1, got {num_envs}")
-        if num_envs > 1:
-            raise ValueError(f"num_envs={num_envs} needs vectorised physics; {physics!r} steps one world")
+        if num_envs > 1 and physics != "newton":
+            raise ValueError(f"num_envs={num_envs} needs physics='newton'; {physics!r} steps one world")
         self.backend_name = backend
         self.physics_name = physics
         self.headless = headless
@@ -75,7 +75,7 @@ class Simulation(_SceneOps):
         self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
         self._closed = False
-        cls = load_backend(backend)
+        cls = load_backend(backend, physics)
         self.backend: Backend = cls(
             physics=physics, headless=headless, device=device, num_envs=num_envs, render_size=render_size
         )
