@@ -39,6 +39,9 @@ class Episode:
         fps = int(round(hz))
         if abs(fps - hz) > 1e-6:
             raise ValueError(f"a LeRobot dataset needs an integer fps; run at hz={fps} to record (got {hz})")
+        from .lerobot_v3 import require_lerobot
+
+        require_lerobot()  # before step one: a run that cannot be recorded never moves the robot
         self.repo_id, self.root = locate(target)
         self.target = target
         self.fps = fps

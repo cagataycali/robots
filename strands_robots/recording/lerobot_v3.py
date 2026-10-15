@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .._extras import hint
+from .._extras import LEROBOT_DATASET
 from ..types import Observation
 from .features import features_from, units_meta
 
@@ -17,12 +17,20 @@ if TYPE_CHECKING:
     from .episode import Episode
 
 
-def open_dataset(ep: Episode, first: Observation) -> tuple[Any, bool]:
-    """``(dataset, created)``: resume the one already at the target (same features, fps, units) or create it."""
+def require_lerobot() -> Any:
+    """LeRobot's dataset class, or an ImportError naming the install line (raised before the robot moves)."""
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ImportError as e:
-        raise ImportError(f"record= writes a LeRobot dataset and needs lerobot: {hint('lerobot')} ({e})") from e
+        raise ImportError(
+            f"record= writes a LeRobot dataset and needs LeRobot's dataset extra: {LEROBOT_DATASET} ({e})"
+        ) from e
+    return LeRobotDataset
+
+
+def open_dataset(ep: Episode, first: Observation) -> tuple[Any, bool]:
+    """``(dataset, created)``: resume the one already at the target (same features, fps, units) or create it."""
+    LeRobotDataset = require_lerobot()
     logging.getLogger("lerobot").setLevel(logging.ERROR)
     features = features_from(first, ep.description.action_keys)
     said = units_meta(ep.units, ep.description)
