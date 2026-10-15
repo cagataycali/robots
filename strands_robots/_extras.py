@@ -8,8 +8,11 @@ from __future__ import annotations
 
 PACKAGE = "strands-robots"
 REPO_HINT = 'uv pip install -e ".[{extra}]"'
+# LeRobot's remote_inference is not on PyPI yet, and a wheel cannot depend on a git commit, so it is its own line.
+LEROBOT = 'pip install "lerobot[remote] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"'
 
 
 def hint(extra: str) -> str:
     """``pip install 'strands-robots[lerobot]'  (from a checkout: uv pip install -e ".[lerobot]")``."""
-    return f"pip install '{PACKAGE}[{extra}]'  (from a checkout: {REPO_HINT.format(extra=extra)})"
+    line = f"pip install '{PACKAGE}[{extra}]'  (from a checkout: {REPO_HINT.format(extra=extra)})"
+    return f"{line}, then {LEROBOT}" if extra == "lerobot" else line

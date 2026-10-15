@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -23,6 +24,7 @@ from strands_robots.policy.onnx import (
     quat_rotate_inverse,
     read_metadata,
 )
+from strands_robots.policy.onnx.graph import resolve_weights
 
 PKG = Path(__file__).resolve().parents[1] / "strands_robots"
 needs_onnx_extra = pytest.mark.skipif(
@@ -70,12 +72,37 @@ def test_onnx_policy_runs_a_graph_and_writes_the_sidecar(tiny_onnx):
     assert pol.infer(np.array([1.0, 2.0, 3.0])).tolist() == [2.0, 4.0, 6.0]
     assert pol.input_name == "obs" and pol.input_width == 3 and pol.units == "rad"
     assert read_metadata(tiny_onnx) == {"joint_names": "a,b,c"}
-    side = tiny_onnx.with_suffix(".json")
-    assert json.loads(side.read_text())["metadata"]["joint_names"] == "a,b,c"
+    side = tiny_onnx.with_name("tiny.onnx.json")
+    assert pol.sidecar == side and json.loads(side.read_text())["metadata"]["joint_names"] == "a,b,c"
     with pytest.raises(ValueError, match="takes 3 inputs"):
         pol.infer(np.zeros(4))
     with pytest.raises(TypeError, match="providers"):
         OnnxPolicy(tiny_onnx, providers="cpu")  # type: ignore[arg-type]
+
+
+def test_a_users_json_next_to_the_graph_is_never_touched(tiny_onnx):
+    pytest.importorskip("onnxruntime")
+    own = tiny_onnx.with_suffix(".json")
+    own.write_text('{"mine": true}')
+    OnnxPolicy(tiny_onnx)
+    assert own.read_text() == '{"mine": true}'
+
+
+def test_a_preset_name_never_resolves_to_a_file_in_cwd(tmp_path, monkeypatch):
+    (tmp_path / "w.onnx").write_bytes(b"not the published weights")
+    monkeypatch.chdir(tmp_path)
+    fetched = tmp_path / "hub" / "w.onnx"
+    fetched.parent.mkdir()
+    fetched.write_bytes(b"published")
+    calls = []
+    hub = pytest.importorskip("huggingface_hub")
+    monkeypatch.setattr(hub, "hf_hub_download", lambda repo, name: calls.append((repo, name)) or str(fetched))
+    good = hashlib.sha256(b"published").hexdigest()
+    assert resolve_weights("w.onnx", repo="o/r", sha256=good) == fetched and calls == [("o/r", "w.onnx")]
+    with pytest.raises(OSError, match="refusing to run unknown weights"):
+        resolve_weights("w.onnx", repo="o/r", sha256="0" * 64)
+    with pytest.raises(OSError, match="refusing to run unknown weights"):
+        resolve_weights(tmp_path / "w.onnx", sha256=good)
 
 
 def test_a_query_string_is_the_same_as_keywords(monkeypatch):

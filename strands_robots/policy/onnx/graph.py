@@ -54,21 +54,23 @@ def base_twist(obs: Observation, who: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def resolve_weights(source: str | Path, *, repo: str | None = None, sha256: str | None = None) -> Path:
-    """A local ``.onnx`` path as is; a bare file name is fetched from the Hugging Face ``repo`` (hash-checked)."""
+    """A local ``.onnx`` path as is; a bare file name with a ``repo`` always comes from the Hub. ``sha256`` is checked
+    on whichever file is returned."""
     p = Path(source).expanduser()
-    if p.is_file():
-        return p
     if repo is None or "/" in str(source):
-        raise FileNotFoundError(f"ONNX file not found: {source} (pass repo='owner/name' to fetch a bare file name)")
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise ImportError(f"huggingface_hub is not installed: {hint('onnx')}") from exc
-    path = Path(hf_hub_download(repo, str(source)))
+        if not p.is_file():
+            raise FileNotFoundError(f"ONNX file not found: {source} (pass repo='owner/name' to fetch a bare file name)")
+        path = p
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise ImportError(f"huggingface_hub is not installed: {hint('onnx')}") from exc
+        path = Path(hf_hub_download(repo, str(source)))
     if sha256 is not None:
         got = hashlib.sha256(path.read_bytes()).hexdigest()
         if got != sha256:
-            raise OSError(f"{repo}/{source} hashes to {got}, expected {sha256}: refusing to run unknown weights")
+            raise OSError(f"{path} hashes to {got}, expected {sha256}: refusing to run unknown weights")
     return path
 
 
@@ -86,8 +88,10 @@ def read_metadata(path: str | Path) -> dict[str, str]:
 
 
 def write_sidecar(path: Path, session: Any) -> Path:
-    """``<file>.json`` next to the graph: inputs, outputs and metadata, for readers without a metadata API."""
-    side = path.with_suffix(".json")
+    """``<file>.onnx.json`` next to the graph: inputs, outputs and metadata, for readers without a metadata API.
+
+    The name cannot collide with a ``<file>.json`` the user exported, and a file that is not ours is never written."""
+    side = path.with_name(path.name + ".json")
     doc = {
         "file": path.name,
         "inputs": [{"name": i.name, "shape": list(i.shape)} for i in session.get_inputs()],
@@ -95,7 +99,7 @@ def write_sidecar(path: Path, session: Any) -> Path:
         "metadata": dict(session.get_modelmeta().custom_metadata_map),
     }
     text = json.dumps(doc, indent=1)
-    if not side.is_file() or side.read_text() != text:
+    if not side.exists() or (not side.is_symlink() and side.read_text() != text):
         try:
             side.write_text(text)
         except OSError:  # a read-only cache is fine; the sidecar is a convenience
