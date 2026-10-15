@@ -13,6 +13,8 @@ from .scene import Scene
 
 _BACKENDS: dict[str, str] = {
     "mujoco": "strands_robots.simulation.backends.mujoco:MuJoCoBackend",
+    "isaac": "strands_robots.simulation.backends.isaac:IsaacBackend",
+    "mujoco+newton": "strands_robots.simulation.backends.newton:NewtonBackend",  # a solver of the MuJoCo world
 }
 
 
@@ -76,10 +78,11 @@ class Backend(ABC):
     def close(self) -> None: ...
 
 
-def load_backend(name: str) -> type[Backend]:
-    try:
-        target = _BACKENDS[name]
-    except KeyError:
-        raise ValueError(f"unknown simulation backend {name!r}; choose from {sorted(_BACKENDS)}") from None
+def load_backend(name: str, physics: str = "native") -> type[Backend]:
+    """The engine class; a solver choice (``physics=``) may swap in its own subclass of that engine."""
+    engines = sorted(k for k in _BACKENDS if "+" not in k)
+    if name not in engines:
+        raise ValueError(f"unknown simulation backend {name!r}; choose from {engines}")
+    target = _BACKENDS.get(f"{name}+{physics}", _BACKENDS[name])
     mod_name, cls_name = target.split(":")
     return getattr(importlib.import_module(mod_name), cls_name)

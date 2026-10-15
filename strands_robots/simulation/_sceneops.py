@@ -222,10 +222,15 @@ class _SceneOps:
             return float(rng.uniform(*v))
 
         with self.lock:
-            self.scene.friction_scale = pick(friction, self.scene.friction_scale)
-            self.scene.mass_scale = pick(mass, self.scene.mass_scale)
-            self.scene.light_scale = pick(lighting, self.scene.light_scale)
-            self._reload()
+            sc = self.scene
+            was = (sc.friction_scale, sc.mass_scale, sc.light_scale)
+            sc.friction_scale, sc.mass_scale = pick(friction, was[0]), pick(mass, was[1])
+            sc.light_scale = pick(lighting, was[2])
+            try:
+                self._reload()
+            except Exception:  # an engine that cannot randomize this leaves the world as it was
+                sc.friction_scale, sc.mass_scale, sc.light_scale = was
+                raise
 
     def contacts(self) -> list[Contact]:
         return self.backend.contacts()
