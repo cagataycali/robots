@@ -41,10 +41,26 @@ def run(
     if hz is not None and hz <= 0:
         raise ValueError(f"hz must be > 0, got {hz}")  # before bind: a bad hz loads no checkpoint
     bound = bind(robot, policy, units)
+    _emit(robot, "run.started", {"policy": repr(bound.policy)})
     try:
-        return _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event)
+        result = _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event)
     finally:
         release(bound)
+    _announce(robot, result)
+    return result
+
+
+def _emit(robot: Robot, event: str, payload: dict[str, Any]) -> None:
+    events = getattr(robot, "events", None)
+    if events is not None:
+        events.emit(event, {"device_id": robot.id, **payload})
+
+
+def _announce(robot: Robot, result: RunResult) -> None:
+    """``run.stopped`` for every finished run, and ``fault`` first when a policy fault ended it."""
+    if result.fault is not None and result.stopped_by == "fault":
+        _emit(robot, "fault", {"reason": result.fault})
+    _emit(robot, "run.stopped", {"stopped_by": result.stopped_by, "steps": result.steps})
 
 
 def _declared(bounds: Iterable[Bound], hz: float | None) -> float | None:
@@ -152,10 +168,15 @@ def lockstep(
     try:
         for r, p in policies.items():
             bound[r] = bind(r, p, units)
-        return _lockstep(sim, bound, hz, seconds, steps, instruction)
+        for r, b in bound.items():
+            _emit(r, "run.started", {"policy": repr(b.policy)})
+        results = _lockstep(sim, bound, hz, seconds, steps, instruction)
     finally:
         for b in bound.values():
             release(b)
+    for r in bound:
+        _announce(r, results[r.id])
+    return results
 
 
 def _lockstep(

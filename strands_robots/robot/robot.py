@@ -63,7 +63,7 @@ class Robot(DeviceVerbs):
         self._bus_lock = threading.RLock()  # a hardware body: one half-duplex bus shared by every thread
         self.estop_latch, self.events = Latch(), Emitter(self)
         self.validators: list[Validator] = []  # extra checks on every agent/dashboard write, after the interlocks
-        self.interlocks: list[Validator] = []
+        self.interlocks: list[Validator] = []  # append a Validator to either list; it sees every target, in order
 
         if self.is_real:
             if sim is not None:
