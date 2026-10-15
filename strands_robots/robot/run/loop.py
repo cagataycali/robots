@@ -37,6 +37,8 @@ def run(
     """observe -> policy -> act at ``hz`` (default: the policy's ``hz``, else 30) until a limit or ``stop()``."""
     if seconds is None and steps is None and stop_when is None:
         raise ValueError("run needs seconds=, steps= or stop_when=")
+    if hz is not None and hz <= 0:
+        raise ValueError(f"hz must be > 0, got {hz}")  # before bind: a bad hz loads no checkpoint
     bound = bind(robot, policy, units)
     try:
         return _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event)

@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 _REPO = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 _PRESET = re.compile(r"^[a-z][a-z0-9_]*(\?[^\s/]*)?$")
 FORMS = (
-    "<preset>[?k=v&k2=v2]            a named ONNX preset (holosoma, microduck), run in-process",
+    "<preset>[?k=v&k2=v2]            a named ONNX preset, run in-process",
     "zenoh://host:port/<deployment>   a lerobot-policy-server",
     "<owner>/<repo>                   a LeRobot checkpoint on the Hugging Face Hub, run in-process",
     "<dir with config.json>           a local LeRobot checkpoint, run in-process",

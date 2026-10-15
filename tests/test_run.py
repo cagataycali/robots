@@ -51,6 +51,8 @@ def test_run_needs_a_bound_and_valid_hz():
         arm.run(lambda o: o.joints.positions)
     with pytest.raises(ValueError, match="hz"):
         arm.run(lambda o: o.joints.positions, hz=0, steps=1)
+    with pytest.raises(ValueError, match="hz"):  # refused before the spec is resolved, so nothing is loaded
+        arm.run("zenoh://127.0.0.1:1/nobody", hz=-1, steps=1)
 
 
 def test_start_stop_background_task():
