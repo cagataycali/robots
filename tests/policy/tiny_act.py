@@ -27,7 +27,7 @@ def save_tiny_act(path: Path, n: int, *, camera: str | None = "front", size: tup
             "STATE": NormalizationMode.MEAN_STD,
             "ACTION": NormalizationMode.MEAN_STD,
         },
-        chunk_size=10,
+        chunk_size=60,  # a 2 s horizon at 30 Hz: a slow first turnaround (~1 s) stays inside it
         n_action_steps=10,
         dim_model=32,
         n_heads=2,
