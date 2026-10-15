@@ -58,7 +58,9 @@ class Emitter:
             cb(payload)
 
     def _state_stream(self, cb: Callable[[dict[str, Any]], Any], hz: float | None) -> Callable[[], None]:
-        rate = float(hz) if hz is not None else self.robot.manifest.events[0].hz or 10.0
+        rate = (
+            float(hz) if hz is not None else next(e.hz for e in self.robot.manifest.events if e.name == "state") or 10.0
+        )
         if rate <= 0:
             raise ValueError(f"hz must be > 0, got {rate}")
         stop = threading.Event()

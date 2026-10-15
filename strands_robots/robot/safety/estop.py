@@ -25,6 +25,7 @@ class Latch:
 
     def __init__(self) -> None:
         self._set = threading.Event()
+        self._lock = threading.Lock()
         self.engaged_at: float | None = None
         self.reason: str | None = None
         self.resumed_by: str | None = None
@@ -35,10 +36,11 @@ class Latch:
         return self._set.is_set()
 
     def engage(self, reason: str) -> None:
-        if not self._set.is_set():
-            self.engaged_at, self.reason = time.monotonic(), reason
-            self.count += 1
-            self._set.set()
+        with self._lock:  # two racing e-stops count once
+            if not self._set.is_set():
+                self.engaged_at, self.reason = time.monotonic(), reason
+                self.count += 1
+                self._set.set()
 
     def release(self, by: str) -> None:
         self.resumed_by = by
@@ -58,7 +60,7 @@ def engage(robot: Robot, reason: str = "estop()") -> None:
 
 
 def guarded_write(robot: Robot, targets: object) -> None:
-    """Write under the body's lock, refusing while latched; a stop that lands mid-write is re-applied after it."""
+    """Write, refusing while latched (the caller holds ``robot._lock``); a stop landing mid-write is re-applied."""
     latch, body = robot.estop_latch, robot.body
     latch.check(robot.id)
     body.write(targets)  # type: ignore[arg-type]
