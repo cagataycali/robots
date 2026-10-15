@@ -53,7 +53,7 @@ def scene() -> Scene:
     s.arrow([(526, 558), (526, 590), (1015, 590), (1015, 458)], dashed=True, label="steps", label_dx=10,
             label_dy=-6, id="b2s")
     s.footnote(626, "strands_robots.__all__ is exactly Robot, Simulation, Policy, Body, Description, Observation, "
-                    "Action, JointState, Pose; everything else is imported from its package.")
+                    "Action, JointState, Pose and Mesh; everything else is imported from its package.")
     s.motion = [("robot", "pulse"), ("obs", "flow"), ("act", "flow"), ("d2r", "flow"), ("r2b", "flow"),
                 ("b2s", "flow")]
     return s
