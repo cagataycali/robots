@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -33,19 +34,25 @@ class NewtonStepper:
             self._model = model
             self.m = self.mjw.put_model(model)
             self.d = self.mjw.put_data(model, data, nworld=self.num_envs)
-            self._capture()
+            self._capture(data)
 
-    def _capture(self) -> None:
-        """Record one step into a CUDA graph (kernel-by-kernel launches are ~10x slower); CPU devices run eagerly."""
+    def _capture(self, data: Any) -> None:
+        """Record one step into a CUDA graph (kernel-by-kernel launches are ~10x slower); CPU devices run eagerly.
+
+        The warm-up step that compiles the kernels runs on a scratch copy, and a capture records without executing,
+        so loading, resetting or teleporting never advances the world.
+        """
         self._graph = None
         if not str(self.device).startswith("cuda"):
             return
         try:
-            self.mjw.step(self.m, self.d)  # compiles every kernel before the capture
+            self.mjw.step(self.m, self.mjw.put_data(self._model, data, nworld=self.num_envs))
             with self.wp.ScopedCapture() as cap:
                 self.mjw.step(self.m, self.d)
             self._graph = cap.graph
-        except Exception:  # noqa: BLE001 — the graph is an optimisation; eager stepping is the contract
+        except Exception as exc:  # noqa: BLE001 — the graph is an optimisation; eager stepping is the contract
+            msg = f"newton: CUDA graph capture failed ({exc}); stepping kernel by kernel, ~10x slower"
+            warnings.warn(msg, stacklevel=2)
             self._graph = None
 
     def step(self, n: int) -> None:
