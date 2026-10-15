@@ -49,10 +49,10 @@ test = "pytest {args}"
 [tool.hatch.envs.lerobot]
 python = "3.12"
 features = ["dev", "mujoco", "lerobot"]
-dependencies = ["lerobot[remote,feetech] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"]
+dependencies = ["lerobot[remote,feetech,dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"]
 
 [tool.hatch.envs.lerobot.scripts]
-test = "pytest tests/policy tests/test_policy_factory.py tests/test_units_lerobot_modes.py tests/test_units_lerobot_calibrated.py {args}"
+test = "pytest tests/policy tests/recording tests/test_policy_factory.py tests/test_units_lerobot_modes.py tests/test_units_lerobot_calibrated.py {args}"
 
 [tool.ruff]
 line-length = 120
@@ -125,6 +125,17 @@ type = "forbidden"
 source_modules = ["strands_robots.robot.safety", "strands_robots.robot.device"]
 forbidden_modules = ["strands_robots.policy", "strands_robots.simulation.backends"]
 allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "recording depends only on types, description and units (the run loop calls it, never the reverse)"
+type = "forbidden"
+source_modules = ["strands_robots.recording"]
+forbidden_modules = [
+    "strands_robots.geometry",
+    "strands_robots.simulation",
+    "strands_robots.robot",
+    "strands_robots.policy",
+]
 
 [[tool.importlinter.contracts]]
 name = "units depends only on types and description"
