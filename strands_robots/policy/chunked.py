@@ -45,9 +45,13 @@ class ChunkedPolicy(Policy):
         self._played = 0
         self.inner.reset()
 
-    def act(self, obs: Observation, *, instruction: str | None = None) -> Action:
+    def needs_observation(self, *, instruction: str | None = None) -> bool:
+        """Only the step that asks the inner policy looks; the queued steps replay without a frame."""
         stale = self.replan_every is not None and self._played >= self.replan_every
-        if not self._queue or stale or instruction != self._instruction:
+        return not self._queue or stale or instruction != self._instruction
+
+    def act(self, obs: Observation, *, instruction: str | None = None) -> Action:
+        if self.needs_observation(instruction=instruction):
             chunk = np.asarray(self.inner.act_chunk(obs, instruction=instruction), dtype=float)
             if chunk.ndim != 2 or len(chunk) == 0:
                 raise ValueError(f"act_chunk returned shape {chunk.shape}; expected [H, n] with H >= 1")

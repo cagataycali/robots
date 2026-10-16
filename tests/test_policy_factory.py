@@ -52,6 +52,42 @@ def test_chunked_policy_plays_the_chunk_then_asks_again():
     assert inner2.calls == 4
 
 
+# One render per step the policy looks at: every step for a plain policy, once per chunk for a ChunkedPolicy.
+_LOOKS = {
+    "plain": (lambda: lambda obs: obs.joints.positions, 8),
+    "chunked": (lambda: ChunkedPolicy(_Count()), 2),
+    "chunked replan_every=2": (lambda: ChunkedPolicy(_Count(), replan_every=2), 4),
+}
+_LOOPS = {
+    "robot.run": lambda arm, pol: arm.run(pol, steps=8),
+    "sim.run": lambda arm, pol: arm.sim.run({arm: pol}, steps=8),
+}
+
+
+@pytest.mark.parametrize("loop", _LOOPS.values(), ids=_LOOPS.keys())
+@pytest.mark.parametrize("make,looks", _LOOKS.values(), ids=_LOOKS.keys())
+def test_the_loop_renders_only_the_steps_the_policy_looks_at(make, looks, loop):
+    with Simulation() as sim:
+        arm = Robot("so101", sim=sim)
+        sim.camera("wrist", size=(64, 64), attach=arm)
+        rendered, render = [], sim.backend.render
+        sim.backend.render = lambda name: rendered.append(name) or render(name)
+        pol = make()
+        loop(arm, pol)
+        assert len(rendered) == looks + 1  # + the one frame bind's requirements check reads
+        if isinstance(pol, ChunkedPolicy):
+            assert pol.inner.calls == looks
+
+
+def test_stop_when_still_sees_a_frame_on_every_step():
+    with Simulation() as sim:
+        arm = Robot("so101", sim=sim)
+        sim.camera("wrist", size=(64, 64), attach=arm)
+        seen = []
+        arm.run(ChunkedPolicy(_Count()), steps=8, stop_when=lambda o: seen.append(sorted(o.images)) and False)
+        assert seen == [["wrist"]] * 8
+
+
 class _LeRobotUnits:
     units = "lerobot"
 

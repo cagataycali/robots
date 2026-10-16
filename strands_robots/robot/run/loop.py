@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ...policy.base import PolicyFault
 from ...types import Observation
 from ..safety import EStopped
-from .bind import Bound, bind, decide, release
+from .bind import Bound, bind, decide, looks, release
 from .result import RunResult
 from .task import Task
 
@@ -114,7 +114,7 @@ def _loop(
             break
         if max_steps is not None and n >= max_steps:
             break
-        obs = robot.observe()
+        obs = robot.observe(images=stop_when is not None or looks(bound, instruction))
         if stop_when is not None and stop_when(obs):
             why = "stop_when"
             break
@@ -204,7 +204,7 @@ def _lockstep(
                 if stopped:
                     break
                 try:
-                    r.act(decide(r, b, r.observe(), instruction))
+                    r.act(decide(r, b, r.observe(images=looks(b, instruction)), instruction))
                 except PolicyFault as e:
                     faults[r.id] = str(e)
                 except EStopped:
@@ -221,7 +221,8 @@ def _lockstep(
     el = sim.time - t0
     why = "fault" if faults else ("estop" if stopped else "steps")
     reason = f"e-stop engaged on {', '.join(r.id for r in stopped)}" if stopped else None
+    final = {r: r.observe(images=False) for r in bound}
     return {
-        r.id: RunResult(n, el, 1.0 / dt, n / el if el else 0.0, why, None, r.observe(), faults.get(r.id, reason))  # type: ignore[arg-type]
+        r.id: RunResult(n, el, 1.0 / dt, n / el if el else 0.0, why, None, final[r], faults.get(r.id, reason))  # type: ignore[arg-type]
         for r in bound
     }

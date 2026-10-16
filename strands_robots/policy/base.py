@@ -35,7 +35,8 @@ class Policy(metaclass=_Factory):
     """Base class: override ``act``; ``units`` and ``requirements`` say what the policy speaks and needs.
 
     Optional hooks the run loop honours: ``attach(robot)`` before step one (connect, admit, load),
-    ``detach()`` after the last step, ``realtime`` (pace in wall time even in a sim) and ``hz``.
+    ``detach()`` after the last step, ``realtime`` (pace in wall time even in a sim), ``hz`` and
+    ``needs_observation`` (the loop renders the cameras only for a step that answers True).
     """
 
     units: str | None = None  # a scheme name in strands_robots.units (e.g. "rad", "lerobot") or None = cannot say
@@ -51,6 +52,10 @@ class Policy(metaclass=_Factory):
 
     def reset(self) -> None:
         pass
+
+    def needs_observation(self, *, instruction: str | None = None) -> bool:
+        """Whether the next ``act`` looks at the observation's images; the default looks on every step."""
+        return True
 
     def requirements(self) -> Requirements:
         """Cameras/state this policy needs; the default needs nothing specific."""

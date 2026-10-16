@@ -62,3 +62,9 @@ def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None
         return robot.coerce(pol.act(obs, instruction=instruction))
     seen = obs.with_joints(conv.from_rad(obs.joints.positions))
     return robot.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)))
+
+
+def looks(bound: Bound, instruction: str | None) -> bool:
+    """Whether this step renders the cameras: only when the policy looks (a chunk replays without a frame)."""
+    ask = getattr(bound.policy, "needs_observation", None)
+    return not callable(ask) or bool(ask(instruction=instruction))
