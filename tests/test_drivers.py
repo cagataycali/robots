@@ -135,6 +135,30 @@ def test_bus_reads_exactly_the_reply_and_never_waits(wire, call):
     assert serial.waited == 0 and not serial.rx
 
 
+@pytest.mark.parametrize("wire", [FakeSerial, EchoSerial, NoisySerial])
+def test_a_servo_that_never_answers_is_absent_on_every_wire(wire):
+    bus = ft.FeetechBus("/dev/fake", serial=wire())
+    for _ in range(2):  # before and after the bus has learned whether the adapter echoes
+        assert bus.ping(7) is False
+        with pytest.raises(ft.ProtocolError, match="no FF FF header"):
+            bus.read(7, ft.REG_PRESENT_POSITION, 2)
+        assert bus.ping(1) is True
+
+
+class VoltageErrorSerial(FakeSerial):
+    """No echo; every status carries ERR 0x01, so a PING reply is byte-identical to the PING request."""
+
+    def _status(self, mid, params=b""):
+        payload = bytes([mid, len(params) + 2, 1]) + params
+        return ft.HEADER + payload + bytes([ft.checksum(payload)])
+
+
+def test_a_reply_identical_to_the_request_stands_once_the_adapter_is_known_not_to_echo():
+    bus = ft.FeetechBus("/dev/fake", serial=VoltageErrorSerial())
+    assert bus.read(1, ft.REG_PRESENT_POSITION, 2)  # a reply unlike the request: this adapter does not echo
+    assert all(bus.ping(i) for i in range(1, 7))
+
+
 class BreakSerial(FakeSerial):
     """A line held low (a pinched cable): the adapter delivers 0x00 for as long as anyone reads."""
 

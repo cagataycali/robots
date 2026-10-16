@@ -41,7 +41,7 @@ mirrors, and `calibrate(interactive=False)` against LeRobot's file, and `Driver.
 **The wire.** `FeetechBus` reads each status frame's head, `FF FF ID LEN`, then exactly `LEN` more
 bytes, so `ping`, `read` and `sync_read` cost the reply (six servos answer in about a millisecond), not the
 20 ms `timeout`, which only bounds a servo that does not answer. An adapter that echoes the request and
-a stray byte ahead of the header are both skipped.
+a stray byte ahead of the header are both skipped; an echo and then silence is a servo that did not answer.
 
 {{drawing:d06_bus_frame}}
 

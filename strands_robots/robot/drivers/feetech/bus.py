@@ -88,15 +88,31 @@ class FeetechBus:
             serial = pyserial.Serial(port, baudrate=baud, timeout=timeout)
         self.serial = serial
         self.wire = threading.RLock()  # one transaction at a time: an e-stop from any thread never collides
+        self.echoes: bool | None = None  # learned from the wire: does this adapter hear its own request?
 
     def _txrx(self, packet: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
         with self.wire:
             self.serial.reset_input_buffer()
             self.serial.write(packet)
-            raw = self._frame()
-            if raw == packet:  # an adapter that echoes the request; a reply equal to it stands if nothing follows
-                raw = self._frame() or raw
+            raw = self._echoed(packet, self._frame())
         return parse_status(raw, expect_id, nparams)
+
+    def _echoed(self, packet: bytes, raw: bytes) -> bytes:
+        """Drop the request an echoing adapter hears; learn which kind of adapter this is.
+
+        A frame equal to the request is the echo unless the adapter is known not to echo (a reply can be
+        byte-identical: ``ERR`` equal to the instruction byte). Echo then silence is an unanswered request.
+        """
+        if raw != packet:
+            if raw.startswith(HEADER) and self.echoes is None:
+                self.echoes = False
+            return raw
+        if self.echoes is False:
+            return raw
+        reply = self._frame()
+        if reply:
+            self.echoes = True
+        return reply
 
     def _frame(self) -> bytes:
         """One frame off the wire: find ``FF FF``, read ``ID LEN``, then exactly ``LEN`` bytes, never a guess.
@@ -131,9 +147,7 @@ class FeetechBus:
             self.serial.reset_input_buffer()
             self.serial.write(packet)
             for mid in ids:  # the servos answer in id order, one frame each
-                raw = self._frame()
-                if raw == packet:  # an echoed request
-                    raw = self._frame()
+                raw = self._echoed(packet, self._frame()) if mid == ids[0] else self._frame()
                 if not raw.startswith(HEADER):
                     raise ProtocolError(f"sync_read: no reply from servo {mid} (got {len(out)} of {len(ids)})")
                 out[mid] = parse_status(raw, mid, n)[1]
