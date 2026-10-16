@@ -26,11 +26,13 @@ class FakeSerial:
         self.rx = bytearray()
         self.frames = []
         self.closed = False
+        self.waited = 0  # bytes asked for that never came: on a real wire each one costs the whole timeout
 
     def reset_input_buffer(self):
         self.rx.clear()
 
     def read(self, n):
+        self.waited += max(0, n - len(self.rx))
         out, self.rx = bytes(self.rx[:n]), self.rx[n:]
         return out
 
@@ -97,6 +99,46 @@ def test_protocol_codec():
         ft.parse_status(bytes.fromhex("ff ff 01 02 00 00"), 1, 0)
     with pytest.raises(ft.ProtocolError, match="expected 1"):
         ft.parse_status(bytes.fromhex("ff ff 02 02 00 fb"), 1, 0)
+
+
+class EchoSerial(FakeSerial):
+    """An adapter that hears its own request before the servo answers."""
+
+    def write(self, data):
+        self.rx += bytes(data)
+        super().write(data)
+
+
+class NoisySerial(FakeSerial):
+    """A stray byte on the line ahead of every reply."""
+
+    def write(self, data):
+        self.rx += b"\x00"
+        super().write(data)
+
+
+BUS_CALLS = {
+    "ping": lambda bus: bus.ping(1) is True,
+    "read": lambda bus: bus.read(1, ft.REG_PRESENT_POSITION, 2),
+    "write": lambda bus: bus.write(1, ft.REG_TORQUE_ENABLE, b"\x01") is None,
+    "sync_read": lambda bus: bus.sync_read(ft.REG_PRESENT_POSITION, 6, [1, 2, 3, 4, 5, 6]),
+}
+
+
+@pytest.mark.parametrize("wire", [FakeSerial, EchoSerial, NoisySerial])
+@pytest.mark.parametrize("call", BUS_CALLS)
+def test_bus_reads_exactly_the_reply_and_never_waits(wire, call):
+    serial = wire()
+    bus = ft.FeetechBus("/dev/fake", serial=serial)
+    for _ in range(3):
+        assert BUS_CALLS[call](bus)
+    assert serial.waited == 0 and not serial.rx
+
+
+def test_driver_cycle_never_waits_on_the_wire():
+    d, serial = make_driver(serial=EchoSerial())
+    d.write(d.read().positions)
+    assert serial.waited == 0
 
 
 def test_driver_reads_through_calibration_and_writes_goals():

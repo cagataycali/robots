@@ -75,7 +75,7 @@ def parse_status(raw: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
 class FeetechBus:
     """Half-duplex serial bus. ``serial`` may be injected (tests); otherwise pyserial opens ``port``."""
 
-    def __init__(self, port: str, *, baud: int = 1_000_000, timeout: float = 0.05, serial: Any = None) -> None:
+    def __init__(self, port: str, *, baud: int = 1_000_000, timeout: float = 0.02, serial: Any = None) -> None:
         self.port = port
         if serial is None:
             try:
@@ -90,8 +90,20 @@ class FeetechBus:
         with self.wire:
             self.serial.reset_input_buffer()
             self.serial.write(packet)
-            raw = self.serial.read(6 + nparams + 2)  # + possible echoed byte(s)
+            raw = self._frame()
+            if raw == packet:  # an adapter that echoes the request; a reply equal to it stands if nothing follows
+                raw = self._frame() or raw
         return parse_status(raw, expect_id, nparams)
+
+    def _frame(self) -> bytes:
+        """One frame off the wire: find ``FF FF``, read ``ID LEN``, then exactly ``LEN`` bytes, never a guess.
+
+        A healthy reply is under a millisecond; asking for a byte that never comes costs the whole ``timeout``.
+        """
+        head = bytes(self.serial.read(4))
+        while len(head) == 4 and head[:2] != HEADER:  # a stray byte ahead of the header
+            head = head[1:] + bytes(self.serial.read(1))
+        return head + bytes(self.serial.read(head[3])) if len(head) == 4 else head
 
     def ping(self, motor_id: int) -> bool:
         try:
@@ -108,19 +120,18 @@ class FeetechBus:
         self._txrx(frame(motor_id, WRITE, bytes([reg]) + data), motor_id, 0)
 
     def sync_read(self, reg: int, n: int, ids: list[int]) -> dict[int, bytes]:
+        packet = frame(BROADCAST, SYNC_READ, bytes([reg, n]) + bytes(ids))
+        out: dict[int, bytes] = {}
         with self.wire:
             self.serial.reset_input_buffer()
-            self.serial.write(frame(BROADCAST, SYNC_READ, bytes([reg, n]) + bytes(ids)))
-            raw = self.serial.read((6 + n) * len(ids) + 2)
-        out: dict[int, bytes] = {}
-        pos = 0
-        for mid in ids:
-            i = raw.find(HEADER, pos)
-            if i < 0:
-                raise ProtocolError(f"sync_read: no reply from servo {mid} (got {len(out)} of {len(ids)})")
-            _, params = parse_status(raw[i : i + 6 + n], mid, n)
-            out[mid] = params
-            pos = i + 6 + n
+            self.serial.write(packet)
+            for mid in ids:  # the servos answer in id order, one frame each
+                raw = self._frame()
+                if raw == packet:  # an echoed request
+                    raw = self._frame()
+                if not raw.startswith(HEADER):
+                    raise ProtocolError(f"sync_read: no reply from servo {mid} (got {len(out)} of {len(ids)})")
+                out[mid] = parse_status(raw, mid, n)[1]
         return out
 
     def sync_write(self, reg: int, per: int, items: Mapping[int, bytes]) -> None:

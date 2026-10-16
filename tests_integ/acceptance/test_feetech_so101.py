@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -108,3 +109,16 @@ def test_calibrate_returns_lerobots_file_unchanged(arm):
     on_disk = json.loads(path.read_text())
     cal = real.calibrate(interactive=False)
     assert cal == Calibration.from_json(on_disk) and cal.to_json() == on_disk
+
+
+def test_a_read_costs_the_reply_not_the_timeout(arm):
+    """Six servos answer in about a millisecond; a bus that waits out its read timeout reads at 50 ms."""
+    driver = arm(lambda action: False).body
+    for _ in range(10):
+        driver.read()
+    ms = []
+    for _ in range(100):
+        t = time.perf_counter()
+        driver.read()
+        ms.append((time.perf_counter() - t) * 1e3)
+    assert float(np.median(ms)) < 3.0, f"Driver.read() p50 {np.median(ms):.1f} ms"

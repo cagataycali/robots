@@ -36,7 +36,14 @@ full turn of counts (2048 is 0 rad).
 
 **On your arm.** `STRANDS_SO101_PORT=/dev/ttyACM0 pytest tests_integ/acceptance` runs acceptance check 9
 on a physical SO-101: `observe()`, a refused `confirm_act()` that writes nothing, an allowed hold the twin
-mirrors, and `calibrate(interactive=False)` against LeRobot's file. Without an arm it skips and says why.
+mirrors, and `calibrate(interactive=False)` against LeRobot's file, and `Driver.read()` under 3 ms. Without an arm it skips and says why.
+
+**The wire.** `FeetechBus` reads each status frame's head, `FF FF ID LEN`, then exactly `LEN` more
+bytes, so `ping`, `read` and `sync_read` cost the reply (six servos answer in about a millisecond), not the
+20 ms `timeout`, which only bounds a servo that does not answer. An adapter that echoes the request and
+a stray byte ahead of the header are both skipped.
+
+{{drawing:d06_bus_frame}}
 
 {{drawing:d05_bench}}
 
