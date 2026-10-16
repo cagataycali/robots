@@ -43,7 +43,9 @@ class NewtonBackend(MuJoCoBackend):
         self._stepper.sync_from(self.data)
 
     def time(self) -> float:
-        self._fresh()
+        """Read without the world lock (the watchdog clock): the device scalar, never a write to the CPU MjData."""
+        if self._stale and self._stepper.d is not None:
+            return float(self._stepper.d.time.numpy()[0])
         return super().time()
 
     def joint_state(self, body: str) -> JointState:

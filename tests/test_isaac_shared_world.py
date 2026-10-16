@@ -124,3 +124,6 @@ def test_the_gaps_are_named(pair):
     assert arm.sim.contacts() == []  # PhysX contact reports need a contact sensor per prim (not wired)
     with pytest.raises(NotImplementedError, match="gains"):
         arm.sim.backend.set_gains(arm.id, np.ones(6), np.ones(6))
+    with pytest.raises(NotImplementedError, match="attach"):  # MuJoCo parents it to the body; never a world camera
+        arm.sim.camera("wrist", attach=arm)
+    assert "wrist" not in [c.name for c in arm.sim.scene.cameras]

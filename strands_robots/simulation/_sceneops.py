@@ -233,4 +233,5 @@ class _SceneOps:
                 raise
 
     def contacts(self) -> list[Contact]:
-        return self.backend.contacts()
+        with self.lock:  # a GPU solver mirrors its state into the CPU world on this read
+            return self.backend.contacts()

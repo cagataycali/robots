@@ -21,7 +21,8 @@ class Object:
 
     @property
     def pose(self) -> Pose:
-        return self.sim.backend.body_pose(self.name)
+        with self.sim.lock:
+            return self.sim.backend.body_pose(self.name)
 
     def set_pose(self, position: Any = None, orientation: Any = None) -> None:
         self.sim.set_pose(self.name, position=position, orientation=orientation)

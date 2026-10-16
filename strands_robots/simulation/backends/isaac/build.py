@@ -52,6 +52,10 @@ def add_object(world: Any, o: SceneObject) -> Any:
 
 
 def add_camera(c: SceneCamera) -> Any:
+    if c.attach is not None:
+        raise NotImplementedError(
+            f"Simulation('isaac'): camera {c.name!r} attach={c.attach!r} is not wired yet; use a world camera"
+        )
     from isaacsim.sensors.camera import Camera
 
     pos = np.asarray(c.position, dtype=float)

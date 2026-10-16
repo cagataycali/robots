@@ -75,3 +75,22 @@ def test_newton_time_is_exact_across_load_reset_and_teleport():
         assert sim.time == pytest.approx(10 * ts, abs=1e-6)
     finally:
         sim.close()
+
+
+@gpu
+def test_unlocked_reads_survive_a_background_run():
+    """``sim.time`` (the watchdog's clock), ``contacts()`` and ``pose`` read while ``Robot.start`` steps the world."""
+    sim = Simulation("mujoco", physics="newton")
+    try:
+        arm = Robot("so101", sim=sim)
+        cube = sim.add_object("cube", shape="box", size=[0.02] * 3, position=[0.25, 0, 0.02])
+        key = arm.description.action_keys[0]
+        task = arm.start(lambda o: {key: 0.3}, hz=200, seconds=2)
+        reads, t = 0, time.perf_counter()
+        while time.perf_counter() - t < 2.5:
+            _ = sim.time, sim.contacts(), arm.pose, cube.pose
+            reads += 1
+        task.stop()
+        assert reads > 100 and sim.time > 0.0
+    finally:
+        sim.close()

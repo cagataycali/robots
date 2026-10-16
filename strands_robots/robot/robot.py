@@ -112,7 +112,8 @@ class Robot(DeviceVerbs):
 
     @property
     def pose(self) -> Pose:
-        p = self.body.pose()
+        with self._lock:
+            p = self.body.pose()
         if p is None:
             raise RuntimeError(f"{self.id}: this body does not report a base pose")
         return p
