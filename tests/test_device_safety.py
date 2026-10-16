@@ -23,6 +23,30 @@ def test_out_of_range_write_is_refused_naming_joint_value_and_bound():
         arm.confirm_act({"elbow_flex": hi + 1.0})
 
 
+def _saturated_sim_arm():
+    arm = Robot("so101")
+    hi = np.array([arm.description.limits[k][1] for k in arm.action_keys])
+    for _ in range(50):  # legal: act() clips; the soft limit lets the joints settle a hair past it
+        arm.act(hi)
+    return arm
+
+
+def _servo_past_range_min_arm():
+    d, s = make_driver()
+    s.actual[4] = 1024 - 40  # wrist_flex rests 40 counts below its calibrated sweep
+    return Robot("so101", driver=d, twin=False, confirm=lambda a: True)
+
+
+@pytest.mark.parametrize("make", [_saturated_sim_arm, _servo_past_range_min_arm])
+def test_a_joint_measured_past_its_limit_does_not_refuse_a_write_that_never_named_it(make):
+    arm = make()
+    arm.confirm_act({"gripper": 0.5})  # the joints it did not name are held, clipped into range
+    hi = arm.description.limits["gripper"][1]
+    with pytest.raises(RequestRefused, match=r"^so101: gripper="):  # a value it did send is still graded
+        arm.confirm_act({"gripper": hi + 1.0})
+    arm.close()
+
+
 def test_validator_refusal_reaches_the_caller_verbatim():
     arm = Robot("so101")
 

@@ -180,7 +180,11 @@ class Robot(DeviceVerbs):
         return self.body.calibrate(interactive=interactive)
 
     def coerce(self, action: Action, *, clip: bool = True) -> np.ndarray:
-        """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits."""
+        """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits.
+
+        A joint a mapping does not name holds its measured position, clipped into its limits even when
+        ``clip=False``: only the caller's own values reach the safety chain unclipped.
+        """
         keys = self.description.action_keys
         if isinstance(action, JointState):
             action = action.as_dict()
@@ -189,7 +193,7 @@ class Robot(DeviceVerbs):
             if unknown:
                 raise KeyError(f"unknown joint(s) {unknown} for {self.id}; action_keys are {list(keys)}")
             with self._lock:
-                targets = np.array(self.body.read().positions, dtype=float)
+                targets = self._full_targets(np.array(self.body.read().positions, dtype=float))
             for k, v in action.items():
                 targets[keys.index(k)] = float(v)
         else:
