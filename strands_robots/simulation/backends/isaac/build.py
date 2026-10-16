@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from ...scene import SceneCamera, SceneObject, SceneRobot
+from ...scene import Scene, SceneCamera, SceneObject, SceneRobot
 from .usd import demangle
 
 _KINDS = {"box": "Cuboid", "sphere": "Sphere", "cylinder": "Cylinder", "capsule": "Capsule"}
@@ -23,11 +23,34 @@ def look_at_quat(pos: np.ndarray, target: np.ndarray) -> np.ndarray:
     return np.array([cy * cp, -sy * sp, cy * sp, sy * cp])
 
 
+def refuse(scene: Scene, objects: Any, cameras: Any) -> None:
+    """Every scene change Isaac cannot build, refused by name before ``load`` touches the stage."""
+    if scene.friction_scale != 1.0 or scene.mass_scale != 1.0:
+        raise NotImplementedError(
+            "Simulation('isaac') cannot randomize friction or mass yet (PhysX materials / body masses are not "
+            "wired); randomize(lighting=) works, and Simulation('mujoco') randomizes all three"
+        )
+    for o in scene.objects:
+        if o.name not in objects and o.path is not None:
+            raise NotImplementedError(
+                f"Simulation('isaac'): object {o.name!r} from a file is not supported; use a shape"
+            )
+    for c in scene.cameras:
+        if c.name not in cameras and c.attach is not None:
+            raise NotImplementedError(
+                f"Simulation('isaac'): camera {c.name!r} attach={c.attach!r} is not wired yet; use a world camera"
+            )
+
+
+def add_ground() -> Any:
+    from isaacsim.core.api.objects import GroundPlane
+
+    return GroundPlane(prim_path="/World/ground", size=50.0, z_position=0.0, color=np.array([0.55, 0.58, 0.62]))
+
+
 def add_object(world: Any, o: SceneObject) -> Any:
     from isaacsim.core.api import objects
 
-    if o.path is not None:
-        raise NotImplementedError(f"Simulation('isaac'): object {o.name!r} from a file is not supported; use a shape")
     kind = _KINDS[o.shape or "box"]
     cls = getattr(objects, ("Dynamic" if o.free else "Fixed") + kind)
     kw: dict[str, Any] = {
@@ -52,10 +75,6 @@ def add_object(world: Any, o: SceneObject) -> Any:
 
 
 def add_camera(c: SceneCamera) -> Any:
-    if c.attach is not None:
-        raise NotImplementedError(
-            f"Simulation('isaac'): camera {c.name!r} attach={c.attach!r} is not wired yet; use a world camera"
-        )
     from isaacsim.sensors.camera import Camera
 
     pos = np.asarray(c.position, dtype=float)

@@ -48,22 +48,14 @@ class IsaacBackend(Backend):
         self._time_base = 0.0
 
     def load(self, scene: Scene) -> None:
-        if scene.friction_scale != 1.0 or scene.mass_scale != 1.0:
-            raise NotImplementedError(
-                "Simulation('isaac') cannot randomize friction or mass yet (PhysX materials / body masses are not "
-                "wired); randomize(lighting=) works, and Simulation('mujoco') randomizes all three"
-            )
+        build.refuse(scene, self._objects, self._cameras)  # before the first mutation: a refusal changes nothing
         carried = self._snapshot()
         pc = self.world.get_physics_context()
         if abs(pc.get_physics_dt() - scene.timestep) > 1e-12:
             pc.set_physics_dt(scene.timestep)
         pc.set_gravity(float(scene.gravity[2]))
         if scene.ground and self._ground is None:
-            from isaacsim.core.api.objects import GroundPlane
-
-            self._ground = GroundPlane(
-                prim_path="/World/ground", size=50.0, z_position=0.0, color=np.array([0.55, 0.58, 0.62])
-            )
+            self._ground = build.add_ground()
         if self._lit != scene.light_scale:
             build.add_lights(self.world.stage, scene.light_scale)
             self._lit = scene.light_scale
@@ -74,21 +66,37 @@ class IsaacBackend(Backend):
         rebuild = bool(removed or new_robots or new_objects)
         if rebuild and self.world.is_playing():
             self.world.stop()  # PhysX views are rebuilt with the timeline stopped; deleting a prim invalidates them
-        for r in new_robots:
-            self._robots[r.id] = self._add_robot(r)
-        for o in new_objects:
-            self._objects[o.name] = build.add_object(self.world, o)
-        for c in scene.cameras:
-            if c.name not in self._cameras:
-                self._cameras[c.name] = build.add_camera(c)
-        self._scene = scene
-        if rebuild or not self.world.is_playing():
-            self.world.reset()  # initialises the physics views (and zeroes state; restored below)
+        try:
             for r in new_robots:
-                self._dofs[r.id] = np.asarray(build.map_dofs(r, list(self._robots[r.id].dof_names)))
-                self._apply_keyframe(r)
-        self._restore(carried)
-        self._time_base = t - float(self.world.current_time)  # a scene change is not a reset: time carries over
+                self._robots[r.id] = self._add_robot(r)
+            for o in new_objects:
+                self._objects[o.name] = build.add_object(self.world, o)
+            for c in scene.cameras:
+                if c.name not in self._cameras:
+                    self._cameras[c.name] = build.add_camera(c)
+            if rebuild or not self.world.is_playing():
+                self.world.reset()  # initialises the physics views (and zeroes state; restored below)
+                for r in new_robots:
+                    self._dofs[r.id] = np.asarray(build.map_dofs(r, list(self._robots[r.id].dof_names)))
+                    self._apply_keyframe(r)
+            self._scene = scene
+        except BaseException:
+            self._undo(new_robots)  # drop what this load added (self._scene is the old world), restart the timeline
+            raise
+        finally:
+            self._restore(carried)
+            self._time_base = t - float(self.world.current_time)  # a scene change is not a reset: time carries over
+
+    def _undo(self, new_robots: list[SceneRobot]) -> None:
+        from isaacsim.core.utils.prims import delete_prim, is_prim_path_valid
+
+        if self.world.is_playing():
+            self.world.stop()
+        self._remove_gone(self._scene)
+        for r in new_robots:  # an import that raised halfway leaves its reference prim behind
+            if r.id not in self._robots and is_prim_path_valid(f"/World/{r.id}"):
+                delete_prim(f"/World/{r.id}")
+        self.world.reset()
 
     def _add_robot(self, r: SceneRobot) -> Any:
         from isaacsim.core.prims import SingleArticulation
@@ -193,8 +201,7 @@ class IsaacBackend(Backend):
         self._drive(body, targets)
 
     def _prim(self, body: str) -> Any:
-        prim = self._robots.get(body) or self._objects.get(body)
-        if prim is None:
+        if (prim := self._robots.get(body) or self._objects.get(body)) is None:
             raise KeyError(f"no body {body!r} in the world")
         return prim
 
@@ -236,10 +243,8 @@ class IsaacBackend(Backend):
         try:
             self.world.clear()
         finally:
-            self._robots.clear()
-            self._objects.clear()
-            self._cameras.clear()
-            self._dofs.clear()
+            for held in (self._robots, self._objects, self._cameras, self._dofs):
+                held.clear()
             self._ground = None
             self._lit = None
             app.release(self)

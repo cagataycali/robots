@@ -127,3 +127,15 @@ def test_the_gaps_are_named(pair):
     with pytest.raises(NotImplementedError, match="attach"):  # MuJoCo parents it to the body; never a world camera
         arm.sim.camera("wrist", attach=arm)
     assert "wrist" not in [c.name for c in arm.sim.scene.cameras]
+
+
+def test_a_refused_scene_change_leaves_the_world_stepping(pair):
+    arm, _ = pair
+    sim = arm.sim
+    sim.step(10)
+    t0 = sim.time
+    with pytest.raises(NotImplementedError, match="from a file"):
+        sim.add_object("t", path="x.obj")
+    sim.step(100)
+    assert sim.backend.world.is_playing() and sim.time - t0 == pytest.approx(100 * sim.physics.timestep, rel=1e-3)
+    assert arm.observe().joints.names == arm.description.action_keys

@@ -7,6 +7,7 @@ box); everywhere else the GPU tests skip with the reason and only the refusals r
 from __future__ import annotations
 
 import importlib.util
+import threading
 import time
 
 import pytest
@@ -92,5 +93,29 @@ def test_unlocked_reads_survive_a_background_run():
             reads += 1
         task.stop()
         assert reads > 100 and sim.time > 0.0
+    finally:
+        sim.close()
+
+
+@gpu
+def test_concurrent_estops_stop_a_background_run():
+    """The e-stop takes no world lock; on newton its hold must not race the run thread on the mirrored ``MjData``."""
+    sim = Simulation("mujoco", physics="newton")
+    try:
+        arm = Robot("so101", sim=sim)
+        key = arm.description.action_keys[0]
+        for _ in range(10):
+            task = arm.start(lambda o: {key: 0.3}, hz=500, seconds=30)
+            time.sleep(0.05)
+            stops = [threading.Thread(target=arm.estop) for _ in range(8)]
+            for s in stops:
+                s.start()
+            for s in stops:
+                s.join()
+            t = time.perf_counter()
+            while task.running and time.perf_counter() - t < 2.0:
+                time.sleep(0.001)
+            assert not task.running and task.result.stopped_by == "estop"
+            arm.resume(approved_by="test")
     finally:
         sim.close()
