@@ -88,6 +88,17 @@ def test_stop_when_still_sees_a_frame_on_every_step():
         assert seen == [["wrist"]] * 8
 
 
+def test_a_hardware_camera_is_drained_on_every_step_even_while_a_chunk_replays():
+    from test_drivers import make_driver
+
+    d, _ = make_driver()
+    arm = Robot("so101", driver=d, twin=False, confirm=lambda a: True)
+    reads, images = [], d.images
+    d.images = lambda: reads.append(1) or images()  # a V4L2 ring goes stale when nobody dequeues
+    arm.run(ChunkedPolicy(_Count()), steps=8)
+    assert len(reads) >= 8
+
+
 class _LeRobotUnits:
     units = "lerobot"
 

@@ -114,7 +114,7 @@ def _loop(
             break
         if max_steps is not None and n >= max_steps:
             break
-        obs = robot.observe(images=stop_when is not None or looks(bound, instruction))
+        obs = robot.observe(images=robot.sim is None or stop_when is not None or looks(bound, instruction))
         if stop_when is not None and stop_when(obs):
             why = "stop_when"
             break
@@ -204,7 +204,7 @@ def _lockstep(
                 if stopped:
                     break
                 try:
-                    r.act(decide(r, b, r.observe(images=looks(b, instruction)), instruction))
+                    r.act(decide(r, b, r.observe(images=r.sim is None or looks(b, instruction)), instruction))
                 except PolicyFault as e:
                     faults[r.id] = str(e)
                 except EStopped:
