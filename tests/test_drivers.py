@@ -135,6 +135,28 @@ def test_bus_reads_exactly_the_reply_and_never_waits(wire, call):
     assert serial.waited == 0 and not serial.rx
 
 
+class BreakSerial(FakeSerial):
+    """A line held low (a pinched cable): the adapter delivers 0x00 for as long as anyone reads."""
+
+    def read(self, n):
+        return b"\x00" * n
+
+
+@pytest.mark.parametrize("call", BUS_CALLS)
+def test_a_line_that_never_sends_a_header_is_refused_and_frees_the_wire(call):
+    bus = ft.FeetechBus("/dev/fake", serial=BreakSerial())
+    if call == "ping":
+        assert bus.ping(1) is False
+    else:
+        with pytest.raises(ft.ProtocolError):
+            BUS_CALLS[call](bus)
+    freed = []
+    t = threading.Thread(target=lambda: freed.append(bus.wire.acquire(timeout=0.5)))
+    t.start()
+    t.join()
+    assert freed == [True]  # an e-stop from another thread still gets the bus
+
+
 def test_driver_cycle_never_waits_on_the_wire():
     d, serial = make_driver(serial=EchoSerial())
     d.write(d.read().positions)

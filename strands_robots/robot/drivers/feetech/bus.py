@@ -72,6 +72,9 @@ def parse_status(raw: bytes, expect_id: int, nparams: int) -> tuple[int, bytes]:
     return err, params
 
 
+MAX_SLIDE = 64  # bytes skipped looking for FF FF before a reply is refused: a UART break streams 0x00 forever
+
+
 class FeetechBus:
     """Half-duplex serial bus. ``serial`` may be injected (tests); otherwise pyserial opens ``port``."""
 
@@ -101,9 +104,11 @@ class FeetechBus:
         A healthy reply is under a millisecond; asking for a byte that never comes costs the whole ``timeout``.
         """
         head = bytes(self.serial.read(4))
-        while len(head) == 4 and head[:2] != HEADER:  # a stray byte ahead of the header
+        for _ in range(MAX_SLIDE):  # stray bytes ahead of the header; a line streaming no header stops here
+            if len(head) < 4 or head[:2] == HEADER:
+                break
             head = head[1:] + bytes(self.serial.read(1))
-        return head + bytes(self.serial.read(head[3])) if len(head) == 4 else head
+        return head + bytes(self.serial.read(head[3])) if len(head) == 4 and head[:2] == HEADER else head
 
     def ping(self, motor_id: int) -> bool:
         try:
