@@ -11,8 +11,14 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-import mujoco
 import numpy as np
+
+from ...._extras import hint
+
+try:
+    import mujoco
+except ImportError as exc:  # the extra the first snippet needs, so the error says how to get it
+    raise ImportError(f"Simulation() needs MuJoCo: {hint('mujoco')} ({exc})") from exc
 
 from ...._gl import ensure_gl
 from ....types import JointState, Pose

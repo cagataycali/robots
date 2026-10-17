@@ -33,7 +33,10 @@ scene change takes: joint state, time and randomised physics carry over. A float
 on its keyframe at the spawn position.
 
 `Simulation()` refuses what it cannot be: an unknown backend, `physics=` other than `native`,
-`substeps` below 1, `num_envs` above 1, an unknown keyword.
+`substeps` below 1, `num_envs` above 1, an unknown keyword. Without the `mujoco` extra it raises an `ImportError` that
+says `pip install 'strands-robots[mujoco]'`, not a bare `ModuleNotFoundError`.
+
+{{drawing:d08_missing_extra}}
 
 ## The backend contract
 
