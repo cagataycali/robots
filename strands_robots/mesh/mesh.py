@@ -19,6 +19,7 @@ from . import wire
 from .broadcast import broadcast, listen_estop, publish_estop
 from .codec import observation_from_dict
 from .device import Device, Selector
+from .iot.options import attach as _iot_attach
 from .presence import Directory, announce, refuse_shared, refuse_taken
 from .record import RAISE, check_kill_switch, default_operator, default_tenant, record, state_rate
 from .remote import RemoteBody
@@ -75,15 +76,16 @@ class Mesh:
         labels: Mapping[str, str] | None = None,
         state_hz: float | None = None,
         watchdog_ms: float | None = 500.0,
+        iot: Any = None,
     ) -> Any:
         """Make ``robot`` a device on every transport: announce it, answer its rpcs, publish its state (at
-        ``state_hz``, default the manifest's state rate) and events. Whoever moves it must keep talking within
-        ``watchdog_ms`` and stay present, or the device applies ``on_disconnect`` (``None``: no watchdog).
-        A ``Simulation`` mounts every robot in it and returns the list of Devices."""
+        ``state_hz``, default the manifest's rate) and events. Whoever moves it must keep talking within
+        ``watchdog_ms`` and stay present, or the device applies ``on_disconnect`` (``None``: no watchdog). ``iot``
+        (``iot.IotOptions``) adds shadows/telemetry/cameras on ``iot://``. A ``Simulation`` mounts every robot."""
         from ..simulation import Simulation
 
         if isinstance(robot, Simulation):
-            kw = {"labels": labels, "state_hz": state_hz, "watchdog_ms": watchdog_ms}
+            kw = {"labels": labels, "state_hz": state_hz, "watchdog_ms": watchdog_ms, "iot": iot}
             return [self.mount(r, **kw) for r in robot.robots.values()]  # type: ignore[arg-type]
         did = wire.check_id(device_id or getattr(robot, "id", None) or robot.describe()["name"], "device_id")
         with self._lock:
@@ -92,10 +94,10 @@ class Mesh:
             refuse_taken(self._dirs, did, self.tenant)
             rec = record(robot, did, labels or {}, self.tenant, tuple(ARGS))
             lockout = _authority.Lockout()
+            undo = [] if iot is None else [_iot_attach(self.transports, iot, robot, rec, watchdog_ms, lockout)]
             dog = _watchdog.start(robot, watchdog_ms, self.transports, self.tenant)
             on_rpc = None if dog is None else dog.on_rpc
-            auth = self._authority
-            undo = [serve(t, self.tenant, robot, did, lockout, auth, on_rpc) for t in self.transports]
+            undo += [serve(t, self.tenant, robot, did, lockout, self._authority, on_rpc) for t in self.transports]
             undo.append(_watchdog.stopper(dog))
             if hasattr(robot, "subscribe"):
                 undo.append(publish(self.transports, self.tenant, robot, did, state_hz or state_rate(rec["manifest"])))

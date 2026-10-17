@@ -26,6 +26,7 @@ import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import parse_qs, urlparse
 
+from ..iot.direct import reply_ok, rpc_mode
 from .base import OnAlive, OnQuery, OnSample, RemoteError, Unsubscribe
 from .iot_link import AwsLink, FakeIotBroker, FakeLink, Link
 
@@ -59,6 +60,7 @@ class IotTransport:
         self.url = url
         self.ttl = presence_ttl
         self.link = link or _link(url)
+        self.rpc = rpc_mode({k: v[0] for k, v in parse_qs(urlparse(url).query).items()})
         self._pending: dict[str, Future[bytes]] = {}
         self._clients: dict[str, str] = {}  # presence key's device id -> the client holding it
         self._replies: set[str] = set()
@@ -81,6 +83,8 @@ class IotTransport:
     def queryable(self, key_expr: str, handler: OnQuery, *, inline: bool = False) -> Unsubscribe:
         def answer(key: str, raw: bytes) -> None:
             req = json.loads(raw)
+            if not reply_ok(str(req.get("reply", "")), key.split("/")[1]):
+                return  # a reply address outside this tenant's @reply keys: never answered
             try:
                 out = {"id": req["id"], "ok": handler(key, req["body"].encode()).decode()}
             except Exception as exc:
@@ -111,6 +115,9 @@ class IotTransport:
         self._pending[rid] = fut
         body = json.dumps({"id": rid, "reply": reply, "body": payload.decode()}).encode()
         try:
+            if self.rpc == "mqtt":  # request/response: the device's silence is the offline signal, presence says why
+                self.link.publish(key, body, response_topic=reply, correlation_data=rid)
+                return [fut.result(timeout)]
             status = self.link.send_direct(client, key, body, timeout=timeout)
             if status == 404:
                 raise Offline(f"{did}: its client {client!r} is not connected (404); nothing was queued")
