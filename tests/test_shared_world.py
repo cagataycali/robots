@@ -350,3 +350,23 @@ def test_holding_what_the_panda_reads_keeps_its_hand_open():
         assert sim.backend.data.actuator_length[a] == pytest.approx(0.04, abs=1e-3)
     finally:
         sim.close()
+
+
+@pytest.mark.parametrize(
+    "use",
+    [
+        lambda sim: sim.add(Robot("so101", sim=Simulation())),
+        lambda sim: sim.add_object("cube", shape="box"),
+        lambda sim: sim.step(1),
+        lambda sim: sim.control_step(),
+        lambda sim: sim.reset(),
+        lambda sim: sim.run({}, steps=1),
+    ],
+)
+def test_a_closed_simulation_refuses_to_be_used(use):
+    sim = Simulation()
+    sim.close()
+    sim.close()  # idempotent
+    with pytest.raises(RuntimeError, match="closed"):
+        use(sim)
+    assert sim.robots == {} and sim._closed

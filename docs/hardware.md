@@ -27,10 +27,12 @@ A `Driver` is `names read() write() pose() images() extras() hold() estop() cali
 `supports_position_hold`, `calibration` and `resolution` (None when the bus has none); `driver=` takes a name
 or an instance, and an instance whose `names` are not the description's `action_keys`, in order, is refused. `Robot(name, port=)` picks the driver from the registry entry and adds a twin of the same
 description to `Simulation.default()`: `real.twin` is `so101_twin`, its `twin_of` is `real`, and only
-`real.is_real` is true (`twin=False` to skip). `observe()` pushes the measured joints into
-the twin; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
+`real.is_real` is true (`twin=False` to skip). `observe()` places the twin at the measured joints
+(`Backend.set_joints`, no step), so `real.twin.sim.render()` draws the real pose; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
 
 {{drawing:d07_twin_steps}}
+
+{{drawing:d09_twin_measured}}
 
 **Calibration.** `calibrate(interactive=False)` returns the LeRobot file it found under
 `$HF_LEROBOT_CALIBRATION/robots/`: `so_follower/<id>.json` (LeRobot 0.6 names every SO-10x arm so),

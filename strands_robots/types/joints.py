@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 import numpy as np
@@ -16,9 +16,29 @@ def _ro(a: Any, dtype: Any = np.float64) -> np.ndarray:
     return out
 
 
-@dataclass(frozen=True)
+def _same(a: Any, b: Any) -> bool:
+    """Value equality through arrays and mappings: what ``==`` means on every type here."""
+    if isinstance(a, np.ndarray) or isinstance(b, np.ndarray):
+        return isinstance(a, np.ndarray) and isinstance(b, np.ndarray) and np.array_equal(a, b)
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    return bool(a == b)
+
+
+def _eq(self: Any, other: Any) -> bool:
+    if type(other) is not type(self):
+        return NotImplemented
+    return all(_same(getattr(self, f.name), getattr(other, f.name)) for f in fields(self))
+
+
+def _key(a: np.ndarray | None) -> bytes | None:
+    """A hash key that agrees with ``np.array_equal`` (``+ 0.0`` folds -0.0 into 0.0)."""
+    return None if a is None else (a + 0.0).tobytes()
+
+
+@dataclass(frozen=True, eq=False)
 class JointState:
-    """Positions/velocities/efforts for a named set of joints (SI: rad, rad/s, N·m)."""
+    """Positions/velocities/efforts for a named set of joints (SI: rad, rad/s, N·m). A value: ``==``, ``hash``."""
 
     names: tuple[str, ...]
     positions: np.ndarray
@@ -32,6 +52,11 @@ class JointState:
             if arr.shape != (n,):
                 raise ValueError(f"JointState.{f} has shape {arr.shape}, expected ({n},) for {n} joints")
             object.__setattr__(self, f, arr)
+
+    __eq__ = _eq
+
+    def __hash__(self) -> int:
+        return hash((self.names, _key(self.positions), _key(self.velocities), _key(self.efforts)))
 
     def __getitem__(self, joint: str) -> float:
         try:

@@ -26,7 +26,7 @@ from ...backend import Backend
 from ...physics import Contact, Physics
 from ...scene import Scene, SceneRobot
 from . import build
-from .state import restore, snapshot
+from .state import place, restore, snapshot
 
 
 @dataclass
@@ -185,6 +185,11 @@ class MuJoCoBackend(Backend):
             m.actuator_biasprm[i, 1] = -p
             m.actuator_biasprm[i, 2] = -dgain
 
+    def set_joints(self, body: str, positions: np.ndarray) -> None:
+        assert self.model is not None and self.data is not None
+        idx = self._index[body]
+        place(self.model, self.data, idx.joint_qadr, idx.joint_dadr, positions)
+
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None:
         assert self.model is not None and self.data is not None and self.spec is not None
         m, d = self.model, self.data
@@ -226,15 +231,8 @@ class MuJoCoBackend(Backend):
         for i in range(d.ncon):
             c = d.contact[i]
             mujoco.mj_contactForce(m, d, i, f)
-            out.append(
-                Contact(
-                    m.body(m.geom_bodyid[c.geom1]).name,
-                    m.body(m.geom_bodyid[c.geom2]).name,
-                    c.pos.copy(),
-                    c.frame[:3].copy(),
-                    float(f[0]),
-                )
-            )
+            body1, body2 = (m.body(m.geom_bodyid[g]).name for g in (c.geom1, c.geom2))
+            out.append(Contact(body1, body2, c.pos.copy(), c.frame[:3].copy(), float(f[0])))
         return out
 
     def physics(self) -> Physics:
