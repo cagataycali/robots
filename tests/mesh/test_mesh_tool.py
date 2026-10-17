@@ -116,3 +116,13 @@ def test_a_second_run_is_refused_while_the_first_runs_and_stop_halts_it(lab):
     n = len(writes)
     time.sleep(0.5)
     assert n > 0 and len(writes) == n and not m.tasks
+
+
+@pytest.mark.parametrize("extra", [{"record": "hf://someone/lab-camera-dump", "push": True}, {"record": "/tmp/x"}])
+def test_a_model_cannot_record_or_push_through_the_mesh_tool(lab, extra):
+    from strands_robots.mesh.tool import dispatch
+
+    m, _ = lab
+    with pytest.raises(TypeError, match="record"):
+        dispatch(m, {"action": "run", "device_id": "arm", "run": {"policy": lambda o: o.joints.positions, **extra}})
+    assert not m.tasks  # nothing started

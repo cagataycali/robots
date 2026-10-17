@@ -115,3 +115,49 @@ def test_images_over_the_mesh_render_on_one_thread(mesh_pair):
     assert all(img.shape == (48, 64, 3) and img.dtype == np.uint8 for img in imgs)
     a.close()
     sim.close()
+
+
+class _LimpBus:
+    """A hardware Body that counts holds: a hold on a limp arm is torque on plus a goal write."""
+
+    supports_position_hold, calibration, resolution = True, None, None
+
+    def __init__(self, names):
+        self.names, self.holds = names, 0
+        self.q = np.zeros(len(names))
+
+    def read(self):
+        from strands_robots import JointState
+
+        return JointState(self.names, self.q, self.q * 0, self.q * 0)
+
+    def write(self, targets):
+        self.q = np.asarray(targets, dtype=float)
+
+    def hold(self):
+        self.holds += 1
+
+    pose = lambda self: None  # noqa: E731
+    images = extras = lambda self: {}  # noqa: E731
+    estop = close = lambda self: None  # noqa: E731
+
+    def calibrate(self, *, interactive=True):
+        raise RuntimeError("no calibration")
+
+
+@pytest.mark.parametrize("operator, holds", [(False, 0), (True, 1)])
+def test_a_remote_hold_on_a_real_arm_asks_the_operator_first(mesh_pair, operator, holds):
+    a, b = mesh_pair
+    names = Robot("so101").description.action_keys
+    bus = _LimpBus(names)
+    real = Robot("so101", driver=bus, confirm=lambda targets: operator, twin=False)
+    a.mount(real, device_id="real-arm")
+    assert b.discover("real-arm", min_count=1, timeout=3.0)
+    if operator:
+        b.invoke("real-arm", "hold")
+    else:
+        with pytest.raises(RequestRefused, match="operator gate refused"):
+            b.invoke("real-arm", "hold")
+    assert bus.holds == holds  # refused: torque never went on
+    a.close()
+    real.close()

@@ -40,6 +40,9 @@ def _json(x: Any) -> Any:
     return x if isinstance(x, (str, int, float, bool)) or x is None else str(x)
 
 
+RUN_ARGS = ("policy", "steps", "seconds", "hz", "instruction")  # the run keys a model may set
+
+
 def spec(mesh: Mesh) -> dict[str, Any]:
     """The tool spec for the devices present right now: their ids, labels, rpcs and joints come from manifests."""
     devices = mesh.discover()
@@ -65,6 +68,7 @@ def spec(mesh: Mesh) -> dict[str, Any]:
                 "policy": {"type": "string"},
                 "steps": {"type": "integer"},
                 "seconds": {"type": "number"},
+                "hz": {"type": "number"},
                 "instruction": {"type": "string"},
             },
             "required": ["policy"],
@@ -95,6 +99,9 @@ def dispatch(mesh: Mesh, inp: Mapping[str, Any]) -> Any:
         return mesh.invoke(did, "act", action=dict(inp.get("act") or {}))
     if action == "run":
         args = dict(inp.get("run") or {})
+        extra = sorted(set(args) - set(RUN_ARGS))  # record=/push= are the developer's: nothing leaves on a model's say
+        if extra:
+            raise TypeError(f"use_mesh run takes {list(RUN_ARGS)}, not {extra}")
         prev = mesh.tasks.get(did)
         if prev is not None and prev.running:
             raise RuntimeError(f"robot {did!r} already has a running task; call stop() first")

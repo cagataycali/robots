@@ -84,6 +84,13 @@ def _resume(
     _lockout(robot, lockout)
 
 
+def _hold(robot: Any) -> None:
+    """A hold energises a limp arm (torque on at the measured pose): the safety chain and operator say go first."""
+    if hasattr(robot, "gate"):
+        robot.gate(robot.observe(images=False).joints)
+    robot.hold()
+
+
 def _handlers(
     robot: Any, did: str, lockout: Lockout, authority: Callable[[], Authority], local: bool
 ) -> dict[str, Callable[..., Any]]:
@@ -91,7 +98,7 @@ def _handlers(
         "describe": lambda: robot.describe(),
         "observe": lambda images=False: _observe(robot, bool(images)),
         "act": lambda action=None, steps=None: _act(robot, action, steps),
-        "hold": lambda: robot.hold(),
+        "hold": lambda: _hold(robot),
         "stop": lambda: None if robot.stop() is None else "stopped",
         "estop": lambda by=None, epoch=None: estop(robot, lockout, by, epoch),
         "resume": lambda approved_by=None, assertion=None: _resume(
