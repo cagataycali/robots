@@ -8,6 +8,7 @@ so scene, backend and registry change together and a locked reader never sees th
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,8 @@ class _SceneOps:
     revision: int
     render_size: tuple[int, int]
     _robots: dict[str, Member]
+    _reload: Callable[[], None]  # Simulation's (rebuild now, or when ``with sim.editing():`` exits); so is _flush
+    _flush: Callable[[], None]
 
     def unique_id(self, want: str) -> str:
         if want not in self._robots:
@@ -66,18 +69,14 @@ class _SceneOps:
             self._robots[robot.id] = robot
         return robot
 
-    def _reload(self) -> None:
-        with self.lock:
-            self.backend.load(self.scene)
-            self.revision += 1
-
     def remove(self, robot: Member | str) -> None:
         rid = robot if isinstance(robot, str) else robot.id
         if rid not in self._robots:
             raise KeyError(f"no robot {rid!r} in this world; robots are {list(self._robots)}")
         with self.lock:
             self.scene.robots = [r for r in self.scene.robots if r.id != rid]
-            self.scene.cameras = [c for c in self.scene.cameras if c.attach != rid]
+            self.scene.cameras = [c for c in self.scene.cameras if (c.attach or "").split("/")[0] != rid]
+            self.scene.scales.pop(rid, None)
             self._reload()
             gone = self._robots.pop(rid)
         gone.detached()
@@ -132,6 +131,7 @@ class _SceneOps:
         if name not in self._robots and not any(o.name == name for o in self.scene.objects):
             raise KeyError(f"no body {name!r} in this world")
         with self.lock:
+            self._flush()
             cur = self.backend.body_pose(name)
             pose = Pose(
                 cur.position if position is None else np.asarray(position, dtype=float),
@@ -161,8 +161,8 @@ class _SceneOps:
         if any(c.name == name for c in self.scene.cameras):
             raise ValueError(f"camera {name!r} already exists")
         att = attach if (attach is None or isinstance(attach, str)) else attach.id
-        if att is not None and att not in self._robots:
-            raise KeyError(f"attach={att!r} is not a robot in this world")
+        if att is not None and att.split("/")[0] not in self._robots:  # "<robot>" (its base) or "<robot>/<link>"
+            raise KeyError(f"attach={att!r} is not a robot in this world (or '<robot>/<link>')")
         cam = SceneCamera(
             name=name,
             position=tuple(float(x) for x in position),  # type: ignore[arg-type]
@@ -185,7 +185,7 @@ class _SceneOps:
         """HxWx3 uint8 from a named camera, or from an auto-framed overview camera when none is given."""
         if camera is None:  # the auto-framed overview, created on first use (user cameras never replace it)
             if not any(c.name == "overview" for c in self.scene.cameras):
-                self.camera("overview", **self._frame_all())
+                self.camera("overview", **self.scene.overview())
             name = "overview"
         else:
             name = camera if isinstance(camera, str) else camera.name
@@ -193,15 +193,8 @@ class _SceneOps:
         if not any(c.name == name for c in self.scene.cameras):
             raise KeyError(f"no camera {name!r}; cameras are {[c.name for c in self.scene.cameras]}")
         with self.lock:
+            self._flush()
             return self.backend.render(name)
-
-    def _frame_all(self) -> dict[str, Any]:
-        """A camera position that sees every robot: look at their centroid from the -y side."""
-        pts = np.array([r.position for r in self.scene.robots] or [(0.0, 0.0, 0.0)])
-        center = pts.mean(axis=0) + np.array([0.0, 0.0, 0.4])
-        spread = float(np.ptp(pts, axis=0).max()) if len(pts) > 1 else 0.0
-        dist = max(1.8, 1.4 * spread + 1.6)
-        return {"position": tuple(center + np.array([0.0, -dist, 0.65 * dist])), "target": tuple(center)}
 
     def randomize(
         self,
@@ -209,29 +202,40 @@ class _SceneOps:
         friction: float | tuple[float, float] | None = None,
         mass: float | tuple[float, float] | None = None,
         lighting: float | tuple[float, float] | None = None,
+        camera: float | None = None,
+        target: str | None = None,
         seed: int | None = None,
     ) -> None:
-        """Scale friction / mass / light intensity (a factor or a (lo, hi) range to sample) and rebuild."""
+        """Scale friction / mass / light (a factor or a (lo, hi) range to sample) and rebuild.
+
+        ``target`` scales one robot or object only; ``camera`` moves every camera up to that many metres per axis."""
         rng = np.random.default_rng(seed)
+        if target is not None and target not in self._robots and not any(o.name == target for o in self.scene.objects):
+            raise KeyError(f"target={target!r} is not a robot or object in this world")
+        if target is not None and lighting is not None:
+            raise ValueError("lighting is world-wide; randomize(lighting=) takes no target")
 
         def pick(v: float | tuple[float, float] | None, current: float) -> float:
-            if v is None:
-                return current
-            if isinstance(v, int | float):
-                return float(v)
-            return float(rng.uniform(*v))
+            return current if v is None else float(v) if isinstance(v, int | float) else float(rng.uniform(*v))
 
         with self.lock:
             sc = self.scene
-            was = (sc.friction_scale, sc.mass_scale, sc.light_scale)
-            sc.friction_scale, sc.mass_scale = pick(friction, was[0]), pick(mass, was[1])
+            was = (sc.friction_scale, sc.mass_scale, sc.light_scale, dict(sc.scales), dict(sc.camera_jitter))
+            if target is None:
+                sc.friction_scale, sc.mass_scale = pick(friction, was[0]), pick(mass, was[1])
+            else:
+                f, m = sc.scales.get(target, (1.0, 1.0))
+                sc.scales[target] = (pick(friction, f), pick(mass, m))
             sc.light_scale = pick(lighting, was[2])
+            if camera is not None:
+                sc.camera_jitter = {c.name: tuple(rng.uniform(-camera, camera, 3).tolist()) for c in sc.cameras}  # type: ignore[misc]
             try:
                 self._reload()
             except Exception:  # an engine that cannot randomize this leaves the world as it was
-                sc.friction_scale, sc.mass_scale, sc.light_scale = was
+                sc.friction_scale, sc.mass_scale, sc.light_scale, sc.scales, sc.camera_jitter = was
                 raise
 
     def contacts(self) -> list[Contact]:
         with self.lock:  # a GPU solver mirrors its state into the CPU world on this read
+            self._flush()
             return self.backend.contacts()

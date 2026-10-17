@@ -21,6 +21,10 @@ from .stepper import NewtonStepper
 
 
 class NewtonBackend(MuJoCoBackend):
+    @property
+    def deterministic(self) -> bool:  # type: ignore[override]
+        return self.num_envs == 1  # one GPU world replays bit-exactly; a batch of envs does not
+
     def __init__(self, **cfg: Any) -> None:
         super().__init__(**cfg)
         self._stepper = NewtonStepper(self.device, self.num_envs)

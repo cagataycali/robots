@@ -9,7 +9,17 @@ from __future__ import annotations
 from .base import Policy, PolicyLike
 from .callable import CallablePolicy, as_policy
 from .factory import from_spec
+from .perturb import Perturb
 from .requirements import Requirements
 from .sequence import SequencePolicy
 
-__all__ = ["Policy", "PolicyLike", "CallablePolicy", "SequencePolicy", "as_policy", "Requirements", "from_spec"]
+__all__ = [
+    "Policy",
+    "PolicyLike",
+    "CallablePolicy",
+    "SequencePolicy",
+    "Perturb",
+    "as_policy",
+    "Requirements",
+    "from_spec",
+]

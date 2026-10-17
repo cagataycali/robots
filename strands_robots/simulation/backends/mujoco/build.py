@@ -97,8 +97,12 @@ def add_object(spec: mujoco.MjSpec, o: SceneObject) -> None:
 
 def add_camera(spec: mujoco.MjSpec, c: SceneCamera, scene: Scene) -> None:
     parent = spec.worldbody
-    pos = np.asarray(c.position, dtype=float)
-    if c.attach is not None:
+    pos = np.asarray(c.position, dtype=float) + np.asarray(scene.camera_jitter.get(c.name, (0.0, 0.0, 0.0)))
+    if c.attach is not None and "/" in c.attach:  # "<robot>/<link>": the link carries it (a wrist camera)
+        parent = spec.body(c.attach)
+        if parent is None:
+            raise KeyError(f"camera {c.name!r}: no link {c.attach!r}; describe()['robots'][<id>]['links'] lists them")
+    elif c.attach is not None:
         parent = spec.body(root_body_name(spec, c.attach))
     kw: dict[str, Any] = {"name": c.name, "pos": pos.tolist(), "fovy": c.fov}
     if c.orientation is not None:
@@ -107,6 +111,26 @@ def add_camera(spec: mujoco.MjSpec, c: SceneCamera, scene: Scene) -> None:
         tgt = np.asarray(c.target if c.target is not None else (0, 0, 0), dtype=float)
         kw["xyaxes"] = look_at(pos, tgt)
     parent.add_camera(**kw)
+
+
+def scale_bodies(model: mujoco.MjModel, scene: Scene) -> None:
+    """``randomize``: every body by the world's factors, then one robot's or object's subtree by its own."""
+    model.geom_friction[:, 0] *= scene.friction_scale
+    model.body_mass[:] *= scene.mass_scale
+    model.body_inertia[:] *= scene.mass_scale
+    for name, (friction, mass) in scene.scales.items():
+        own = [
+            b for b in range(1, model.nbody) if model.body(b).name == name or model.body(b).name.startswith(f"{name}/")
+        ]
+        bodies = np.isin(model.body_rootid, [b for b in own if model.body_parentid[b] == 0])
+        model.geom_friction[bodies[model.geom_bodyid], 0] *= friction
+        model.body_mass[bodies] *= mass
+        model.body_inertia[bodies] *= mass
+
+
+def link_names(model: mujoco.MjModel, root: int) -> list[str]:
+    """The bodies of one attached robot (the root and its subtree), without the ``<id>/`` prefix."""
+    return [model.body(b).name.split("/", 1)[1] for b in range(model.nbody) if model.body_rootid[b] == root]
 
 
 def root_body_name(spec: mujoco.MjSpec, rid: str) -> str:

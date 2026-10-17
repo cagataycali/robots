@@ -20,7 +20,7 @@ from .usd import convert_to_usd
 
 
 class IsaacBackend(Backend):
-    """PhysX world behind the Backend contract."""
+    deterministic = False  # a PhysX world behind the Backend contract; bit-exact replay is not promised
 
     def __init__(self, **cfg: Any) -> None:
         super().__init__(**cfg)

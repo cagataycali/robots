@@ -74,6 +74,7 @@ class Simulation(_SceneOps):
         self.revision = 0  # bumped on every scene change (add/remove/add_object/camera/set_pose/randomize)
         self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
+        self._editing, self._pending = 0, False
         self._closed = False
         cls = load_backend(backend, physics)
         self.backend: Backend = cls(
@@ -98,6 +99,7 @@ class Simulation(_SceneOps):
         if n < 0:
             raise ValueError(f"n must be >= 0, got {n}")
         with self.lock:
+            self._flush()
             self.backend.step(int(n))
 
     def control_step(self) -> None:
@@ -114,6 +116,36 @@ class Simulation(_SceneOps):
             yield self
         finally:
             self._manual -= 1
+
+    @contextmanager
+    def editing(self) -> Iterator[Simulation]:
+        """Batch scene edits into one rebuild on exit (on newton a new scene shape compiles kernels). A failed
+        rebuild restores the scene and robots as they were; step, render and set_pose flush pending edits first."""
+        with self.lock:
+            scene, robots = self.scene.copy(), dict(self._robots)
+            self._editing += 1
+            try:
+                yield self
+            finally:
+                self._editing -= 1
+            try:
+                self._flush()
+            except Exception:
+                self.scene, self._robots, self._pending = scene, robots, False
+                raise
+
+    def _reload(self) -> None:
+        with self.lock:
+            if self._editing:  # inside ``with sim.editing():`` the rebuild waits for the block's exit
+                self._pending = True
+                return
+            self.backend.load(self.scene)
+            self.revision += 1
+            self._pending = False
+
+    def _flush(self) -> None:
+        if self._pending and not self._editing:
+            self._reload()
 
     @property
     def time_is_manual(self) -> bool:
@@ -166,12 +198,19 @@ class Simulation(_SceneOps):
         p = self.physics
         return {
             "backend": self.backend_name,
-            "physics": {"name": p.name, "timestep": p.timestep, "substeps": p.substeps, "envs": self.num_envs},
+            "physics": {
+                "name": p.name,
+                "timestep": p.timestep,
+                "substeps": p.substeps,
+                "envs": self.num_envs,
+                "deterministic": self.backend.deterministic,  # same scene + actions -> bit-identical trajectory
+            },
             "time": self.time,
             "revision": self.revision,
             "manual_time": self.time_is_manual,
             "robots": {
-                rid: r.description.describe() | {"position": list(self.scene.robot(rid).position)}
+                rid: r.description.describe()
+                | {"position": list(self.scene.robot(rid).position), "links": self.backend.links(rid)}
                 for rid, r in self._robots.items()
             },
             "objects": [

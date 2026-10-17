@@ -73,11 +73,7 @@ class MuJoCoBackend(Backend):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = spec.compile()
-        if scene.friction_scale != 1.0:
-            model.geom_friction[:, 0] *= scene.friction_scale
-        if scene.mass_scale != 1.0:
-            model.body_mass[:] *= scene.mass_scale
-            model.body_inertia[:] *= scene.mass_scale
+        build.scale_bodies(model, scene)
         data = mujoco.MjData(model)
         self.spec, self.model, self.data = spec, model, data
         self._scene = scene
@@ -100,6 +96,10 @@ class MuJoCoBackend(Backend):
         joint_ids = [j for j in range(m.njnt) if m.joint(j).name.startswith(f"{rid}/")]
         root = next(b for b in range(1, m.nbody) if m.body_parentid[b] == 0 and m.body(b).name.startswith(f"{rid}/"))
         return _RobotIndex(act_ids, jq, jd, joint_ids, root)
+
+    def links(self, body: str) -> list[str]:
+        assert self.model is not None
+        return build.link_names(self.model, self._index[body].root_body)
 
     def _body_id(self, name: str) -> int:
         if name in self._index:

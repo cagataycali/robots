@@ -21,6 +21,8 @@ _BACKENDS: dict[str, str] = {
 class Backend(ABC):
     """The thirteen methods a physics world implements. Nothing else is engine-specific."""
 
+    deterministic = True  # the same scene and actions give a bit-identical trajectory, run to run
+
     def __init__(
         self,
         *,
@@ -73,6 +75,10 @@ class Backend(ABC):
 
     @abstractmethod
     def physics(self) -> Physics: ...
+
+    def links(self, body: str) -> list[str]:
+        """The link (body) names of a robot, for ``camera(attach="<robot>/<link>")``; empty if the engine cannot say."""
+        return []
 
     @abstractmethod
     def close(self) -> None: ...

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
+
+import numpy as np
 
 from ..description import Description
 
@@ -39,7 +42,7 @@ class SceneCamera:
     orientation: tuple[float, float, float, float] | None = None
     fov: float = 45.0
     size: tuple[int, int] = (640, 480)
-    attach: str | None = None  # robot id whose base body carries the camera
+    attach: str | None = None  # a robot id (its base carries the camera) or "<robot>/<link>" (a wrist camera)
 
 
 @dataclass
@@ -55,6 +58,27 @@ class Scene:
     friction_scale: float = 1.0
     mass_scale: float = 1.0
     light_scale: float = 1.0
+    scales: dict[str, tuple[float, float]] = field(default_factory=dict)  # (friction, mass) of one robot or object
+    camera_jitter: dict[str, tuple[float, float, float]] = field(default_factory=dict)  # metres, per camera
+
+    def overview(self) -> dict[str, Any]:
+        """A camera position that sees every robot: look at their centroid from the -y side."""
+        pts = np.array([r.position for r in self.robots] or [(0.0, 0.0, 0.0)])
+        center = pts.mean(axis=0) + np.array([0.0, 0.0, 0.4])
+        spread = float(np.ptp(pts, axis=0).max()) if len(pts) > 1 else 0.0
+        dist = max(1.8, 1.4 * spread + 1.6)
+        return {"position": tuple(center + np.array([0.0, -dist, 0.65 * dist])), "target": tuple(center)}
+
+    def copy(self) -> Scene:
+        """An independent copy of the plain data (descriptions are shared: they never change)."""
+        return replace(
+            self,
+            robots=[replace(r) for r in self.robots],
+            objects=[replace(o) for o in self.objects],
+            cameras=[replace(c) for c in self.cameras],
+            scales=dict(self.scales),
+            camera_jitter=dict(self.camera_jitter),
+        )
 
     def robot(self, id: str) -> SceneRobot:
         for r in self.robots:
