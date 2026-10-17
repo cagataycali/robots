@@ -282,10 +282,25 @@ def test_a_real_act_advances_the_twins_world_one_control_step(manual):
             real.act({"shoulder_pan": 0.5})
             real.observe()  # a read mirrors the measurement but is not time
     moved = real.twin.observe()["shoulder_pan"]
-    if manual:
-        assert world.time == t0 and moved == pytest.approx(start, abs=1e-6)
+    if manual:  # no time passed, yet the twin stands where the arm measured (observe places it)
+        assert world.time == t0 and start == 0.0 and moved == pytest.approx(0.5, abs=1e-3)
     else:
         assert world.time == pytest.approx(t0 + 60 * world.physics.control_dt) and moved == pytest.approx(0.5, abs=0.05)
+    real.close()
+
+
+def test_a_real_observe_places_the_twin_at_the_measurement_with_no_step():
+    # the twin mirrors a MEASUREMENT: after observe() it shows the real pose, before its world steps once
+    d, _ = make_driver()
+    real = Robot("so101", driver=d)
+    world = real.twin.sim
+    with world.manual_time():
+        t0 = world.time
+        real.act({"shoulder_pan": 0.5, "shoulder_lift": -0.6, "elbow_flex": 0.4})
+        measured = real.observe().joints.positions
+        twin = real.twin.observe().joints
+    assert world.time == t0 and np.abs(measured).max() > 0.3
+    assert np.allclose(twin.positions, measured, atol=1e-9) and np.allclose(twin.velocities, 0.0)
     real.close()
 
 

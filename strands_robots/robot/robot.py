@@ -147,7 +147,7 @@ class Robot(DeviceVerbs):
                 extras=body.extras(),
             )
         if self.twin is not None:  # the twin shows what the real body measured
-            _twin.mirror(self, self._full_targets(js.positions))
+            _twin.mirror(self, self._full_targets(js.positions), measured=True)
         return obs
 
     def gate(self, action: Action, *, confirmed: bool = False) -> np.ndarray:

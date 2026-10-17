@@ -8,19 +8,27 @@ from typing import Any
 
 import numpy as np
 
-from .joints import JointState
+from .joints import JointState, _eq
 from .pose import Pose
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Observation:
-    """What a body reports at time ``t``: joints, base pose, camera images and per-body extras."""
+    """What a body reports at time ``t``: joints, base pose, camera images and per-body extras.
+
+    ``==`` compares every field by value (images and extras too); ``hash`` reads ``t``, joints and pose.
+    """
 
     t: float
     joints: JointState
     pose: Pose | None = None
     images: Mapping[str, np.ndarray] = field(default_factory=dict)
     extras: Mapping[str, Any] = field(default_factory=dict)
+
+    __eq__ = _eq
+
+    def __hash__(self) -> int:
+        return hash((self.t, self.joints, self.pose))
 
     def __getitem__(self, joint: str) -> float:
         return self.joints[joint]

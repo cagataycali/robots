@@ -20,7 +20,7 @@ from ...backend import Backend
 from ...physics import Contact, Physics
 from ...scene import Scene, SceneRobot
 from . import build
-from .state import restore, snapshot
+from .state import place, restore, snapshot
 
 
 @dataclass
@@ -177,6 +177,11 @@ class MuJoCoBackend(Backend):
             m.actuator_biasprm[i, 0] = 0.0
             m.actuator_biasprm[i, 1] = -p
             m.actuator_biasprm[i, 2] = -dgain
+
+    def set_joints(self, body: str, positions: np.ndarray) -> None:
+        assert self.model is not None and self.data is not None
+        idx = self._index[body]
+        place(self.model, self.data, idx.joint_qadr, idx.joint_dadr, positions)
 
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None:
         assert self.model is not None and self.data is not None and self.spec is not None

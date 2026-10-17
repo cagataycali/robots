@@ -95,6 +95,7 @@ class Simulation(_SceneOps):
 
     def step(self, n: int = 1) -> None:
         """Advance ``n`` physics steps (``timestep`` each)."""
+        self._open()
         if n < 0:
             raise ValueError(f"n must be >= 0, got {n}")
         with self.lock:
@@ -102,6 +103,7 @@ class Simulation(_SceneOps):
 
     def control_step(self) -> None:
         """Advance exactly one control step (``physics.substeps`` physics steps) unless time is manual."""
+        self._open()
         if not self._manual:
             with self.lock:
                 self.backend.step(self._substeps)
@@ -122,6 +124,7 @@ class Simulation(_SceneOps):
     def reset(self, *, keyframe: str | None = None, seed: int | None = None) -> None:
         if seed is not None:
             np.random.seed(seed)
+        self._open()
         with self.lock:
             self.backend.reset(keyframe)
 
@@ -155,6 +158,7 @@ class Simulation(_SceneOps):
         """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once."""
         from ..robot.run import lockstep
 
+        self._open()
         return lockstep(self, policies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)
 
     def describe(self) -> dict[str, Any]:
