@@ -136,3 +136,57 @@ def test_both_loops_replay_at_the_rate_the_policy_declares_and_refuse_another():
 
     with pytest.raises(ValueError, match="different rates"):
         arm.sim.run({arm: _At30([{"shoulder_pan": 0.1}]), other: At20([{"shoulder_pan": 0.1}])}, steps=1)
+
+
+class _Holds:
+    def act(self, obs, *, instruction=None):
+        return obs.joints.positions
+
+    def reset(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "name, value, said",
+    [
+        ("hz", 0, "hz must be a number > 0, got 0"),
+        ("hz", "50", "hz must be a number > 0, got '50'"),
+        ("hz", True, "hz must be a number > 0, got True"),
+        ("realtime", "no", "realtime must be True or False, got 'no'"),
+        ("requires_position_hold", "0", "requires_position_hold must be True or False"),
+        ("gains", "strong", r"gains must be a \(kp, kd\) pair, got 'strong'"),
+        ("attach", True, "attach must be a method, got True"),
+        ("detach", "later", "detach must be a method, got 'later'"),
+        ("requirements", object(), "requirements must be a method"),
+        ("needs_observation", False, "needs_observation must be a method, got False"),
+        ("requirements", lambda: {}, r"requirements\(\) must return Requirements, got \{\}"),
+    ],
+)
+def test_a_policy_hook_of_the_wrong_type_is_refused_by_name_before_step_one(name, value, said):
+    arm, pol = Robot("so101"), _Holds()
+    setattr(pol, name, value)
+    with pytest.raises(TypeError, match=said):
+        arm.run(pol, steps=1)
+    with pytest.raises(TypeError, match=said):
+        arm.sim.run({arm: pol}, steps=1)
+    arm.close()
+
+
+def test_stop_raises_a_run_error_once_and_a_run_that_will_not_end_times_out():
+    arm = Robot("so101")
+
+    def bad(obs):
+        raise ZeroDivisionError("policy bug")
+
+    arm.start(bad, steps=3)._thread.join(2)
+    with pytest.raises(ZeroDivisionError, match="policy bug"):
+        arm.stop()
+    assert arm.stop() is None  # reported once; the robot is free again
+    gate = __import__("threading").Event()
+    task = arm.start(lambda o: gate.wait(5) and o.joints.positions, steps=2)
+    with pytest.raises(TimeoutError, match="still going after 0.2 s"):
+        arm.stop(timeout=0.2)
+    assert task.running
+    gate.set()
+    assert arm.stop().stopped_by == "stopped"
+    arm.close()

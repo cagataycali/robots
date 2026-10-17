@@ -225,8 +225,9 @@ class Robot(DeviceVerbs):
 
         return start(self, policy, **kw)
 
-    def stop(self) -> RunResult | None:
-        return self._task.stop() if self._task is not None else None
+    def stop(self, timeout: float | None = None) -> RunResult | None:
+        """End the background run: its result, or its error raised once; None when nothing runs."""
+        return self._task.stop(timeout) if self._task is not None else None
 
     def close(self) -> None:
         self.events.close()
