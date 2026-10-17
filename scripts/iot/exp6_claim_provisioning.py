@@ -24,6 +24,7 @@ import threading
 import time
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from _common import REGION, TAG_MAP, TAGS, Mqtt5, account_and_endpoint, device_policy, leftovers, name, run_id, sweep_deprecated_thing_types
 
@@ -95,6 +96,7 @@ def main() -> int:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
             z.writestr("hook.py", HOOK.replace("%s-\" % PREFIX", f'{prefix}-"'))
+        fn: dict[str, Any] | None = None
         for attempt in range(10):
             try:
                 fn = timed("lambda_create", lam.create_function, FunctionName=hook_fn, Runtime="python3.12", Role=role_arn, Handler="hook.handler",
@@ -102,6 +104,8 @@ def main() -> int:
                 break
             except lam.exceptions.InvalidParameterValueException:
                 time.sleep(2)
+        if fn is None:
+            raise RuntimeError(f"lambda {hook_fn}: the role never became assumable in 10 tries")
         created["lambda"] = True
         lam.get_waiter("function_active_v2").wait(FunctionName=hook_fn)
         lam.add_permission(FunctionName=hook_fn, StatementId="iot", Action="lambda:InvokeFunction", Principal="iot.amazonaws.com", SourceAccount=account)
@@ -189,12 +193,15 @@ def main() -> int:
         out["device_configuration_from_hook"] = r2.get("deviceConfiguration")
         link.close()
         # 3) connect as the thing with the new cert, prove the policy is the exp-1 one
+        dev: Mqtt5 | None = None
         for attempt in range(20):
             try:
                 dev = Mqtt5(endpoint, r2["thingName"], cert=work / "device.cert.pem", key=key_path, timeout=6.0)
                 break
             except TimeoutError:
                 time.sleep(0.5)
+        if dev is None:
+            raise RuntimeError(f"{r2['thingName']}: the new certificate never connected in 20 tries")
         T["new_cert_first_connect_attempts"] = attempt + 1
         T["new_cert_connect"] = dev.connect_ms
         T["claim_to_connected_total"] = round((time.perf_counter() - t_all) * 1e3, 1)
