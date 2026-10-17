@@ -13,6 +13,9 @@ classes a program names, and everything else is imported from its package
     arm.act({"shoulder_pan": 0.3})          # one control step for the world
     arm.run(lambda obs: {"elbow_flex": 0.4}, hz=50, steps=60)   # -> RunResult
     real = Robot("so101", port="/dev/ttyACM0", confirm=ask)     # a feetech bus, a twin in the default world
+    real.act({"shoulder_pan": 0.3})         # writes the bus; the twin mirrors it and its world steps once
+
+Every refusal (the operator said no, a limit, the e-stop) raises ``RequestRefused``, a ``PermissionError``.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from __future__ import annotations
 from .description import Description
 from .policy import Policy
 from .robot import Body, Robot
+from .robot.safety import RequestRefused
 from .simulation import Simulation
 from .types import Action, JointState, Observation, Pose
 
@@ -35,5 +39,6 @@ __all__ = [
     "Action",
     "JointState",
     "Pose",
+    "RequestRefused",
     "__version__",
 ]

@@ -1,4 +1,4 @@
-"""The public surface after 'one concept, one package': the top level exports ten names, no more.
+"""The public surface after 'one concept, one package': the top level exports eleven names, no more.
 
 Everything else is imported from its package. The classes a program names still work exactly as before.
 """
@@ -18,12 +18,22 @@ _TOP_LEVEL = {
     "Action",
     "JointState",
     "Pose",
+    "RequestRefused",
     "__version__",
 }
 
 
-def test_the_top_level_exports_exactly_the_ten_names():
+def test_the_top_level_exports_exactly_the_eleven_names():
     assert set(strands_robots.__all__) == _TOP_LEVEL
+
+
+def test_every_refusal_is_caught_by_the_one_public_exception():
+    # the operator gate, a validator and the latched e-stop all raise it; it is still a PermissionError
+    from strands_robots import RequestRefused
+    from strands_robots.robot import safety
+
+    assert RequestRefused is safety.RequestRefused and issubclass(RequestRefused, PermissionError)
+    assert issubclass(safety.EStopped, RequestRefused)
 
 
 def test_names_that_left_the_top_level_import_from_their_package():

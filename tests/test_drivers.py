@@ -1,5 +1,6 @@
 """Drivers against simulated buses: no hardware is touched here."""
 
+import contextlib
 import json
 import math
 import os
@@ -267,6 +268,25 @@ def test_hardware_robot_gets_a_twin_in_the_default_world():
     )  # the loaded file; True walks a human through it
     real.close()
     assert "so101_twin" not in Simulation.default().robots
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_a_real_act_advances_the_twins_world_one_control_step(manual):
+    # a real act() steps the twin's world as a simulated act() steps its own; manual_time() still wins
+    d, _ = make_driver()
+    real = Robot("so101", driver=d)
+    world = real.twin.sim
+    t0, start = world.time, real.twin.observe()["shoulder_pan"]
+    with world.manual_time() if manual else contextlib.nullcontext():
+        for _ in range(60):
+            real.act({"shoulder_pan": 0.5})
+            real.observe()  # a read mirrors the measurement but is not time
+    moved = real.twin.observe()["shoulder_pan"]
+    if manual:
+        assert world.time == t0 and moved == pytest.approx(start, abs=1e-6)
+    else:
+        assert world.time == pytest.approx(t0 + 60 * world.physics.control_dt) and moved == pytest.approx(0.5, abs=0.05)
+    real.close()
 
 
 def test_hardware_robot_without_twin_and_bad_kwargs():

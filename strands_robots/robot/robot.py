@@ -159,7 +159,7 @@ class Robot(DeviceVerbs):
         return _gate.confirm_act(self, action, steps=steps, confirmed=confirmed)
 
     def act(self, action: Action, *, steps: int | None = None) -> Observation:
-        """Write targets for THIS body and advance its world one control step (unless manual time)."""
+        """Write targets for THIS body and advance its world (a real body: its twin's) one control step."""
         targets = self.coerce(action)
         with self._lock:
             guarded_write(self, targets)
@@ -168,8 +168,8 @@ class Robot(DeviceVerbs):
                     self.sim.control_step()
                 else:
                     self.sim.step(steps)
-        if self.twin is not None:
-            _twin.mirror(self, targets)
+        if self.twin is not None:  # the twin's world advances one control step too
+            _twin.mirror(self, targets, step=True)
         return self.observe(images=False)
 
     def calibrate(self, *, interactive: bool = True) -> Calibration:

@@ -27,7 +27,9 @@ A `Driver` is `names read() write() pose() images() extras() calibrate() close()
 or an instance. `Robot(name, port=)` picks the driver from the registry entry and adds a twin of the same
 description to `Simulation.default()`: `real.twin` is `so101_twin`, its `twin_of` is `real`, and only
 `real.is_real` is true (`twin=False` to skip). `observe()` pushes the measured joints into
-the twin, `act()` mirrors the targets. `set_pose` raises on hardware; `real.twin.set_pose` works.
+the twin; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
+
+{{drawing:d07_twin_steps}}
 
 **Calibration.** `calibrate(interactive=False)` returns the file found at
 `$HF_LEROBOT_CALIBRATION/robots/<lerobot_type>/<id>.json`; `calibrate()` walks a human through
@@ -49,7 +51,7 @@ a stray byte ahead of the header are both skipped; an echo and then silence is a
 
 **The operator gate.** `act()` in your own code is the developer's call. `confirm_act()` is what an
 agent tool or a dashboard calls: on a real body it asks `confirm(action)` and refuses on `False`; with
-no `confirm=` it raises `PermissionError` and says `pass confirm=`. A refusal writes nothing to the bus. Only a real body
+no `confirm=` it raises and says `pass confirm=`. Every refusal (the gate, a limit, the e-stop's `EStopped`) is `from strands_robots import RequestRefused`, a `PermissionError`, and writes nothing to the bus. Only a real body
 takes `confirm=`:
 
 ```python
