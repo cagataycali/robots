@@ -23,11 +23,18 @@ def arm_with_wrist_camera():
     return arm
 
 
+# MuJoCo joint limits are soft (solref 0.02 s): a position servo holding a joint at its limit rests past it.
+# Measured on so101 (kp 17.8, 300 control steps at each end of every joint): at most 0.024 rad over. The
+# checkpoint opens the gripper to its limit, so a measured joint may sit there; a target past the range is
+# clipped before it is written (``Robot.coerce``), so only this much soft overshoot can ever be measured.
+SOFT_LIMIT = 0.03
+
+
 def inside_limits(robot, q) -> bool:
     lim = robot.description.limits
     lo = np.array([lim[k][0] for k in robot.action_keys])
     hi = np.array([lim[k][1] for k in robot.action_keys])
-    return bool(np.all(np.isfinite(q)) and np.all(q >= lo - 1e-6) and np.all(q <= hi + 1e-6))
+    return bool(np.all(np.isfinite(q)) and np.all(q >= lo - SOFT_LIMIT) and np.all(q <= hi + SOFT_LIMIT))
 
 
 def test_a_lerobot_checkpoint_drives_the_sim_arm():
