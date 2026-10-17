@@ -24,11 +24,12 @@ class Task:
         except BaseException as exc:  # noqa: BLE001 - surfaced via .result
             self._error = exc
 
-    def stop(self, timeout: float = 5.0) -> RunResult | None:
+    def stop(self, timeout: float | None = None) -> RunResult | None:
+        """Stop and wait for the run to end, its recording saved; the loop itself exits within one tick."""
         self.halt(timeout)
         return self.result
 
-    def halt(self, timeout: float = 5.0) -> None:
+    def halt(self, timeout: float | None = 5.0) -> None:
         """Stop and join without reading ``result``, so teardown never re-raises the task's error."""
         self._stop.set()
         self._thread.join(timeout)

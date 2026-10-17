@@ -98,3 +98,24 @@ def test_lerobot_is_imported_only_when_a_run_records():
     )
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-1500:]
+
+
+def test_stop_waits_for_a_slow_save_and_the_episode_is_kept(tmp_path, monkeypatch):
+    """A save longer than any join cap still lands: ``stop()`` returns the result, the episode is counted."""
+    import time
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    save = LeRobotDataset.save_episode
+
+    def slow_save(self, *a, **kw):
+        time.sleep(6.0)
+        return save(self, *a, **kw)
+
+    monkeypatch.setattr(LeRobotDataset, "save_episode", slow_save)
+    arm = _arm()
+    arm.start(lambda o: o.joints.positions, hz=20, seconds=600, record=tmp_path / "ds", realtime=True)
+    time.sleep(1.0)
+    r = arm.stop()
+    assert r is not None and r.stopped_by == "stopped" and r.recorded == str(tmp_path / "ds")
+    assert json.loads((tmp_path / "ds" / "meta" / "info.json").read_text())["total_episodes"] == 1
