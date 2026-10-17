@@ -24,6 +24,7 @@ class RemoteBody:
         self, mesh: Mesh, device_id: str, names: tuple[str, ...], *, images: bool = False, position_hold: bool = False
     ) -> None:
         self.supports_position_hold = position_hold  # what the device's manifest declares; False if it does not say
+        self.calibration, self.resolution = None, None  # the device's own bus owns its calibration
         self.mesh = mesh
         self.device_id = device_id
         self.names = names
