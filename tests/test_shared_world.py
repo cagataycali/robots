@@ -152,6 +152,33 @@ def test_render_without_a_camera_is_the_overview_even_after_user_cameras(pair):
         sim.render("nope")
 
 
+def test_any_live_thread_can_render_after_another_did(pair):
+    """A GL context is bound to the thread that made it current; renders from a script, a run loop and a server
+    thread that all stay alive must share the world's cameras (EGL_BAD_ACCESS before, a hang on macOS)."""
+    sim = pair[0].sim
+    sim.camera("eye", position=[1.0, -1.0, 0.8], target=[0.3, 0, 0.3], size=(64, 48))
+    first = sim.render("eye")  # this thread renders first and stays alive
+    out: dict[str, object] = {}
+    go, done = threading.Event(), threading.Event()
+
+    def worker() -> None:
+        try:
+            out["img"] = sim.render("eye")
+        except Exception as exc:  # noqa: BLE001 - the failure is the assertion
+            out["img"] = exc
+        done.set()
+        go.wait(5)  # still alive while the first thread renders again
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert done.wait(10)
+    again = sim.render("eye")
+    go.set()
+    t.join(5)
+    assert isinstance(out["img"], np.ndarray), out["img"]
+    assert out["img"].shape == first.shape == again.shape == (48, 64, 3)
+
+
 def test_state_survives_add_object_and_remove(pair):
     arm, g1 = pair
     sim = arm.sim

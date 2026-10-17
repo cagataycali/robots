@@ -83,6 +83,7 @@ class Dashboard:
                     {"name": o.name, "shape": o.shape or o.path, "root": sx.roots.get(o.name)}
                     for o in self.sim.scene.objects
                 ],
+                "cameras": self.cameras_json(),
                 "physics": {
                     "name": p.name,
                     "timestep": p.timestep,
@@ -93,6 +94,24 @@ class Dashboard:
                 "revision": self.sim.revision,
                 "stats": sx.stats,
             }
+
+    def cameras_json(self) -> list[dict[str, Any]]:
+        """The world's cameras; each one's picture is ``GET /api/cameras/<name>.png``, what a policy sees."""
+        with self.sim.lock:
+            return [
+                {"name": c.name, "size": list(c.size), "url": f"/api/cameras/{c.name}.png"}
+                for c in self.sim.scene.cameras
+            ]
+
+    def world(self, call: Any) -> Any:
+        """One ``sim.tool`` call from the page (``{"rpc": "add_object", "add_object": {...}}``): the model's verbs."""
+        from ..tools.call import dispatch
+        from ..tools.wire import json_safe
+        from ..tools.world import WorldDevice
+
+        if not isinstance(call, dict):
+            raise ValueError('body must be {"rpc": <verb>, <verb>: {arguments}}')
+        return json_safe(dispatch(WorldDevice(self.sim), call))
 
     def frame(self) -> dict[str, Any]:
         """One state frame: joint values by model joint name, root poses by the browser's root body."""
@@ -203,21 +222,22 @@ class Dashboard:
     def app(self) -> Any:
         """The ASGI app (FastAPI is imported here, on first use)."""
         if self._app is None:
-            try:
-                from .app import build_app
-            except ImportError as e:
-                raise ImportError(f"the dashboard needs its web server: {hint('dashboard')} ({e})") from e
-            self._app = build_app(self)
+            self._app = _web()[0](self)
         return self._app
 
     def start(self, *, host: str = "127.0.0.1", port: int = 0) -> Server:
         """Serve in a background thread; ``.url`` and ``.stop()`` on the returned handle."""
-        from .server import Server
-
-        return Server(self.app, host=host, port=port).start()
+        return _web()[1](self.app, host=host, port=port).start()
 
     def serve(self, *, host: str = "127.0.0.1", port: int = 8090) -> None:
         """Serve in this thread until interrupted. Loopback only."""
-        from .server import Server
+        _web()[1](self.app, host=host, port=port).run()
 
-        Server(self.app, host=host, port=port).run()
+
+def _web() -> tuple[Any, type[Server]]:
+    """The web stack (fastapi + uvicorn), imported on first use; missing, the error names the extra."""
+    try:
+        from . import app, server
+    except ImportError as e:
+        raise ImportError(f"the dashboard needs its web server: {hint('dashboard')} ({e})") from e
+    return app.build_app, server.Server

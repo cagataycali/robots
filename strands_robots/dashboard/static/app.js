@@ -99,7 +99,19 @@ function renderCards(desc) {
     card.addEventListener("click", () => highlight(r.id));
     root.appendChild(card);
   }
-  if (!root.__wired) { root.addEventListener("change", onSlider); root.__wired = true; }
+  for (const c of desc.cameras || []) {  // what a policy sees: the world's own render, refreshed once a second
+    const card = document.createElement("div");
+    card.className = "card cam";
+    card.innerHTML = `<h3><span>${c.name}<small>camera ${c.size[0]}x${c.size[1]}</small></span><span class="tag sim">eyes</span></h3><img alt="camera ${c.name}" data-src="${state.base}${c.url}">`;
+    root.appendChild(card);
+  }
+  refreshCams();
+  if (!root.__wired) { root.addEventListener("change", onSlider); root.__wired = true; setInterval(refreshCams, 1000); }
+}
+
+function refreshCams() {
+  if (state.mode !== "server" || document.hidden) return;
+  for (const img of document.querySelectorAll(".card.cam img")) img.src = `${img.dataset.src}?t=${Date.now()}`;
 }
 
 async function onSlider(e) {

@@ -1,6 +1,6 @@
 """The routes: GET / · /api/scene · /api/assets/{path} · /api/policies · /api/mesh · WS /ws/state · /ws/chat ·
 POST /api/robots · POST|GET /api/robots/{id}/run · POST /api/robots/{id}/{act,stop,estop,resume} ·
-POST /api/mesh/{id}/estop."""
+POST /api/mesh/{id}/estop · GET /api/cameras · /api/cameras/{name}.png · POST /api/world."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import runs
+from . import cameras, runs
 from .guard import SameOrigin
 
 if TYPE_CHECKING:
@@ -69,6 +69,26 @@ def build_app(dash: Dashboard) -> FastAPI:
         except Exception as exc:  # noqa: BLE001 — an unknown name is a 4xx with the reason
             raise http_error(exc) from exc
         return JSONResponse(out, status_code=201)
+
+    @app.get("/api/cameras")
+    async def camera_list() -> JSONResponse:
+        return JSONResponse(await asyncio.to_thread(dash.cameras_json))
+
+    @app.get("/api/cameras/{name}.png")
+    async def camera(name: str) -> Response:
+        try:  # sim.render takes the world lock: the picture a policy would see at this instant
+            img = await asyncio.to_thread(dash.sim.render, name)
+        except Exception as exc:  # noqa: BLE001 — an unknown camera is a 404 with the names
+            raise http_error(exc) from exc
+        return Response(cameras.png(img), media_type="image/png", headers={"cache-control": "no-store"})
+
+    @app.post("/api/world")
+    async def world(request: Request) -> JSONResponse:
+        body = await request.json()
+        try:
+            return JSONResponse(await asyncio.to_thread(dash.world, body))
+        except Exception as exc:  # noqa: BLE001 — an unknown verb or argument is a 4xx with the reason
+            raise http_error(exc) from exc
 
     @app.get("/api/policies")
     async def policies() -> JSONResponse:
