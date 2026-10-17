@@ -67,7 +67,7 @@ def test_register_rotate_retire_revoke_teardown(aws, tmp_path):
     assert provision.retire(aws, "arm-1", [first]) == [first]
     assert len(aws.list_thing_principals(thingName="arm-1")["principals"]) == 1
 
-    assert provision.revoke(aws, "arm-1") == [rot["certificate_id"]]
+    assert provision.revoke(aws, "arm-1") == {"thing": "arm-1", "stopped": False, "certs": [rot["certificate_id"]]}
     assert (
         aws.describe_certificate(certificateId=rot["certificate_id"])["certificateDescription"]["status"] == "INACTIVE"
     )
@@ -76,3 +76,39 @@ def test_register_rotate_retire_revoke_teardown(aws, tmp_path):
     provision.teardown(aws, "arm-1")
     assert aws.list_things()["things"] == []
     assert aws.list_things_in_thing_group(thingGroupName="strands-lab")["things"] == []
+
+
+def _policies(aws, cert_id):
+    arn = aws.describe_certificate(certificateId=cert_id)["certificateDescription"]["certificateArn"]
+    return sorted(p["policyName"] for p in aws.list_attached_policies(target=arn)["policies"])
+
+
+def test_a_rotated_controller_certificate_is_still_a_controller(aws, tmp_path):
+    provision.setup_tenant(aws, "lab", region=REGION, account=ACCOUNT)
+    old = provision.register(aws, RECORD, tmp_path, controller=True)["certificate_id"]
+    both = ["strands-robots-device", "strands-robots-device-controller"]
+    assert _policies(aws, old) == both
+    rot = provision.rotate(aws, "arm-1", tmp_path)
+    provision.retire(aws, "arm-1", rot["retire"])
+    assert _policies(aws, rot["certificate_id"]) == both
+
+
+def test_revoke_with_a_mesh_estops_the_connected_device_before_its_certificate_goes(aws, tmp_path):
+    from strands_robots import Robot
+    from strands_robots.mesh import Mesh
+
+    provision.setup_tenant(aws, "lab", region=REGION, account=ACCOUNT)
+    provision.register(aws, RECORD, tmp_path)
+    url = f"iot://fake?broker=revoke-{tmp_path.name}"
+    device, operator = Mesh(url, tenant="lab"), Mesh(url, tenant="lab")
+    arm = Robot("so101", id="arm-1")
+    try:
+        device.mount(arm, device_id="arm-1")
+        assert operator.discover("arm-1", min_count=1, timeout=3.0)
+        out = provision.revoke(aws, "arm-1", mesh=operator)
+        assert out["stopped"] is True and arm.estopped, "a connected session outlives revoke(); the e-stop stops it"
+        assert len(out["certs"]) == 1 and aws.list_thing_principals(thingName="arm-1")["principals"] == []
+    finally:
+        operator.close()
+        device.close()
+        arm.close()

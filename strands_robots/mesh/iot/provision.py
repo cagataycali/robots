@@ -161,38 +161,36 @@ def register(
     when ``controller``). Writes ``<out_dir>/<device_id>/{cert.pem,key.pem}`` (0600) and returns ids plus the
     ``iot://`` query to use."""
     did, dtype, tenant = str(record["id"]), str(record["device_type"]), str(record["tenant"])
-    attrs = {
-        "tenant": tenant,
-        "device_type": dtype,
-        **{str(k): str(v)[:800] for k, v in (record.get("labels") or {}).items()},
-    }
-    _exists(iot.create_thing_type, thingTypeName=_segment(dtype))
-    _exists(iot.create_thing, thingName=did, thingTypeName=_segment(dtype), attributePayload={"attributes": attrs})
-    iot.update_thing(
-        thingName=did, thingTypeName=_segment(dtype), attributePayload={"attributes": attrs, "merge": True}
-    )
+    labels = {str(k): str(v)[:800] for k, v in (record.get("labels") or {}).items()}
+    attrs, ttype = {"tenant": tenant, "device_type": dtype, **labels}, _segment(dtype)
+    _exists(iot.create_thing_type, thingTypeName=ttype)
+    _exists(iot.create_thing, thingName=did, thingTypeName=ttype, attributePayload={"attributes": attrs})
+    iot.update_thing(thingName=did, thingTypeName=ttype, attributePayload={"attributes": attrs, "merge": True})
     iot.add_thing_to_thing_group(thingGroupName=group_name(tenant), thingName=did)
-    key_pem, csr_pem = csr(did)
-    cert = iot.create_certificate_from_csr(certificateSigningRequest=csr_pem, setAsActive=True)
-    iot.attach_thing_principal(thingName=did, principal=cert["certificateArn"])  # first: never an orphan cert
-    for name in (policy, f"{policy}-controller") if controller else (policy,):
-        iot.attach_policy(policyName=name, target=cert["certificateArn"])
-    paths = _write(Path(out_dir) / did, cert["certificatePem"], key_pem)
+    cert, paths = _issue(iot, did, out_dir, [policy, f"{policy}-controller"] if controller else [policy])
     query = f"client={did}&cert={paths['cert']}&key={paths['key']}"
-    return {"thing": did, "thing_type": _segment(dtype), "thing_group": group_name(tenant),
+    return {"thing": did, "thing_type": ttype, "thing_group": group_name(tenant),
             "certificate_id": cert["certificateId"], **paths, "query": query}  # fmt: skip
 
 
 def rotate(iot: Any, device_id: str, out_dir: str | Path, *, policy: str = POLICY_NAME) -> dict[str, Any]:
-    """A new certificate for ``device_id`` (same CN, same policy) over the old files; the previous certificates
-    stay ACTIVE until ``retire``, so the device reconnects first and nothing breaks."""
-    old = [p.rsplit("/", 1)[-1] for p in _principals(iot, device_id)]
+    """A new certificate for ``device_id`` with the same CN and every policy its current ones carry (``policy`` if
+    none) over the old files; those stay ACTIVE until ``retire``, so the device reconnects first and nothing breaks."""
+    arns = _principals(iot, device_id)
+    names = {p["policyName"] for a in arns for p in iot.list_attached_policies(target=a).get("policies", [])}
+    cert, paths = _issue(iot, device_id, out_dir, sorted(names or {policy}))
+    old = [a.rsplit("/", 1)[-1] for a in arns]
+    return {"thing": device_id, "certificate_id": cert["certificateId"], "retire": old, **paths}
+
+
+def _issue(iot: Any, device_id: str, out_dir: str | Path, policies: list[str]) -> tuple[dict[str, Any], dict[str, str]]:
+    """A certificate from a local CSR, attached to the thing first (never an orphan), then to ``policies``."""
     key_pem, csr_pem = csr(device_id)
     cert = iot.create_certificate_from_csr(certificateSigningRequest=csr_pem, setAsActive=True)
-    iot.attach_policy(policyName=policy, target=cert["certificateArn"])
     iot.attach_thing_principal(thingName=device_id, principal=cert["certificateArn"])
-    paths = _write(Path(out_dir) / device_id, cert["certificatePem"], key_pem)
-    return {"thing": device_id, "certificate_id": cert["certificateId"], "retire": old, **paths}
+    for name in policies:
+        iot.attach_policy(policyName=name, target=cert["certificateArn"])
+    return cert, _write(Path(out_dir) / device_id, cert["certificatePem"], key_pem)
 
 
 def retire(iot: Any, device_id: str, certificate_ids: list[str]) -> list[str]:
@@ -206,12 +204,14 @@ def retire(iot: Any, device_id: str, certificate_ids: list[str]) -> list[str]:
     return done
 
 
-def revoke(iot: Any, device_id: str) -> list[str]:
-    """Every certificate of ``device_id`` → INACTIVE and detached: its next connect fails, nothing else changes."""
+def revoke(iot: Any, device_id: str, *, mesh: Any = None, deadline: float = 1.0) -> dict[str, Any]:
+    """Certificates of ``device_id`` → INACTIVE, detached: its next connect fails, but a live session stays up until
+    it drops, so ``mesh`` (an operator's ``Mesh``) e-stops it first; ``stopped`` is its ack within ``deadline``."""
+    stopped = mesh is not None and device_id in mesh.broadcast("estop", selector=device_id, deadline=deadline)
     arns = _principals(iot, device_id)
     for arn in arns:
         _drop_cert(iot, device_id, arn, arn.rsplit("/", 1)[-1], delete=False)
-    return [a.rsplit("/", 1)[-1] for a in arns]
+    return {"thing": device_id, "stopped": stopped, "certs": [a.rsplit("/", 1)[-1] for a in arns]}
 
 
 def teardown(iot: Any, device_id: str) -> dict[str, Any]:

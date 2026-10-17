@@ -3,16 +3,19 @@
 The device generates a key and a CSR with ``CN=<device_id>`` (``provision.csr``), connects with the fleet's CLAIM
 certificate, asks IoT for a certificate from that CSR and registers its thing through ``TEMPLATE``. The template
 creates thing, type, group membership and attributes and attaches the fleet policy. The pre-provisioning hook
-(``HOOK_SOURCE``, a Lambda the user deploys) accepts a request only when the certificate's CN equals the thing name
-it is about to create: a claim holder can never mint a certificate that speaks for another robot (v0.5 fact (b);
-measured: forged CN → 403 in 552 ms, honest path claim connect → connected as the thing in ~5 s). The hook's role is
-the user's; the library creates no IAM. Files land in ``<out_dir>/<device_id>/{cert.pem,key.pem}`` (0600).
+(``HOOK_SOURCE``, a Lambda the user deploys) is a first-come binding of a NEW name: it accepts a request only when
+the thing does not exist yet and the certificate's subject CN equals that thing name, so a claim holder can name a
+new robot but never mint a certificate for one that already exists (measured: forged CN → 403 in 552 ms, honest
+path claim connect → connected as the thing in ~5 s). Which serials may claim which names is a product choice
+the hook does not make. The hook's role is the user's (it needs ``iot:DescribeThing``); the library creates no
+IAM. Files land in ``<out_dir>/<device_id>/{cert.pem,key.pem}`` (0600).
 """
 
 from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -48,36 +51,72 @@ TEMPLATE: dict[str, Any] = {
 """The provisioning template body (≤ 10 KB): the thing IS the device id, the group IS the tenant."""
 
 HOOK_SOURCE = '''\
-"""Pre-provisioning hook (python3.12 Lambda, no dependencies): allow a RegisterThing only when the certificate's CN
-is the thing being created. The hook event carries the certificate PEM, so the CN is read from the DER itself
-(measured: a forged CSR with another robot's CN is denied 403 in 552 ms and its certificate is never activated)."""
+"""Pre-provisioning hook (python3.12 Lambda, boto3 from the runtime): allow a RegisterThing only for a thing that does
+not exist yet, and only when the certificate's subject has exactly one CN and it is that thing's name. The CN is read
+by walking the DER to the TBS subject Name (never the issuer, never bytes inside another attribute's value). The
+hook's role needs iot:DescribeThing; any other answer than ResourceNotFoundException denies."""
 import base64
 
 
-def common_name(pem):
+def _tlv(der, i):
+    tag, n = der[i], der[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7F
+        n, i = int.from_bytes(der[i : i + k], "big"), i + k
+    return tag, i, i + n  # tag, start of value, end of value
+
+
+def _items(der, start, end):
+    while start < end:
+        tag, v, start = _tlv(der, start)
+        yield tag, v, start
+
+
+def subject_cns(pem):
     der = base64.b64decode("".join(line for line in pem.splitlines() if "-----" not in line))
-    i = der.find(bytes.fromhex("0603550403"))  # OID 2.5.4.3 commonName
-    if i < 0:
-        return None
-    j = i + 5
-    tag, length = der[j], der[j + 1]
-    return der[j + 2 : j + 2 + length].decode("utf-8", "replace") if tag in (0x0C, 0x13) else None
+    _, c, _ = _tlv(der, 0)  # Certificate
+    _, t, t_end = _tlv(der, c)  # tbsCertificate
+    fields = [f for f in _items(der, t, t_end) if f[0] != 0xA0]  # drop [0] version
+    _, s, s_end = fields[4]  # serial, signature, issuer, validity, SUBJECT
+    cns = []
+    for _, r, r_end in _items(der, s, s_end):  # RDN (SET)
+        for _, a, a_end in _items(der, r, r_end):  # AttributeTypeAndValue
+            (_, o, o_end), (tag, v, v_end) = list(_items(der, a, a_end))[:2]
+            if der[o:o_end] == bytes.fromhex("550403"):  # 2.5.4.3 commonName
+                cns.append(der[v:v_end].decode("utf-8", "replace") if tag in (0x0C, 0x13) else None)
+    return cns
+
+
+def thing_exists(name):
+    import boto3
+
+    iot = boto3.client("iot")
+    try:
+        iot.describe_thing(thingName=name)
+        return True
+    except iot.exceptions.ResourceNotFoundException:
+        return False
 
 
 def handler(event, _context):
     params = event.get("parameters") or {}
     thing = str(params.get("device_id") or "")
-    ok = bool(thing) and common_name(event.get("certificatePem", "")) == thing
+    try:
+        ok = bool(thing) and subject_cns(event.get("certificatePem", "")) == [thing] and not thing_exists(thing)
+    except Exception:  # a malformed certificate or any AWS error denies
+        ok = False
     return {"allowProvisioning": ok, "parameterOverrides": {"device_id": thing} if ok else {}}
 '''
-"""Source of the pre-provisioning Lambda. The template only runs for a NEW thing (``OverrideSettings`` never
-replaces an existing thing's certificate attachment), and the hook binds CN to that thing."""
+"""Source of the pre-provisioning Lambda: a new thing, named by the certificate's one subject CN."""
 
 
-def hook_decision(parameters: dict[str, Any], certificate_pem: str) -> bool:
-    """The hook's rule, callable without AWS: accept iff the certificate's CN equals ``parameters["device_id"]``."""
+def hook_decision(parameters: dict[str, Any], certificate_pem: str, *, existing: Collection[str] = ()) -> bool:
+    """The hook's rule, callable without AWS: accept iff ``parameters["device_id"]`` is not in ``existing`` (the
+    things IoT already has) and is the certificate's one subject CN."""
     ns: dict[str, Any] = {}
     exec(HOOK_SOURCE, ns)  # noqa: S102 — the shipped source is the rule under test
+    ns["thing_exists"] = lambda name: name in existing
     return bool(ns["handler"]({"parameters": parameters, "certificatePem": certificate_pem}, None)["allowProvisioning"])
 
 

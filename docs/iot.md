@@ -62,7 +62,7 @@ There is one policy for every robot, 1.9 KB, written with policy variables (`${i
 its own presence, and read only inside its tenant. Measured: a publish on another robot's presence is refused at the
 broker (PUBACK 135) and the link stays up. The key is generated on the robot and only a CSR with `CN=<device id>`
 travels, which is also what makes the HTTPS path identify the robot. `rotate` issues a new certificate while the old
-one still works, `retire` removes the old, `revoke` cuts a robot off at its next connect.
+one still works, `retire` removes the old, `revoke` cuts a robot off at its next connect; a connected session stays up until it drops, so `revoke(..., mesh=)` e-stops it first.
 
 A robot without a certificate yet gets one on first mount through fleet provisioning by claim (`claim.claim`) with a
 template and a pre-provisioning hook shipped as data (`claim.TEMPLATE`, `claim.HOOK_SOURCE`): the hook accepts a
