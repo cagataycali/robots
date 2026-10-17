@@ -126,6 +126,8 @@ class MicroduckDriver:
     """Hardware Body for a Microduck: joints from robotd's ``robot.state``. Observe-only by robotd's design."""
 
     supports_position_hold = False  # observe-only: nothing of ours writes a goal
+    calibration: Calibration | None = None  # the vendor firmware owns it
+    resolution: int | None = None
 
     def __init__(
         self,

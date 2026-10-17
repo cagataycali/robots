@@ -9,6 +9,17 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import wraps
+from typing import Any, ParamSpec, TypeVar
+
+T = TypeVar("T")
+P = ParamSpec("P")
+_GL_THREAD = "strands-gl"
+_pool: ThreadPoolExecutor | None = None
+_pool_lock = threading.Lock()
 
 
 def _loads(lib: str) -> bool:
@@ -30,3 +41,28 @@ def ensure_gl() -> str:
                 os.environ["MUJOCO_GL"] = value
                 return value
     return cur
+
+
+def on_gl_thread(fn: Callable[..., T], *args: Any) -> T:
+    """Run ``fn`` on the one thread that owns every GL context in the process.
+
+    A context is bound to the thread that made it: on macOS (CGL) a render from any other thread
+    blocks forever, so a second ``run()`` from a background ``Task`` would hang. Every render goes here.
+    """
+    global _pool
+    if threading.current_thread().name.startswith(_GL_THREAD):
+        return fn(*args)
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(1, thread_name_prefix=_GL_THREAD)
+    return _pool.submit(fn, *args).result()
+
+
+def gl_thread(fn: Callable[P, T]) -> Callable[P, T]:
+    """Decorate a method that touches a GL context: it always runs on the one GL thread."""
+
+    @wraps(fn)
+    def run(*args: P.args, **kwargs: P.kwargs) -> T:
+        return on_gl_thread(lambda: fn(*args, **kwargs))
+
+    return run

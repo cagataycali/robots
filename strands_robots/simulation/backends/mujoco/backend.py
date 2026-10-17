@@ -20,7 +20,7 @@ try:
 except ImportError as exc:  # the extra the first snippet needs, so the error says how to get it
     raise ImportError(f"Simulation() needs MuJoCo: {hint('mujoco')} ({exc})") from exc
 
-from ...._gl import ensure_gl
+from ...._gl import ensure_gl, gl_thread, on_gl_thread
 from ....types import JointState, Pose
 from ...backend import Backend
 from ...physics import Contact, Physics
@@ -88,7 +88,8 @@ class MuJoCoBackend(Backend):
         self.spec, self.model, self.data = spec, model, data
         self._scene = scene
         self._index = {r.id: self._make_index(model, r) for r in scene.robots}
-        self._renderers.clear()
+        if self._renderers:  # a context is freed on the thread that made it
+            on_gl_thread(self._renderers.clear)
         build.apply_keyframes(model, data, scene, {rid: idx.joint_ids for rid, idx in self._index.items()})
         restore(model, data, carried)
         data.time = t  # a scene change is not a reset: world time carries over like joint state
@@ -199,6 +200,7 @@ class MuJoCoBackend(Backend):
             self.load(self._scene)
         mujoco.mj_forward(self.model, self.data)
 
+    @gl_thread  # a GL context lives on one thread: macOS hangs, EGL fails, on any other
     def render(self, camera: str) -> np.ndarray:
         assert self.model is not None and self.data is not None
         if self._gl_failed:
@@ -240,7 +242,7 @@ class MuJoCoBackend(Backend):
         return Physics("mujoco", float(self.model.opt.timestep), 1)
 
     def close(self) -> None:
-        for r in self._renderers.values():
-            r.close()
+        if self._renderers:  # never start the GL thread for a world that did not render
+            on_gl_thread(lambda: [r.close() for r in self._renderers.values()])
         self._renderers.clear()
         self.model = self.data = self.spec = None

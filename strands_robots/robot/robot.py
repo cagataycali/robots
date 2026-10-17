@@ -19,7 +19,7 @@ from . import gate as _gate
 from . import twin as _twin
 from .body import Body, SimBody
 from .device import DeviceVerbs, Emitter, position_hold_of
-from .safety import Latch, Validator, guarded_write
+from .safety import Latch, NonFiniteTarget, Validator, guarded_write
 
 if TYPE_CHECKING:
     from ..policy import PolicyLike
@@ -46,6 +46,7 @@ class Robot(DeviceVerbs):
         cameras: Mapping[str, int | str] | None = None,
         twin: bool = True,
         confirm: Callable[[np.ndarray], bool] | None = None,
+        calibration: Any = None,
     ) -> None:
         from ..simulation import Simulation
 
@@ -67,13 +68,12 @@ class Robot(DeviceVerbs):
 
         if self.is_real:
             if sim is not None:
-                raise TypeError(
-                    "a hardware Robot takes port=/driver=, not sim= (its twin lives in Simulation.default())"
-                )
+                raise TypeError("a hardware Robot takes port=/driver=, not sim=: its twin is in Simulation.default()")
             from .drivers import make_driver
 
             self.id = id or self.name
-            self._body = make_driver(self.description, port=port, driver=driver, cameras=cameras)
+            hw = {"port": port, "driver": driver, "cameras": cameras, "calibration": calibration}
+            self._body = make_driver(self.description, **hw)
             self.supports_position_hold = position_hold_of(self.description, self._body)
             if twin:
                 self.twin = Robot(
@@ -82,8 +82,8 @@ class Robot(DeviceVerbs):
                 self.twin.twin_of = self
             return
 
-        if cameras is not None:
-            raise TypeError("cameras= is a hardware argument; in a world use sim.camera(name, attach=robot)")
+        if cameras is not None or calibration is not None:
+            raise TypeError("cameras=/calibration= are hardware arguments; in a world: sim.camera(name, attach=robot)")
         world = sim if sim is not None else Simulation.default()
         self.id = world.unique_id(id or self.name)
         self.sim = world
@@ -203,6 +203,8 @@ class Robot(DeviceVerbs):
                 raise ValueError(
                     f"action has {targets.size} values; {self.id} has {len(keys)} action keys {list(keys)}"
                 )
+        if not np.isfinite(targets).all():  # NaN survives min/max: a policy's NaN would reach the bus
+            raise NonFiniteTarget(f"{self.id}: non-finite target {dict(zip(keys, targets.tolist(), strict=True))}")
         return self._full_targets(targets) if clip else targets
 
     def _full_targets(self, targets: np.ndarray) -> np.ndarray:

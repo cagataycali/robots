@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ...policy.base import PolicyFault
 from ...recording import Episode, NotRecording, episode
 from ...types import Observation
-from ..safety import EStopped
+from ..safety import EStopped, NonFiniteTarget
 from .bind import Bound, bind, decide, looks, release
 from .result import RunResult
 from .task import Task
@@ -140,7 +140,7 @@ def _loop(
             break
         try:
             action = decide(robot, bound, obs, instruction)
-        except PolicyFault as e:
+        except (PolicyFault, NonFiniteTarget) as e:
             why, fault = "fault", str(e)
             break
         try:
@@ -227,7 +227,7 @@ def _lockstep(
                     break
                 try:
                     r.act(decide(r, b, r.observe(images=r.sim is None or looks(b, instruction)), instruction))
-                except PolicyFault as e:
+                except (PolicyFault, NonFiniteTarget) as e:
                     faults[r.id] = str(e)
                 except EStopped:
                     stopped.append(r)

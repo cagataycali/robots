@@ -190,3 +190,16 @@ def test_stop_raises_a_run_error_once_and_a_run_that_will_not_end_times_out():
     gate.set()
     assert arm.stop().stopped_by == "stopped"
     arm.close()
+
+
+def test_a_policy_that_emits_nan_ends_the_run_as_a_fault_before_the_write():
+    arm = Robot("so101")
+    calls = []
+
+    def pol(obs):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.1}
+
+    res = arm.run(pol, hz=50, steps=10)
+    assert res.stopped_by == "fault" and res.steps == 2 and "non-finite" in res.fault
+    assert all(abs(v) < 10 for v in arm.observe().joints.positions)  # the world never saw the NaN
