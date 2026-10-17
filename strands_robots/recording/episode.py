@@ -21,8 +21,10 @@ class Episode:
     A run that raises or ends on a policy fault records nothing (``RunResult.recorded`` is None); a run stopped by
     ``stop()`` keeps its frames. Only an integer ``hz`` can record (a LeRobot dataset has an integer fps).
     Nothing is uploaded unless ``push=True``, which needs an ``hf://owner/name`` target and runs LeRobot's
-    ``push_to_hub`` after the episode.
+    ``push_to_hub`` after the episode. ``wants_images``: every frame needs the cameras, whatever the policy looks at.
     """
+
+    wants_images = True
 
     def __init__(
         self,
@@ -104,6 +106,8 @@ class Episode:
 
 class NotRecording:
     """What a run without ``record=`` holds: every call is a no-op, so the loop has no recording branches."""
+
+    wants_images = False
 
     def add(self, obs: Observation, action: Any) -> None:
         return None

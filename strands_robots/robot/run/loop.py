@@ -120,12 +120,11 @@ def _loop(
     dt = 1.0 / hz
     sim_steps = max(1, round(dt / robot.sim.physics.timestep)) if robot.sim is not None else None
     max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
-    n = 0
+    n, stops0 = 0, robot.estop_latch.count
     why: str = "steps"
     fault: str | None = None
-    wall0 = _time.perf_counter()
-    next_tick = wall0
-    stops0 = robot.estop_latch.count
+    next_tick = wall0 = _time.perf_counter()
+    always = robot.sim is None or stop_when is not None or ep.wants_images  # a recorded step keeps its cameras
     while True:
         if robot.estopped or robot.estop_latch.count != stops0:  # an e-stop outranks a plain stop()
             why = "estop"
@@ -135,7 +134,7 @@ def _loop(
             break
         if max_steps is not None and n >= max_steps:
             break
-        obs = robot.observe(images=robot.sim is None or stop_when is not None or looks(bound, instruction))
+        obs = robot.observe(images=always or looks(bound, instruction))
         if stop_when is not None and stop_when(obs):
             why = "stop_when"
             break

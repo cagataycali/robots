@@ -60,3 +60,13 @@ def test_a_checkpoint_run_records_in_its_units_and_the_dataset_says_which(tmp_pa
     with pytest.raises(ValueError, match="units"):
         arm.run(lambda o: o.joints.positions, hz=30, steps=3, record=target)  # radians into a lerobot-units dataset
     print(f"[measured] checkpoint run: 15 frames in 'lerobot' units, state[0] {np.round(state[0], 2).tolist()}")
+
+
+def test_a_chunked_checkpoint_records_every_camera_frame_without_stop_when(tmp_path):
+    ckpt = save_tiny_act(tmp_path / "act", 6, camera="front")
+    arm = Robot("so101")
+    arm.sim.camera("front", size=(64, 48), attach=arm)
+    target = tmp_path / "chunked"
+    r = arm.run(Policy(str(ckpt), device="cpu"), hz=30, steps=15, record=target)  # replay steps skip the render
+    assert r.recorded == str(target) and r.steps == 15
+    assert reload(target)["frames"] == 15
