@@ -107,3 +107,9 @@ def test_presence_is_outside_the_tenant_wildcard():
     k = wire.key("presence", "lab", "d1")
     assert key_matches(wire.key("presence", "lab", "*"), k)
     assert not key_matches("strands/lab/**", k)
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+def test_nan_literals_from_a_peer_are_refused(literal):
+    with pytest.raises(ValueError, match="refusing"):
+        wire.decode(f'{{"x": {literal}}}')

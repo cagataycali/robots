@@ -86,3 +86,20 @@ def test_watchdog_off(mesh_pair):
     assert holds == []
     a.close()
     arm.close()
+
+
+def test_a_motion_rpc_without_a_peer_is_refused_where_a_watchdog_guards(tenant):
+    from strands_robots.mesh import Mesh, wire
+    from strands_robots.mesh.transports import open_transport
+
+    url = f"mem://a4-{tenant}"
+    dev, arm = Mesh(url, tenant=tenant), Robot("so101")
+    dev.mount(arm, device_id="arm", watchdog_ms=200)
+    raw = open_transport(url)
+    env = wire.envelope(tenant, "arm", "rpc", "act", seq=1, args={"action": {"shoulder_pan": 0.3}})
+    reply = wire.decode_envelope(raw.query(wire.key("rpc", tenant, "arm", "act"), wire.encode(env), 1.0)[0])
+    assert reply["kind"] == "error" and "peer id" in reply["error"]["message"]
+    assert abs(float(arm.observe().joints["shoulder_pan"])) < 0.05, "nothing moved"
+    raw.close()
+    dev.close()
+    arm.close()

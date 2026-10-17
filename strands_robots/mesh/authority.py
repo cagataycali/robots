@@ -1,18 +1,21 @@
 """Who may clear an e-stop: the operator who stopped, a named authority, or the holder of an operator key.
 
-Every e-stop over the mesh opens a lockout with an ``epoch`` (a fresh id) and the stopping operator's name. A
-device's ``Authority`` decides who may resume it:
+Every e-stop over the mesh opens a lockout with an ``epoch`` (a fresh id the device mints, never the stopper) and the
+first stopping operator's name. A device's ``Authority`` decides who may resume it:
 
 * without keys, the operator who stopped or a name in ``names`` (names are claimed, not proven: use keys on any
   network you do not control);
 * with ``public_keys``, only a fresh Ed25519-signed assertion for THIS lockout and THIS device:
   ``{"v", "epoch", "targets", "t", "nonce", "by", "sig"}``. A captured assertion cannot clear a later lockout
-  (epoch), another device (targets), or be replayed (nonce, ``max_age``).
+  (epoch), another device (targets), or be replayed (nonce, ``max_age``). Nonces are kept per process for
+  ``max_age``; across a device restart the fresh epoch is what refuses the old assertion. The approver is recorded
+  as ``"<by> key=<fingerprint>"``: the signature proves the key, ``by`` is what its holder typed.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import secrets
 import threading
@@ -37,9 +40,16 @@ class Lockout:
     engaged: bool = False
     epoch: str | None = None
     by: str | None = None
+    at: float | None = None
+    """When it engaged, wall clock (``time.time()``): a time an audit can put on a calendar."""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"engaged": self.engaged, "epoch": self.epoch, "by": self.by}
+        return {"engaged": self.engaged, "epoch": self.epoch, "by": self.by, "at": self.at}
+
+
+def fingerprint(public_key: str) -> str:
+    """A short, stable id for an operator's public key: what the audit records next to the name."""
+    return hashlib.sha256(public_key.encode("ascii")).hexdigest()[:8]
 
 
 def keygen() -> tuple[Any, str]:
@@ -74,8 +84,19 @@ class Authority:
     max_age: float = 60.0
     trust_names: bool | None = None
     """Accept claimed names without keys. ``None``: only when every transport is loopback or in-process."""
-    _seen: set[str] = field(default_factory=set, repr=False)
+    _seen: dict[str, float] = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def trust(self, public_key: str) -> None:
+        """Accept resumes signed by ``public_key`` from now on."""
+        with self._lock:
+            if public_key not in self.public_keys:
+                self.public_keys = (*self.public_keys, public_key)
+
+    def distrust(self, public_key: str) -> None:
+        """Refuse resumes signed by ``public_key`` from now on (an operator's key revoked)."""
+        with self._lock:
+            self.public_keys = tuple(k for k in self.public_keys if k != public_key)
 
     def check(
         self, device_id: str, lockout: Lockout, approved_by: str | None, assertion: Any, *, local: bool = False
@@ -108,15 +129,19 @@ class Authority:
         age = time.time() - float(a.get("t", 0))
         if not -5.0 <= age <= self.max_age:
             raise RequestRefused(f"{device_id}: the resume assertion is stale ({age:.0f} s old)")
-        if not self._verify(a):
+        key = self._verify(a)
+        if key is None:
             raise RequestRefused(f"{device_id}: the resume assertion's signature matches no trusted operator key")
+        now = time.monotonic()
         with self._lock:
             if a["nonce"] in self._seen:
                 raise RequestRefused(f"{device_id}: the resume assertion was already used")
-            self._seen.add(a["nonce"])
-        return str(a.get("by") or "operator-key")
+            self._seen = {n: t for n, t in self._seen.items() if now - t <= self.max_age + 5.0}
+            self._seen[a["nonce"]] = now
+        return f"{a.get('by') or 'operator'} key={fingerprint(key)}"
 
-    def _verify(self, a: dict[str, Any]) -> bool:
+    def _verify(self, a: dict[str, Any]) -> str | None:
+        """The trusted public key that signed ``a``, or ``None``."""
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
@@ -124,11 +149,11 @@ class Authority:
             sig = base64.b64decode(a["sig"])
             msg = _signed_bytes(a)
         except (KeyError, ValueError, TypeError):
-            return False
+            return None
         for pub in self.public_keys:
             try:
                 Ed25519PublicKey.from_public_bytes(base64.b64decode(pub)).verify(sig, msg)
-                return True
+                return pub
             except (InvalidSignature, ValueError):
                 continue
-        return False
+        return None

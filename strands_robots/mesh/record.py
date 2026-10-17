@@ -22,6 +22,9 @@ RAISE: dict[str, type[Exception]] = {
 """Remote error types re-raised as themselves at the caller; anything else is a RuntimeError."""
 
 
+_LABEL = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+MAX_LABELS = 16
+
 _HOST_ONLY = ("model",)
 """Manifest fields that only make sense on the device's own machine (paths); never sent."""
 
@@ -33,6 +36,12 @@ def record(
     answers over the mesh). Live status (estop, task) travels on state and events."""
     manifest = dict(robot.manifest.to_dict() if hasattr(robot, "manifest") else robot.describe())
     labels = {str(k): str(v) for k, v in labels.items()}
+    bad = [f"{k}:{v}" for k, v in labels.items() if not (_LABEL.match(k) and _LABEL.match(v))]
+    if bad or len(labels) > MAX_LABELS:
+        raise ValueError(
+            f"labels must be at most {MAX_LABELS} pairs of 1-64 characters from [A-Za-z0-9_.:-] (what a selector "
+            f"can match); refused: {bad or f'{len(labels)} labels'}"
+        )
     manifest.update(device_id=device_id, tenant=tenant, labels=labels)
     for k in _HOST_ONLY:
         manifest.pop(k, None)

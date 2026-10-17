@@ -1,11 +1,13 @@
 """An in-process transport: every ``mem://<name>`` opened in this process shares one bus.
 
-For tests and single-process worlds; it behaves like a peer-to-peer transport with zero latency.
+For tests and single-process worlds; it behaves like a peer-to-peer transport with zero latency. A query runs
+each handler on its own thread and keeps only the replies that land within ``timeout``, as a network would.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from .base import OnAlive, OnQuery, OnSample, RemoteError, Unsubscribe, key_matches
@@ -18,7 +20,7 @@ class _Bus:
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.subs: dict[int, tuple[str, OnSample]] = {}
-        self.queryables: dict[int, tuple[str, OnQuery]] = {}
+        self.queryables: dict[int, tuple[str, OnQuery, bool]] = {}
         self.tokens: dict[int, str] = {}
         self.watchers: dict[int, tuple[str, OnAlive]] = {}
         self.next = 0
@@ -58,17 +60,31 @@ class MemoryTransport:
         return self._own(self.bus.subs, (key_expr, cb))
 
     def queryable(self, key_expr: str, handler: OnQuery, *, inline: bool = False) -> Unsubscribe:
-        return self._own(self.bus.queryables, (key_expr, handler))
+        return self._own(self.bus.queryables, (key_expr, handler, inline))
 
     def query(self, key: str, payload: bytes, timeout: float) -> list[bytes]:
         with self.bus.lock:
-            handlers = [h for expr, h in self.bus.queryables.values() if key_matches(expr, key)]
-        out, errors = [], []
-        for h in handlers:
+            handlers = [(h, inline) for expr, h, inline in self.bus.queryables.values() if key_matches(expr, key)]
+        out: list[bytes] = []
+        errors: list[str] = []
+
+        def answer(h: OnQuery) -> None:
             try:
                 out.append(h(key, payload))
             except Exception as exc:
                 errors.append(f"{type(exc).__name__}: {exc}")
+
+        threads = []
+        for h, inline in handlers:
+            if inline:  # the e-stop path: answered on the transport thread, as zenoh does
+                answer(h)
+            else:
+                threads.append(threading.Thread(target=answer, args=(h,), daemon=True, name="mem-query"))
+                threads[-1].start()
+        end = time.monotonic() + timeout
+        for t in threads:
+            t.join(max(0.0, end - time.monotonic()))
+        out, errors = list(out), list(errors)  # a reply after the deadline is not one
         if errors and not out:
             raise RemoteError(f"{key}: {errors[0]}")
         return out

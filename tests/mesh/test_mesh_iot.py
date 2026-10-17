@@ -42,7 +42,7 @@ def test_estop_to_an_offline_device_is_a_404_and_is_never_replayed():
         try:
             controller.invoke("arm", "describe")
             break
-        except Offline:
+        except (Offline, LookupError):  # the controller has not seen it come back yet
             time.sleep(0.05)
     controller.invoke("arm", "estop")
     assert arm.estopped

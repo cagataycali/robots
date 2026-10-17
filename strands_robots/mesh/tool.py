@@ -17,6 +17,7 @@ import numpy as np
 
 from ..types import Observation
 from .device import Device
+from .record import _LABEL
 
 if TYPE_CHECKING:
     from .mesh import Mesh
@@ -43,19 +44,36 @@ def _json(x: Any) -> Any:
 RUN_ARGS = ("policy", "steps", "seconds", "hz", "instruction")  # the run keys a model may set
 
 
+def _token(x: Any) -> str | None:
+    """``x`` if it is a selector token (what a label may be), else ``None``: any peer in the tenant writes these."""
+    return x if isinstance(x, str) and _LABEL.match(x) else None
+
+
 def spec(mesh: Mesh) -> dict[str, Any]:
-    """The tool spec for the devices present right now: their ids, labels, rpcs and joints come from manifests."""
+    """The tool spec for the devices present right now: their ids, labels, rpcs and joints come from manifests.
+
+    Every manifest field comes from a peer, so only selector tokens and numbers reach the description, one JSON
+    line per device: a label or type cannot write prose into the model's instructions."""
     devices = mesh.discover()
     joints: dict[str, Any] = {}
     lines = []
     for d in devices:
         for c in d.manifest.get("controls") or ():
-            key = str(c.get("name", "")).removesuffix(".pos")
-            rng = c.get("range")
-            joints[key] = {"type": "number", "description": f"{c.get('unit', '')} {rng}".strip()}
-        labels = ",".join(f"{k}:{v}" for k, v in sorted(d.labels.items()))
-        rpcs = [r.get("name") for r in d.manifest.get("rpcs") or ()]
-        lines.append(f"- {d.id} ({d.device_type}; {labels or 'no labels'}) rpcs={rpcs}")
+            key = _token(str(c.get("name", "")).removesuffix(".pos")) if isinstance(c, Mapping) else None
+            rng = c.get("range") if key else None
+            rng = (
+                [float(v) for v in rng]
+                if isinstance(rng, list) and all(isinstance(v, (int, float)) for v in rng)
+                else None
+            )
+            if key:
+                desc = " ".join(str(p) for p in (_token(c.get("unit")), rng) if p)
+                joints[key] = {"type": "number", "description": desc}
+        labels = {k: v for k, v in sorted(d.labels.items()) if _token(k) and _token(v)}
+        rpcs = [r.get("name") for r in d.manifest.get("rpcs") or () if isinstance(r, Mapping) and _token(r.get("name"))]
+        line = {"id": _token(d.id), "type": _token(d.device_type) or "?", "labels": labels, "rpcs": rpcs}
+        if line["id"]:
+            lines.append("- " + json.dumps(line))
     about = f"Every device on the mesh (tenant {mesh.tenant}). Selectors: device(*), device(role:arm,...).\n"
     props: dict[str, Any] = {
         "action": {"type": "string", "enum": list(ACTIONS)},

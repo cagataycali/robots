@@ -149,3 +149,77 @@ def test_a_transport_whose_publish_raises_does_not_stop_the_estop_on_the_others(
     device.close()
     controller.close()
     arm.close()
+
+
+def _three(tenant, **device_kw):
+    """A device mesh and two operators, alice and mallory, on one in-process bus."""
+    url = f"mem://ops-{tenant}"
+    dev = Mesh(url, tenant=tenant, operator="device", **device_kw)
+    alice = Mesh(url, tenant=tenant, operator="alice")
+    mallory = Mesh(url, tenant=tenant, operator="mallory")
+    return dev, alice, mallory
+
+
+def test_the_first_stopper_keeps_the_stop_and_the_device_mints_its_epoch(tenant):
+    dev, alice, mallory = _three(tenant)
+    arm = Robot("so101")
+    dev.mount(arm, device_id="arm", watchdog_ms=None)
+    assert alice.discover("arm", min_count=1, timeout=3.0) and mallory.discover("arm", min_count=1, timeout=3.0)
+    alice.invoke("arm", "estop", epoch="deadbeef")
+    first = alice.invoke("arm", "lockout")
+    assert first["by"] == "alice" and first["epoch"] != "deadbeef"
+    assert abs(first["at"] - time.time()) < 5.0, "wall clock, so an audit can place it"
+    mallory.invoke("arm", "estop", epoch="cafe")
+    assert alice.invoke("arm", "lockout") == first
+    with pytest.raises(RequestRefused, match="not a resume authority"):
+        mallory.invoke("arm", "resume", approved_by="mallory")
+    alice.invoke("arm", "resume", approved_by="alice")
+    assert not arm.estopped
+    arm.estop()  # pressed on the device: no mesh stopper may claim it
+    mallory.invoke("arm", "estop")
+    with pytest.raises(RequestRefused, match="not a resume authority"):
+        mallory.invoke("arm", "resume", approved_by="mallory")
+    for m in (alice, mallory, dev):
+        m.close()
+    arm.close()
+
+
+def test_a_captured_signed_resume_cannot_clear_a_stop_after_the_device_restarts(tenant, monkeypatch):
+    private, public = authority.keygen()
+    captured = []
+    sign = authority.sign
+    monkeypatch.setattr(authority, "sign", lambda *a, **k: captured.append(sign(*a, **k)) or captured[-1])
+    dev, alice, mallory = _three(tenant, resume_authority=authority.Authority(public_keys=(public,)))
+    alice.resume_key = private
+    arm = Robot("so101")
+    dev.mount(arm, device_id="arm", watchdog_ms=None)
+    assert alice.discover("arm", min_count=1, timeout=3.0) and mallory.discover("arm", min_count=1, timeout=3.0)
+    mallory.invoke("arm", "estop", epoch="deadbeef")
+    alice.invoke("arm", "resume", approved_by="alice")
+    assert not arm.estopped
+    dev.close()  # the device restarts: a fresh process remembers no nonce
+    dev = Mesh(f"mem://ops-{tenant}", tenant=tenant, resume_authority=authority.Authority(public_keys=(public,)))
+    dev.mount(arm, device_id="arm", watchdog_ms=None)
+    assert mallory.discover("arm", min_count=1, timeout=3.0)
+    mallory.invoke("arm", "estop", epoch=captured[-1]["epoch"])
+    with pytest.raises(RequestRefused, match="not for this device's current stop"):
+        mallory.invoke("arm", "resume", approved_by="mallory", assertion=captured[-1])
+    assert arm.estopped
+    for m in (alice, mallory, dev):
+        m.close()
+    arm.close()
+
+
+def test_an_operator_key_can_be_trusted_and_revoked_and_used_nonces_age_out():
+    private, public = authority.keygen()
+    auth = authority.Authority(public_keys=(authority.keygen()[1],), max_age=60.0)
+    auth.trust(public)
+    lock = authority.Lockout(engaged=True, epoch="e1")
+    approver = auth.check("arm", lock, "op", authority.sign(private, "e1", ["arm"], "op"))
+    assert approver == f"op key={authority.fingerprint(public)}", "the record names the key, not only the typed name"
+    auth._seen = {n: t - 100.0 for n, t in auth._seen.items()}  # older than max_age + skew
+    auth.check("arm", lock, "op", authority.sign(private, "e1", ["arm"], "op"))
+    assert len(auth._seen) == 1, "nonces older than max_age are pruned"
+    auth.distrust(public)
+    with pytest.raises(RequestRefused, match="no trusted operator key"):
+        auth.check("arm", lock, "op", authority.sign(private, "e1", ["arm"], "op"))

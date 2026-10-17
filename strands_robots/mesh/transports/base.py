@@ -29,7 +29,8 @@ class RemoteError(RuntimeError):
 
 @runtime_checkable
 class Transport(Protocol):
-    """Bytes on keys. Every callback runs on a transport thread and must not block."""
+    """Bytes on keys. Callbacks must not block: they run on a transport thread, or on the publisher's own thread
+    on ``mem://``."""
 
     url: str
 
@@ -43,7 +44,8 @@ class Transport(Protocol):
         ...
 
     def query(self, key: str, payload: bytes, timeout: float) -> list[bytes]:
-        """Every reply within ``timeout``; raises ``RemoteError`` when the only answers were handler failures."""
+        """Every reply within ``timeout`` (``[]`` when none came in time, which the Mesh raises as ``TimeoutError``);
+        raises ``RemoteError`` when the only answers were handler failures."""
         ...
 
     def liveliness(self, key: str) -> Unsubscribe: ...

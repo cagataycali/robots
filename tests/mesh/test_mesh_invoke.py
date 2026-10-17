@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -161,3 +162,32 @@ def test_a_remote_hold_on_a_real_arm_asks_the_operator_first(mesh_pair, operator
     assert bus.holds == holds  # refused: torque never went on
     a.close()
     real.close()
+
+
+def test_a_device_slower_than_the_timeout_raises_timeout_error(served):
+    arm, _, b = served
+    real = arm.observe
+    arm.observe = lambda **kw: (time.sleep(1.0), real(**kw))[1]
+    t0 = time.monotonic()
+    with pytest.raises(TimeoutError, match="no reply within 0.2"):
+        b.invoke("so101-a", "observe", timeout=0.2)
+    assert time.monotonic() - t0 < 0.8
+
+
+def test_every_rpc_leaves_an_audit_record_naming_who_and_the_outcome(served, caplog):
+    _, _, b = served
+    caplog.set_level(logging.INFO, logger="strands_robots.audit")
+    b.invoke("so101-a", "act", action={"shoulder_pan": 0.1})
+    with pytest.raises(RequestRefused):
+        b.invoke("so101-a", "act", action={"shoulder_pan": 99.0})
+    acts = [r for r in caplog.records if r.name == "strands_robots.audit" and r.rpc == "act"]
+    assert [(r.by, r.peer, r.outcome) for r in acts] == [
+        (b.operator, b.peer_id, "ok"),
+        (b.operator, b.peer_id, "RequestRefused"),
+    ]
+
+
+def test_one_act_cannot_hold_the_world_for_an_unbounded_number_of_steps(served):
+    _, _, b = served
+    with pytest.raises(ValueError, match="steps= must be an integer"):
+        b.invoke("so101-a", "act", action={"shoulder_pan": 0.1}, steps=10**9)

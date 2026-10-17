@@ -133,6 +133,8 @@ class Mesh:
             args.setdefault("by", self.operator)
             args.setdefault("epoch", uuid.uuid4().hex)
             publish_estop(self, f"device(id:{device_id})", dict(args))
+        if rpc in ("act", "hold", "stop"):  # who moved it, for the device's audit record
+            args.setdefault("by", self.operator)
         transport = self._transport_of(device_id)
         if rpc == "resume" and self.resume_key is not None and "assertion" not in args:
             lock = self.invoke(device_id, "lockout", timeout=timeout)

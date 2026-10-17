@@ -124,6 +124,10 @@ def _hook(d: dict[str, Any]) -> Any:
     return d
 
 
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"refusing {name} from the mesh (not valid JSON)")
+
+
 def encode(obj: Any) -> bytes:
     """JSON bytes; arrays and numpy scalars included. NaN and infinity are refused (they are not JSON). A dict that
     is exactly ``{"__nd__": [...]}`` is reserved: it decodes as an array."""
@@ -138,7 +142,7 @@ def encode(obj: Any) -> bytes:
 def decode(raw: bytes | bytearray | memoryview | str) -> Any:
     """The inverse of ``encode``."""
     text = raw if isinstance(raw, str) else bytes(raw).decode()
-    return json.loads(text, object_hook=_hook)
+    return json.loads(text, object_hook=_hook, parse_constant=_no_constant)
 
 
 def decode_envelope(raw: bytes | bytearray | memoryview | str) -> dict[str, Any]:

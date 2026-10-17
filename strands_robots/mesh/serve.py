@@ -3,12 +3,15 @@
 Every motion rpc goes through the robot's safety chain and operator gate (``confirm_act``); a remote caller can
 never confirm on the operator's behalf. ``estop`` has its own queryable, answered on the transport thread itself:
 it never waits on the rpc pool, a lock or a queue. Errors travel as ``{"type", "message"}`` with the message
-verbatim.
+verbatim. Every rpc leaves one record on the ``strands_robots.audit`` logger: tenant, device, rpc, who, peer, seq and
+the outcome. ``by`` is the name the caller asserts; the transport proves the device, not the operator.
 """
 
 from __future__ import annotations
 
 import itertools
+import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -17,13 +20,18 @@ from . import wire
 from .authority import Authority, Lockout, new_epoch
 from .codec import observation_to_dict
 from .transports.base import Transport, Unsubscribe
+from .watchdog import MOTION_RPCS
+
+AUDIT = logging.getLogger("strands_robots.audit")
+MAX_STEPS = 10_000
+"""The most world steps one ``act`` may ask for: every robot in the world waits on its lock meanwhile."""
 
 ARGS: dict[str, tuple[str, ...]] = {
     "describe": (),
     "observe": ("images",),
-    "act": ("action", "steps"),
-    "hold": (),
-    "stop": (),
+    "act": ("action", "steps", "by"),
+    "hold": ("by",),
+    "stop": ("by",),
     "estop": ("by", "epoch"),
     "resume": ("approved_by", "assertion"),
     "lockout": (),
@@ -53,6 +61,8 @@ def _observe(robot: Any, images: bool) -> Any:
 def _act(robot: Any, action: Any = None, steps: int | None = None) -> Any:
     if action is None:
         raise TypeError("act needs action=")
+    if steps is not None and (isinstance(steps, bool) or not isinstance(steps, int) or not 1 <= steps <= MAX_STEPS):
+        raise ValueError(f"act steps= must be an integer in [1, {MAX_STEPS}], got {steps!r}")
     return observation_to_dict(robot.confirm_act(action, steps=steps))
 
 
@@ -60,17 +70,21 @@ def _lockout(robot: Any, lockout: Lockout) -> Lockout:
     """The lockout as the robot's latch says it is (a local ``robot.estop()`` opens one too)."""
     engaged = bool(getattr(robot, "estopped", False))
     if engaged and not lockout.engaged:
-        lockout.engaged, lockout.epoch, lockout.by = True, new_epoch(), None
+        lockout.engaged, lockout.epoch, lockout.by, lockout.at = True, new_epoch(), None, time.time()
     elif not engaged:
-        lockout.engaged, lockout.epoch, lockout.by = False, None, None
+        lockout.engaged, lockout.epoch, lockout.by, lockout.at = False, None, None, None
     return lockout
 
 
 def estop(robot: Any, lockout: Lockout, by: str | None = None, epoch: str | None = None) -> None:
-    """Latch first, then record which stop and who: never waits on a lock, a pool or a queue."""
+    """Latch first, then record which stop and who: never waits on a lock, a pool or a queue.
+
+    The device mints the lockout's epoch and the first stopper keeps it: a later stop (or the caller's ``epoch``,
+    only a correlation id for the broadcast) never renames who stopped, nor picks the epoch an assertion signs."""
+    engaged = _lockout(robot, lockout).engaged
     robot.estop()
-    if not lockout.engaged or epoch is not None:
-        lockout.engaged, lockout.epoch, lockout.by = True, epoch or new_epoch(), by
+    if not engaged:
+        lockout.engaged, lockout.epoch, lockout.by, lockout.at = True, new_epoch(), by, time.time()
 
 
 def _resume(
@@ -97,9 +111,9 @@ def _handlers(
     return {
         "describe": lambda: robot.describe(),
         "observe": lambda images=False: _observe(robot, bool(images)),
-        "act": lambda action=None, steps=None: _act(robot, action, steps),
-        "hold": lambda: _hold(robot),
-        "stop": lambda: None if robot.stop() is None else "stopped",
+        "act": lambda action=None, steps=None, by=None: _act(robot, action, steps),
+        "hold": lambda by=None: _hold(robot),
+        "stop": lambda by=None: None if robot.stop() is None else "stopped",
         "estop": lambda by=None, epoch=None: estop(robot, lockout, by, epoch),
         "resume": lambda approved_by=None, assertion=None: _resume(
             robot, did, lockout, authority(), approved_by, assertion, local
@@ -147,9 +161,13 @@ def serve(
     def answer(key: str, payload: bytes) -> bytes:
         name = key.rsplit("/", 1)[-1]
         seq = next(counter)
+        env: dict[str, Any] = {}
+        args: dict[str, Any] = {}
         try:
             env = wire.decode_envelope(payload)
             args = env.get("args") or {}
+            if on_rpc is not None and name in MOTION_RPCS and env.get("peer") is None:
+                raise TypeError(f"{device_id}.{name} needs the caller's peer id: the watchdog arms on whoever moves it")
             if on_rpc is not None and name != "estop":
                 on_rpc(name, env.get("peer"))
             extra = sorted(set(args) - set(ARGS[name]))
@@ -158,6 +176,27 @@ def serve(
             body = {"result": handlers[name](**args)}
         except Exception as exc:
             body = {"error": _error(exc)}
+        outcome = "ok" if "result" in body else body["error"]["type"]
+        who = (args.get("by") or args.get("approved_by")) if isinstance(args, dict) else None
+        AUDIT.info(
+            "%s/%s %s by=%s peer=%s seq=%s %s",
+            tenant,
+            device_id,
+            name,
+            who,
+            env.get("peer"),
+            seq,
+            outcome,
+            extra={
+                "tenant": tenant,
+                "device_id": device_id,
+                "rpc": name,
+                "by": who,
+                "peer": env.get("peer"),
+                "seq": seq,
+                "outcome": outcome,
+            },
+        )
         return wire.encode(
             wire.envelope(tenant, device_id, "result" if "result" in body else "error", name, seq=seq, **body)
         )

@@ -136,7 +136,9 @@ class ZenohTransport:
             if r.ok is not None:
                 out.append(r.ok.payload.to_bytes())
             elif r.err is not None:
-                errors.append(r.err.payload.to_string())
+                text = r.err.payload.to_string()
+                if text != "Timeout" and not text.startswith("Timeout "):  # zenoh's own deadline is no reply
+                    errors.append(text)
         if errors and not out:
             raise RemoteError(f"{key}: {errors[0]}")
         return out
