@@ -13,8 +13,6 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import numpy as np
-
 from ._sceneops import _SceneOps
 from .backend import Backend, load_backend
 from .member import Member
@@ -25,7 +23,7 @@ if TYPE_CHECKING:
     from ..policy import PolicyLike
     from ..robot import Robot
     from ..robot.run.result import RunResult
-    from ..types import Observation
+    from ..types import Observation, Pose
 
 _PHYSICS = ("native", "newton")
 
@@ -121,10 +119,12 @@ class Simulation(_SceneOps):
     def time_is_manual(self) -> bool:
         return self._manual > 0
 
-    def reset(self, *, keyframe: str | None = None, seed: int | None = None) -> None:
-        if seed is not None:
-            np.random.seed(seed)
+    def reset(self, *, keyframe: str | None = None) -> None:
+        """Every body back to its spawn state, or to ``keyframe`` where a robot has one."""
         self._open()
+        named = {k for r in self._robots.values() for k in r.description.keyframes}
+        if keyframe is not None and keyframe not in named:
+            raise ValueError(f"keyframe {keyframe!r} is not on any robot in this world; keyframes are {sorted(named)}")
         with self.lock:
             self.backend.reset(keyframe)
 
@@ -147,7 +147,7 @@ class Simulation(_SceneOps):
 
     def run(
         self,
-        policies: Mapping[Robot, PolicyLike | Callable[[Observation], Any]],
+        policies: Mapping[str | Robot, PolicyLike | Callable[[Observation], Any]],
         *,
         hz: float | None = None,
         seconds: float | None = None,
@@ -155,14 +155,32 @@ class Simulation(_SceneOps):
         instruction: str | None = None,
         units: str | None = "auto",
     ) -> dict[str, RunResult]:
-        """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once."""
+        """Drive N robots in lock-step (robot id -> policy spec): each observes and acts, then the world steps once."""
         from ..robot.run import lockstep
 
         self._open()
-        return lockstep(self, policies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)
+        unknown = [r for r in policies if isinstance(r, str) and r not in self._robots]
+        if unknown:
+            raise KeyError(f"no robot {unknown} in this world; robots are {list(self._robots)}")
+        bodies = {(self._robots[r] if isinstance(r, str) else r): p for r, p in policies.items()}
+        return lockstep(self, bodies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)  # type: ignore[arg-type]
+
+    def pose(self, body: str) -> Pose:
+        """Where a robot base or object is now: position m, orientation quaternion w,x,y,z."""
+        if body not in self._robots and not any(o.name == body for o in self.scene.objects):
+            raise KeyError(f"no body {body!r} in this world")
+        with self.lock:
+            return self.backend.body_pose(body)
+
+    @property
+    def tool(self) -> Any:
+        """This world as a strands agent tool, generated from its public verbs (imports strands on first use)."""
+        from ..tools.agent import sim_tool
+
+        return sim_tool(self)
 
     def describe(self) -> dict[str, Any]:
-        """Robots, objects, cameras, physics, time — JSON-safe; the dashboard reads THIS (under the world lock)."""
+        """Robots (spawn frame + live ``pose``), objects where they are now, cameras, physics, time; JSON-safe."""
         with self.lock:
             return self._describe()
 
@@ -175,14 +193,17 @@ class Simulation(_SceneOps):
             "revision": self.revision,
             "manual_time": self.time_is_manual,
             "robots": {
-                rid: r.description.describe() | {"position": list(self.scene.robot(rid).position)}
+                rid: r.description.describe()
+                | {"position": list(self.scene.robot(rid).position), "pose": self._where(rid)}
                 for rid, r in self._robots.items()
             },
-            "objects": [
-                {"name": o.name, "shape": o.shape or o.path, "position": list(o.position)} for o in self.scene.objects
-            ],
+            "objects": [{"name": o.name, "shape": o.shape or o.path} | self._where(o.name) for o in self.scene.objects],
             "cameras": [{"name": c.name, "size": list(c.size), "attach": c.attach} for c in self.scene.cameras],
         }
+
+    def _where(self, body: str) -> dict[str, list[float]]:
+        p = self.backend.body_pose(body)
+        return {"position": p.position.tolist(), "orientation": p.orientation.tolist()}
 
     def close(self) -> None:
         if self._closed:

@@ -19,10 +19,10 @@ from . import gate as _gate
 from . import twin as _twin
 from .body import Body, SimBody
 from .device import DeviceVerbs, Emitter, position_hold_of
+from .run import loop as _run
 from .safety import Latch, NonFiniteTarget, Validator, guarded_write
 
 if TYPE_CHECKING:
-    from ..policy import PolicyLike
     from ..simulation import Simulation
     from .drivers.calibration import Calibration
     from .run.result import RunResult
@@ -215,21 +215,19 @@ class Robot(DeviceVerbs):
                 out[i] = min(max(out[i], lim[0]), lim[1])
         return out
 
-    def run(self, policy: PolicyLike | Callable[[Observation], Any], **kw: Any) -> RunResult:
-        """observe -> policy -> act at ``hz`` until ``seconds``/``steps``/``stop_when`` (see ``robot.run``)."""
-        from .run import run
-
-        return run(self, policy, **kw)
-
-    def start(self, policy: PolicyLike | Callable[[Observation], Any], **kw: Any) -> Task:
-        """``run`` in a background thread; ``Task.stop()`` / ``.status`` / ``.result``."""
-        from .run import start
-
-        return start(self, policy, **kw)
+    run = _run.run  # the run loop's own signature, robot first: one place spells every keyword
+    start = _run.start
 
     def stop(self, timeout: float | None = None) -> RunResult | None:
         """End the background run: its result, or its error raised once; None when nothing runs."""
         return self._task.stop(timeout) if self._task is not None else None
+
+    @property
+    def tool(self) -> Any:
+        """This robot as a strands agent tool, generated from its rpcs (imports strands on first use)."""
+        from ..tools.agent import agent_tool
+
+        return agent_tool(self)
 
     def close(self) -> None:
         self.events.close()

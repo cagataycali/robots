@@ -19,7 +19,9 @@ sim.set_pose("unitree_g1", position=[2, 0, 0.8])   # teleport; velocities zeroed
 sim.add_object("box", shape="box", position=[0.3, 0, 0.1], size=[0.03, 0.03, 0.03])
 sim.camera("wrist", position=[0.15, -0.25, 0.25], target=[0.2, 0, 0.05], attach="so101")
 sim.render()                      # HxWx3 uint8 from the auto-framed overview camera that sees every robot
-sim.describe()                    # robots, objects, cameras, physics, time and revision, JSON-safe
+sim.pose("box")                   # where it is now: position (m), quaternion (w, x, y, z)
+sim.remove("wrist")               # a robot, an object or a camera, by name
+sim.describe()                    # robots, objects where they are now, cameras, physics, time; JSON-safe
 ```
 
 A `Simulation` owns the `Scene` (plain data: robots, objects, cameras, gravity, timestep), the robots
@@ -31,6 +33,11 @@ the world, so a reader and a stepping loop never see a half-built world.
 `set_pose` moves a fixed base by moving its spawn frame in the scene and rebuilding, the path every
 scene change takes: joint state, time and randomised physics carry over. A floating base is teleported in place and keeps its spawn frame, so `reset()` stands it back
 on its keyframe at the spawn position.
+
+Vectors are numbers, never strings: `position` 3, `orientation` a `(w, x, y, z)` quaternion, `color` RGBA in
+0-1; a string or a wrong length is refused by name. `reset(keyframe=)` refuses a keyframe no robot has.
+`randomize` takes a factor or a `(lo, hi)` range and returns the scales it drew. `sim.tool` offers all of these to
+an agent, and `run({"a": spec, "b": spec})` drives robots in lock-step by id.
 
 `Simulation()` refuses what it cannot be: an unknown backend, `physics=` other than `native`,
 `substeps` below 1, `num_envs` above 1, an unknown keyword. Without the `mujoco` extra it raises an `ImportError` that

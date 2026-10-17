@@ -41,3 +41,13 @@ def moved_frame(frame: Pose, old: Pose, new: Pose) -> Pose:
     q = quat_mul(new.orientation, quat_conj(old.orientation))
     q = q / np.linalg.norm(q)
     return Pose(new.position + quat_rotate(q, frame.position - old.position), quat_mul(q, frame.orientation))
+
+
+def vec(value: object, n: int, what: str) -> tuple[float, ...]:
+    """``value`` as ``n`` floats; a string or a wrong length is refused by name, never read character by character."""
+    if isinstance(value, str | bytes) or not hasattr(value, "__iter__"):
+        raise TypeError(f"{what} must be {n} numbers, got {value!r}")
+    out = tuple(float(x) for x in value)
+    if len(out) != n:
+        raise ValueError(f"{what} must be {n} numbers, got {len(out)}")
+    return out
