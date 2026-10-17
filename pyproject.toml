@@ -30,14 +30,14 @@ newton = ["mujoco-warp>=3.11", "warp-lang>=1.10"]
 # The mesh over zenoh (peer mode, zero config on a LAN). Same pin as above.
 mesh = ["eclipse-zenoh>=1.9.0,<1.10.0", "cryptography>=42"]
 # The mesh over AWS IoT Core (Direct Messaging for rpcs, MQTT for state).
-iot = ["awsiotsdk>=1.31", "boto3>=1.43.17"]
-dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10", "import-linter>=2.1", "onnx>=1.16"]
+iot = ["awsiotsdk>=1.31", "boto3>=1.43.17", "cryptography>=42"]  # cryptography: the local CSR with CN=<device id>
+dev = ["pytest>=8", "pytest-timeout", "ruff>=0.6", "mypy>=1.10", "import-linter>=2.1", "onnx>=1.16", "moto[iot]>=5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["strands_robots"]
 
 [tool.hatch.envs.default]
-features = ["dev", "mujoco", "onnx", "mesh"]
+features = ["dev", "mujoco", "onnx", "mesh", "iot"]
 
 [tool.hatch.envs.default.scripts]
 lint = [

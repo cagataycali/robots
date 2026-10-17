@@ -23,7 +23,10 @@ _FAKES: dict[str, FakeIotBroker] = {}
 class Link(Protocol):
     client_id: str
 
-    def publish(self, topic: str, payload: bytes) -> None: ...
+    def publish(self, topic: str, payload: bytes, **props: str) -> None:
+        """``props`` are MQTT5 request/response properties (``response_topic``, ``correlation_data``); a link
+        without MQTT5 ignores them (the body carries the same addressing)."""
+        ...
 
     def subscribe(self, topic_filter: str, handler: Handler) -> Callable[[], None]: ...
 
@@ -102,7 +105,7 @@ class FakeLink:
         with broker.lock:
             broker.clients[client_id] = self
 
-    def publish(self, topic: str, payload: bytes) -> None:
+    def publish(self, topic: str, payload: bytes, **props: str) -> None:
         if not self.closed:
             self.broker.publish(topic, payload)
 
@@ -167,8 +170,12 @@ class AwsLink:
         if not self._up.wait(timeout):
             raise TimeoutError(f"iot: {client_id} did not connect to {endpoint} within {timeout}s ({self._why})")
 
-    def publish(self, topic: str, payload: bytes) -> None:
-        self.client.publish(self._m.PublishPacket(topic=topic, payload=payload, qos=self._m.QoS.AT_MOST_ONCE))
+    def publish(self, topic: str, payload: bytes, **props: str) -> None:
+        pkt = self._m.PublishPacket(topic=topic, payload=payload, qos=self._m.QoS.AT_MOST_ONCE)
+        if props.get("response_topic"):
+            pkt.response_topic = props["response_topic"]
+            pkt.correlation_data_bytes = str(props.get("correlation_data", "")).encode()
+        self.client.publish(pkt)
 
     def subscribe(self, topic_filter: str, handler: Handler) -> Callable[[], None]:
         m = self._m
