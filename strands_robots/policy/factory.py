@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 _REPO = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 _PRESET = re.compile(r"^[a-z][a-z0-9_]*(\?[^\s/]*)?$")
@@ -14,6 +14,7 @@ FORMS = (
     "zenoh://host:port/<deployment>   a lerobot-policy-server",
     "<owner>/<repo>                   a LeRobot checkpoint on the Hugging Face Hub, run in-process",
     "<dir with config.json>           a local LeRobot checkpoint, run in-process",
+    "<dir with meta/info.json>[?episode=n]   a recorded LeRobot dataset, one episode replayed",
     "<callable>                       f(obs) -> action",
 )
 
@@ -34,7 +35,20 @@ def make(spec: Any, **kw: Any) -> Any:
         if not u.hostname or not u.port or not deployment or "/" in deployment:
             raise ValueError(f"{s!r}: expected zenoh://host:port/<deployment>")
         return ZenohPolicy(endpoint=f"tcp/{u.hostname}:{u.port}", deployment=deployment, **kw)
-    if (Path(s).expanduser() / "config.json").is_file() or _REPO.match(s):
+    path, _, query = s.partition("?")
+    local = Path(path).expanduser()
+    if (local / "meta" / "info.json").is_file():
+        from .dataset import ReplayPolicy
+
+        episode = dict(parse_qsl(query)).get("episode", "0")
+        if not episode.isdigit():
+            raise ValueError(f"Policy({s!r}): episode must be an integer >= 0")
+        return ReplayPolicy(local, int(episode), **kw)
+    if local.is_dir() and not (local / "config.json").is_file():
+        raise ValueError(
+            f"Policy({s!r}): a directory, but neither a checkpoint nor a dataset; forms:\n  " + "\n  ".join(FORMS)
+        )
+    if (local / "config.json").is_file() or _REPO.match(s):
         from .chunked import ChunkedPolicy
         from .lerobot import LeRobotPolicy
 

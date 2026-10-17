@@ -40,3 +40,11 @@ going, and the error of a run whose policy raised, once. `units="auto"` converts
 robot's radians and the units the policy declares (`policy.units`, for example `lerobot_so10x`).
 
 {{drawing:d08_policy_hooks}}
+
+`run(record="data/wave")` appends the run as one episode of a LeRobot v3 dataset; it needs LeRobot with its
+`dataset` extra, which the one LeRobot install line carries. `Policy("data/wave?episode=0")` replays that
+episode: the recorded `action` column, at the dataset's fps, in the units `meta/units.json` names (a dataset
+without that file needs `units=`). A path that exists is never sent to the Hub: a directory with neither
+`config.json` nor `meta/info.json` is a `ValueError`.
+
+{{drawing:d09_record_replay}}
