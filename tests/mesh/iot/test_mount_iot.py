@@ -38,7 +38,7 @@ def test_mount_with_iot_options_mirrors_shadows_and_a_shadow_target_moves_the_ar
     assert dev.id == "arm"
     manifest = "$aws/things/arm/shadow/name/manifest/update"
     _wait(lambda: manifest in seen)
-    assert seen[manifest][0]["state"]["reported"]["manifest"]["device_id"] == "arm"
+    assert seen[manifest][0]["state"]["reported"]["device_id"] == "arm"  # the compact document
 
     controller = Mesh(url, tenant=tenant)  # the mesh itself is unchanged: discover + invoke still work
     assert controller.discover("arm", min_count=1, timeout=3.0)

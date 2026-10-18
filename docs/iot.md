@@ -26,9 +26,11 @@ what the cloud sees.
 
 ## Shadows: the device's last known state, and targets that go through the safety chain
 
-Three named shadows per thing. `manifest` holds the device's record (what it is, its sensors, controls with
-ranges, rpcs, events; 5.3 KB for an SO-101), written once at mount and deleted at unmount, so a dashboard that has
-never met the robot can draw it from one GET. `state` holds the live state at `shadow_hz` (default 0.5 Hz, at most
+Three named shadows per thing. `manifest` holds a compact document of the device (its identity and labels, each
+control's range as `{name: [lo, hi]}`, the units, the sensor count per kind, the rpc and event names, and `full`,
+the mesh key that carries the complete record; 0.7 KB for an SO-101, 4.0 KB for a 51-joint humanoid, under the
+8 KB shadow cap for every robot in the registry), written once at mount and deleted at unmount, so a dashboard that
+has never met the robot can draw it from one GET. `state` holds the live state at `shadow_hz` (default 0.5 Hz, at most
 1 Hz; the mesh `state` stream stays the live path at 10–500 Hz) plus the lockout, so a late operator sees that the
 arm is stopped and by whom. `control` takes targets:
 

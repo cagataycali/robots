@@ -1,6 +1,6 @@
 ### Added: AWS IoT Core, natively
 
-`Mesh.mount(robot, iot=IotOptions(...))` makes a device a proper IoT thing on an `iot://` mesh: a `manifest` named
+`Mesh.mount(robot, iot=IotOptions(...))` makes a device a proper IoT thing on an `iot://` mesh: a compact `manifest` named
 shadow written once, a `state` shadow at most 1 Hz with the lockout, and a `control` shadow whose desired targets go
 through `confirm_act` and the safety chain (a refusal comes back verbatim in `reported`; `estop` is never a shadow
 field). `mesh.iot.rules` applies one rule per event kind from the manifest, idempotently; `mesh.iot.provision`

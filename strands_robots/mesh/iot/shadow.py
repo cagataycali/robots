@@ -1,10 +1,12 @@
 """Device shadows for a mounted device (MAPPING rows 1.1–1.5).
 
-Three named shadows per thing: ``manifest`` (``reported`` = the device's record, written once at mount, deleted at
-unmount: a dashboard that has never met the device draws it from one GET), ``state`` (``reported`` = the live state
-at ``shadow_hz`` ≤ 1, the last-known view; the live stream stays on the ``state`` key) and ``control``
-(``desired.<control>`` = an operator's target, which arrives as a delta and goes through ``robot.confirm_act`` like
-every other write; the outcome is written back to ``reported``, a refusal verbatim under ``reported.refused``).
+Three named shadows per thing: ``manifest`` (``reported`` = the compact device document of ``manifest.py``:
+identity, control ranges, units, rpc and event names — it fits every registry robot under the 8 KB cap, and names
+the mesh key that carries the full record; written once at mount, deleted at unmount, so a dashboard that has never
+met the device draws it from one GET), ``state`` (``reported`` = the live state at ``shadow_hz`` ≤ 1, the last-known
+view; the live stream stays on the ``state`` key) and ``control`` (``desired.<control>`` = an operator's target,
+which arrives as a delta and goes through ``robot.confirm_act`` like every other write; the outcome is written back
+to ``reported``, a refusal verbatim under ``reported.refused``).
 
 An e-stop or resume as a shadow field is refused: the shadow is eventually consistent and persists, a latch is
 immediate and must never replay. The lockout is *reported* into ``state`` so a late operator sees it.
@@ -17,6 +19,8 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
+
+from .manifest import manifest_doc
 
 MAX_SHADOW_HZ = 1.0
 """Above 1 Hz a shadow is telemetry (measured: the per-shadow throttle sits at 20–30 updates/s, 429 beyond; the
@@ -99,7 +103,7 @@ class ShadowMirror:
 
     def start(self) -> ShadowMirror:
         """Write ``manifest``, start reporting ``state`` at ``shadow_hz``, listen for ``control`` deltas."""
-        self._update("manifest", {"reported": self.record})
+        self._update("manifest", {"reported": manifest_doc(self.record)})
         self._worker.start()
         self._undo.append(self.link.subscribe(shadow_topic(self.thing, "control", "update/delta"), self._on_delta))
         if hasattr(self.robot, "subscribe"):

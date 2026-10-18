@@ -76,7 +76,7 @@ def test_live_provision_mount_shadow_round_trip_and_cleanup(tmp_path):
 
         _wait(lambda: manifest_shadow() is not None, 10, "the manifest shadow")
         doc = manifest_shadow()
-        assert doc["state"]["reported"]["manifest"]["device_id"] == did
+        assert doc["state"]["reported"]["device_id"] == did  # the compact document
         t["manifest_bytes"] = len(json.dumps(doc["state"]["reported"]))
 
         def state_shadow():

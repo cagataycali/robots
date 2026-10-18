@@ -11,6 +11,7 @@ import pytest
 
 from strands_robots import Robot, Simulation
 from strands_robots.mesh.iot import ShadowMirror, shadow_topic
+from strands_robots.mesh.iot.manifest import manifest_doc
 from strands_robots.mesh.record import record
 from strands_robots.mesh.serve import ARGS
 from strands_robots.mesh.transports.iot_link import FakeIotBroker, FakeLink
@@ -43,12 +44,15 @@ def _wait(pred, timeout=2.0):
     assert pred()
 
 
-def test_manifest_shadow_is_the_record_once_and_is_deleted_at_stop(lab):
+def test_manifest_shadow_is_the_compact_document_once_and_is_deleted_at_stop(lab):
     arm, rec, device, _op, seen = lab
     mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0).start()
     topic = shadow_topic("arm", "manifest", "update")
     _wait(lambda: topic in seen)
-    assert seen[topic][0]["state"]["reported"] == json.loads(json.dumps(rec))  # tuples → lists
+    doc = seen[topic][0]["state"]["reported"]
+    assert doc == json.loads(json.dumps(manifest_doc(rec)))  # tuples → lists
+    assert doc["id"] == doc["device_id"] == "arm" and doc["full"] == "strands/lab/arm/manifest"
+    assert set(doc["controls"]) == {c["name"] for c in rec["manifest"]["controls"]} and doc["rpcs"]
     assert len(json.dumps(seen[topic][0])) <= 8192
     mirror.stop()
     _wait(lambda: shadow_topic("arm", "manifest", "delete") in seen)
