@@ -60,10 +60,16 @@ a stray byte ahead of the header are both skipped; an echo and then silence is a
 
 {{drawing:d10_what_never_reaches_the_arm}}
 
+{{drawing:d11_fault_goes_safe}}
+
 **The operator gate.** `act()` in your own code is the developer's call. `confirm_act()` is what an
 agent tool or a dashboard calls: on a real body it asks `confirm(action)` and refuses on `False`; with
 no `confirm=` it raises and says `pass confirm=`. Every refusal (the gate, a limit, the e-stop's `EStopped`) is `from strands_robots import RequestRefused`, a `PermissionError`, and writes nothing to the bus. A NaN or infinite target raises `NonFiniteTarget` (a `ValueError`) before
-any write, and ends a `run()` with `stopped_by="fault"`. Only a real body
+any write, and ends a `run()` with `stopped_by="fault"`. When a run ends in a fault the body is put in
+its declared `on_disconnect` state (each control's `hold`, `zero`, `safe` or `apply`), so a policy that
+can no longer act safely leaves the arm somewhere declared safe rather than frozen at its last command.
+A remote policy (`Policy("zenoh://host:7447/deployment")`) holds the last target through LeRobot's chunk
+playback and a 1.0 s grace, then raises that fault. Only a real body
 takes `confirm=`:
 
 ```python

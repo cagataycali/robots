@@ -203,3 +203,50 @@ def test_a_policy_that_emits_nan_ends_the_run_as_a_fault_before_the_write():
     res = arm.run(pol, hz=50, steps=10)
     assert res.stopped_by == "fault" and res.steps == 2 and "non-finite" in res.fault
     assert all(abs(v) < 10 for v in arm.observe().joints.positions)  # the world never saw the NaN
+
+
+def _zero_on_disconnect(robot, joint="shoulder_pan.pos"):
+    """Give one of a sim body's controls on_disconnect='zero' so a fault's effect is observable."""
+    import dataclasses as dc
+
+    m = robot.manifest
+    controls = tuple(dc.replace(c, on_disconnect="zero") if c.name == joint else c for c in m.controls)
+    robot.__dict__["manifest"] = dc.replace(m, controls=controls)
+
+
+def test_a_faulted_run_puts_the_body_in_its_declared_on_disconnect_state():
+    arm = Robot("so101")
+    _zero_on_disconnect(arm)
+    arm.run(lambda o: {"shoulder_pan": 0.8, "shoulder_lift": 0.3}, hz=50, steps=10)
+    assert arm.sim.backend.data.ctrl[0] == pytest.approx(0.8)  # commanded away from the disconnect target
+    calls = []
+
+    def pol(o):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.8}
+
+    res = arm.run(pol, hz=50, steps=10)
+    assert res.stopped_by == "fault"
+    assert arm.sim.backend.data.ctrl[0] == pytest.approx(0.0)  # on_disconnect='zero' drove shoulder_pan to 0
+    held = arm.observe().joints.positions
+    assert arm.sim.backend.data.ctrl[1] == pytest.approx(held[1])  # a 'hold' control keeps its measured value
+
+
+def test_lockstep_applies_on_disconnect_only_to_the_robot_that_faulted():
+    sim = Simulation()
+    a, b = Robot("so101", sim=sim), Robot("so101", sim=sim)
+    _zero_on_disconnect(a)
+    a.act({"shoulder_pan": 0.8})
+    calls = []
+
+    def faulting(o):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.8}
+
+    res = sim.run({a: faulting, b: lambda o: {"shoulder_pan": 0.5}}, steps=10)
+    assert res[a.id].stopped_by == "fault" and "non-finite" in res[a.id].fault
+    assert res[b.id].fault is None  # b did not fault; the world's run ended with a
+    ia = sim.backend._index[a.id].actuator_ids[0]  # a's shoulder_pan actuator
+    ib = sim.backend._index[b.id].actuator_ids[0]
+    assert sim.backend.data.ctrl[ia] == pytest.approx(0.0)  # a faulted: on_disconnect='zero' applied
+    assert sim.backend.data.ctrl[ib] != pytest.approx(0.0)  # b kept running, no disconnect applied

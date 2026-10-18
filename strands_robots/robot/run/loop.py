@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ...policy.base import PolicyFault
 from ...recording import Episode, NotRecording, episode
 from ...types import Observation
-from ..safety import EStopped, NonFiniteTarget
+from ..safety import EStopped, NonFiniteTarget, apply_on_disconnect
 from .bind import Bound, bind, decide, looks, release
 from .result import RunResult
 from .task import Task
@@ -152,11 +152,11 @@ def _loop(
         n += 1
         if robot.sim is None or realtime:  # hardware (or a watched sim): pace in wall time
             next_tick += dt
-            sleep = next_tick - _time.perf_counter()
-            if sleep > 0:
-                _time.sleep(sleep)
+            _time.sleep(max(0.0, next_tick - _time.perf_counter()))
     wall = _time.perf_counter() - wall0
     elapsed = n * dt if robot.sim is not None else wall
+    if fault is not None:  # the policy can no longer act safely: put the body in its declared on_disconnect state
+        apply_on_disconnect(robot)
     final = robot.observe(images=False)
     recorded = ep.close(why)
     return RunResult(n, elapsed, hz, (n / wall) if wall else 0.0, why, recorded, final, fault)  # type: ignore[arg-type]
@@ -237,10 +237,10 @@ def _lockstep(
             n += 1
             if realtime:
                 next_tick += dt
-                time_left = next_tick - _time.perf_counter()
-                if time_left > 0:
-                    _time.sleep(time_left)
+                _time.sleep(max(0.0, next_tick - _time.perf_counter()))
     el = sim.time - t0
+    for faulted in (r for r in bound if r.id in faults):  # faulted bodies go to their on_disconnect state
+        apply_on_disconnect(faulted)
     why = "fault" if faults else ("estop" if stopped else "steps")
     reason = f"e-stop engaged on {', '.join(r.id for r in stopped)}" if stopped else None
     final = {r: r.observe(images=False) for r in bound}
