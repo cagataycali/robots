@@ -36,6 +36,11 @@ def make(spec: Any, **kw: Any) -> Any:
             raise ValueError(f"{s!r}: expected zenoh://host:port/<deployment>")
         return ZenohPolicy(endpoint=f"tcp/{u.hostname}:{u.port}", deployment=deployment, **kw)
     path, _, query = s.partition("?")
+    if _PRESET.match(s):  # a known preset wins: the spec is a name, never a path in the CWD
+        from .onnx import preset, preset_names
+
+        if path in preset_names():
+            return preset(s, **kw)
     local = Path(path).expanduser()
     if (local / "meta" / "info.json").is_file():
         from .dataset import ReplayPolicy
@@ -44,21 +49,19 @@ def make(spec: Any, **kw: Any) -> Any:
         if not episode.isdigit():
             raise ValueError(f"Policy({s!r}): episode must be an integer >= 0")
         return ReplayPolicy(local, int(episode), **kw)
-    if local.is_dir() and not (local / "config.json").is_file():
-        raise ValueError(
-            f"Policy({s!r}): a directory, but neither a checkpoint nor a dataset; forms:\n  " + "\n  ".join(FORMS)
-        )
     if (local / "config.json").is_file() or _REPO.match(s):
         from .chunked import ChunkedPolicy
         from .lerobot import LeRobotPolicy
 
         replan = kw.pop("replan_every", None)
         return ChunkedPolicy(LeRobotPolicy(s, **kw), replan_every=replan)
+    if local.is_dir():
+        raise ValueError(
+            f"Policy({s!r}): a directory, but neither a checkpoint nor a dataset; forms:\n  " + "\n  ".join(FORMS)
+        )
     if _PRESET.match(s):
-        from .onnx import preset, preset_names
+        from .onnx import preset_names
 
-        if s.partition("?")[0] in preset_names():
-            return preset(s, **kw)
         known = f"; known presets: {', '.join(preset_names())}"
         raise ValueError(f"Policy({s!r}): unknown form{known}; forms:\n  " + "\n  ".join(FORMS))
     raise ValueError(f"Policy({s!r}): unknown form; forms:\n  " + "\n  ".join(FORMS))
