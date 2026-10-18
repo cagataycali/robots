@@ -50,9 +50,18 @@ class Latch:
                 self.count += 1
                 self._set.set()
 
-    def release(self, by: str) -> None:
-        self.resumed_by = by
-        self._set.clear()
+    def release(self, by: str, *, stop: int | None = None) -> bool:
+        """Clear the latch; with ``stop``, only while it is still engagement #``stop`` (compare-and-release).
+
+        The pin check and the clear are one critical section under the lock ``engage`` takes, so a stop
+        landing between them latches and stays latched instead of being cleared by a yes meant for the one before.
+        """
+        with self._lock:
+            if stop is not None and stop != self.count:
+                return False
+            self.resumed_by = by
+            self._set.clear()
+            return True
 
     def check(self, robot_id: str) -> None:
         if self._set.is_set():
@@ -86,8 +95,7 @@ def resume(robot: Robot, *, approved_by: str | None, stop: int | None = None) ->
     if not approved_by or not str(approved_by).strip():
         raise RequestRefused(f"{robot.id}: resume needs approved_by=<the operator who cleared the stop>")
     latch = robot.estop_latch
-    if stop is not None and stop != latch.count:
+    if not latch.release(str(approved_by), stop=stop):  # compare-and-release: refused only once decided under the lock
         raise RequestRefused(
             f"{robot.id}: resume is for stop #{stop}, but the current stop is #{latch.count}; approve the stop you saw"
         )
-    latch.release(str(approved_by))

@@ -283,6 +283,35 @@ def test_resume_can_pin_the_stop_it_clears_so_a_stale_yes_is_refused():
     arm.close()
 
 
+def test_a_stop_landing_between_the_pin_check_and_the_release_stays_latched():
+    # A7 under the module's own concurrency: the pin check and the clear are ONE critical section, so a hazard
+    # engaged from another thread between them is never cleared by a yes meant for the stop before it.
+    arm = Robot("so101")
+    latch = arm.estop_latch
+    armed, engaged = threading.Event(), threading.Event()
+    second = threading.Thread(target=lambda: (arm.estop(by="validator"), engaged.set()))
+
+    class PausingEvent(threading.Event):
+        def clear(self) -> None:  # the gap between the pin check and the clear
+            if armed.is_set():
+                second.start()
+                engaged.wait(timeout=0.5)  # before the fix #2 lands here; after it the engage waits on the lock
+            super().clear()
+
+    latch._set = PausingEvent()
+    arm.estop(by="op")  # stop #1, the one the operator reads
+    seen = latch.count
+    arm.resume(approved_by="op")  # someone clears #1 early
+    armed.set()
+    arm.resume(approved_by="op", stop=seen)  # the operator's yes for #1: passes the check, then #2 lands
+    second.join(timeout=5)
+    assert latch.count == 2 and latch.stopped_by == "validator"
+    assert latch.engaged, "a hazard stopped between the check and the clear was silently released"
+    with pytest.raises(RequestRefused, match=r"resume is for stop #1, but the current stop is #2"):
+        arm.resume(approved_by="op", stop=seen)
+    arm.close()
+
+
 def test_the_latch_names_who_stopped_it_and_carries_a_wall_clock():
     # E1(b): the latch must be placeable on a calendar and name the stopper, so a stop has an audit trail.
     arm = Robot("so101")
