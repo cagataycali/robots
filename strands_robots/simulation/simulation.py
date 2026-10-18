@@ -119,19 +119,20 @@ class Simulation(_SceneOps):
 
     @contextmanager
     def editing(self) -> Iterator[Simulation]:
-        """Batch scene edits into one rebuild on exit (on newton a new scene shape compiles kernels). A failed
-        rebuild restores the scene and robots as they were; step, render and set_pose flush pending edits first."""
+        """Batch scene edits into one rebuild on exit (on newton a new scene shape compiles kernels). A block that
+        fails, in its body or in its rebuild, restores the scene and robots as they were; step, render and set_pose
+        outside a block flush pending edits first."""
         with self.lock:
             scene, robots = self.scene.copy(), dict(self._robots)
             self._editing += 1
             try:
-                yield self
-            finally:
-                self._editing -= 1
-            try:
+                try:
+                    yield self
+                finally:
+                    self._editing -= 1
                 self._flush()
-            except Exception:  # restore in place: the backend holds this same Scene object
-                for rid in set(self._robots) - set(robots):
+            except BaseException:  # the body raised (a KeyboardInterrupt too) or the exit rebuild did: restore in
+                for rid in set(self._robots) - set(robots):  # place, the backend holds this same Scene object
                     self._robots.pop(rid).detached()  # added in the failed block: a dead handle, not half-in
                 vars(self.scene).update(vars(scene))
                 self._robots.update(robots)  # removed in it: back, and still live

@@ -146,9 +146,14 @@ class _SceneOps:
                 sr = self.scene.robot(name)  # a fixed base is rebuilt from the scene, so the scene moves first
                 f = moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
                 sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # type: ignore[assignment]
+            fixed = name in self._robots and not self._robots[name].description.floating
             for o in self.scene.objects:
                 if o.name == name and not o.free:
                     o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
+                    fixed = True
+            if fixed and self._editing:  # the scene holds the pose: the block's one rebuild places it, not a second
+                self._reload()
+                return
             self.backend.set_pose(name, pose, zero_velocity=True)
             self.revision += 1
 

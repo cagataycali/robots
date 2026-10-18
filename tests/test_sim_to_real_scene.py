@@ -140,6 +140,32 @@ def test_editing_rebuilds_the_world_once_and_a_failed_block_changes_nothing(worl
     assert arm.sim is None and list(sim.robots) == []
 
 
+def test_a_block_that_raises_in_its_body_restores_the_world_and_set_pose_is_part_of_its_one_rebuild(world, monkeypatch):
+    sim, arm = world
+    loads = []
+    real = sim.backend.load
+    monkeypatch.setattr(sim.backend, "load", lambda scene: (loads.append(1), real(scene)))
+    with sim.editing():  # a fixed base teleported inside the block: the block's rebuild places it, not a second one
+        sim.add_object("o0", shape="sphere", size=[0.02], position=[0.3, 0.1, 0.2])
+        sim.set_pose(arm, position=[0.4, 0, 0])
+    assert len(loads) == 1 and np.allclose(sim.backend.body_pose(arm.id).position[:2], [0.4, 0])
+    names = [o.name for o in sim.scene.objects]
+    with pytest.raises(KeyError, match="no link"), sim.editing():  # the mistyped link + the advertised verb
+        sim.camera("bad", attach=f"{arm.id}/nope")
+        sim.set_pose(arm, position=[0.5, 0, 0])  # deferred: the error is the block's, at exit, and rolled back
+    assert "bad" not in [c.name for c in sim.scene.cameras] and not sim._pending
+    sim.step(1)  # not wedged
+    with pytest.raises(RuntimeError, match="whatever"), sim.editing():  # the user's own code raising in the body
+        sim.add_object("late", shape="box", size=[0.015] * 3, position=[0.25, 0, 0.3])
+        raise RuntimeError("whatever the user's code did")
+    assert [o.name for o in sim.scene.objects] == names and "late" not in str(sim.describe()["objects"])
+    with pytest.raises(KeyError):
+        sim.backend.body_pose("late")  # describe() and the physics agree: no such body anywhere
+    assert not sim._pending
+    sim.step(1)
+    arm.act(dict.fromkeys(arm.action_keys, 0.0))  # the policy's world is the described one
+
+
 def test_mujoco_replays_bit_exact_and_says_so():
     def episode():
         with Simulation() as sim:
