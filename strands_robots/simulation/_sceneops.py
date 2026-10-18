@@ -1,9 +1,6 @@
-"""Scene-editing verbs of a Simulation: add/remove a body, add an object, teleport, cameras, randomize.
-
-These are methods of ``Simulation`` (it inherits this private base); they live here so ``simulation.py``
-holds the world's lifecycle and time, and no file crosses 250 lines. Every method takes the world lock,
-so scene, backend and registry change together and a locked reader never sees them disagree.
-"""
+"""Scene-editing verbs of a Simulation (its private base): add/remove a body, add an object, teleport, cameras,
+randomize. Every verb takes the world lock, so scene, backend and registry change together and a locked reader
+never sees them disagree; ``simulation.py`` keeps the world's lifecycle and time."""
 
 from __future__ import annotations
 
@@ -62,14 +59,19 @@ class _SceneOps:
         if keyframe is not None and keyframe not in robot.description.keyframes:
             raise ValueError(f"keyframe {keyframe!r} not in {robot.description.name}: {robot.description.keyframes}")
         with self.lock:  # scene, backend and registry change together: a locked reader never sees them disagree
-            self.scene.robots.append(SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
+            self._commit(self.scene.robots, SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
+            self._robots[robot.id] = robot
+        return robot
+
+    def _commit(self, items: list[Any], item: Any) -> None:
+        """Append ``item`` to a scene list and rebuild; a rebuild that fails leaves the scene as it was."""
+        with self.lock:
+            items.append(item)
             try:
                 self._reload()
             except Exception:
-                self.scene.robots.pop()
+                items.pop()
                 raise
-            self._robots[robot.id] = robot
-        return robot
 
     def remove(self, robot: Member | str) -> None:
         rid = robot if isinstance(robot, str) else robot.id
@@ -116,22 +118,13 @@ class _SceneOps:
             color=tuple(float(x) for x in color) if color is not None else (0.6, 0.6, 0.6, 1.0),  # type: ignore[arg-type]
             free=free,
         )
-        with self.lock:
-            self.scene.objects.append(obj)
-            try:
-                self._reload()
-            except Exception:
-                self.scene.objects.pop()
-                raise
+        self._commit(self.scene.objects, obj)
         return Object(self, obj)  # type: ignore[arg-type]
 
     def set_pose(self, body: Member | Object | str, position: Any = None, orientation: Any = None) -> None:
-        """Teleport a robot or object: new base pose, velocities zeroed. Time does not advance.
-
-        A fixed base is rebuilt where it lands and stays there. A floating base keeps its spawn
-        frame, so ``reset()`` stands it back on its keyframe instead of adding the keyframe's
-        height on top of the teleport.
-        """
+        """Teleport a robot or object: new base pose, velocities zeroed; time does not advance. A fixed base is
+        rebuilt where it lands and stays there; a floating base keeps its spawn frame, so ``reset()`` stands it back
+        on its keyframe instead of adding the keyframe's height on top of the teleport."""
         name = body if isinstance(body, str) else (body.id if hasattr(body, "id") else body.name)
         if name not in self._robots and not any(o.name == name for o in self.scene.objects):
             raise KeyError(f"no body {name!r} in this world")
@@ -182,13 +175,7 @@ class _SceneOps:
             size=tuple(size) if size else self.render_size,  # type: ignore[arg-type]
             attach=att,
         )
-        with self.lock:
-            self.scene.cameras.append(cam)
-            try:
-                self._reload()
-            except Exception:
-                self.scene.cameras.pop()
-                raise
+        self._commit(self.scene.cameras, cam)
         return cam
 
     def render(self, camera: str | SceneCamera | None = None) -> np.ndarray:

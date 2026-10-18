@@ -1,10 +1,7 @@
-"""One world. Owns time. Holds many robots.
-
-``Simulation`` is backend-agnostic: it owns the ``Scene`` (plain data), the robot registry of the
-world and the time policy. A ``Backend`` implements a dozen methods and nothing else; MuJoCo is the
-first. Adding a robot = append to the Scene + ``backend.load(scene)`` with joint state carried over
-for the bodies that still exist. The scene-editing verbs live in the private ``_SceneOps`` base.
-"""
+"""One world. Owns time. Holds many robots. ``Simulation`` is backend-agnostic: it owns the ``Scene`` (plain data),
+the robot registry and the time policy; a ``Backend`` implements a dozen methods and nothing else (MuJoCo is the
+first). Adding a robot = append to the Scene + ``backend.load(scene)`` with joint state carried over for the
+bodies that still exist. The scene-editing verbs live in the private ``_SceneOps`` base."""
 
 from __future__ import annotations
 
@@ -31,11 +28,8 @@ _PHYSICS = ("native", "newton")
 
 
 class Simulation(_SceneOps):
-    """One world. Owns time. Holds many robots.
-
-    ``Simulation()`` is MuJoCo, headless. ``Simulation.default()`` is the process-wide world
-    every Robot joins when it is given none.
-    """
+    """One world. Owns time. Holds many robots. ``Simulation()`` is MuJoCo, headless; ``Simulation.default()`` is
+    the process-wide world every Robot joins when it is given none."""
 
     _default: ClassVar[Simulation | None] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
