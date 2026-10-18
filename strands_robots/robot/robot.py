@@ -7,20 +7,21 @@ The Body is the only thing that differs between a simulated robot (``SimBody``, 
 from __future__ import annotations
 
 import threading
-import time as _time
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..description import Description
-from ..types import Action, JointState, Observation, Pose
+from ..types import Action, Observation, Pose
 from . import gate as _gate
+from . import targets as _targets
 from . import twin as _twin
 from .body import Body, SimBody
+from .clock import MONOTONIC, Clock, WorldClock
 from .device import DeviceVerbs, Emitter, position_hold_of
 from .run import loop as _run
-from .safety import Latch, NonFiniteTarget, Validator, guarded_write
+from .safety import Latch, Validator, guarded_write
 
 if TYPE_CHECKING:
     from ..simulation import Simulation
@@ -48,14 +49,16 @@ class Robot(DeviceVerbs):
         confirm: Callable[[np.ndarray], bool] | None = None,
         calibration: Any = None,
         mesh: Any = None,
+        clock: Clock | None = None,
     ) -> None:
         from ..simulation import Simulation
 
         self.description: Description = Description.load(name)
         self.name = self.description.name
         self.is_real = port is not None or driver is not None
-        if confirm is not None and not self.is_real:
-            raise TypeError("confirm= is the operator gate of a hardware Robot; a simulated body is never gated")
+        hw_only = [n for n, v in (("confirm", confirm), ("clock", clock)) if v is not None]
+        if hw_only and not self.is_real:  # the operator gate and a bus clock are hardware's; a world owns its time
+            raise TypeError(f"{', '.join(hw_only)}= are hardware Robot arguments; a simulated body takes none")
         self.confirm = confirm
         self.sim: Simulation | None = None
         self.twin: Robot | None = None  # on a hardware Robot: the simulated body that mirrors it
@@ -63,7 +66,8 @@ class Robot(DeviceVerbs):
         self._task: Task | None = None
         self._body: Body | None = None
         self._bus_lock = threading.RLock()  # a hardware body: one half-duplex bus shared by every thread
-        self.estop_latch, self.events = Latch(), Emitter(self)
+        self.clock: Clock = clock or MONOTONIC  # a world's robot reads its world's time, set below
+        self.estop_latch, self.events = Latch(lambda: self.clock.now()), Emitter(self)
         self.validators: list[Validator] = []  # extra checks on every agent/dashboard write, after the interlocks
         self.interlocks: list[Validator] = []  # append a Validator to either list; it sees every target, in order
 
@@ -86,6 +90,7 @@ class Robot(DeviceVerbs):
         else:
             world = sim if sim is not None else Simulation.default()
             self.sim, self.id = world, world.unique_id(id or self.name)
+            self.clock = WorldClock(world)
             world.add(self, position=position, orientation=orientation, keyframe=keyframe)
             self._body = SimBody(world, self.id, self.description.action_keys)
             self.supports_position_hold = True  # a simulated actuator keeps its last target
@@ -137,18 +142,20 @@ class Robot(DeviceVerbs):
             self.sim.backend.set_gains(self.id, kp, kd)
 
     def observe(self, *, images: bool = True) -> Observation:
+        """One read of the body; ``t`` is the capture time on ``self.clock``."""
         body = self.body
         with self._lock:
+            t = self.clock.now()
             js = body.read()
             obs = Observation(
-                t=self.sim.time if self.sim is not None else _time.time(),
+                t=t,
                 joints=js,
                 pose=body.pose(),
                 images=body.images() if images else {},
                 extras=body.extras(),
             )
         if self.twin is not None:  # the twin shows what the real body measured
-            _twin.mirror(self, self._full_targets(js.positions), measured=True)
+            _twin.mirror(self, _targets.clip_to_limits(self.description, js.positions), measured=True)
         return obs
 
     def gate(self, action: Action, *, confirmed: bool = False) -> np.ndarray:
@@ -160,8 +167,15 @@ class Robot(DeviceVerbs):
         return _gate.confirm_act(self, action, steps=steps, confirmed=confirmed)
 
     def act(self, action: Action, *, steps: int | None = None) -> Observation:
-        """Write targets for THIS body and advance its world (a real body: its twin's) one control step."""
-        targets = self.coerce(action)
+        """Write targets for THIS body and advance its world (a real body: its twin's) one control step.
+
+        Returns what the body reports after the step (one read); a run loop calls ``command`` instead.
+        """
+        self.command(self.coerce(action), steps=steps)
+        return self.observe(images=False)
+
+    def command(self, targets: np.ndarray, *, steps: int | None = None) -> None:
+        """Write already-coerced full ``targets`` and advance the world, with no read: the run loop's write."""
         with self._lock:
             guarded_write(self, targets)
             if self.sim is not None:
@@ -171,7 +185,6 @@ class Robot(DeviceVerbs):
                     self.sim.step(steps)
         if self.twin is not None:  # the twin's world advances one control step too
             _twin.mirror(self, targets, step=True)
-        return self.observe(images=False)
 
     def calibrate(self, *, interactive: bool = True) -> Calibration:
         """Read (or, at the arm, record) the bus calibration: LeRobot's calibration JSON, unchanged."""
@@ -181,40 +194,9 @@ class Robot(DeviceVerbs):
             raise RuntimeError("calibrate() is for hardware; a simulated body needs no calibration")
         return self.body.calibrate(interactive=interactive)
 
-    def coerce(self, action: Action, *, clip: bool = True) -> np.ndarray:
-        """Any accepted Action -> a full target vector in ``action_keys`` order, clipped to limits.
-
-        A joint a mapping does not name holds its measured position, clipped into its limits even when
-        ``clip=False``: only the caller's own values reach the safety chain unclipped.
-        """
-        keys = self.description.action_keys
-        if isinstance(action, JointState):
-            action = action.as_dict()
-        if isinstance(action, Mapping):
-            unknown = [k for k in action if k not in keys]
-            if unknown:
-                raise KeyError(f"unknown joint(s) {unknown} for {self.id}; action_keys are {list(keys)}")
-            with self._lock:
-                targets = self._full_targets(np.array(self.body.read().positions, dtype=float))
-            for k, v in action.items():
-                targets[keys.index(k)] = float(v)
-        else:
-            targets = np.asarray(action, dtype=float).reshape(-1)
-            if targets.shape != (len(keys),):
-                raise ValueError(
-                    f"action has {targets.size} values; {self.id} has {len(keys)} action keys {list(keys)}"
-                )
-        if not np.isfinite(targets).all():  # NaN survives min/max: a policy's NaN would reach the bus
-            raise NonFiniteTarget(f"{self.id}: non-finite target {dict(zip(keys, targets.tolist(), strict=True))}")
-        return self._full_targets(targets) if clip else targets
-
-    def _full_targets(self, targets: np.ndarray) -> np.ndarray:
-        out = np.array(targets, dtype=float)
-        for i, k in enumerate(self.description.action_keys):
-            lim = self.description.limits.get(k)
-            if lim is not None:
-                out[i] = min(max(out[i], lim[0]), lim[1])
-        return out
+    def coerce(self, action: Action, *, clip: bool = True, measured: np.ndarray | None = None) -> np.ndarray:
+        """Any accepted Action -> full targets in ``action_keys`` order (see ``robot.targets.coerce``)."""
+        return _targets.coerce(self, action, clip=clip, measured=measured)
 
     run = _run.run  # the run loop's own signature, robot first: one place spells every keyword
     start = _run.start

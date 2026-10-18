@@ -1,13 +1,12 @@
 """The watchdog: a heartbeat on the command path. When it lapses, every control applies its ``on_disconnect``.
 
-The clock is the world's time for a simulated body (so ``manual_time`` tests are exact) and the monotonic
-clock on hardware. ``poll()`` checks once; ``start()`` polls on a thread until ``stop()``.
+The clock is ``robot.clock``: the world's time for a simulated body (so ``manual_time`` tests are exact),
+the body's clock on hardware. ``poll()`` checks once; ``start()`` polls on a thread until ``stop()``.
 """
 
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -32,8 +31,7 @@ class Watchdog:
             )
         self.robot = robot
         self.timeout = timeout_ms / 1000.0
-        sim = robot.sim
-        self.clock = clock or ((lambda: sim.time) if sim is not None else time.monotonic)
+        self.clock = clock or robot.clock.now
         self.last = self.clock()
         self.lapsed = False
         self._stop = threading.Event()
