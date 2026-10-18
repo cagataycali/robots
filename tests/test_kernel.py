@@ -173,6 +173,32 @@ def test_k3_a_write_that_takes_time_or_a_sleep_that_overshoots_is_not_a_miss():
     assert p.misses == 1 and p.worst_late == pytest.approx(0.3 - dt, abs=0.002)
 
 
+@pytest.mark.parametrize(("eps", "healthy"), [(100e-6, 2000), (1.5e-3, 500)])
+def test_k3_lateness_is_measured_from_the_write_that_landed_not_a_grid_the_writes_left_behind(eps, healthy):
+    """One tick that nearly fills its period (17.95 ms + 2 ms write at 50 Hz, sleeps overshooting by ``eps``) used
+    to tip the pacer into a regime where every later write was held to its floor and the grid stayed one overshoot
+    further behind each tick, so a 1 ms overrun hundreds of ticks later was reported as hundreds of ms late."""
+    clock, dt = VirtualClock(), 1 / 50
+    p = Pacer(dt, now=clock.now, sleep=lambda s: clock.advance(s + eps))
+    writes: list[float] = []
+
+    def tick(inference: float) -> None:
+        p.start()
+        clock.advance(inference)
+        p.before_write()
+        writes.append(clock.now())
+        clock.advance(0.002)  # the write itself
+        p.after_write()
+
+    for k in range(healthy + 2):
+        tick(0.01795 if k == 0 else 0.005)  # one tick that almost saturates its period, then healthy ticks
+    tick(0.019)  # a 1 ms overrun of dt - write
+    assert p.misses == 1
+    late_ms = f"{p.worst_late * 1e3:.1f} ms reported for a 1 ms overrun"
+    assert p.worst_late == pytest.approx(0.001, abs=eps + 1e-9), late_ms
+    assert min(np.diff(writes)) >= dt - 1e-9
+
+
 def test_k3_writes_stay_one_period_apart_across_runs_estops_and_resumes():
     """A random history of runs, stalls, e-stops and resumes on one body: no two writes < one period apart."""
     rng = np.random.default_rng(0)

@@ -5,7 +5,8 @@ starts at its grid point (``start``), observes and decides; its write waits unti
 write (``before_write``), so consecutive writes are never closer than ``dt`` whatever the inference jitter. A
 write that lands after the next tick should have started, without having been held to that floor, is a deadline
 miss (``after_write``): counted, the worst lateness kept, and the grid re-phases to that write (so a sleep's
-overshoot after a re-phase is not another miss); ``on_miss="fault"`` ends the run instead.
+overshoot after a re-phase is not another miss); ``on_miss="fault"`` ends the run instead. A held write that still
+lands past its deadline re-phases the grid as well, so lateness is always measured from the writes themselves.
 """
 
 from __future__ import annotations
@@ -68,8 +69,8 @@ class Pacer:
             self.worst_late = max(self.worst_late, w - deadline)
             self._next = w  # re-phase onto the late write: the next tick starts now, its write still waits
             return self.on_miss != "fault"
-        self._next = deadline
-        return True
+        self._next = max(deadline, w)  # a held write past its deadline moves the grid too: lateness is measured
+        return True  # from where the writes are, never from a grid they left behind one sleep overshoot at a time
 
     def span(self) -> float:
         """The time the body was commanded: first write to one period after the last (n * dt with no miss)."""
