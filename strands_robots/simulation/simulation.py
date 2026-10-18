@@ -117,7 +117,7 @@ class Simulation(_SceneOps):
         fails, in its body or in its rebuild, restores the scene and robots as they were; step, render and set_pose
         outside a block flush pending edits first."""
         with self.lock:
-            scene, robots = self.scene.copy(), dict(self._robots)
+            scene, robots, pending, gone = self.scene.copy(), dict(self._robots), self._pending, list(self._gone)
             self._editing += 1
             try:
                 try:
@@ -130,7 +130,7 @@ class Simulation(_SceneOps):
                     self._robots.pop(rid).detached()  # added in the failed block: a dead handle, not half-in
                 vars(self.scene).update(vars(scene))
                 self._robots.update(robots)  # removed in it: back, and still live
-                self._pending, self._gone = False, []
+                self._pending, self._gone = pending, gone  # a nested block owns only the edits since its entry
                 raise
 
     def _reload(self) -> None:

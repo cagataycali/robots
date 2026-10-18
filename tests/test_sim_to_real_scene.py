@@ -166,6 +166,18 @@ def test_a_block_that_raises_in_its_body_restores_the_world_and_set_pose_is_part
     arm.act(dict.fromkeys(arm.action_keys, 0.0))  # the policy's world is the described one
 
 
+def test_a_caught_inner_block_rolls_back_only_its_own_edits(world):
+    sim, arm = world
+    with sim.editing():
+        sim.add_object("a", shape="box", size=[0.015] * 3, position=[0.25, 0, 0.3])
+        sim.remove(arm)
+        with pytest.raises(RuntimeError, match="helper"), sim.editing():
+            sim.add_object("b", shape="box", size=[0.015] * 3, position=[0.3, 0, 0.3])
+            raise RuntimeError("a helper's validation failed")
+    assert sim.backend.body_pose("a") is not None and [o["name"] for o in sim.describe()["objects"]] == ["cube", "a"]
+    assert arm.sim is None and list(sim.robots) == []  # the outer remove still detaches on the outer rebuild
+
+
 def test_mujoco_replays_bit_exact_and_says_so():
     def episode():
         with Simulation() as sim:
