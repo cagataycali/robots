@@ -46,11 +46,12 @@ class Latch:
 
     def engage(self, reason: str, by: str | None = None) -> None:
         with self._lock:  # two racing e-stops count once; the first keeps the latch
-            if not self._set.is_set():
-                self.engaged_at, self.engaged_wall = self._now(), time.time()
+            if not self._set.is_set():  # latch first, stamp after: a clock that raises never un-latches a stop
+                self.engaged_at, self.engaged_wall = None, time.time()
                 self.reason, self.stopped_by = reason, by
                 self.count += 1
                 self._set.set()
+                self.engaged_at = self._now()
 
     def release(self, by: str, *, stop: int | None = None) -> bool:
         """Clear the latch; with ``stop``, only while it is still engagement #``stop`` (compare-and-release).
@@ -75,11 +76,13 @@ class Latch:
 
 
 def engage(robot: Robot, reason: str = "estop()", by: str | None = None) -> None:
-    """Latch first (so the next tick refuses), then the body's own stop."""
-    robot.estop_latch.engage(reason, by)
-    body = robot._body
-    if body is not None:
-        body.estop()
+    """Latch first (so the next tick refuses), then the body's own stop, even if stamping the latch raised."""
+    try:
+        robot.estop_latch.engage(reason, by)
+    finally:
+        body = robot._body
+        if body is not None:
+            body.estop()
 
 
 def guarded_write(robot: Robot, targets: object) -> None:

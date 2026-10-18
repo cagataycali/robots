@@ -249,6 +249,27 @@ def test_k5_latch_and_run_seconds_on_the_body_clock():
     assert res.deadline_misses == 0 and res.seconds == pytest.approx(10 / 50) and res.hz_achieved == pytest.approx(50)
 
 
+class BrokenClock(VirtualClock):
+    def now(self) -> float:
+        raise OSError("ptp: no grandmaster")
+
+
+def test_k5_a_clock_that_raises_never_stops_the_estop_from_latching_and_reaching_the_body():
+    drv = CountingDriver()
+    stops = []
+    drv.estop = lambda: stops.append(1)  # type: ignore[method-assign]
+    robot = Robot("so101", driver=drv, twin=False, clock=BrokenClock())
+    with pytest.raises(OSError, match="grandmaster"):
+        robot.estop()
+    assert robot.estopped and robot.estop_latch.count == 1 and robot.estop_latch.engaged_at is None and stops == [1]
+    sim = Simulation()
+    arm = Robot("so101", sim=sim)
+    sim.close()
+    with pytest.raises(AssertionError):  # a closed world has no time to read; the stop latches regardless
+        arm.estop()
+    assert arm.estopped and arm.estop_latch.engaged_at is None
+
+
 def test_k5_a_world_robot_reads_world_time_and_refuses_a_clock():
     sim = Simulation()
     arm = Robot("so101", sim=sim)
