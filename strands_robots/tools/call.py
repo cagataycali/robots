@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .spec import DEVELOPER_ONLY_ARGS, OPERATOR_ONLY, handler, rpc_names
+from .spec import DEVELOPER_ONLY_ARGS, OPERATOR_ONLY, REMOTE_SPEC, handler, rpc_names
 from .wire import decode
 
 # An agent's ``act`` is never the developer's own call: it goes through the robot's operator gate.
@@ -43,6 +43,9 @@ def dispatch(device: Any, tool_input: Mapping[str, Any]) -> Any:
     kept = sorted(set(args) & DEVELOPER_ONLY_ARGS)
     if kept:
         raise PermissionError(f"{kept} of {rpc!r} are the developer's to pass, not an agent's")
+    spec = args.get("policy")
+    if isinstance(spec, str) and REMOTE_SPEC in spec:  # the cameras would stream there, before the gate sees an action
+        raise PermissionError(f"a policy at a network address is the developer's to pass, not an agent's: {spec}")
     fn = target(device, rpc)
     decode(handler(device, rpc), args)  # refuse what the declared rpc does not take, before anything moves
     return fn(**decode(fn, args))

@@ -15,6 +15,10 @@ from .schema import parameters
 OPERATOR_ONLY = frozenset({"resume", "calibrate"})
 # Arguments only the developer's own code passes: a model never decides what is recorded or uploaded.
 DEVELOPER_ONLY_ARGS = frozenset({"record", "push"})
+# A policy at a network address (``zenoh://host:port/x``) streams the cameras to that host on every step, before the
+# operator gate sees an action: a model never chooses where the frames go. ``robot.run("zenoh://...")`` in the
+# developer's own code is untouched.
+REMOTE_SPEC = "://"
 
 
 def rpc_names(device: Any) -> tuple[str, ...]:

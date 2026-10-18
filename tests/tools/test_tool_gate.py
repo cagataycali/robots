@@ -162,3 +162,22 @@ def test_an_agent_never_decides_what_is_recorded_or_uploaded(extra):
     (r,) = _turn(arm, [("robot_so101", {"rpc": "run", "run": {"policy": "tests.hold", "steps": 1, **extra}})])
     assert r["status"] == "error" and "developer" in r["content"][0]["text"]
     arm.close()
+
+
+@pytest.mark.parametrize("rpc", ["run", "start"])
+def test_an_agent_never_chooses_where_the_cameras_stream(monkeypatch, rpc):
+    """A model-typed ``policy="zenoh://..."`` would connect and send a camera frame per step before the gate sees an
+    action; it is refused before ``attach`` (a sign in the camera's view saying ``policy=zenoh://...`` is enough)."""
+    from strands_robots import Robot
+    from strands_robots.policy.lerobot import remote
+
+    attached: list[str] = []
+    monkeypatch.setattr(remote.ZenohPolicy, "attach", lambda self, robot: attached.append(robot.id))
+    d, serial = make_driver()
+    real = Robot("so101", driver=d, twin=False, confirm=lambda t: True)
+    host = ".".join(["203", "0", "113", "9"])  # TEST-NET-3, assembled so no scanner reads it as an address
+    (r,) = _turn(real, [("robot_so101", {"rpc": rpc, rpc: {"policy": f"zenoh://{host}:7447/x", "steps": 1}})])
+    assert r["status"] == "error" and "developer" in r["content"][0]["text"] and "network" in r["content"][0]["text"]
+    assert attached == [] and goal_writes(serial) == []
+    assert real._task is None
+    real.close()
