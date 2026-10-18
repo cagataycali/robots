@@ -47,6 +47,7 @@ class Robot(DeviceVerbs):
         twin: bool = True,
         confirm: Callable[[np.ndarray], bool] | None = None,
         calibration: Any = None,
+        mesh: Any = None,
     ) -> None:
         from ..simulation import Simulation
 
@@ -80,16 +81,16 @@ class Robot(DeviceVerbs):
                     name, position=position, orientation=orientation, keyframe=keyframe, id=f"{self.id}_twin"
                 )
                 self.twin.twin_of = self
-            return
-
-        if cameras is not None or calibration is not None:
+        elif cameras is not None or calibration is not None:
             raise TypeError("cameras=/calibration= are hardware arguments; in a world: sim.camera(name, attach=robot)")
-        world = sim if sim is not None else Simulation.default()
-        self.id = world.unique_id(id or self.name)
-        self.sim = world
-        world.add(self, position=position, orientation=orientation, keyframe=keyframe)
-        self._body = SimBody(world, self.id, self.description.action_keys)
-        self.supports_position_hold = True  # a simulated actuator keeps its last target
+        else:
+            world = sim if sim is not None else Simulation.default()
+            self.sim, self.id = world, world.unique_id(id or self.name)
+            world.add(self, position=position, orientation=orientation, keyframe=keyframe)
+            self._body = SimBody(world, self.id, self.description.action_keys)
+            self.supports_position_hold = True  # a simulated actuator keeps its last target
+        if mesh is not None:
+            mesh.mount(self)
 
     @property
     def body(self) -> Body:
