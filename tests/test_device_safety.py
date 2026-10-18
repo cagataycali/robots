@@ -266,3 +266,44 @@ def test_workspace_bounds_validator_refuses_a_target_whose_tool_leaves_the_box()
     arm.confirm_act({"shoulder_pan": 0.2})
     with pytest.raises(RequestRefused, match=r"tool x=0\.3000 m is outside the workspace \[-0\.2000, 0\.2000\]"):
         arm.confirm_act({"shoulder_pan": 1.0})
+
+
+def test_resume_can_pin_the_stop_it_clears_so_a_stale_yes_is_refused():
+    # A7: an operator's yes for the stop they read must not clear a later, different stop they never saw.
+    arm = Robot("so101")
+    arm.estop(by="op")  # stop #1, the one the operator reads
+    seen = arm.estop_latch.count
+    arm.resume(approved_by="op")  # someone clears #1 early
+    arm.estop(by="validator")  # stop #2, a different hazard, never shown to op
+    with pytest.raises(RequestRefused, match=r"resume is for stop #1, but the current stop is #2"):
+        arm.resume(approved_by="op", stop=seen)
+    assert arm.estopped  # #2 is still latched
+    arm.resume(approved_by="op", stop=arm.estop_latch.count)  # pinned to #2: clears it
+    assert not arm.estopped
+    arm.close()
+
+
+def test_the_latch_names_who_stopped_it_and_carries_a_wall_clock():
+    # E1(b): the latch must be placeable on a calendar and name the stopper, so a stop has an audit trail.
+    arm = Robot("so101")
+    events: list[dict] = []
+    arm.subscribe("estop", events.append)
+    before = time.time()
+    arm.estop(by="alice@corp")
+    latch = arm.estop_latch
+    assert latch.stopped_by == "alice@corp"
+    assert latch.engaged_wall is not None and before <= latch.engaged_wall <= time.time()
+    assert latch.engaged_at is not None  # the monotonic clock is kept for elapsed math
+    assert events and events[-1]["by"] == "alice@corp"  # the event carries the stopper too
+    arm.resume(approved_by="op")
+    arm.close()
+
+
+def test_a_local_press_records_no_operator_and_resume_without_a_pin_is_unchanged():
+    # by/stop are additive: an unattributed local press and an unpinned resume behave as before.
+    arm = Robot("so101")
+    arm.estop()
+    assert arm.estop_latch.stopped_by is None and arm.estop_latch.engaged_wall is not None
+    arm.resume(approved_by="cagatay")  # no stop= pin: clears whatever is latched, as before
+    assert not arm.estopped
+    arm.close()

@@ -21,13 +21,20 @@ class EStopped(RequestRefused):
 
 
 class Latch:
-    """Engaged / released, with who released it and when it was engaged (monotonic)."""
+    """Engaged / released, with who stopped it, who released it, and when (monotonic and wall clock).
+
+    ``engaged_at`` is ``time.monotonic`` for elapsed math; ``engaged_wall`` is ``time.time`` so the
+    stop can be placed on a calendar in an audit record. ``stopped_by`` names the operator who pressed
+    it (``None`` for a local, unattributed press).
+    """
 
     def __init__(self) -> None:
         self._set = threading.Event()
         self._lock = threading.Lock()
-        self.engaged_at: float | None = None
+        self.engaged_at: float | None = None  # time.monotonic, for elapsed math
+        self.engaged_wall: float | None = None  # time.time, to place the stop on a calendar
         self.reason: str | None = None
+        self.stopped_by: str | None = None  # who pressed it (None = local, unattributed)
         self.resumed_by: str | None = None
         self.count = 0  # engagements so far: a run that saw a different count was stopped, even if resumed since
 
@@ -35,10 +42,11 @@ class Latch:
     def engaged(self) -> bool:
         return self._set.is_set()
 
-    def engage(self, reason: str) -> None:
-        with self._lock:  # two racing e-stops count once
+    def engage(self, reason: str, by: str | None = None) -> None:
+        with self._lock:  # two racing e-stops count once; the first keeps the latch
             if not self._set.is_set():
-                self.engaged_at, self.reason = time.monotonic(), reason
+                self.engaged_at, self.engaged_wall = time.monotonic(), time.time()
+                self.reason, self.stopped_by = reason, by
                 self.count += 1
                 self._set.set()
 
@@ -51,9 +59,9 @@ class Latch:
             raise EStopped(f"{robot_id}: e-stop is engaged ({self.reason}); resume(approved_by=<operator>) first")
 
 
-def engage(robot: Robot, reason: str = "estop()") -> None:
+def engage(robot: Robot, reason: str = "estop()", by: str | None = None) -> None:
     """Latch first (so the next tick refuses), then the body's own stop."""
-    robot.estop_latch.engage(reason)
+    robot.estop_latch.engage(reason, by)
     body = robot._body
     if body is not None:
         body.estop()
@@ -69,8 +77,17 @@ def guarded_write(robot: Robot, targets: object) -> None:
         latch.check(robot.id)
 
 
-def resume(robot: Robot, *, approved_by: str | None) -> None:
-    """Release the latch; only a named operator can."""
+def resume(robot: Robot, *, approved_by: str | None, stop: int | None = None) -> None:
+    """Release the latch; only a named operator can, and only for the stop they saw.
+
+    ``stop`` pins the engagement being cleared to ``Latch.count``: a yes typed for stop #1 is refused
+    once a later, different stop #2 is latched, so an approver never clears a hazard they never saw.
+    """
     if not approved_by or not str(approved_by).strip():
         raise RequestRefused(f"{robot.id}: resume needs approved_by=<the operator who cleared the stop>")
-    robot.estop_latch.release(str(approved_by))
+    latch = robot.estop_latch
+    if stop is not None and stop != latch.count:
+        raise RequestRefused(
+            f"{robot.id}: resume is for stop #{stop}, but the current stop is #{latch.count}; approve the stop you saw"
+        )
+    latch.release(str(approved_by))

@@ -74,3 +74,12 @@ try:
 except TypeError as e:
     print(e)                                 # confirm= is the operator gate of a hardware Robot; a simulated body is never gated
 ```
+
+{{drawing:d11_estop_audit}}
+
+**The e-stop and resume.** `robot.estop(by="alice@corp")` latches now, bypassing the chain. The
+`Latch` records `stopped_by`, the `reason`, a monotonic `engaged_at` and a wall-clock `engaged_wall`,
+so a stop can be attributed and placed on a calendar in an audit record. Resuming takes the operator
+who cleared it: `robot.resume(approved_by="alice@corp")`. Pass the engagement `count` you showed the
+operator as `resume(approved_by=..., stop=n)` and a yes typed for the stop they saw is refused once a
+later, different stop is latched.
