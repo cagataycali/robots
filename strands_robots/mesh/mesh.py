@@ -92,7 +92,7 @@ class Mesh:
             refuse_taken(self._dirs, did, self.tenant)
             rec = record(robot, did, labels or {}, self.tenant, tuple(ARGS))
             lockout = _authority.Lockout()
-            undo = [] if iot is None else [_iot_attach(self.transports, iot, robot, rec, watchdog_ms, lockout)]
+            undo = [] if iot is None else [_iot_attach(self.transports, iot, robot, rec, lockout)]
             dog = _watchdog.start(robot, watchdog_ms, self.transports, self.tenant)
             on_rpc = None if dog is None else dog.on_rpc
             undo += [serve(t, self.tenant, robot, did, lockout, self._authority, on_rpc) for t in self.transports]

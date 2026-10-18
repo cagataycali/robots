@@ -25,6 +25,10 @@ SHADOW_DOC_CAP = 8 * 1024
 """IoT rejects a reported document over 8,192 bytes (413, nothing stored)."""
 NAMES = ("manifest", "state", "control")
 _RPC_FIELDS = ("estop", "resume", "hold", "stop")
+STAMP_RESOLUTION_S = 1.0
+"""AWS writes ``metadata.<key>.timestamp`` as integer epoch seconds: a write time is truncated by up to 999 ms before
+the delta leaves the broker, so no staleness bound under one second can be told apart from that truncation."""
+MIN_STALE_S = STAMP_RESOLUTION_S
 
 
 def shadow_topic(thing: str, name: str, op: str) -> str:
@@ -56,21 +60,28 @@ class ShadowMirror:
         *,
         thing: str | None = None,
         shadow_hz: float = 0.5,
-        watchdog_ms: float | None = 500.0,
+        stale_s: float | None = 2.0,
         lockout: Callable[[], Mapping[str, Any]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         """``link`` publishes/subscribes MQTT topics (``AwsLink`` or ``FakeLink``); ``thing`` defaults to the device
         id (the thing name IS the device id, MAPPING 3.1). ``lockout()`` returns the device's lockout as a dict so the
-        ``state`` shadow reports it. A delta older than ``watchdog_ms`` is dropped as stale (``None``: never)."""
+        ``state`` shadow reports it. A desired target whose ``metadata`` stamp is older than ``stale_s`` at delivery
+        is dropped as stale (``None``: never). The bound is the shadow's own, not the mesh watchdog: a shadow is
+        eventually consistent and its stamps resolve to whole seconds, a watchdog is a 500 ms liveness check."""
         if not 0 < shadow_hz <= MAX_SHADOW_HZ:
             raise ValueError(
                 f"shadow_hz={shadow_hz} is over the {MAX_SHADOW_HZ:g} Hz shadow limit (20 req/s per-thing quota, "
                 f"8 KB documents); subscribe to the mesh state stream for live data"
             )
+        if stale_s is not None and not stale_s >= MIN_STALE_S:
+            raise ValueError(
+                f"stale_s={stale_s} is under the {MIN_STALE_S:g} s resolution of a shadow timestamp (AWS stamps whole "
+                f"seconds); use stale_s >= {MIN_STALE_S:g}, or None to apply every delta"
+            )
         self.link, self.robot, self.record = link, robot, dict(record)
         self.thing = thing or str(record["id"])
-        self.shadow_hz, self.watchdog_ms, self.clock = float(shadow_hz), watchdog_ms, clock
+        self.shadow_hz, self.stale_s, self.clock = float(shadow_hz), stale_s, clock
         self._lockout = lockout
         self._controls = {str(c["name"]) for c in (self.record.get("manifest") or {}).get("controls") or ()}
         self._undo: list[Callable[[], None]] = []
@@ -138,7 +149,7 @@ class ShadowMirror:
             elif key not in self._controls:
                 refused[key] = f"{self.thing} has no control {key!r}"
             elif self._stale(key, stamps):
-                refused[key] = f"{key}: target is older than watchdog_ms={self.watchdog_ms:g}; dropped as stale"
+                refused[key] = f"{key}: target is older than stale_s={self.stale_s:g}; dropped as stale"
             else:
                 try:
                     action[key.rsplit(".pos", 1)[0]] = float(value)
@@ -161,8 +172,13 @@ class ShadowMirror:
         return reported
 
     def _stale(self, key: str, stamps: Mapping[str, Any] | None) -> bool:
-        if self.watchdog_ms is None or not stamps:
+        """An integer stamp means "written somewhere in [ts, ts + 1 s)": the target is judged by the youngest
+        write that stamp can stand for, so truncation alone never makes a fresh target stale."""
+        if self.stale_s is None or not stamps:
             return False
         ts = (stamps.get("desired") or stamps).get(key)
         ts = ts.get("timestamp") if isinstance(ts, Mapping) else ts
-        return isinstance(ts, (int, float)) and (self.clock() - float(ts)) * 1000.0 > self.watchdog_ms
+        if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+            return False
+        youngest = float(ts) + (STAMP_RESOLUTION_S if isinstance(ts, int) else 0.0)
+        return self.clock() - youngest > self.stale_s

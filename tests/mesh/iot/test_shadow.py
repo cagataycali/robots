@@ -72,7 +72,7 @@ def test_shadow_hz_above_one_is_refused():
 
 def test_desired_goes_through_confirm_act_and_a_refusal_travels_verbatim(lab):
     arm, rec, device, op, seen = lab
-    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, watchdog_ms=None).start()
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
     before = float(arm.observe(images=False).joints.positions[0])
     delta = {"state": {"shoulder_pan.pos": 0.3}, "metadata": {}, "version": 7, "timestamp": int(time.time())}
     op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps(delta).encode())
@@ -96,7 +96,7 @@ def test_desired_goes_through_confirm_act_and_a_refusal_travels_verbatim(lab):
 
 def test_estop_as_a_shadow_field_is_refused_and_unknown_controls_too(lab):
     arm, rec, device, _op, _seen = lab
-    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, watchdog_ms=None).start()
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
     out = mirror.apply({"estop": True, "resume": "me", "nonsuch.pos": 1.0, "wrist_roll.pos": "fast"})
     assert out["refused"]["estop"] == "estop is an rpc, not a shadow field"
     assert out["refused"]["resume"] == "resume is an rpc, not a shadow field"
@@ -109,11 +109,61 @@ def test_estop_as_a_shadow_field_is_refused_and_unknown_controls_too(lab):
 def test_a_stale_delta_is_dropped_not_applied(lab):
     arm, rec, device, _op, _seen = lab
     now = [1_000.0]
-    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, watchdog_ms=500.0, clock=lambda: now[0]).start()
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=2.0, clock=lambda: now[0]).start()
     stamps = {"desired": {"shoulder_pan.pos": {"timestamp": 990}}}  # 10 s old
     out = mirror.apply({"shoulder_pan.pos": 0.2}, stamps)
-    assert "stale" in out["refused"]["shoulder_pan.pos"] and mirror.applied == []
+    assert "stale_s=2" in out["refused"]["shoulder_pan.pos"] and mirror.applied == []
     stamps = {"desired": {"shoulder_pan.pos": {"timestamp": 999.9}}}  # 100 ms old
     out = mirror.apply({"shoulder_pan.pos": 0.2}, stamps)
     assert out["refused"] is None and mirror.applied == [{"shoulder_pan": 0.2}]
     mirror.stop()
+
+
+def test_an_aws_integer_second_stamp_is_never_stale_at_the_default_bound(lab):
+    """AWS stamps ``metadata.<key>.timestamp`` in whole seconds, so a target written 121–312 ms ago (the measured
+    desired→delta latency) carries a stamp up to 1,121–1,312 ms old. At the default bound none of them is stale,
+    whatever the sub-second phase; the mesh watchdog (500 ms) plays no part."""
+    arm, rec, device, _op, _seen = lab
+    now = [1_000_000.0]
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, clock=lambda: now[0]).start()
+    assert mirror.stale_s == ShadowMirror(device, arm, rec).stale_s == 2.0
+    refused = 0
+    for latency in (0.121, 0.312):
+        for phase in range(1000):
+            now[0] = 1_000_000.0 + phase / 1000.0
+            written = now[0] - latency
+            stamps = {"desired": {"shoulder_pan.pos": {"timestamp": int(written)}}}  # AWS truncates
+            out = mirror.apply({"shoulder_pan.pos": 0.1}, stamps)
+            refused += out["refused"] is not None
+    assert refused == 0 and len(mirror.applied) == 2000
+    # a stamp that is old even by the youngest write it can stand for IS stale
+    now[0] = 1_000_010.0
+    out = mirror.apply({"shoulder_pan.pos": 0.1}, {"desired": {"shoulder_pan.pos": {"timestamp": 1_000_006}}})
+    assert "stale" in out["refused"]["shoulder_pan.pos"]
+    out = mirror.apply({"shoulder_pan.pos": 0.1}, {"desired": {"shoulder_pan.pos": {"timestamp": 1_000_008}}})
+    assert out["refused"] is None  # 1_000_008 means [8, 9): the youngest write is 1 s old
+    mirror.stop()
+
+
+def test_a_real_shaped_delta_with_an_integer_stamp_is_applied_over_the_broker(lab):
+    arm, rec, device, op, _seen = lab
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0).start()  # the default stale_s
+    now = time.time()
+    delta = {
+        "state": {"shoulder_pan.pos": 0.25},
+        "metadata": {"shoulder_pan.pos": {"timestamp": int(now - 0.3)}},
+        "version": 12,
+        "timestamp": int(now),
+    }
+    op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps(delta).encode())
+    _wait(lambda: mirror.applied)
+    assert mirror.applied == [{"shoulder_pan": 0.25}]
+    mirror.stop()
+
+
+def test_a_stale_bound_under_the_stamp_resolution_is_refused_by_name(lab):
+    arm, rec, device, _op, _seen = lab
+    with pytest.raises(ValueError, match="stale_s=0.5 is under the 1 s resolution"):
+        ShadowMirror(device, arm, rec, stale_s=0.5)
+    assert ShadowMirror(device, arm, rec, stale_s=1.0).stale_s == 1.0
+    assert ShadowMirror(device, arm, rec, stale_s=None).stale_s is None

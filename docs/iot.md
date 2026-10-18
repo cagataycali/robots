@@ -44,7 +44,10 @@ operator gate. Measured on a real account: desired written → arm moving in **1
 comes back verbatim under `reported.refused` (`"so101: elbow_flex=3.1000 rad is outside its range [...]"`) and is
 cleared from `desired`. Two things a shadow will never do: `estop`/`resume` as a field (a shadow persists and is
 eventually consistent; a latch must be immediate and must never replay — use the rpc or `broadcast("estop")`), and
-`state` above 1 Hz (the per-thing quota throttles at 20 updates/s and a document is capped at 8 KB).
+`state` above 1 Hz (the per-thing quota throttles at 20 updates/s and a document is capped at 8 KB). A target that
+arrives late is dropped as stale rather than moved to: `IotOptions(stale_s=2.0)` is the bound (at least 1 s, because
+AWS stamps `metadata` in whole seconds; `None` applies every delta). It is the shadow's own knob — the mesh's
+`watchdog_ms` is a 500 ms liveness check for the rpc path and stays as it is.
 
 ## Certificates: one per robot, one policy for the fleet
 

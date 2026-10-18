@@ -44,7 +44,11 @@ def test_apply_is_idempotent_and_replaces_on_change(aws):
     assert out == {"strands_estop_lab": "unchanged", "strands_events_lab": "replaced"}
     got = aws.get_topic_rule(ruleName="strands_events_lab")["rule"]
     assert got["actions"][0]["s3"]["bucketName"] == "other-bucket"
+    other = rules.rules_for("prod-lab", ROLE, s3_bucket="bucket")  # normalises to the suffix "_prod_lab"
+    assert set(rules.apply_rules(aws, other)) == {"strands_estop_prod_lab", "strands_events_prod_lab"}
     assert rules.delete_rules(aws, "lab") == ["strands_estop_lab", "strands_events_lab"]
+    assert sorted(r["ruleName"] for r in aws.list_topic_rules()["rules"]) == sorted(other)
+    assert rules.delete_rules(aws, "prod-lab") == sorted(other)
     assert aws.list_topic_rules()["rules"] == []
 
 

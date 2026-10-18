@@ -127,9 +127,11 @@ def apply_rules(iot: Any, rules: Mapping[str, Mapping[str, Any]]) -> dict[str, s
 
 
 def delete_rules(iot: Any, tenant: str) -> list[str]:
-    """Delete every ``strands_*_<tenant>`` rule; the names deleted."""
+    """Delete every ``strands_<kind>_<tenant>`` rule of THIS tenant; the names deleted. The whole name is matched:
+    a kind carries no ``_``, so ``prod-lab``'s rules (``strands_estop_prod_lab``) are not ``lab``'s."""
     suffix = rule_name("x", tenant)[len("strands_x") :]
-    names = [r["ruleName"] for r in iot.list_topic_rules().get("rules", []) if r["ruleName"].endswith(suffix)]
+    own = re.compile(r"strands_[A-Za-z0-9]+" + re.escape(suffix))
+    names = [r["ruleName"] for r in iot.list_topic_rules().get("rules", []) if own.fullmatch(r["ruleName"])]
     for name in names:
         iot.delete_topic_rule(ruleName=name)
     return sorted(names)
