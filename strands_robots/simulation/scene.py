@@ -44,6 +44,11 @@ class SceneCamera:
     size: tuple[int, int] = (640, 480)
     attach: str | None = None  # a robot id (its base carries the camera) or "<robot>/<link>" (a wrist camera)
 
+    @property
+    def robot(self) -> str | None:
+        """The id of the robot this camera rides, base or link; None for a world camera."""
+        return None if self.attach is None else self.attach.split("/", 1)[0]
+
 
 @dataclass
 class Scene:

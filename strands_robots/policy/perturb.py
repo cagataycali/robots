@@ -58,7 +58,7 @@ class Perturb(Policy):
         self._queue.append(self.policy.act(seen, instruction=instruction))
         if len(self._queue) > self.action_delay:
             return self._queue.popleft()
-        return obs.joints if self.units is None else np.array(obs.joints.positions)  # a hold, in the policy's units
+        return np.array(obs.joints.positions)  # a hold: the measured pose, in the units the loop hands the policy
 
     def _noisy(self, img: np.ndarray) -> np.ndarray:
         out = img.astype(np.float32) + self._rng.normal(0.0, self.image_noise * 255.0, img.shape)

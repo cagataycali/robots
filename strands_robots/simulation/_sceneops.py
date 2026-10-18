@@ -75,7 +75,7 @@ class _SceneOps:
             raise KeyError(f"no robot {rid!r} in this world; robots are {list(self._robots)}")
         with self.lock:
             self.scene.robots = [r for r in self.scene.robots if r.id != rid]
-            self.scene.cameras = [c for c in self.scene.cameras if (c.attach or "").split("/")[0] != rid]
+            self.scene.cameras = [c for c in self.scene.cameras if c.robot != rid]
             self.scene.scales.pop(rid, None)
             self._reload()
             gone = self._robots.pop(rid)

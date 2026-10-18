@@ -15,6 +15,8 @@ import pytest
 
 from strands_robots import Robot, Simulation
 from strands_robots.policy import Perturb, SequencePolicy
+from strands_robots.robot.device.build import manifest_for
+from strands_robots.simulation.backends.mujoco.build import link_names
 from strands_robots.types import JointState, Observation
 
 has_warp = importlib.util.find_spec("mujoco_warp") is not None and importlib.util.find_spec("warp") is not None
@@ -43,6 +45,8 @@ def test_a_camera_rides_any_link_the_world_describes(world):
     assert _body_of_camera(sim, "wrist") == f"{arm.id}/gripper"
     assert _body_of_camera(sim, "base_cam") == f"{arm.id}/base"
     assert sim.render("wrist").shape == (24, 32, 3)
+    assert set(arm.observe().images) == {"wrist", "base_cam"}  # a link camera reaches the policy and the recorder
+    assert [s.name for s in manifest_for(arm).sensors if s.kind == "camera"] == ["wrist.image", "base_cam.image"]
     with pytest.raises(KeyError, match="no link 'so101/nope'.*links"):
         sim.camera("bad", attach=f"{arm.id}/nope")
     assert [c.name for c in sim.scene.cameras] == ["wrist", "base_cam"]  # a refused camera leaves no trace
@@ -93,6 +97,16 @@ def test_randomize_jitters_cameras_within_the_bound_and_refuses_a_bad_target(wor
         sim.randomize(target="ghost", mass=2.0)
     with pytest.raises(ValueError, match="lighting is world-wide"):
         sim.randomize(target="cube", lighting=0.5)
+
+
+def test_links_skip_an_unnamed_body_and_a_robot_not_built_yet(world):
+    body = '<body name="r/base"><geom size=".1"/><body><geom size=".1"/></body></body>'
+    xml = f"<mujoco><worldbody>{body}</worldbody></mujoco>"
+    assert link_names(mujoco.MjModel.from_xml_string(xml), 1) == ["base"]  # reachy_mini has an unnamed body
+    sim, _ = world
+    with sim.editing():
+        Robot("so101", sim=sim, id="late", position=[0.6, 0, 0])
+        assert sim.describe()["robots"]["late"]["links"] == []
 
 
 def test_editing_rebuilds_the_world_once_and_a_failed_block_changes_nothing(world, monkeypatch):
@@ -166,10 +180,24 @@ def _obs(q, img=None):
 def test_perturb_delays_actions_and_holds_the_measured_pose_until_the_first_lands():
     p = Perturb(SequencePolicy([np.array([1.0, 1.0]), np.array([2.0, 2.0]), np.array([3.0, 3.0])]), action_delay=2)
     out = [p.act(_obs([0.1, 0.2])) for _ in range(4)]
-    assert isinstance(out[0], JointState) and np.allclose(out[0].positions, [0.1, 0.2])
+    assert np.allclose(out[0], [0.1, 0.2])
     assert [float(np.asarray(a)[0]) for a in out[2:]] == [1.0, 2.0]
     p.reset()
-    assert isinstance(p.act(_obs([0.0, 0.0])), JointState)  # reset empties the pipe
+    assert np.allclose(p.act(_obs([0.0, 0.0])), [0.0, 0.0])  # reset empties the pipe
+
+
+class _UnitsFor(SequencePolicy):  # declares its units the way a LeRobot checkpoint does
+    def units_for(self, description):
+        from strands_robots.units.scheme import Units
+
+        return Units.for_robot(description, "lerobot")
+
+
+@pytest.mark.parametrize("policy, units", [(_UnitsFor, "auto"), (SequencePolicy, "lerobot"), (SequencePolicy, "auto")])
+def test_perturb_holds_in_whatever_units_the_loop_converts(world, policy, units):
+    sim, arm = world
+    q = np.zeros(len(arm.description.action_keys))
+    arm.run(Perturb(policy([q] * 5), action_delay=2), steps=5, units=units)  # the hold is a vector the loop accepts
 
 
 def test_perturb_noise_reaches_only_the_policy_and_is_seeded():

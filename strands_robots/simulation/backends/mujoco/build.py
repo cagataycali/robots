@@ -130,7 +130,8 @@ def scale_bodies(model: mujoco.MjModel, scene: Scene) -> None:
 
 def link_names(model: mujoco.MjModel, root: int) -> list[str]:
     """The bodies of one attached robot (the root and its subtree), without the ``<id>/`` prefix."""
-    return [model.body(b).name.split("/", 1)[1] for b in range(model.nbody) if model.body_rootid[b] == root]
+    names = (model.body(b).name for b in range(model.nbody) if model.body_rootid[b] == root)
+    return [n.split("/", 1)[1] for n in names if "/" in n]  # an unnamed MJCF body attaches as ""
 
 
 def root_body_name(spec: mujoco.MjSpec, rid: str) -> str:

@@ -98,7 +98,8 @@ class MuJoCoBackend(Backend):
         return _RobotIndex(act_ids, jq, jd, joint_ids, root)
 
     def links(self, body: str) -> list[str]:
-        assert self.model is not None
+        if self.model is None or body not in self._index:  # not built yet (inside sim.editing())
+            return []
         return build.link_names(self.model, self._index[body].root_body)
 
     def _body_id(self, name: str) -> int:
