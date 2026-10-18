@@ -11,13 +11,15 @@ import threading
 import time
 from typing import Any
 
+from ..robot.safety import RequestRefused
 from . import wire
 from .device import Device
 from .transports.base import Transport, Unsubscribe
 
 
-def announce(transport: Transport, tenant: str, record: dict[str, Any]) -> Unsubscribe:
-    """Answer for ``record`` on its manifest key, then take the presence token. Returns the undo (token first)."""
+def announce(transport: Transport, tenant: str, record: dict[str, Any], peer: str) -> Unsubscribe:
+    """Answer for ``record`` on its manifest key, then take the presence token and this peer's holder token (zenoh
+    merges tokens on one key, so two peers holding one id show only on ``@holder``). Returns the undo (tokens first)."""
     did = record["id"]
 
     def answer(_key: str, _payload: bytes) -> bytes:
@@ -25,8 +27,10 @@ def announce(transport: Transport, tenant: str, record: dict[str, Any]) -> Unsub
 
     stop_answering = transport.queryable(wire.key("manifest", tenant, did), answer)
     drop_token = transport.liveliness(wire.key("presence", tenant, did))
+    drop_holder = transport.liveliness(wire.key("holder", tenant, did, peer))
 
     def undo() -> None:
+        drop_holder()
         drop_token()
         stop_answering()
 
@@ -43,9 +47,17 @@ class Directory:
         self._lock = threading.Lock()
         self._devices: dict[str, Device] = {}
         self._alive: set[str] = set()
+        self._holders: dict[str, set[str]] = {}
         self._closed = False
         self._changed = threading.Condition(self._lock)
         self._stop = transport.watch_liveliness(wire.key("presence", tenant, "*"), self._on_presence)
+        self._unwatch = transport.watch_liveliness(wire.key("holder", tenant, "*", "*"), self._on_holder)
+
+    def _on_holder(self, key: str, alive: bool) -> None:
+        did, peer = key.split("/")[3:5]
+        with self._lock:
+            peers = self._holders.setdefault(did, set())
+            peers.add(peer) if alive else peers.discard(peer)
 
     def _on_presence(self, key: str, alive: bool) -> None:
         tenant, did = wire.parse_presence(key)
@@ -93,6 +105,16 @@ class Directory:
             if d is not None:
                 self._devices[did] = Device(d.id, d.device_type, d.tenant, d.labels, d.manifest, time.time())
 
+    def knows(self, did: str) -> bool:
+        """Whether some peer holds ``did`` on this transport (its token is up, its record maybe not fetched yet)."""
+        with self._lock:
+            return did in self._alive or bool(self._holders.get(did))
+
+    def holders(self, did: str) -> int:
+        """How many peers hold ``did`` now: more than one is one id on two robots."""
+        with self._lock:
+            return len(self._holders.get(did, ()))
+
     def devices(self) -> list[Device]:
         with self._lock:
             return sorted(self._devices.values(), key=lambda d: d.id)
@@ -105,3 +127,17 @@ class Directory:
         with self._lock:
             self._closed = True
         self._stop()
+        self._unwatch()
+
+
+def refuse_taken(dirs: list[Directory], did: str, tenant: str) -> None:
+    """A device id names one robot per tenant, not per peer: refuse to mount a second robot under it."""
+    if any(d.knows(did) for d in dirs):
+        raise ValueError(f"device {did!r} is already on the mesh in tenant {tenant!r}; pass device_id=")
+
+
+def refuse_shared(dirs: list[Directory], did: str, rpc: str, tenant: str) -> None:
+    """Refuse a write (``act``, ``hold``, ``resume``) to an id two peers hold at once (a race ``refuse_taken`` cannot
+    see, or a peer gone without a goodbye until its ttl): it would reach both; ``estop``, ``stop`` go to all."""
+    if rpc in ("act", "hold", "resume") and any(d.holders(did) > 1 for d in dirs):
+        raise RequestRefused(f"{did!r} is mounted by more than one peer in tenant {tenant!r}; one {rpc} reaches all")

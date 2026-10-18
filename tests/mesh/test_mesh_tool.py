@@ -149,7 +149,7 @@ def test_a_peer_cannot_write_prose_into_the_tool_description(lab):
         "labels": {"role": note},
         "manifest": {"controls": [{"name": "x" * 2000, "unit": note, "range": [0, 1]}]},
     }
-    undo = announce(m.transports[0], m.tenant, rogue)
+    undo = announce(m.transports[0], m.tenant, rogue, "rogue-peer")
     assert m.discover("helper", min_count=1, timeout=3.0)
     text = m.tool.tool_spec["description"]
     undo()

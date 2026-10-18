@@ -1,7 +1,7 @@
 ### Added: the mesh
 
 `Mesh()` (`from strands_robots import Mesh`) puts robots on one network with no configuration: `mesh.mount(robot)` (or `Robot(..., mesh=mesh)`)
-publishes a robot as a device, `mesh.discover("device(role:arm)")` finds devices by selector, and
+publishes a robot as a device, `mesh.discover("device(role:arm)")` finds devices by selector (a device id names one robot per tenant: a second peer mounting it is refused), and
 `invoke` / `subscribe` / `connect` call a remote device's rpcs, stream its state and drive it as a `RemoteBody`
 through the same run loop. Presence rides on zenoh liveliness, so a device that dies leaves the mesh; a watchdog
 applies the device's `on_disconnect` when its controller goes quiet. `mesh.broadcast("estop")` sends an e-stop every

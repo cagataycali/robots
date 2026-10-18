@@ -19,7 +19,7 @@ from . import wire
 from .broadcast import broadcast, listen_estop, publish_estop
 from .codec import observation_from_dict
 from .device import Device, Selector
-from .presence import Directory, announce
+from .presence import Directory, announce, refuse_shared, refuse_taken
 from .record import RAISE, check_kill_switch, default_operator, default_tenant, record, state_rate
 from .remote import RemoteBody
 from .serve import ARGS, estop_each, serve
@@ -89,6 +89,7 @@ class Mesh:
         with self._lock:
             if did in self._mounted:
                 raise ValueError(f"device {did!r} is already mounted on this mesh")
+            refuse_taken(self._dirs, did, self.tenant)
             rec = record(robot, did, labels or {}, self.tenant, tuple(ARGS))
             lockout = _authority.Lockout()
             dog = _watchdog.start(robot, watchdog_ms, self.transports, self.tenant)
@@ -98,7 +99,7 @@ class Mesh:
             undo.append(_watchdog.stopper(dog))
             if hasattr(robot, "subscribe"):
                 undo.append(publish(self.transports, self.tenant, robot, did, state_hz or state_rate(rec["manifest"])))
-            undo += [announce(t, self.tenant, rec) for t in self.transports]
+            undo += [announce(t, self.tenant, rec, self.peer_id) for t in self.transports]
             device = Device.from_dict({**rec, "last_seen": time.time()})
             self._mounted[did] = (robot, device, undo, lockout)
         return device
@@ -136,6 +137,7 @@ class Mesh:
             publish_estop(self, f"device(id:{device_id})", dict(args))
         if rpc in ("act", "hold", "stop"):  # who moved it, for the device's audit record
             args.setdefault("by", self.operator)
+        refuse_shared(self._dirs, device_id, rpc, self.tenant)
         transport = self._transport_of(device_id)
         if rpc == "resume" and self.resume_key is not None and "assertion" not in args:
             lock = self.invoke(device_id, "lockout", timeout=timeout)

@@ -101,3 +101,54 @@ def test_the_default_tenant_is_the_users_own(monkeypatch):
     monkeypatch.setenv("STRANDS_TENANT", "my lab")
     with Mesh("mem://tenant-default") as m:
         assert m.tenant == "my-lab"
+
+
+def _arm():
+    from strands_robots import Robot, Simulation
+
+    return Robot("so101", sim=Simulation())
+
+
+def test_a_device_id_is_unique_per_tenant_not_per_peer(mesh_pair):
+    a, b = mesh_pair
+    a.mount(FakeArm(), device_id="so101")
+    assert b.discover("so101", min_count=1, timeout=3.0)
+    with pytest.raises(ValueError, match="already on the mesh in tenant"):
+        b.mount(FakeArm(), device_id="so101")
+
+
+@pytest.mark.parametrize("url", ["mem", "zenoh"])
+def test_one_id_mounted_by_two_peers_at_once_refuses_motion_and_still_stops_both(url, tenant, monkeypatch):
+    """The race refuse_taken cannot see (both mount before either hears the other): a third peer's act is refused
+    and neither arm moves; estop still reaches both."""
+    import socket
+
+    import strands_robots.mesh.mesh as mesh_mod
+
+    if url == "zenoh":
+        pytest.importorskip("zenoh")
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        urls = [f"zenoh://?listen=tcp/127.0.0.1:{port}"] + [f"zenoh://?connect=tcp/127.0.0.1:{port}"] * 2
+    else:
+        urls = [f"mem://race-{tenant}"] * 3
+    monkeypatch.setattr(mesh_mod, "refuse_taken", lambda *a: None, raising=False)
+    a, b, c = (Mesh(u, tenant=tenant) for u in urls)
+    try:
+        arms = [_arm(), _arm()]
+        a.mount(arms[0])
+        b.mount(arms[1])
+        assert [d.id for d in c.discover("so101", min_count=1, timeout=3.0)] == ["so101"]
+        time.sleep(0.5)  # both holder tokens reach the third peer
+        with pytest.raises(Exception, match="more than one peer"):
+            c.invoke("so101", "act", action={"shoulder_pan": 0.5}, steps=50)
+        assert [round(float(r.observe().joints["shoulder_pan"]), 3) for r in arms] == [0.0, 0.0]
+        c.invoke("so101", "estop")
+        end = time.monotonic() + 3.0
+        while not all(r.estopped for r in arms) and time.monotonic() < end:
+            time.sleep(0.02)
+        assert [r.estopped for r in arms] == [True, True]
+    finally:
+        for m in (c, b, a):
+            m.close()
