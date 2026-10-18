@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-import os
+import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,7 +14,7 @@ import numpy as np
 
 from ....description import Description
 from ....types import JointState, Pose
-from ..calibration import Calibration, JointCalibration
+from ..calibration import Calibration, JointCalibration, lerobot_calibration_candidates, lerobot_calibration_path
 from .bus import (
     REG_GOAL_POSITION,
     REG_HOMING_OFFSET,
@@ -26,12 +26,6 @@ from .bus import (
     encode_sm,
     word,
 )
-
-
-def lerobot_calibration_path(robot_type: str, robot_id: str) -> Path:
-    """Where ``lerobot-calibrate --robot.type=<type> --robot.id=<id>`` writes (honours HF_LEROBOT_CALIBRATION)."""
-    root = Path(os.environ.get("HF_LEROBOT_CALIBRATION", "~/.cache/huggingface/lerobot/calibration")).expanduser()
-    return root / "robots" / robot_type / f"{robot_id}.json"
 
 
 class FeetechDriver:
@@ -65,6 +59,7 @@ class FeetechDriver:
         self._torque_on = False
         self.calibration: Calibration | None = None
         self.calibration_source: str | None = None
+        self.calibration_looked: list[str] = []
         self._load_calibration(calibration, robot_id)
         missing = [i for i in self.ids if not self.bus.ping(i)]
         if missing:
@@ -76,7 +71,9 @@ class FeetechDriver:
         elif isinstance(cal, Mapping):
             self.calibration, self.calibration_source = Calibration.from_json(cal), "caller"
         else:
-            path = Path(cal).expanduser() if cal is not None else self.default_calibration_path(robot_id)
+            looked = [Path(cal).expanduser()] if cal is not None else self.calibration_candidates(robot_id)
+            path = next((p for p in looked if p.is_file()), looked[0])
+            self.calibration_looked = [str(p) for p in looked]
             if path.is_file():
                 self.calibration = Calibration.from_json(json.loads(path.read_text()))
                 self.calibration_source = str(path)
@@ -84,8 +81,14 @@ class FeetechDriver:
                 raise FileNotFoundError(f"calibration file not found: {path}")
 
     def default_calibration_path(self, robot_id: str | None = None) -> Path:
+        """Where ``calibrate()`` saves: LeRobot's ``<type>/<id>.json`` for this arm."""
         rtype = str(self.description.hardware.lerobot_type or self.description.name)
         return lerobot_calibration_path(rtype, robot_id or rtype)
+
+    def calibration_candidates(self, robot_id: str | None = None) -> list[Path]:
+        return lerobot_calibration_candidates(
+            str(self.description.hardware.lerobot_type or self.description.name), robot_id
+        )
 
     def _span(self, name: str) -> tuple[float, float, float, float, bool]:
         """(count_min, count_max, rad_lo, rad_hi, reversed) for a joint, or the uncalibrated full turn."""
@@ -103,6 +106,8 @@ class FeetechDriver:
         return lo + f * (hi - lo)
 
     def rad_to_counts(self, name: str, rad: float) -> int:
+        if not math.isfinite(rad):  # NaN would round to range_min: a full-speed move to the end stop
+            raise ValueError(f"{self.description.name}.{name}: non-finite goal {rad}")
         cmin, cmax, lo, hi, rev = self._span(name)
         f = (rad - lo) / (hi - lo) if hi != lo else 0.0
         f = min(1.0, max(0.0, 1.0 - f if rev else f))
@@ -175,10 +180,13 @@ class FeetechDriver:
         if not interactive:
             if self.calibration is None:
                 raise RuntimeError(
-                    f"no calibration at {self.default_calibration_path()}; recording one needs a human to move the "
-                    "arm: call calibrate(interactive=True) at the arm"
+                    f"no LeRobot calibration for {self.description.name}; looked at {self.calibration_looked}. "
+                    "Pass Robot(..., calibration=<path to lerobot's json>), or record one at the arm with "
+                    "calibrate(interactive=True)"
                 )
             return self.calibration
+        if prompt is input and not sys.stdin.isatty():  # torque off drops the arm: only a human at the arm says go
+            raise RuntimeError(f"{self.description.name}: calibrate(interactive=True) needs a human at a terminal")
         self.torque(False)
         for i in self.ids:  # the firmware reports Present = Actual - Homing_Offset: read the middle unshifted
             self._write_homing(i, 0)

@@ -32,6 +32,20 @@ its actuators, `describe()` is JSON-safe, `close()` removes it from its world (a
 `run(policy, hz=, seconds=|steps=|stop_when=)` takes a `Policy` subclass, anything with `act(obs)` and
 `reset()`, or a bare callable (it receives `instruction=` when it declares it). In a world, `hz` sets how
 many physics steps each `act()` advances and time is sim time; `realtime=True` also paces the loop to the
-wall clock. Before the first inference `policy.requirements()` is checked against a real observation, so
-a missing camera or a wrong state length is refused by name. `units="auto"` converts joints between the
+wall clock. Before the first inference `policy.requirements()` is checked against a real observation, so a
+missing camera or a wrong state length is refused by name. The policy's optional hooks (`hz`, `realtime`,
+`gains`, `attach`, `detach`, `requirements`, `needs_observation`) are read once there too, and one of the
+wrong type is a `TypeError` naming it. `stop(timeout=)` raises `TimeoutError` while the run is still
+going, and the error of a run whose policy raised, once. `units="auto"` converts joints between the
 robot's radians and the units the policy declares (`policy.units`, for example `lerobot_so10x`).
+
+{{drawing:d08_policy_hooks}}
+
+`run(record="data/wave")` appends the run as one episode of a LeRobot v3 dataset; it needs LeRobot with its
+`dataset` extra, which the one LeRobot install line carries. `Policy("data/wave?episode=0")` replays that
+episode: the recorded `action` column, at the dataset's fps, in the units `meta/units.json` names (a dataset
+without that file needs `units=`; one that has it refuses a `units=` that disagrees). `episode` is the query's
+only key: `?ep=1` or `?episode` is refused by name, never episode 0 by default. A path that exists is never sent
+to the Hub: a directory with neither `config.json` nor `meta/info.json` is a `ValueError`.
+
+{{drawing:d09_record_replay}}

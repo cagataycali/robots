@@ -7,10 +7,10 @@ from typing import Any
 
 import numpy as np
 
-from .joints import _ro
+from .joints import _eq, _key, _ro
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Pose:
     """A rigid pose in the world frame: position (m) and orientation as a unit quaternion (w, x, y, z).
 
@@ -22,6 +22,13 @@ class Pose:
     orientation: np.ndarray
     linear_velocity: np.ndarray | None = None
     angular_velocity: np.ndarray | None = None
+
+    __eq__ = _eq
+
+    def __hash__(self) -> int:
+        return hash(
+            tuple(_key(getattr(self, f)) for f in ("position", "orientation", "linear_velocity", "angular_velocity"))
+        )
 
     def __post_init__(self) -> None:
         p, q = _ro(self.position), _ro(self.orientation)

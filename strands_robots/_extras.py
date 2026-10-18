@@ -9,9 +9,8 @@ from __future__ import annotations
 PACKAGE = "strands-robots"
 REPO_HINT = 'uv pip install -e ".[{extra}]"'
 # LeRobot's remote_inference is not on PyPI yet, and a wheel cannot depend on a git commit, so it is its own line.
-LEROBOT = 'pip install "lerobot[remote,feetech] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"'
-# record= needs LeRobot's dataset writer only.
-LEROBOT_DATASET = 'pip install "lerobot[dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"'
+# One line for every LeRobot feature: policies (remote), the SO-101 bus (feetech) and record= (dataset).
+LEROBOT = 'pip install "lerobot[remote,feetech,dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"'
 
 
 def hint(extra: str) -> str:

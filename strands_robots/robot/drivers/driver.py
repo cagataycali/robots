@@ -28,11 +28,15 @@ _DRIVERS: dict[str, str] = {
 class Driver(Protocol):
     """Hardware Body: what a bus must offer. ``names`` are the description's action_keys, in order.
 
-    A driver may also declare ``supports_position_hold`` (does the bus keep its last goal under torque);
-    registry ``hardware.position_hold`` wins over it, and absent both a body is taken not to hold.
+    ``supports_position_hold``: does the bus keep its last goal under torque (registry
+    ``hardware.position_hold`` wins over it). ``calibration`` + ``resolution`` (counts per turn), or
+    None: with both, a LeRobot policy's degrees are converted exactly through the bus calibration.
     """
 
     names: tuple[str, ...]
+    supports_position_hold: bool
+    calibration: Calibration | None
+    resolution: int | None
 
     def read(self) -> JointState: ...
 
@@ -65,10 +69,21 @@ def make_driver(
     port: str | None,
     driver: str | Driver | None,
     cameras: Mapping[str, int | str] | None,
+    calibration: Any = None,
 ) -> Driver:
     if driver is not None and not isinstance(driver, str):
         if not isinstance(driver, Driver):
-            raise TypeError(f"driver= must be a driver name or a Driver instance, got {type(driver).__name__}")
+            raise TypeError(
+                f"driver= must be a driver name or a Driver instance, got {type(driver).__name__} "
+                f"(a Driver declares names, supports_position_hold, calibration, resolution and the Body verbs)"
+            )
+        if calibration is not None:
+            raise TypeError("calibration= is for a driver Robot builds; pass it to your Driver instead")
+        if tuple(driver.names) != tuple(description.action_keys):  # targets are written in action_keys order
+            raise ValueError(
+                f"{type(driver).__name__}.names {list(driver.names)} must be {description.name}'s action_keys "
+                f"{list(description.action_keys)}, in order"
+            )
         return driver
     kind = driver or driver_kind(description)
     if kind is None:
@@ -80,7 +95,9 @@ def make_driver(
         raise ValueError(f"unknown driver {kind!r}; known drivers: {sorted(_DRIVERS)}")
     mod_name, cls_name = _DRIVERS[kind].split(":")
     cls = getattr(importlib.import_module(mod_name), cls_name)
-    return cls(description, port=port, cameras=cameras or {})
+    return cls(
+        description, port=port, cameras=cameras or {}, **({} if calibration is None else {"calibration": calibration})
+    )
 
 
 __all__ = ["Driver", "Calibration", "make_driver", "driver_kind"]

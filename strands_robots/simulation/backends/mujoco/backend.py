@@ -11,16 +11,22 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-import mujoco
 import numpy as np
 
-from ...._gl import ensure_gl
+from ...._extras import hint
+
+try:
+    import mujoco
+except ImportError as exc:  # the extra the first snippet needs, so the error says how to get it
+    raise ImportError(f"Simulation() needs MuJoCo: {hint('mujoco')} ({exc})") from exc
+
+from ...._gl import ensure_gl, gl_thread, on_gl_thread
 from ....types import JointState, Pose
 from ...backend import Backend
 from ...physics import Contact, Physics
 from ...scene import Scene, SceneRobot
 from . import build
-from .state import restore, snapshot
+from .state import place, restore, snapshot
 
 
 @dataclass
@@ -78,7 +84,8 @@ class MuJoCoBackend(Backend):
         self.spec, self.model, self.data = spec, model, data
         self._scene = scene
         self._index = {r.id: self._make_index(model, r) for r in scene.robots}
-        self._renderers.clear()
+        if self._renderers:  # a context is freed on the thread that made it
+            on_gl_thread(self._renderers.clear)
         build.apply_keyframes(model, data, scene, {rid: idx.joint_ids for rid, idx in self._index.items()})
         restore(model, data, carried)
         data.time = t  # a scene change is not a reset: world time carries over like joint state
@@ -179,6 +186,11 @@ class MuJoCoBackend(Backend):
             m.actuator_biasprm[i, 1] = -p
             m.actuator_biasprm[i, 2] = -dgain
 
+    def set_joints(self, body: str, positions: np.ndarray) -> None:
+        assert self.model is not None and self.data is not None
+        idx = self._index[body]
+        place(self.model, self.data, idx.joint_qadr, idx.joint_dadr, positions)
+
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None:
         assert self.model is not None and self.data is not None and self.spec is not None
         m, d = self.model, self.data
@@ -194,6 +206,7 @@ class MuJoCoBackend(Backend):
             self.load(self._scene)
         mujoco.mj_forward(self.model, self.data)
 
+    @gl_thread  # a GL context lives on one thread: macOS hangs, EGL fails, on any other
     def render(self, camera: str) -> np.ndarray:
         assert self.model is not None and self.data is not None
         if self._gl_failed:
@@ -219,15 +232,8 @@ class MuJoCoBackend(Backend):
         for i in range(d.ncon):
             c = d.contact[i]
             mujoco.mj_contactForce(m, d, i, f)
-            out.append(
-                Contact(
-                    m.body(m.geom_bodyid[c.geom1]).name,
-                    m.body(m.geom_bodyid[c.geom2]).name,
-                    c.pos.copy(),
-                    c.frame[:3].copy(),
-                    float(f[0]),
-                )
-            )
+            body1, body2 = (m.body(m.geom_bodyid[g]).name for g in (c.geom1, c.geom2))
+            out.append(Contact(body1, body2, c.pos.copy(), c.frame[:3].copy(), float(f[0])))
         return out
 
     def physics(self) -> Physics:
@@ -235,7 +241,7 @@ class MuJoCoBackend(Backend):
         return Physics("mujoco", float(self.model.opt.timestep), 1)
 
     def close(self) -> None:
-        for r in self._renderers.values():
-            r.close()
+        if self._renderers:  # never start the GL thread for a world that did not render
+            on_gl_thread(lambda: [r.close() for r in self._renderers.values()])
         self._renderers.clear()
         self.model = self.data = self.spec = None

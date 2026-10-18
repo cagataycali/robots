@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .._extras import LEROBOT_DATASET
+from .._extras import LEROBOT
 from ..types import Observation
 from .features import features_from, units_meta
 
@@ -23,7 +23,7 @@ def require_lerobot() -> Any:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ImportError as e:
         raise ImportError(
-            f"record= writes a LeRobot dataset and needs LeRobot's dataset extra: {LEROBOT_DATASET} ({e})"
+            f"record= writes a LeRobot dataset and needs LeRobot with its dataset extra: {LEROBOT} ({e})"
         ) from e
     return LeRobotDataset
 

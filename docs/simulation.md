@@ -19,7 +19,9 @@ sim.set_pose("unitree_g1", position=[2, 0, 0.8])   # teleport; velocities zeroed
 sim.add_object("box", shape="box", position=[0.3, 0, 0.1], size=[0.03, 0.03, 0.03])
 sim.camera("wrist", position=[0.035, 0, -0.02], target=[-0.2, 0, -0.09], attach="so101/gripper")  # link frame
 sim.render()                      # HxWx3 uint8 from the auto-framed overview camera that sees every robot
-sim.describe()                    # robots, objects, cameras, physics, time and revision, JSON-safe
+sim.pose("box")                   # where it is now: position (m), quaternion (w, x, y, z)
+sim.remove("wrist")               # a robot, an object or a camera, by name
+sim.describe()                    # robots, objects where they are now, cameras, physics, time; JSON-safe
 ```
 
 A `Simulation` owns the `Scene` (plain data: robots, objects, cameras, gravity, timestep), the robots
@@ -34,9 +36,16 @@ on its keyframe at the spawn position.
 
 `attach="so101"` puts a camera on the robot's base; `attach="so101/gripper"` on one of its links (the
 wrist view a VLA dataset expects). `describe()["robots"]["so101"]["links"]` lists the link names.
+Vectors are numbers, never strings: `position` 3, `orientation` a `(w, x, y, z)` quaternion, `color` RGBA in
+0-1; a string or a wrong length is refused by name. `reset(keyframe=)` refuses a keyframe no robot has.
+`randomize` takes a factor or a `(lo, hi)` range and returns the scales it drew. `sim.tool` offers all of these to
+an agent, and `run({"a": spec, "b": spec})` drives robots in lock-step by id.
 
 `Simulation()` refuses what it cannot be: an unknown backend, `physics=` other than `native`,
-`substeps` below 1, `num_envs` above 1, an unknown keyword.
+`substeps` below 1, `num_envs` above 1, an unknown keyword. Without the `mujoco` extra it raises an `ImportError` that
+says `pip install 'strands-robots[mujoco]'`, not a bare `ModuleNotFoundError`.
+
+{{drawing:d08_missing_extra}}
 
 ## The backend contract
 
@@ -44,7 +53,7 @@ wrist view a VLA dataset expects). `describe()["robots"]["so101"]["links"]` list
 `body_pose`, `set_pose`, `set_gains`, `render`, `contacts`, `physics` and `close`. `mujoco` is the
 first backend (MuJoCo 3.3.4 or newer): one `MjSpec`, each robot attached under an `id/` prefix,
 rebuilt on every scene change with time kept and joint state carried by joint name. `mujoco` is imported when the first world is made, not by
-`import strands_robots`. Rendering uses EGL when no display is present (`MUJOCO_GL` is respected).
+`import strands_robots`. Rendering uses EGL when no display is present (`MUJOCO_GL` is respected). Every render runs on one GL thread, whichever thread asks, so a `start()` after a `run()` renders from its background thread too.
 
 Measured headless: 2000 physics steps of so101 plus unitree_g1 take 85 us each (MuJoCo 3.15, one CPU core).
 

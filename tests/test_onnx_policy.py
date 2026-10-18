@@ -117,6 +117,22 @@ def test_a_query_string_is_the_same_as_keywords(monkeypatch):
     assert isinstance(Policy("holosoma"), HolosomaPolicy) and seen[4] == {}
 
 
+def test_a_preset_name_is_independent_of_a_directory_of_the_same_name_in_cwd(tmp_path, monkeypatch):
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        HolosomaPolicy, "__init__", functools.wraps(HolosomaPolicy.__init__)(lambda self, **kw: seen.append(kw))
+    )
+    (tmp_path / "holosoma").mkdir()  # the upstream repo's name, checked out next to the user's script
+    monkeypatch.chdir(tmp_path)
+    assert isinstance(Policy("holosoma"), HolosomaPolicy) and seen == [{}]
+    assert isinstance(Policy("holosoma?algorithm=ppo"), HolosomaPolicy) and seen[1] == {"algorithm": "ppo"}
+    with pytest.raises(ValueError, match="neither a checkpoint nor a dataset"):
+        Policy("./holosoma")  # a path form stays a path: this directory is neither
+    (tmp_path / "nope").mkdir()
+    with pytest.raises(ValueError, match="neither a checkpoint nor a dataset"):
+        Policy("nope")  # not a known preset: judged as the directory it is
+
+
 @pytest.mark.parametrize(
     ("spec", "kw", "err", "names"),
     [

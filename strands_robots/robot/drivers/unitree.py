@@ -137,6 +137,8 @@ class UnitreeDriver:
     """Hardware Body for a Unitree robot: joints from ``rt/lowstate``, IMU + battery in ``extras``. Observe-only."""
 
     supports_position_hold = False  # observe-only: nothing of ours writes a goal
+    calibration: Calibration | None = None  # the vendor firmware owns it
+    resolution: int | None = None
 
     def __init__(
         self,

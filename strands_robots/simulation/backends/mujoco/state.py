@@ -46,3 +46,11 @@ def restore(model: mujoco.MjModel, data: mujoco.MjData, snap: Snapshot | None) -
         a = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
         if a >= 0:
             d.ctrl[a] = c
+
+
+def place(model: mujoco.MjModel, data: mujoco.MjData, qadr: list[int], dadr: list[int], positions: np.ndarray) -> None:
+    """Joints at ``positions`` (a ``-1`` address is a tendon actuator: skipped), at rest, kinematics recomputed."""
+    for qa, da, q in zip(qadr, dadr, positions, strict=True):
+        if qa >= 0:
+            data.qpos[qa], data.qvel[da] = q, 0.0
+    mujoco.mj_forward(model, data)

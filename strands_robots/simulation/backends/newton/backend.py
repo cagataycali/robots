@@ -83,6 +83,12 @@ class NewtonBackend(MuJoCoBackend):
             super().set_gains(body, kp, kd)
             self._stepper.load(self.model, self.data)  # the device model is a copy: re-upload the edited gains
 
+    def set_joints(self, body: str, positions: np.ndarray) -> None:
+        with self._mirror:
+            self._fresh()
+            super().set_joints(body, positions)
+            self._stepper.sync_from(self.data)
+
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None:
         with self._mirror:
             self._fresh()

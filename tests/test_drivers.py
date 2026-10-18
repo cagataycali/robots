@@ -282,10 +282,25 @@ def test_a_real_act_advances_the_twins_world_one_control_step(manual):
             real.act({"shoulder_pan": 0.5})
             real.observe()  # a read mirrors the measurement but is not time
     moved = real.twin.observe()["shoulder_pan"]
-    if manual:
-        assert world.time == t0 and moved == pytest.approx(start, abs=1e-6)
+    if manual:  # no time passed, yet the twin stands where the arm measured (observe places it)
+        assert world.time == t0 and start == 0.0 and moved == pytest.approx(0.5, abs=1e-3)
     else:
         assert world.time == pytest.approx(t0 + 60 * world.physics.control_dt) and moved == pytest.approx(0.5, abs=0.05)
+    real.close()
+
+
+def test_a_real_observe_places_the_twin_at_the_measurement_with_no_step():
+    # the twin mirrors a MEASUREMENT: after observe() it shows the real pose, before its world steps once
+    d, _ = make_driver()
+    real = Robot("so101", driver=d)
+    world = real.twin.sim
+    with world.manual_time():
+        t0 = world.time
+        real.act({"shoulder_pan": 0.5, "shoulder_lift": -0.6, "elbow_flex": 0.4})
+        measured = real.observe().joints.positions
+        twin = real.twin.observe().joints
+    assert world.time == t0 and np.abs(measured).max() > 0.3
+    assert np.allclose(twin.positions, measured, atol=1e-9) and np.allclose(twin.velocities, 0.0)
     real.close()
 
 
@@ -407,3 +422,117 @@ def test_microduck_reads_robotd_state_and_drops_the_mouth():
 def test_microduck_without_robotd_names_the_forward():
     with pytest.raises(ConnectionError, match="ssh -N -L"):
         Robot("microduck", port="/nonexistent/robotd.sock", twin=False)
+
+
+# The readers' findings: a NaN, a mislabelled driver, a LeRobot file under its 0.6 name, a calibrate with no human
+
+
+def writes(serial):
+    return [f for f in serial.frames if f[4] in (ft.WRITE, ft.SYNC_WRITE)]
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_target_never_reaches_the_bus(bad):
+    from strands_robots.robot.safety import NonFiniteTarget
+
+    d, s = make_driver()
+    real = Robot("so101", driver=d, twin=False)
+    with pytest.raises(NonFiniteTarget, match="shoulder_pan"):
+        real.act({"shoulder_pan": bad})  # NaN used to round to range_min: a full-speed move to the end stop
+    assert writes(s) == []  # no torque, no goal
+    with pytest.raises(ValueError, match="non-finite"):
+        d.rad_to_counts("shoulder_pan", bad)  # the driver's own last line of defence
+    real.close()
+
+
+class Renamed:
+    """A third-party Driver: the Body verbs over a FeetechDriver, with its own ``names``."""
+
+    def __init__(self, inner, names):
+        self.inner, self.names = inner, names
+        self.supports_position_hold, self.calibration, self.resolution = True, None, None
+        for verb in ("read", "write", "pose", "images", "extras", "hold", "estop", "calibrate", "close"):
+            setattr(self, verb, getattr(inner, verb))
+
+
+@pytest.mark.parametrize(
+    "names, refused",
+    [
+        (lambda keys: keys, None),
+        (lambda keys: keys[::-1], "in order"),  # the shoulder command would close the gripper
+        (lambda keys: keys[:2], "in order"),
+    ],
+)
+def test_a_driver_whose_names_are_not_the_action_keys_is_refused(names, refused):
+    d, _ = make_driver()
+    drv = Renamed(d, names(d.description.action_keys))
+    if refused is None:
+        Robot("so101", driver=drv, twin=False).close()
+        return
+    with pytest.raises(ValueError, match=refused):
+        Robot("so101", driver=drv, twin=False)
+
+
+def test_the_driver_protocol_names_every_attribute_a_caller_reads():
+    from strands_robots.robot.drivers import Driver
+
+    d, _ = make_driver()
+    drv = Renamed(d, d.description.action_keys)
+    assert isinstance(drv, Driver)
+    del drv.resolution  # bind() reads it to convert LeRobot degrees exactly: a Driver must say
+    assert not isinstance(drv, Driver)
+    with pytest.raises(TypeError, match="resolution"):
+        Robot("so101", driver=drv, twin=False)
+
+
+@pytest.mark.parametrize(
+    "where, robot_id",
+    [
+        ("so_follower/so101_follower.json", None),  # LeRobot 0.6: every SO-10x arm is so_follower
+        ("so_follower/my_arm.json", None),  # --robot.id=my_arm: the only file in the directory
+        ("so_follower/my_arm.json", "my_arm"),
+        ("so101_follower/so101_follower.json", None),  # LeRobot before 0.5
+    ],
+)
+def test_a_lerobot_calibration_is_found_under_every_name_lerobot_writes(tmp_path, monkeypatch, where, robot_id):
+    monkeypatch.setenv("HF_LEROBOT_CALIBRATION", str(tmp_path))
+    p = tmp_path / "robots" / where
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps(CAL))
+    d = ft.FeetechDriver(
+        Description.load("so101"),
+        port="/dev/fake",
+        robot_id=robot_id,
+        bus=ft.FeetechBus("/dev/fake", serial=FakeSerial()),
+    )
+    assert d.calibration_source == str(p) and d.calibration == Calibration.from_json(CAL)
+
+
+def test_robot_takes_calibration_and_a_missing_file_names_where_it_looked(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_LEROBOT_CALIBRATION", str(tmp_path))
+    from strands_robots.robot.drivers.feetech import driver as ftd
+
+    monkeypatch.setattr(ftd, "FeetechBus", lambda port, baud: ft.FeetechBus(port, serial=FakeSerial()))
+    p = tmp_path / "anywhere.json"
+    p.write_text(json.dumps(CAL))
+    real = Robot("so101", port="/dev/fake", calibration=p, twin=False)
+    assert real.calibrate(interactive=False) == Calibration.from_json(CAL)
+    real.close()
+    bare = Robot("so101", port="/dev/fake", twin=False)
+    with pytest.raises(RuntimeError, match=r"so_follower/so101_follower\.json.*calibration="):
+        bare.calibrate(interactive=False)
+    bare.close()
+    with pytest.raises(TypeError, match="hardware argument"):
+        Robot("so101", calibration=p)
+
+
+def test_calibrate_with_no_human_at_a_terminal_moves_nothing(monkeypatch):
+    import io
+    import sys
+
+    d, s = make_driver()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # an agent's tool thread: no tty to press Enter on
+    with pytest.raises(RuntimeError, match="human at a terminal"):
+        d.calibrate(interactive=True)
+    assert writes(s) == []  # no torque-off, no homing-offset write
+    d.close()

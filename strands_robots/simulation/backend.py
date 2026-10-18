@@ -19,7 +19,8 @@ _BACKENDS: dict[str, str] = {
 
 
 class Backend(ABC):
-    """The thirteen methods a physics world implements. Nothing else is engine-specific."""
+    """The twelve abstract methods a physics world implements, plus two it may refuse with
+    ``NotImplementedError``: ``set_gains`` and ``set_joints``. Nothing else is engine-specific."""
 
     deterministic = True  # the same scene and actions give a bit-identical trajectory, run to run
 
@@ -59,13 +60,17 @@ class Backend(ABC):
     @abstractmethod
     def body_pose(self, body: str) -> Pose: ...
 
-    @abstractmethod
     # teleport; a fixed body's new pose is already recorded in the scene, so the backend rebuilds it there
+    @abstractmethod
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None: ...
 
     def set_gains(self, body: str, kp: np.ndarray, kd: np.ndarray) -> None:
         """Actuator PD gains for one robot (``action_keys`` order). Engines that cannot say so."""
         raise NotImplementedError(f"{type(self).__name__} cannot change actuator gains at runtime")
+
+    def set_joints(self, body: str, positions: np.ndarray) -> None:
+        """Joints AT ``positions``, at rest (how a hardware twin shows a measurement). Engines that cannot say so."""
+        raise NotImplementedError(f"{type(self).__name__} cannot place joints directly")
 
     @abstractmethod
     def render(self, camera: str) -> np.ndarray: ...

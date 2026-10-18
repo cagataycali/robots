@@ -15,6 +15,7 @@ class Task:
         self._stop = threading.Event()
         self._result: RunResult | None = None
         self._error: BaseException | None = None
+        self._raised = False
         self._thread = threading.Thread(target=self._go, args=(target,), daemon=True)
         self._thread.start()
 
@@ -25,8 +26,10 @@ class Task:
             self._error = exc
 
     def stop(self, timeout: float | None = None) -> RunResult | None:
-        """Stop and wait for the run to end, its recording saved; the loop itself exits within one tick."""
+        """Stop and wait for the run to end, its recording saved; ``TimeoutError`` if it is still running."""
         self.halt(timeout)
+        if self.running:
+            raise TimeoutError(f"the run is still going after {timeout} s; its policy has not returned")
         return self.result
 
     def halt(self, timeout: float | None = 5.0) -> None:
@@ -46,6 +49,8 @@ class Task:
 
     @property
     def result(self) -> RunResult | None:
-        if self._error:
+        """The run's result; a run whose policy raised raises that error here once, then reads None."""
+        if self._error is not None and not self._raised:
+            self._raised = True
             raise self._error
         return self._result

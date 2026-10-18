@@ -107,6 +107,7 @@ def test_links_skip_an_unnamed_body_and_a_robot_not_built_yet(world):
     with sim.editing():
         Robot("so101", sim=sim, id="late", position=[0.6, 0, 0])
         assert sim.describe()["robots"]["late"]["links"] == []
+        assert sim.describe()["robots"]["late"]["pose"]["position"] == [0.6, 0.0, 0.0]  # the spawn frame, not built yet
 
 
 def test_editing_rebuilds_the_world_once_and_a_failed_block_changes_nothing(world, monkeypatch):

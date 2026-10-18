@@ -36,18 +36,25 @@ class DeviceVerbs:
         d["estop"] = self._robot.estopped
         return d
 
-    def estop(self) -> None:
-        """Stop now: bypasses the safety chain, never waits for the world or the run loop; latches."""
+    def estop(self, *, by: str | None = None) -> None:
+        """Stop now: bypasses the safety chain, never waits for the world or the run loop; latches.
+
+        ``by`` names the operator who pressed it; it is recorded on the latch and the ``estop`` event.
+        """
         from ..safety import engage
 
-        engage(self._robot)
-        self._robot.events.emit("estop", {"device_id": self._robot.id, "engaged": True})
+        engage(self._robot, by=by)
+        self._robot.events.emit("estop", {"device_id": self._robot.id, "engaged": True, "by": by})
 
-    def resume(self, *, approved_by: str | None = None) -> None:
-        """Release the e-stop latch; refused without the approving operator's name."""
+    def resume(self, *, approved_by: str | None = None, stop: int | None = None) -> None:
+        """Release the e-stop latch; refused without the operator's name, or for a stop they did not see.
+
+        ``stop`` pins the engagement cleared to ``estop_latch.count``: pass the count shown to the operator
+        and a yes typed for an earlier stop is refused once a later one is latched.
+        """
         from ..safety import resume
 
-        resume(self._robot, approved_by=approved_by)
+        resume(self._robot, approved_by=approved_by, stop=stop)
         self._robot.events.emit("estop", {"device_id": self._robot.id, "engaged": False, "approved_by": approved_by})
 
     def hold(self) -> None:

@@ -10,8 +10,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import numpy as np
-
+from . import _describe
 from ._sceneops import _SceneOps
 from .backend import Backend, load_backend
 from .member import Member
@@ -22,7 +21,7 @@ if TYPE_CHECKING:
     from ..policy import PolicyLike
     from ..robot import Robot
     from ..robot.run.result import RunResult
-    from ..types import Observation
+    from ..types import Observation, Pose
 
 _PHYSICS = ("native", "newton")
 
@@ -90,6 +89,7 @@ class Simulation(_SceneOps):
 
     def step(self, n: int = 1) -> None:
         """Advance ``n`` physics steps (``timestep`` each)."""
+        self._open()
         if n < 0:
             raise ValueError(f"n must be >= 0, got {n}")
         with self.lock:
@@ -98,6 +98,7 @@ class Simulation(_SceneOps):
 
     def control_step(self) -> None:
         """Advance exactly one control step (``physics.substeps`` physics steps) unless time is manual."""
+        self._open()
         if not self._manual:
             with self.lock:
                 self.backend.step(self._substeps)
@@ -152,9 +153,12 @@ class Simulation(_SceneOps):
     def time_is_manual(self) -> bool:
         return self._manual > 0
 
-    def reset(self, *, keyframe: str | None = None, seed: int | None = None) -> None:
-        if seed is not None:
-            np.random.seed(seed)
+    def reset(self, *, keyframe: str | None = None) -> None:
+        """Every body back to its spawn state, or to ``keyframe`` where a robot has one."""
+        self._open()
+        named = {k for r in self._robots.values() for k in r.description.keyframes}
+        if keyframe is not None and keyframe not in named:
+            raise ValueError(f"keyframe {keyframe!r} is not on any robot in this world; keyframes are {sorted(named)}")
         with self.lock:
             self.backend.reset(keyframe)
 
@@ -177,7 +181,7 @@ class Simulation(_SceneOps):
 
     def run(
         self,
-        policies: Mapping[Robot, PolicyLike | Callable[[Observation], Any]],
+        policies: Mapping[str | Robot, PolicyLike | Callable[[Observation], Any]],
         *,
         hz: float | None = None,
         seconds: float | None = None,
@@ -185,40 +189,34 @@ class Simulation(_SceneOps):
         instruction: str | None = None,
         units: str | None = "auto",
     ) -> dict[str, RunResult]:
-        """Drive N robots in lock-step: every robot observes, every policy acts, the world steps once."""
+        """Drive N robots in lock-step (robot id -> policy spec): each observes and acts, then the world steps once."""
         from ..robot.run import lockstep
 
-        return lockstep(self, policies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)
+        self._open()
+        unknown = [r for r in policies if isinstance(r, str) and r not in self._robots]
+        if unknown:
+            raise KeyError(f"no robot {unknown} in this world; robots are {list(self._robots)}")
+        bodies = {(self._robots[r] if isinstance(r, str) else r): p for r, p in policies.items()}
+        return lockstep(self, bodies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)  # type: ignore[arg-type]
+
+    def pose(self, body: str) -> Pose:
+        """Where a robot base or object is now: position m, orientation quaternion w,x,y,z."""
+        if body not in self._robots and not any(o.name == body for o in self.scene.objects):
+            raise KeyError(f"no body {body!r} in this world")
+        with self.lock:
+            return self.backend.body_pose(body)
+
+    @property
+    def tool(self) -> Any:
+        """This world as a strands agent tool, generated from its public verbs (imports strands on first use)."""
+        from ..tools.agent import sim_tool
+
+        return sim_tool(self)
 
     def describe(self) -> dict[str, Any]:
-        """Robots, objects, cameras, physics, time — JSON-safe; the dashboard reads THIS (under the world lock)."""
+        """Robots (spawn frame, live ``pose``, links), objects where they are now, cameras, physics, time; JSON-safe."""
         with self.lock:
-            return self._describe()
-
-    def _describe(self) -> dict[str, Any]:
-        p = self.physics
-        return {
-            "backend": self.backend_name,
-            "physics": {
-                "name": p.name,
-                "timestep": p.timestep,
-                "substeps": p.substeps,
-                "envs": self.num_envs,
-                "deterministic": self.backend.deterministic,  # same scene + actions -> bit-identical trajectory
-            },
-            "time": self.time,
-            "revision": self.revision,
-            "manual_time": self.time_is_manual,
-            "robots": {
-                rid: r.description.describe()
-                | {"position": list(self.scene.robot(rid).position), "links": self.backend.links(rid)}
-                for rid, r in self._robots.items()
-            },
-            "objects": [
-                {"name": o.name, "shape": o.shape or o.path, "position": list(o.position)} for o in self.scene.objects
-            ],
-            "cameras": [{"name": c.name, "size": list(c.size), "attach": c.attach} for c in self.scene.cameras],
-        }
+            return _describe.describe(self)
 
     def close(self) -> None:
         if self._closed:

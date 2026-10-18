@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from numbers import Real
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ...policy import PolicyLike, as_policy
+from ...policy.requirements import Requirements
 from ...types import Observation
 from ...units import Units, calibrated, resolve_units
+from .source import refuse_remote_spec
 
 if TYPE_CHECKING:
     from ..robot import Robot
@@ -18,23 +22,50 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Bound:
-    """A policy made ready for a robot: the adapted policy and the unit converter (or None for radians)."""
+    """A policy made ready for a robot: the adapted policy, the unit converter (or None for radians), its hooks."""
 
     policy: PolicyLike
     units: Units | None
+    hz: float | None = None
+    realtime: bool = False
+
+
+def _hook(pol: Any, name: str, ok: Callable[[Any], bool], want: str, default: Any = None) -> Any:
+    """One optional policy attribute, read once: absent is the default, a wrong type is refused by name."""
+    value = getattr(pol, name, default)
+    if value is not default and not ok(value):
+        raise TypeError(f"{pol!r}.{name} must be {want}, got {value!r}")
+    return value
+
+
+def _rate(v: Any) -> bool:
+    return isinstance(v, Real) and not isinstance(v, bool) and math.isfinite(float(v)) and float(v) > 0
+
+
+def _flag(v: Any) -> bool:
+    return isinstance(v, bool | np.bool_)
+
+
+def _pair(v: Any) -> bool:
+    return isinstance(v, tuple | list) and len(v) == 2
 
 
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
     """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
+    refuse_remote_spec(policy)  # an agent's run, by any entry point: no policy at a network address
     pol = as_policy(policy)
-    if getattr(pol, "requires_position_hold", False) and not robot.supports_position_hold:
+    for name in ("attach", "detach", "requirements", "needs_observation"):
+        _hook(pol, name, callable, "a method")
+    if _hook(pol, "requires_position_hold", _flag, "True or False", False) and not robot.supports_position_hold:
         from ..safety import RequestRefused
 
         raise RequestRefused(f"{robot.id} cannot hold position between ticks, and {pol!r} requires a body that can")
     attach = getattr(pol, "attach", None)
-    if callable(attach):  # connect / load / admit against THIS robot, before units and requirements
+    if attach is not None:  # connect / load / admit against THIS robot, before units and requirements
         attach(robot)
-    gains = getattr(pol, "gains", None)
+    hz = _hook(pol, "hz", _rate, "a number > 0")  # after attach: a remote policy learns its rate from the server
+    realtime = _hook(pol, "realtime", _flag, "True or False", False)
+    gains = _hook(pol, "gains", _pair, "a (kp, kd) pair")
     if gains is not None and robot.sim is not None:  # the policy's PD is part of the policy, not of the world
         robot.set_gains(*gains)
     conv = resolve_units(pol, units, robot.description)
@@ -43,15 +74,18 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
         conv = calibrated(conv, cal, resolution=res)
     req = getattr(pol, "requirements", None)
     if req is not None:
-        req().check(robot.observe(), who=repr(pol))
+        need = req()
+        if not isinstance(need, Requirements):
+            raise TypeError(f"{pol!r}.requirements() must return Requirements, got {need!r}")
+        need.check(robot.observe(), who=repr(pol))
     pol.reset()
-    return Bound(pol, conv)
+    return Bound(pol, conv, None if hz is None else float(hz), bool(realtime))
 
 
 def release(bound: Bound) -> None:
     """After the last step: let the policy close what ``attach`` opened (a session, a server)."""
     detach = getattr(bound.policy, "detach", None)
-    if callable(detach):
+    if detach is not None:  # bind() refused a detach that is not a method
         detach()
 
 
@@ -67,4 +101,4 @@ def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None
 def looks(bound: Bound, instruction: str | None) -> bool:
     """Whether this step renders the cameras: only when the policy looks (a chunk replays without a frame)."""
     ask = getattr(bound.policy, "needs_observation", None)
-    return not callable(ask) or bool(ask(instruction=instruction))
+    return ask is None or bool(ask(instruction=instruction))

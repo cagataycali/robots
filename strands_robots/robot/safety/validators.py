@@ -22,6 +22,10 @@ class RequestRefused(PermissionError):
     """A command the device will not carry out; the message names the input, its value and the bound."""
 
 
+class NonFiniteTarget(ValueError):
+    """A NaN or infinite target: refused before it reaches a body; a run ends with ``stopped_by="fault"``."""
+
+
 @dataclass(frozen=True)
 class Request:
     """A control write on its way through the safety chain: full targets in ``action_keys`` order."""

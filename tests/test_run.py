@@ -136,3 +136,117 @@ def test_both_loops_replay_at_the_rate_the_policy_declares_and_refuse_another():
 
     with pytest.raises(ValueError, match="different rates"):
         arm.sim.run({arm: _At30([{"shoulder_pan": 0.1}]), other: At20([{"shoulder_pan": 0.1}])}, steps=1)
+
+
+class _Holds:
+    def act(self, obs, *, instruction=None):
+        return obs.joints.positions
+
+    def reset(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "name, value, said",
+    [
+        ("hz", 0, "hz must be a number > 0, got 0"),
+        ("hz", "50", "hz must be a number > 0, got '50'"),
+        ("hz", True, "hz must be a number > 0, got True"),
+        ("realtime", "no", "realtime must be True or False, got 'no'"),
+        ("requires_position_hold", "0", "requires_position_hold must be True or False"),
+        ("gains", "strong", r"gains must be a \(kp, kd\) pair, got 'strong'"),
+        ("attach", True, "attach must be a method, got True"),
+        ("detach", "later", "detach must be a method, got 'later'"),
+        ("requirements", object(), "requirements must be a method"),
+        ("needs_observation", False, "needs_observation must be a method, got False"),
+        ("requirements", lambda: {}, r"requirements\(\) must return Requirements, got \{\}"),
+    ],
+)
+def test_a_policy_hook_of_the_wrong_type_is_refused_by_name_before_step_one(name, value, said):
+    arm, pol = Robot("so101"), _Holds()
+    setattr(pol, name, value)
+    with pytest.raises(TypeError, match=said):
+        arm.run(pol, steps=1)
+    with pytest.raises(TypeError, match=said):
+        arm.sim.run({arm: pol}, steps=1)
+    arm.close()
+
+
+def test_stop_raises_a_run_error_once_and_a_run_that_will_not_end_times_out():
+    arm = Robot("so101")
+
+    def bad(obs):
+        raise ZeroDivisionError("policy bug")
+
+    arm.start(bad, steps=3)._thread.join(2)
+    with pytest.raises(ZeroDivisionError, match="policy bug"):
+        arm.stop()
+    assert arm.stop() is None  # reported once; the robot is free again
+    gate = __import__("threading").Event()
+    task = arm.start(lambda o: gate.wait(5) and o.joints.positions, steps=2)
+    with pytest.raises(TimeoutError, match="still going after 0.2 s"):
+        arm.stop(timeout=0.2)
+    assert task.running
+    gate.set()
+    assert arm.stop().stopped_by == "stopped"
+    arm.close()
+
+
+def test_a_policy_that_emits_nan_ends_the_run_as_a_fault_before_the_write():
+    arm = Robot("so101")
+    calls = []
+
+    def pol(obs):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.1}
+
+    res = arm.run(pol, hz=50, steps=10)
+    assert res.stopped_by == "fault" and res.steps == 2 and "non-finite" in res.fault
+    assert all(abs(v) < 10 for v in arm.observe().joints.positions)  # the world never saw the NaN
+
+
+def _zero_on_disconnect(robot, joint="shoulder_pan.pos"):
+    """Give one of a sim body's controls on_disconnect='zero' so a fault's effect is observable."""
+    import dataclasses as dc
+
+    m = robot.manifest
+    controls = tuple(dc.replace(c, on_disconnect="zero") if c.name == joint else c for c in m.controls)
+    robot.__dict__["manifest"] = dc.replace(m, controls=controls)
+
+
+def test_a_faulted_run_puts_the_body_in_its_declared_on_disconnect_state():
+    arm = Robot("so101")
+    _zero_on_disconnect(arm)
+    arm.run(lambda o: {"shoulder_pan": 0.8, "shoulder_lift": 0.3}, hz=50, steps=10)
+    assert arm.sim.backend.data.ctrl[0] == pytest.approx(0.8)  # commanded away from the disconnect target
+    calls = []
+
+    def pol(o):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.8}
+
+    res = arm.run(pol, hz=50, steps=10)
+    assert res.stopped_by == "fault"
+    assert arm.sim.backend.data.ctrl[0] == pytest.approx(0.0)  # on_disconnect='zero' drove shoulder_pan to 0
+    held = arm.observe().joints.positions
+    assert arm.sim.backend.data.ctrl[1] == pytest.approx(held[1])  # a 'hold' control keeps its measured value
+
+
+def test_lockstep_applies_on_disconnect_only_to_the_robot_that_faulted():
+    sim = Simulation()
+    a, b = Robot("so101", sim=sim), Robot("so101", sim=sim)
+    _zero_on_disconnect(a)
+    a.act({"shoulder_pan": 0.8})
+    calls = []
+
+    def faulting(o):
+        calls.append(1)
+        return {"shoulder_pan": float("nan") if len(calls) == 3 else 0.8}
+
+    res = sim.run({a: faulting, b: lambda o: {"shoulder_pan": 0.5}}, steps=10)
+    assert res[a.id].stopped_by == "fault" and "non-finite" in res[a.id].fault
+    assert res[b.id].fault is None  # b did not fault; the world's run ended with a
+    ia = sim.backend._index[a.id].actuator_ids[0]  # a's shoulder_pan actuator
+    ib = sim.backend._index[b.id].actuator_ids[0]
+    assert sim.backend.data.ctrl[ia] == pytest.approx(0.0)  # a faulted: on_disconnect='zero' applied
+    assert sim.backend.data.ctrl[ib] != pytest.approx(0.0)  # b kept running, no disconnect applied
