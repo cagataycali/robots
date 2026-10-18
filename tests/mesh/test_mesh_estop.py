@@ -49,6 +49,23 @@ def test_an_undiscovered_peer_still_latches_from_the_tenant_estop(lab):
     late.close()
 
 
+def test_one_device_whose_stop_raises_does_not_keep_the_tenant_estop_from_the_rest(lab, monkeypatch, caplog):
+    arms, _, b = lab
+
+    def bus_in_a_bad_state():
+        raise OSError("the bus did not answer")
+
+    monkeypatch.setattr(arms[0].body, "estop", bus_in_a_bad_state)
+    b.broadcast("estop", selector="device(*)", deadline=0.0)  # the tenant key only: no rpc fan-out
+    deadline = time.monotonic() + 2.0
+    while not all(arm.estopped for arm in arms) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert [arm.estopped for arm in arms] == [True, True, True]
+    assert any("arm0" in r.getMessage() and "OSError" in r.getMessage() for r in caplog.records)
+    with pytest.raises(RequestRefused):  # the raising stop still locked resume to its authority
+        b.invoke("arm0", "resume", approved_by="someone-else")
+
+
 def test_resume_by_the_operator_who_stopped(lab):
     arms, _, b = lab
     b.broadcast("estop", selector="arm0")

@@ -2,6 +2,7 @@
 
 ``Mesh("zenoh://", tenant="lab-a")`` joins the strands peers on the LAN with zero configuration;
 ``Mesh(("zenoh://", "iot://us-west-2"))`` spans several transports with one id space.
+``Robot("so101", mesh=m)`` mounts a robot on ``m`` as soon as it is built.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from .device import Device, Selector
 from .presence import Directory, announce
 from .record import RAISE, check_kill_switch, default_operator, default_tenant, record, state_rate
 from .remote import RemoteBody
-from .serve import ARGS, estop, serve
+from .serve import ARGS, estop_each, serve
 from .stream import listen, publish
 from .transports.base import Transport, Unsubscribe, open_transport
 
@@ -168,9 +169,7 @@ class Mesh:
     def _on_estop(self, sel: Selector, by: str, epoch: str) -> None:
         with self._lock:
             mounted = list(self._mounted.values())
-        for robot, device, _undo, lockout in mounted:
-            if sel.matches(device):
-                estop(robot, lockout, by, epoch)
+        estop_each(mounted, sel, by, epoch, self.tenant)
 
     @property
     def tool(self) -> Any:

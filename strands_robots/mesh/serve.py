@@ -12,7 +12,7 @@ from __future__ import annotations
 import itertools
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -81,10 +81,20 @@ def estop(robot: Any, lockout: Lockout, by: str | None = None, epoch: str | None
 
     The device mints the lockout's epoch and the first stopper keeps it: a later stop (or the caller's ``epoch``,
     only a correlation id for the broadcast) never renames who stopped, nor picks the epoch an assertion signs."""
-    engaged = _lockout(robot, lockout).engaged
-    robot.estop()
-    if not engaged:
+    if not _lockout(robot, lockout).engaged:  # before the body's stop, so a stop that raises still locks resume
         lockout.engaged, lockout.epoch, lockout.by, lockout.at = True, new_epoch(), by, time.time()
+    robot.estop()
+
+
+def estop_each(mounted: Iterable[tuple[Any, Any, Any, Lockout]], sel: Any, by: str, epoch: str, tenant: str) -> None:
+    """The tenant-wide e-stop on every mounted device ``sel`` matches: one whose stop raises (a bus in a bad state,
+    an object with no ``estop``) leaves an ``AUDIT`` warning naming it and does not keep the stop from the rest."""
+    for robot, device, _undo, lockout in mounted:
+        if sel.matches(device):
+            try:
+                estop(robot, lockout, by, epoch)
+            except Exception as exc:
+                AUDIT.warning("%s/%s estop by=%s: the device's stop raised %r", tenant, device.id, by, exc)
 
 
 def _resume(
