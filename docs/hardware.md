@@ -23,18 +23,27 @@ real.close()                                 # torque off, port closed, twin rem
 | `unitree` | DDS `rt/lowstate`: G1 / Go2 / H1 (`unitree_sdk2py`) | observe only |
 | `microduck` | robotd's JSON-RPC socket (`port=` the socket path) | observe only: robotd has no per-joint write |
 
-A `Driver` is `names read() write() pose() images() extras() calibrate() close()`; `driver=` takes a name
-or an instance. `Robot(name, port=)` picks the driver from the registry entry and adds a twin of the same
+A `Driver` is `names read() write() pose() images() extras() hold() estop() calibrate() close()` plus
+`supports_position_hold`, `calibration` and `resolution` (None when the bus has none); `driver=` takes a name
+or an instance, and an instance whose `names` are not the description's `action_keys`, in order, is refused. `Robot(name, port=)` picks the driver from the registry entry and adds a twin of the same
 description to `Simulation.default()`: `real.twin` is `so101_twin`, its `twin_of` is `real`, and only
-`real.is_real` is true (`twin=False` to skip). `observe()` pushes the measured joints into
-the twin; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
+`real.is_real` is true (`twin=False` to skip). `observe()` places the twin at the measured joints
+(`Backend.set_joints`, no step), so `real.twin.sim.render()` draws the real pose; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
 
 {{drawing:d07_twin_steps}}
 
-**Calibration.** `calibrate(interactive=False)` returns the file found at
-`$HF_LEROBOT_CALIBRATION/robots/<lerobot_type>/<id>.json`; `calibrate()` walks a human through
-LeRobot's procedure (middle pose, then a sweep) and writes the same file. Without one, joints map the
-full turn of counts (2048 is 0 rad).
+{{drawing:d09_twin_measured}}
+
+**Calibration.** `calibrate(interactive=False)` returns the LeRobot file it found under
+`$HF_LEROBOT_CALIBRATION/robots/`: `so_follower/<id>.json` (LeRobot 0.6 names every SO-10x arm so),
+then `<lerobot_type>/<id>.json`; without an id, `<lerobot_type>.json` or the only file in the directory.
+`Robot("so101", port=..., calibration="my_arm.json")` takes any path; a missing file is an error that
+lists where it looked. `calibrate()` walks a human at a terminal through LeRobot's procedure (middle
+pose, then a sweep) and writes the file; with no terminal it refuses before torque goes off. Without a
+file, joints map the full turn of counts (2048 is 0 rad). `observe()` maps each joint's calibrated
+`range_min`..`range_max` onto the description's joint limits, so radians match the twin; LeRobot's own
+degrees are 360/4095 per count from the middle of that range, so the same pose can read a few degrees apart. A LeRobot policy
+gets LeRobot's degrees: `run()` converts through the bus calibration.
 
 **On your arm.** `STRANDS_SO101_PORT=/dev/ttyACM0 pytest tests_integ/acceptance` runs acceptance check 9
 on a physical SO-101: `observe()`, a refused `confirm_act()` that writes nothing, an allowed hold the twin
@@ -49,9 +58,12 @@ a stray byte ahead of the header are both skipped; an echo and then silence is a
 
 {{drawing:d05_bench}}
 
+{{drawing:d10_what_never_reaches_the_arm}}
+
 **The operator gate.** `act()` in your own code is the developer's call. `confirm_act()` is what an
 agent tool or a dashboard calls: on a real body it asks `confirm(action)` and refuses on `False`; with
-no `confirm=` it raises and says `pass confirm=`. Every refusal (the gate, a limit, the e-stop's `EStopped`) is `from strands_robots import RequestRefused`, a `PermissionError`, and writes nothing to the bus. Only a real body
+no `confirm=` it raises and says `pass confirm=`. Every refusal (the gate, a limit, the e-stop's `EStopped`) is `from strands_robots import RequestRefused`, a `PermissionError`, and writes nothing to the bus. A NaN or infinite target raises `NonFiniteTarget` (a `ValueError`) before
+any write, and ends a `run()` with `stopped_by="fault"`. Only a real body
 takes `confirm=`:
 
 ```python

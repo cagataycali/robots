@@ -29,7 +29,13 @@ class _SceneOps:
     lock: threading.RLock
     revision: int
     render_size: tuple[int, int]
+    backend_name: str
+    _closed: bool
     _robots: dict[str, Member]
+
+    def _open(self) -> None:
+        if self._closed:
+            raise RuntimeError(f"this {self.backend_name} Simulation is closed; make a new one")
 
     def unique_id(self, want: str) -> str:
         if want not in self._robots:
@@ -48,6 +54,7 @@ class _SceneOps:
         keyframe: str | None = None,
     ) -> Member:
         """Put ``robot`` into this world (called by ``Robot.__init__``). Surviving bodies keep their state."""
+        self._open()
         if robot.id in self._robots:
             raise ValueError(f"robot id {robot.id!r} is already in this world")
         pos = tuple(float(x) for x in (position if position is not None else robot.description.spawn_position))
@@ -95,6 +102,7 @@ class _SceneOps:
         color: Any = None,
         free: bool = True,
     ) -> Object:
+        self._open()
         if (shape is None) == (path is None):
             raise ValueError("add_object needs exactly one of shape= or path=")
         if shape is not None and shape not in ("box", "sphere", "cylinder", "capsule"):

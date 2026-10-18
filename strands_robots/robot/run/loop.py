@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from ...policy.base import PolicyFault
 from ...recording import Episode, NotRecording, episode
 from ...types import Observation
-from ..safety import EStopped
+from ..safety import EStopped, NonFiniteTarget
 from .bind import Bound, bind, decide, looks, release
 from .result import RunResult
 from .task import Task
@@ -85,7 +85,7 @@ def _announce(robot: Robot, result: RunResult) -> None:
 
 def _declared(bounds: Iterable[Bound], hz: float | None) -> float | None:
     """The rate the policies declare (chunks are replayed at it), refusing a disagreement or an ``hz`` against it."""
-    rates = {float(r): b.policy for b in bounds if (r := getattr(b.policy, "hz", None))}
+    rates = {b.hz: b.policy for b in bounds if b.hz is not None}
     if len(rates) > 1:
         said = ", ".join(f"{p!r} {r:g} Hz" for r, p in rates.items())
         raise ValueError(f"these policies declare different rates: {said}; one world steps at one rate")
@@ -116,7 +116,7 @@ def _loop(
     ep: Episode | NotRecording,
 ) -> RunResult:
     hz = _rate(bound, hz)
-    realtime = realtime or bool(getattr(bound.policy, "realtime", False))
+    realtime = realtime or bound.realtime
     dt = 1.0 / hz
     sim_steps = max(1, round(dt / robot.sim.physics.timestep)) if robot.sim is not None else None
     max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
@@ -140,7 +140,7 @@ def _loop(
             break
         try:
             action = decide(robot, bound, obs, instruction)
-        except PolicyFault as e:
+        except (PolicyFault, NonFiniteTarget) as e:
             why, fault = "fault", str(e)
             break
         try:
@@ -214,7 +214,7 @@ def _lockstep(
     dt = sim.physics.control_dt if rate is None else 1.0 / rate
     per = max(1, round(dt / sim.physics.timestep))
     total = steps if steps is not None else int(round(float(seconds or 0.0) / dt))
-    realtime = any(getattr(b.policy, "realtime", False) for b in bound.values())
+    realtime = any(b.realtime for b in bound.values())
     faults: dict[str, str] = {}
     stopped: list[Robot] = []
     t0, n, next_tick = sim.time, 0, _time.perf_counter()
@@ -227,7 +227,7 @@ def _lockstep(
                     break
                 try:
                     r.act(decide(r, b, r.observe(images=r.sim is None or looks(b, instruction)), instruction))
-                except PolicyFault as e:
+                except (PolicyFault, NonFiniteTarget) as e:
                     faults[r.id] = str(e)
                 except EStopped:
                     stopped.append(r)

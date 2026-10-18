@@ -4,12 +4,21 @@ from __future__ import annotations
 
 from .chain import SafetyChain
 from .estop import EStopped, Latch, engage, guarded_write, resume
-from .validators import JointLimitValidator, Request, RequestRefused, Validator, WorkspaceBoundsValidator, compose
+from .validators import (
+    JointLimitValidator,
+    NonFiniteTarget,
+    Request,
+    RequestRefused,
+    Validator,
+    WorkspaceBoundsValidator,
+    compose,
+)
 from .watchdog import Watchdog, apply_on_disconnect
 
 __all__ = [
     "SafetyChain",
     "RequestRefused",
+    "NonFiniteTarget",
     "EStopped",
     "Request",
     "Validator",

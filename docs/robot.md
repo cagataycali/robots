@@ -32,6 +32,11 @@ its actuators, `describe()` is JSON-safe, `close()` removes it from its world (a
 `run(policy, hz=, seconds=|steps=|stop_when=)` takes a `Policy` subclass, anything with `act(obs)` and
 `reset()`, or a bare callable (it receives `instruction=` when it declares it). In a world, `hz` sets how
 many physics steps each `act()` advances and time is sim time; `realtime=True` also paces the loop to the
-wall clock. Before the first inference `policy.requirements()` is checked against a real observation, so
-a missing camera or a wrong state length is refused by name. `units="auto"` converts joints between the
+wall clock. Before the first inference `policy.requirements()` is checked against a real observation, so a
+missing camera or a wrong state length is refused by name. The policy's optional hooks (`hz`, `realtime`,
+`gains`, `attach`, `detach`, `requirements`, `needs_observation`) are read once there too, and one of the
+wrong type is a `TypeError` naming it. `stop(timeout=)` raises `TimeoutError` while the run is still
+going, and the error of a run whose policy raised, once. `units="auto"` converts joints between the
 robot's radians and the units the policy declares (`policy.units`, for example `lerobot_so10x`).
+
+{{drawing:d08_policy_hooks}}
