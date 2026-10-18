@@ -189,6 +189,52 @@ def test_a_caught_inner_block_rolls_back_only_its_own_edits(world):
     assert arm.sim is None and list(sim.robots) == []  # the outer remove still detaches on the outer rebuild
 
 
+def test_set_pose_on_a_body_added_in_the_same_editing_block_is_placed_by_the_blocks_one_rebuild(world, monkeypatch):
+    """Spawn-then-place inside one block is the per-episode reset shape editing() exists for; it used to KeyError on
+    the not-yet-built body and roll the whole block back."""
+    sim, _ = world
+    loads = []
+    real = sim.backend.load
+    monkeypatch.setattr(sim.backend, "load", lambda scene: (loads.append(1), real(scene))[1])
+    with sim.editing():
+        ball = sim.add_object("ball", shape="sphere", size=0.02, position=[0.4, 0, 0.3], free=False)
+        got = ball.set_pose(position=[0.3, 0.1, 0.3])
+        late = Robot("so101", sim=sim, id="late", position=[0.6, 0, 0])
+        sim.set_pose(late, position=[0.7, 0, 0])
+        assert loads == []  # nothing rebuilt yet
+    assert loads == [1]  # the block's one rebuild
+    assert np.allclose(got.position, [0.3, 0.1, 0.3])
+    assert np.allclose(sim.pose("ball").position, [0.3, 0.1, 0.3])
+    assert np.allclose(sim.pose("late").position, [0.7, 0, 0], atol=1e-6) and "late" in sim.robots
+    assert np.allclose(sim.describe()["robots"]["late"]["position"], [0.7, 0, 0])
+
+
+def test_remove_leaves_no_draw_behind_for_a_body_or_camera_re_added_under_the_same_name(world):
+    sim, _ = world
+    base = sim.backend.model.body_mass[sim.backend.model.body("cube").id]
+    sim.randomize(target="cube", mass=3.0)
+    sim.remove("cube")
+    sim.add_object("cube", shape="box", size=[0.015] * 3, position=[0.25, 0, 0.3], mass=0.05)
+    assert sim.scene.scales == {} and sim.backend.model.body_mass[sim.backend.model.body("cube").id] == pytest.approx(
+        base
+    )
+
+    sim.camera("front", position=[0.5, -0.5, 0.4], size=(32, 24))
+    sim.randomize(camera=0.02, seed=3)
+    assert sim.scene.camera_jitter.get("front")
+    sim.remove("front")
+    sim.camera("front", position=[0.5, -0.5, 0.4], size=(32, 24))
+    assert "front" not in sim.scene.camera_jitter
+    cam = sim.backend.model.camera("front")
+    assert np.allclose(sim.backend.model.cam_pos[cam.id], [0.5, -0.5, 0.4], atol=1e-9)
+
+    sim.camera("wrist", attach="so101", size=(32, 24))  # a robot's camera leaves with the robot, draw included
+    sim.randomize(camera=0.02, seed=4)
+    assert "wrist" in sim.scene.camera_jitter
+    sim.remove("so101")
+    assert "wrist" not in sim.scene.camera_jitter and "so101" not in sim.scene.scales
+
+
 def test_mujoco_replays_bit_exact_and_says_so():
     def episode():
         with Simulation() as sim:

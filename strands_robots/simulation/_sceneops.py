@@ -10,9 +10,9 @@ from typing import Any, Literal
 
 import numpy as np
 
-from ..geometry import moved_frame, vec
+from ..geometry import vec
 from ..types import Pose
-from . import _randomize
+from . import _randomize, _teleport
 from .backend import Backend
 from .member import Member
 from .object import Object
@@ -89,10 +89,14 @@ class _SceneOps:
                 if (objs, cams) == (self.scene.objects, self.scene.cameras):
                     raise KeyError(f"nothing named {rid!r} in this world; robots are {list(self._robots)}")
                 self.scene.objects, self.scene.cameras = objs, cams
+                self.scene.scales.pop(rid, None)  # a body re-added under this name inherits no draw
+                self.scene.camera_jitter.pop(rid, None)
                 self._reload()
             return
         with self.lock:
             self.scene.robots = [r for r in self.scene.robots if r.id != rid]
+            for c in [c for c in self.scene.cameras if c.robot == rid]:
+                self.scene.camera_jitter.pop(c.name, None)
             self.scene.cameras = [c for c in self.scene.cameras if c.robot != rid]
             self.scene.scales.pop(rid, None)
             self._reload()
@@ -151,26 +155,7 @@ class _SceneOps:
             raise KeyError(f"no body {name!r} in this world")
         with self.lock:
             self._flush()
-            cur = self.backend.body_pose(name)
-            pose = Pose(
-                cur.position if position is None else np.asarray(vec(position, 3, "position")),
-                cur.orientation if orientation is None else np.asarray(vec(orientation, 4, "orientation (w, x, y, z)")),
-            )
-            if name in self._robots and not self._robots[name].description.floating:
-                sr = self.scene.robot(name)  # a fixed base is rebuilt from the scene, so the scene moves first
-                f = moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
-                sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # type: ignore[assignment]
-            fixed = name in self._robots and not self._robots[name].description.floating
-            for o in self.scene.objects:
-                if o.name == name and not o.free:
-                    o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
-                    fixed = True
-            if fixed and self._editing:  # the scene holds the pose: the block's one rebuild places it, not a second
-                self._reload()
-                return pose
-            self.backend.set_pose(name, pose, zero_velocity=True)
-            self.revision += 1
-            return self.backend.body_pose(name)
+            return _teleport.teleport(self, name, position, orientation)
 
     def camera(
         self,
