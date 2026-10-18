@@ -60,5 +60,13 @@ def restore(scene: Scene, was: Saved) -> None:
     scene.friction_scale, scene.mass_scale, scene.light_scale, scene.scales, scene.camera_jitter = was
 
 
-def scales(scene: Scene) -> dict[str, float]:
-    return {"friction_scale": scene.friction_scale, "mass_scale": scene.mass_scale, "light_scale": scene.light_scale}
+def scales(scene: Scene) -> dict[str, Any]:
+    """The world-wide factors, plus ``scales`` per targeted body and ``camera_jitter`` per camera: everything a
+    ``randomize`` call can have drawn, so an episode can record exactly what it ran on."""
+    return {
+        "friction_scale": scene.friction_scale,
+        "mass_scale": scene.mass_scale,
+        "light_scale": scene.light_scale,
+        "scales": {name: {"friction_scale": f, "mass_scale": m} for name, (f, m) in scene.scales.items()},
+        "camera_jitter": {name: list(j) for name, j in scene.camera_jitter.items()},
+    }

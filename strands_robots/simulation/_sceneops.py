@@ -225,8 +225,9 @@ class _SceneOps:
         camera: float | None = None,
         target: str | None = None,
         seed: int | None = None,
-    ) -> dict[str, float]:
-        """Scale friction / mass / light (a factor or a (lo, hi) range to sample), rebuild; returns the scales.
+    ) -> dict[str, Any]:
+        """Scale friction / mass / light (a factor or a (lo, hi) range to sample), rebuild; returns what was drawn:
+        the world-wide factors, ``scales[<target>]`` per targeted body and ``camera_jitter`` per camera.
         ``target`` scales one robot or object only; ``camera`` moves every camera up to that many metres per axis."""
         _randomize.check(self.scene, self._robots, target, lighting)
         with self.lock:

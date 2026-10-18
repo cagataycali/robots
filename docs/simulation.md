@@ -38,7 +38,7 @@ on its keyframe at the spawn position.
 wrist view a VLA dataset expects). `describe()["robots"]["so101"]["links"]` lists the link names.
 Vectors are numbers, never strings: `position` 3, `orientation` a `(w, x, y, z)` quaternion, `color` RGBA in
 0-1; a string or a wrong length is refused by name. `reset(keyframe=)` refuses a keyframe no robot has.
-`randomize` takes a factor or a `(lo, hi)` range and returns the scales it drew. `sim.tool` offers all of these to
+`randomize` takes a factor or a `(lo, hi)` range and returns what it drew: the world factors, `scales[<target>]` per targeted body, `camera_jitter` per camera. `sim.tool` offers all of these to
 an agent, and `run({"a": spec, "b": spec})` drives robots in lock-step by id.
 
 `Simulation()` refuses what it cannot be: an unknown backend, `physics=` other than `native`,

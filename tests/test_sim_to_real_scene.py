@@ -68,7 +68,14 @@ ARM = {"base", "shoulder", "upper_arm", "lower_arm", "wrist", "gripper", "moving
 def test_randomize_mass_scales_only_its_target(world, kwargs, changed):
     sim, _ = world
     before = sim.backend.model.body_mass.copy()
-    sim.randomize(**kwargs)
+    drawn = sim.randomize(**kwargs)
+    if "target" in kwargs:  # the return reports the draw where it landed, and the world factor stays 1.0
+        assert drawn["scales"][kwargs["target"]]["mass_scale"] == 2.0 and drawn["mass_scale"] == 1.0
+        assert drawn["scales"][kwargs["target"]] == dict(
+            zip(("friction_scale", "mass_scale"), sim.scene.scales[kwargs["target"]], strict=True)
+        )
+    else:
+        assert drawn["mass_scale"] == 2.0 and drawn["scales"] == {}
     m = sim.backend.model
     doubled = np.isclose(m.body_mass, 2.0 * before) & (before > 0)
     assert {m.body(b).name.split("/")[-1] for b in np.flatnonzero(doubled)} == changed
@@ -80,7 +87,10 @@ def test_randomize_friction_of_one_object_leaves_the_robot_alone(world):
     m0 = sim.backend.model
     cube_geoms = m0.geom_bodyid == mujoco.mj_name2id(m0, mujoco.mjtObj.mjOBJ_BODY, "cube")
     before = m0.geom_friction[:, 0].copy()
-    sim.randomize(target="cube", friction=(0.2, 0.4), seed=1)
+    drawn = sim.randomize(target="cube", friction=(0.2, 0.4), seed=1)
+    f = drawn["scales"]["cube"]["friction_scale"]
+    assert 0.2 <= f <= 0.4 and (f, drawn["scales"]["cube"]["mass_scale"]) == sim.scene.scales["cube"]
+    assert drawn["friction_scale"] == 1.0  # the world factor was not drawn
     after = sim.backend.model.geom_friction[:, 0]
     assert np.all((after[cube_geoms] / before[cube_geoms] >= 0.2) & (after[cube_geoms] / before[cube_geoms] <= 0.4))
     assert np.array_equal(after[~cube_geoms], before[~cube_geoms])

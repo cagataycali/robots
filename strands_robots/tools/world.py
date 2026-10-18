@@ -16,7 +16,7 @@ from .schema import NotOnTheWire, parameters
 if TYPE_CHECKING:
     from ..simulation import Simulation
 
-LIFECYCLE = frozenset({"close", "manual_time", "unique_id"})
+LIFECYCLE = frozenset({"close", "manual_time", "unique_id", "editing"})  # editing: a context manager, no rpc
 ROBOT_PLACEMENT = ("name", "position", "orientation", "keyframe", "id")
 
 
