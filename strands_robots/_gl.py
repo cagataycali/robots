@@ -62,10 +62,15 @@ class _GLThread:
             fn, args, fut = item
             try:
                 fut.set_result(fn(*args))
-            except BaseException as exc:  # noqa: BLE001 — handed to the caller through the future
+            except Exception as exc:  # noqa: BLE001 — a render's error belongs to the caller, through the future
                 fut.set_exception(exc)
+            except BaseException as exc:  # KeyboardInterrupt / SystemExit: the caller gets it, and the worker ends
+                fut.set_exception(exc)
+                raise
 
     def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
+        if not self.t.is_alive():
+            raise RuntimeError("the GL thread has stopped")
         fut: Future[Any] = Future()
         self.q.put((fn, args, fut))
         return fut
@@ -86,7 +91,7 @@ def on_gl_thread(fn: Callable[..., T], *args: Any) -> T:
     if threading.current_thread().name == _GL_THREAD:
         return fn(*args)
     with _gl_lock:
-        if _gl is None:
+        if _gl is None or not _gl.t.is_alive():  # first use, or a worker a KeyboardInterrupt ended
             _gl = _GLThread()
             atexit.register(_release_gl)
     return _gl.submit(fn, *args).result()
