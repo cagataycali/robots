@@ -15,7 +15,7 @@ from ...types import Observation
 from ..safety import EStopped, NonFiniteTarget, apply_on_disconnect
 from .bind import Bound, bind, decide, looks, release
 from .result import RunResult
-from .source import is_agent
+from .source import gated_write, is_agent
 from .task import Task
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ def _loop(
     fault: str | None = None
     next_tick = wall0 = _time.perf_counter()
     always = robot.sim is None or stop_when is not None or ep.wants_images  # a recorded step keeps its cameras
-    write = robot.confirm_act if is_agent() else robot.act  # an agent's run passes the gate on every step
+    write = gated_write(robot) if is_agent() else robot.act  # an agent's run passes the gate on every step
     while True:
         if robot.estopped or robot.estop_latch.count != stops0:  # an e-stop outranks a plain stop()
             why = "estop"

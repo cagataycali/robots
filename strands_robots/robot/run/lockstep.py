@@ -12,7 +12,7 @@ from ..safety import EStopped, NonFiniteTarget, apply_on_disconnect
 from .bind import Bound, bind, decide, looks, release
 from .loop import _announce, _declared, _emit
 from .result import RunResult
-from .source import is_agent
+from .source import gated_write, is_agent
 
 if TYPE_CHECKING:
     from ...policy import PolicyLike
@@ -69,7 +69,7 @@ def _lockstep(
     stopped: list[Robot] = []
     t0, n, next_tick = sim.time, 0, _time.perf_counter()
     stops0 = {r: r.estop_latch.count for r in bound}
-    write = {r: r.confirm_act if is_agent() else r.act for r in bound}  # an agent's run passes the gate per step
+    write = {r: gated_write(r) if is_agent() else r.act for r in bound}  # an agent's run passes the gate per step
     with sim.manual_time():
         for _ in range(total):
             stopped = [r for r in bound if r.estopped or r.estop_latch.count != stops0[r]]

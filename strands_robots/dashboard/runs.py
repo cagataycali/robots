@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..policy.factory import FORMS
+from ..robot.run.source import from_agent
 
 
 def _have(mod: str) -> bool:
@@ -71,7 +72,7 @@ def start(robot: Any, spec: Any, *, instruction: Any, seconds: Any, hz: Any, con
         if not confirmed:
             raise PermissionError(f"{robot.id} is a real robot: run it from this page with header X-Confirm: yes")
         first = pol(robot.observe(images=False)) if callable(pol) else pol.act(robot.observe(images=False))
-        robot.gate(first, confirmed=True)  # the whole chain on the first action, before anything moves
+        robot.gate(first, confirmed=True)  # the whole chain on the first action, before the task even starts
         if hasattr(pol, "reset"):
             pol.reset()
     kw: dict[str, Any] = {"instruction": instruction, "realtime": True}
@@ -81,7 +82,8 @@ def start(robot: Any, spec: Any, *, instruction: Any, seconds: Any, hz: Any, con
         kw["stop_when"] = lambda obs: False  # until POST /stop
     else:
         kw["seconds"] = float(seconds)
-    task = robot.start(pol, **kw)
+    with from_agent(confirmed=confirmed):  # every step passes the chain; the page's one yes is the operator step
+        task = robot.start(pol, **kw)
     return {"robot": robot.id, "policy": spec, "status": task.status, "seconds": seconds}
 
 
