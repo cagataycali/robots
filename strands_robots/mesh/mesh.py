@@ -1,8 +1,7 @@
 """``Mesh``: every device, anywhere. Mount a robot to make it a device; discover, invoke and subscribe to the rest.
 
-``Mesh("zenoh://", tenant="lab-a")`` joins the strands peers on the LAN with zero configuration;
-``Mesh(("zenoh://", "iot://us-west-2"))`` spans several transports with one id space.
-``Robot("so101", mesh=m)`` mounts a robot on ``m`` as soon as it is built.
+``Mesh("zenoh://", tenant="lab-a")`` joins the strands peers on the LAN with zero configuration; ``Mesh(("zenoh://",
+"iot://us-west-2"))`` spans several transports with one id space. ``Robot("so101", mesh=m)`` mounts it on ``m``.
 """
 
 from __future__ import annotations
@@ -78,10 +77,9 @@ class Mesh:
         watchdog_ms: float | None = 500.0,
         iot: Any = None,
     ) -> Any:
-        """Make ``robot`` a device on every transport: announce it, answer its rpcs, publish its state (at
-        ``state_hz``, default the manifest's rate) and events. Whoever moves it must keep talking within
-        ``watchdog_ms`` and stay present, or the device applies ``on_disconnect`` (``None``: no watchdog). ``iot``
-        (``iot.IotOptions``) adds shadows/telemetry/cameras on ``iot://``. A ``Simulation`` mounts every robot."""
+        """Make ``robot`` a device: announce it, answer its rpcs, publish its state (``state_hz``) and events. A mover
+        must keep talking within ``watchdog_ms`` and stay present, else ``on_disconnect`` applies (``None``: no
+        watchdog). ``iot`` (``IotOptions``) adds shadows. A ``Simulation`` mounts every robot in it."""
         from ..simulation import Simulation
 
         if isinstance(robot, Simulation):
