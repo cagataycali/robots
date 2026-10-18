@@ -68,12 +68,7 @@ def _act(robot: Any, action: Any = None, steps: int | None = None) -> Any:
 
 def _lockout(robot: Any, lockout: Lockout) -> Lockout:
     """The lockout as the robot's latch says it is (a local ``robot.estop()`` opens one too)."""
-    engaged = bool(getattr(robot, "estopped", False))
-    if engaged and not lockout.engaged:
-        lockout.engaged, lockout.epoch, lockout.by, lockout.at = True, new_epoch(), None, time.time()
-    elif not engaged:
-        lockout.engaged, lockout.epoch, lockout.by, lockout.at = False, None, None, None
-    return lockout
+    return lockout.synced(robot)
 
 
 def estop(robot: Any, lockout: Lockout, by: str | None = None, epoch: str | None = None) -> None:

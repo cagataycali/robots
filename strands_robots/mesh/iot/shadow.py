@@ -89,23 +89,54 @@ class ShadowMirror:
         self._lock = threading.Lock()
         self.updates = {"manifest": 0, "state": 0, "control": 0}
         self.applied: list[dict[str, float]] = []
+        # A delta is APPLIED on the mirror's own worker, never on the link's dispatcher thread: that thread also
+        # delivers the e-stop, which must never wait behind a confirm_act (an operator gate can hold it for seconds).
+        # Deltas received while one is being applied coalesce: the latest desired wins.
+        self._pending: tuple[Mapping[str, Any], Mapping[str, Any]] | None = None
+        self._busy = False
+        self._wake = threading.Condition()
+        self._worker = threading.Thread(target=self._drain, daemon=True, name=f"shadow-{self.thing}")
 
     def start(self) -> ShadowMirror:
         """Write ``manifest``, start reporting ``state`` at ``shadow_hz``, listen for ``control`` deltas."""
         self._update("manifest", {"reported": self.record})
+        self._worker.start()
         self._undo.append(self.link.subscribe(shadow_topic(self.thing, "control", "update/delta"), self._on_delta))
         if hasattr(self.robot, "subscribe"):
             self._undo.append(self.robot.subscribe("state", self._on_state, hz=self.shadow_hz))
         return self
 
     def stop(self) -> None:
-        """Delete the ``manifest`` shadow (the device is gone, not stale) and stop reporting. Idempotent."""
+        """Delete the ``manifest`` shadow (the device is gone, not stale), stop reporting, and drop any delta still
+        queued (a target for a device that is leaving is not applied). Idempotent."""
         if self._stop.is_set():
             return
         self._stop.set()
+        with self._wake:
+            self._pending = None
+            self._wake.notify()
         for u in reversed(self._undo):
             u()
         self._publish(shadow_topic(self.thing, "manifest", "delete"), {})
+
+    def drain(self, timeout: float = 5.0) -> None:
+        """Wait until every received delta has been applied (a clean stop, tests)."""
+        end = time.monotonic() + timeout
+        while (self._pending is not None or self._busy) and time.monotonic() < end:
+            time.sleep(0.005)
+
+    def _drain(self) -> None:
+        while not self._stop.is_set():
+            with self._wake:
+                while self._pending is None and not self._stop.is_set():
+                    self._wake.wait(0.5)
+                job, self._pending = self._pending, None
+                self._busy = job is not None
+            if job is not None:
+                try:
+                    self.apply(*job)
+                finally:
+                    self._busy = False
 
     def _on_state(self, payload: Mapping[str, Any]) -> None:
         doc = _plain(payload)
@@ -134,7 +165,12 @@ class ShadowMirror:
             return
         if not isinstance(desired, Mapping):
             return
-        self.apply(desired, stamps)
+        with self._wake:  # returns at once: the link's dispatcher is free for the next message (an e-stop)
+            if self._pending is not None:
+                prev_d, prev_s = self._pending
+                desired, stamps = {**prev_d, **desired}, {**prev_s, **stamps}
+            self._pending = (desired, stamps)
+            self._wake.notify()
 
     def apply(self, desired: Mapping[str, Any], stamps: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """One delta: split into targets for ``confirm_act`` and refusals; write the outcome to ``control``.

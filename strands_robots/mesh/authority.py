@@ -46,6 +46,16 @@ class Lockout:
     def to_dict(self) -> dict[str, Any]:
         return {"engaged": self.engaged, "epoch": self.epoch, "by": self.by, "at": self.at}
 
+    def synced(self, robot: Any) -> Lockout:
+        """This lockout as the robot's latch says it is: a local ``robot.estop()`` (a button, a fault handler) opens
+        one too, and a local resume closes it. Every surface that shows the lockout reads it through here."""
+        engaged = bool(getattr(robot, "estopped", False))
+        if engaged and not self.engaged:
+            self.engaged, self.epoch, self.by, self.at = True, new_epoch(), None, time.time()
+        elif not engaged:
+            self.engaged, self.epoch, self.by, self.at = False, None, None, None
+        return self
+
 
 def fingerprint(public_key: str) -> str:
     """A short, stable id for an operator's public key: what the audit records next to the name."""

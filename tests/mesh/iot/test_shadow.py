@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 
@@ -167,3 +168,57 @@ def test_a_stale_bound_under_the_stamp_resolution_is_refused_by_name(lab):
         ShadowMirror(device, arm, rec, stale_s=0.5)
     assert ShadowMirror(device, arm, rec, stale_s=1.0).stale_s == 1.0
     assert ShadowMirror(device, arm, rec, stale_s=None).stale_s is None
+
+
+def test_an_estop_on_the_links_dispatcher_never_waits_behind_a_shadow_act(lab):
+    """A delta used to be applied (confirm_act) ON the link's one dispatcher thread, the thread that also delivers
+    the e-stop: with an operator gate holding confirm_act for seconds, no e-stop could land over this link."""
+    import threading
+
+    arm, rec, device, op, _seen = lab
+    entered, real = threading.Event(), arm.confirm_act
+
+    def slow_act(action, **kw):
+        entered.set()
+        time.sleep(1.5)  # an operator gate waiting for a human
+        return real(action, **kw)
+
+    arm.confirm_act = slow_act  # type: ignore[method-assign]
+    stopped_at: list[float] = []
+    device.subscribe("strands/lab/arm/estop", lambda t, raw: stopped_at.append(time.monotonic()))  # inline, as serve
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
+    try:
+        op.publish(
+            shadow_topic("arm", "control", "update/delta"), json.dumps({"state": {"shoulder_pan.pos": 0.2}}).encode()
+        )
+        assert entered.wait(3.0)  # the act is running now, on the mirror's worker
+        sent = time.monotonic()
+        op.publish("strands/lab/arm/estop", b"{}")
+        _wait(lambda: stopped_at, timeout=1.0)
+        assert stopped_at[0] - sent < 0.3, f"the e-stop waited {stopped_at[0] - sent:.2f} s behind the shadow act"
+    finally:
+        mirror.drain()
+        mirror.stop()
+    assert mirror.applied == [{"shoulder_pan": 0.2}]
+
+
+def test_deltas_received_during_an_apply_coalesce_and_stop_drops_what_is_queued(lab):
+    arm, rec, device, _op, _seen = lab
+    gate, real = threading.Event(), arm.confirm_act
+    arm.confirm_act = lambda action, **kw: (gate.wait(3.0), real(action, **kw))[1]  # type: ignore[method-assign]
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
+    mirror._on_delta("", json.dumps({"state": {"shoulder_pan.pos": 0.1}}).encode())
+    _wait(lambda: mirror._busy)
+    mirror._on_delta("", json.dumps({"state": {"shoulder_pan.pos": 0.2}}).encode())
+    mirror._on_delta("", json.dumps({"state": {"elbow_flex.pos": 0.3}}).encode())  # the latest desired wins, merged
+    gate.set()
+    mirror.drain()
+    assert mirror.applied == [{"shoulder_pan": 0.1}, {"shoulder_pan": 0.2, "elbow_flex": 0.3}]
+    gate.clear()
+    mirror._on_delta("", json.dumps({"state": {"shoulder_pan.pos": 0.4}}).encode())
+    _wait(lambda: mirror._busy)
+    mirror._on_delta("", json.dumps({"state": {"shoulder_pan.pos": 0.5}}).encode())  # queued behind the held one
+    mirror.stop()  # drops it: a device that is leaving applies no more targets
+    gate.set()
+    time.sleep(0.2)
+    assert [a for a in mirror.applied if a == {"shoulder_pan": 0.5}] == []

@@ -39,7 +39,8 @@ def attach(
     lockout: Any,
 ) -> Unsubscribe:
     """Start the IoT-native pieces for one mounted device on every IoT transport. ``lockout`` is the device's
-    ``Lockout`` (its ``to_dict`` is reported into the ``state`` shadow). Returns the undo."""
+    ``Lockout``; the ``state`` shadow reports it synced with the robot's latch, as the ``lockout`` rpc does.
+    Returns the undo."""
     opts = options if isinstance(options, IotOptions) else IotOptions(**dict(options))
     iot_transports = [t for t in transports if is_iot(t)]
     if not iot_transports:
@@ -52,7 +53,12 @@ def attach(
             from .shadow import ShadowMirror
 
             mirror = ShadowMirror(
-                link, robot, record, shadow_hz=opts.shadow_hz, stale_s=opts.stale_s, lockout=lockout.to_dict
+                link,
+                robot,
+                record,
+                shadow_hz=opts.shadow_hz,
+                stale_s=opts.stale_s,
+                lockout=lambda: lockout.synced(robot).to_dict(),  # what the lockout rpc answers, not a stale copy
             ).start()
             undos.append(mirror.stop)
         if opts.telemetry_hz > 0 and hasattr(robot, "subscribe"):
