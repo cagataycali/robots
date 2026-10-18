@@ -45,9 +45,15 @@ def make(spec: Any, **kw: Any) -> Any:
     if (local / "meta" / "info.json").is_file():
         from .dataset import ReplayPolicy
 
-        episode = dict(parse_qsl(query)).get("episode", "0")
+        try:  # the query is a grammar, not a hint: one key, ``episode``; anything else is refused by name
+            params = dict(parse_qsl(query, keep_blank_values=True, strict_parsing=bool(query)))
+        except ValueError as exc:
+            raise ValueError(f"Policy({s!r}): malformed query {query!r}; the form is <dir>?episode=n ({exc})") from exc
+        if unknown := sorted(set(params) - {"episode"}):
+            raise ValueError(f"Policy({s!r}): unknown parameter {', '.join(map(repr, unknown))}; known: episode")
+        episode = params.get("episode", "0")
         if not episode.isdigit():
-            raise ValueError(f"Policy({s!r}): episode must be an integer >= 0")
+            raise ValueError(f"Policy({s!r}): episode must be an integer >= 0, got {episode!r}")
         return ReplayPolicy(local, int(episode), **kw)
     if (local / "config.json").is_file() or _REPO.match(s):
         from .chunked import ChunkedPolicy

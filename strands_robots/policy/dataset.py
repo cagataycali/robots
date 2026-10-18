@@ -23,7 +23,15 @@ class ReplayPolicy(SequencePolicy):
     def __init__(self, root: Path, episode: int = 0, *, units: str | None = None) -> None:
         info = json.loads((root / "meta" / "info.json").read_text())
         stored = root / "meta" / "units.json"
-        units = units or (json.loads(stored.read_text())["units"] if stored.is_file() else None)
+        said = json.loads(stored.read_text())["units"] if stored.is_file() else None
+        if (
+            said is not None and units is not None and units != said
+        ):  # the dataset's word is the record; never overridden
+            raise ValueError(
+                f"{root}: meta/units.json says the actions are stored in {said!r}, but units={units!r} was passed; "
+                "drop units= (the dataset knows) or replay a dataset recorded in those units"
+            )
+        units = units if said is None else said
         if units is None:
             raise ValueError(f"{root}: no meta/units.json says what the actions are in; pass units='rad' or 'lerobot'")
         self.units, self.hz, self.root, self.episode = units, float(info["fps"]), root, episode

@@ -47,6 +47,12 @@ _REFUSED = {
     "a dir that is neither": (lambda root, empty: str(empty), "neither a checkpoint nor a dataset"),
     "an episode it lacks": (lambda root, empty: f"{root}?episode=7", r"no episode 7; it has episodes \[0\]"),
     "a non-integer episode": (lambda root, empty: f"{root}?episode=last", "episode must be an integer"),
+    # the query is a grammar: a key that is not ``episode`` or a malformed query is refused, never episode 0 by default
+    "a misspelt key": (lambda root, empty: f"{root}?ep=1", "unknown parameter 'ep'; known: episode"),
+    "a wrong-case key": (lambda root, empty: f"{root}?Episode=1", "unknown parameter 'Episode'; known: episode"),
+    "a stray key": (lambda root, empty: f"{root}?episode=0&bogus=x", "unknown parameter 'bogus'; known: episode"),
+    "a key without a value": (lambda root, empty: f"{root}?episode", "malformed query 'episode'"),
+    "a bare value": (lambda root, empty: f"{root}?1", "malformed query '1'"),
 }
 
 
@@ -71,6 +77,17 @@ def test_a_dataset_that_does_not_say_its_units_needs_them_from_the_caller(record
     with pytest.raises(ValueError, match="pass units="):
         Policy(str(foreign))
     assert Policy(str(foreign), units="rad").units == "rad"
+
+
+def test_a_callers_units_never_override_what_the_dataset_says_it_stores(recorded):
+    # The factor-57 hazard reopened by a keyword: units.json says 'rad' (so101 records in rad), units='lerobot'
+    # would declare degrees/percent for radian rows and drive a real arm to its stops. Refused, naming both.
+    said = json.loads((recorded / "meta" / "units.json").read_text())["units"]
+    other = "lerobot" if said == "rad" else "rad"
+    with pytest.raises(ValueError, match=f"says the actions are stored in {said!r}, but units={other!r} was passed"):
+        Policy(str(recorded), units=other)
+    assert Policy(str(recorded), units=said).units == said  # agreeing is fine; so is saying nothing
+    assert Policy(str(recorded)).units == said
 
 
 def test_a_replay_on_a_robot_with_keys_the_dataset_lacks_is_refused_by_name(recorded):
