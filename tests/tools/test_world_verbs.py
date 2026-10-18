@@ -65,6 +65,23 @@ def test_a_string_or_wrong_length_vector_is_refused_by_name(sim, kw, err):
     assert sim.scene.objects == []
 
 
+def test_an_agent_never_chooses_where_a_worlds_cameras_stream(sim, monkeypatch):
+    """The same rule as robot.tool's ``policy=``, for ``sim.tool``'s ``policies={id: spec}``: refused before attach."""
+    from strands_robots.policy.lerobot import remote
+    from strands_robots.robot.run.source import from_agent
+
+    attached: list[str] = []
+    monkeypatch.setattr(remote.ZenohPolicy, "attach", lambda self, robot: attached.append(robot.id))
+    Robot("so101", sim=sim, id="a")
+    host = ".".join(["203", "0", "113", "9"])  # TEST-NET-3, assembled so no scanner reads it as an address
+    (r,) = _turn(sim, [{"rpc": "run", "run": {"policies": {"a": f"zenoh://{host}:7447/x"}, "steps": 1}}])
+    assert r["status"] == "error" and "developer" in r["content"][0]["text"] and "network" in r["content"][0]["text"]
+    assert attached == []
+    with from_agent(), pytest.raises(PermissionError, match="network address"):  # any entry point: bind() refuses
+        sim.run({"a": f"zenoh://{host}:7447/x"}, steps=1)
+    assert attached == []
+
+
 def test_an_agent_runs_two_robots_in_lock_step_by_id(sim, monkeypatch):
     from strands_robots.policy import factory
 

@@ -14,6 +14,7 @@ from ...policy import PolicyLike, as_policy
 from ...policy.requirements import Requirements
 from ...types import Observation
 from ...units import Units, calibrated, resolve_units
+from .source import refuse_remote_spec
 
 if TYPE_CHECKING:
     from ..robot import Robot
@@ -51,6 +52,7 @@ def _pair(v: Any) -> bool:
 
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
     """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
+    refuse_remote_spec(policy)  # an agent's run, by any entry point: no policy at a network address
     pol = as_policy(policy)
     for name in ("attach", "detach", "requirements", "needs_observation"):
         _hook(pol, name, callable, "a method")

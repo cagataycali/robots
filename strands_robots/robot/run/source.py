@@ -11,6 +11,16 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 _AGENT: ContextVar[bool] = ContextVar("strands_robots_agent_source", default=False)
+# A policy at a network address (``zenoh://host:port/x``) streams the cameras to that host on every step, before the
+# operator gate sees an action: a model never chooses where the frames go. The developer's own ``run("zenoh://...")``
+# is untouched.
+REMOTE_SPEC = "://"
+
+
+def refuse_remote_spec(spec: object) -> None:
+    """Under ``from_agent()``, a policy spec naming a network address is a ``PermissionError``."""
+    if is_agent() and isinstance(spec, str) and REMOTE_SPEC in spec:
+        raise PermissionError(f"a policy at a network address is the developer's to pass, not an agent's: {spec}")
 
 
 @contextmanager
