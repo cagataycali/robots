@@ -136,7 +136,8 @@ class Dashboard:
                         "root": sx.roots.get(o.name),
                         "pose": [*pose.position.tolist(), *pose.orientation.tolist()],
                     }
-            estop = {rid: bool(getattr(r, "estopped", False)) for rid, r in self.sim.robots.items()}
+            cards = self.real_cards()  # a hardware card is its twin: report the REAL latch, as estop/resume resolve it
+            estop = {rid: bool(getattr(cards.get(rid, r), "estopped", False)) for rid, r in self.sim.robots.items()}
             return {"t": self.sim.time, "revision": self.sim.revision, "bodies": bodies, "estop": estop}
 
     def _robot(self, rid: str) -> Robot:

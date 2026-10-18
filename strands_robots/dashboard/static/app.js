@@ -27,6 +27,9 @@ function setMode(mode, label) {
   pill.dataset.mode = mode;
   pill.textContent = label || mode;
 }
+// Every string the server sends (robot ids, names, cameras, policies, chat tool names) is text, never markup:
+// an agent chooses some of them (sim.tool add_robot id=, camera name=), and a script in this page could set X-Confirm.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function notice(html, bad = false) { const n = $("#notice"); n.innerHTML = html || ""; n.classList.toggle("bad", bad); }
 function chip(key, html, cls = "") { state.chips[key] = html ? { html, cls } : null; renderChips(); }
 function renderChips() {
@@ -85,15 +88,15 @@ function renderCards(desc) {
     const card = document.createElement("div");
     card.className = "card";
     card.dataset.id = r.id;
-    const tag = r.is_twin_of ? `<span class="tag real">twin of ${r.is_twin_of}</span>` : r.is_real ? '<span class="tag real">real</span>' : '<span class="tag sim">sim</span>';
-    card.innerHTML = `<h3><span>${r.id}<small>${r.name}</small></span>${tag}</h3>`;
+    const tag = r.is_twin_of ? `<span class="tag real">twin of ${esc(r.is_twin_of)}</span>` : r.is_real ? '<span class="tag real">real</span>' : '<span class="tag sim">sim</span>';
+    card.innerHTML = `<h3><span>${esc(r.id)}<small>${esc(r.name)}</small></span>${tag}</h3>`;
     r.joints.forEach((jname, i) => {
       const label = (r.labels && r.labels[i]) || jname.split("/").pop();
       const lim = (r.limits && r.limits[label]) || [-3.14, 3.14];
       const row = document.createElement("div");
       row.className = "joint";
-      row.innerHTML = `<span title="${jname}">${label}</span><span class="val" data-joint="${jname}">–</span>` +
-        `<input type="range" min="${lim[0]}" max="${lim[1]}" step="0.001" data-robot="${r.id}" data-label="${label}" ${state.mode === "server" ? "" : "disabled"}>`;
+      row.innerHTML = `<span title="${esc(jname)}">${esc(label)}</span><span class="val" data-joint="${esc(jname)}">–</span>` +
+        `<input type="range" min="${esc(lim[0])}" max="${esc(lim[1])}" step="0.001" data-robot="${esc(r.id)}" data-label="${esc(label)}" ${state.mode === "server" ? "" : "disabled"}>`;
       card.appendChild(row);
     });
     card.addEventListener("click", () => highlight(r.id));
@@ -102,7 +105,7 @@ function renderCards(desc) {
   for (const c of desc.cameras || []) {  // what a policy sees: the world's own render, refreshed once a second
     const card = document.createElement("div");
     card.className = "card cam";
-    card.innerHTML = `<h3><span>${c.name}<small>camera ${c.size[0]}x${c.size[1]}</small></span><span class="tag sim">eyes</span></h3><img alt="camera ${c.name}" data-src="${state.base}${c.url}">`;
+    card.innerHTML = `<h3><span>${esc(c.name)}<small>camera ${esc(c.size[0])}x${esc(c.size[1])}</small></span><span class="tag sim">eyes</span></h3><img alt="camera ${esc(c.name)}" data-src="${esc(state.base)}${esc(c.url)}">`;
     root.appendChild(card);
   }
   refreshCams();
@@ -161,17 +164,17 @@ async function loadPickers() {
   if (!pol) return;
   // {policies: [{name, kind: builtin|onnx|lerobot|remote, robots, ready, hz, source, description}]}
   $("#run-policy").innerHTML = pol.policies.filter((p) => p.kind !== "remote").map((p) =>
-    `<option value="${p.name}" ${p.ready === false ? "disabled" : ""} title="${p.description || ""}">${p.name} · ${p.kind}${p.ready === false ? " · extra missing" : ""}</option>`).join("") +
+    `<option value="${esc(p.name)}" ${p.ready === false ? "disabled" : ""} title="${esc(p.description || "")}">${esc(p.name)} · ${esc(p.kind)}${p.ready === false ? " · extra missing" : ""}</option>`).join("") +
     `<option value="__text">from the text field → (ws://host:port · lerobot/repo · file.onnx)</option>`;
   const names = new Set(["so101", "g1", "microduck", "franka", "go2", "spot"]);
   for (const p of pol.policies) for (const r of p.robots || []) names.add(r);
-  $("#add-names").innerHTML = [...names].map((n) => `<option value="${n}">`).join("");
+  $("#add-names").innerHTML = [...names].map((n) => `<option value="${esc(n)}">`).join("");
   fillRunRobots();
   pollTasks();
 }
 function fillRunRobots() {
   const sel = $("#run-robot"); const was = sel.value;
-  sel.innerHTML = (state.desc?.robots || []).map((r) => `<option value="${r.id}">${r.id}${r.is_real ? " · REAL" : ""}</option>`).join("");
+  sel.innerHTML = (state.desc?.robots || []).map((r) => `<option value="${esc(r.id)}">${esc(r.id)}${r.is_real ? " · REAL" : ""}</option>`).join("");
   if ([...sel.options].some((o) => o.value === was)) sel.value = was;
   else if (state.picked && [...sel.options].some((o) => o.value === state.picked)) sel.value = state.picked;
 }
@@ -254,7 +257,7 @@ $("#run-robot").addEventListener("change", () => renderTasks(state.tasks));
 
 function statusLine() {
   const d = state.desc;
-  if (d) chip("phys", `<b>${d.physics.name}</b> dt=${d.physics.timestep}`);
+  if (d) chip("phys", `<b>${esc(d.physics.name)}</b> dt=${esc(d.physics.timestep)}`);
   const t = state.lastFrame ? state.lastFrame.t : d ? d.time : null;
   chip("t", t === null ? "" : `t=<b>${t.toFixed(2)}</b>s`);
   if (state.mode === "server") chip("net", `<b>${state.fps}</b> fps · ${(state.bytes / 1024).toFixed(1)} KB/s`);
@@ -338,8 +341,8 @@ function connectChat() {
       const ev = JSON.parse(e.data);
       window.__chatEvents = (window.__chatEvents || []).concat([ev]);
       if (ev.type === "text") { if (!current) current = log("", "assistant"); current.textContent += ev.delta; }
-      else if (ev.type === "tool_use") { current = null; const d = log("", "tool"); d.innerHTML = `<details><summary>⚙ ${ev.name}</summary><pre></pre></details>`; d.querySelector("pre").textContent = JSON.stringify(ev.input, null, 1); }
-      else if (ev.type === "tool_result") { current = null; const d = log("", "tool"); d.innerHTML = `<details><summary>↳ ${ev.name} · ${ev.status}</summary><pre></pre></details>`; d.querySelector("pre").textContent = ev.text || ""; }
+      else if (ev.type === "tool_use") { current = null; const d = log("", "tool"); d.innerHTML = `<details><summary>⚙ ${esc(ev.name)}</summary><pre></pre></details>`; d.querySelector("pre").textContent = JSON.stringify(ev.input, null, 1); }
+      else if (ev.type === "tool_result") { current = null; const d = log("", "tool"); d.innerHTML = `<details><summary>↳ ${esc(ev.name)} · ${esc(ev.status)}</summary><pre></pre></details>`; d.querySelector("pre").textContent = ev.text || ""; }
       else if (ev.type === "error") { current = null; log(ev.message, "err"); }
       else if (ev.type === "done") { current = null; }
       $("#log").scrollTop = 1e9;
@@ -377,14 +380,14 @@ async function standalone(why) {
   notice(`<b>standalone</b> — physics in your browser (MuJoCo WASM, ${desc.physics.timestep * 1000} ms × ${desc.physics.substeps}; ` +
     `the ONNX skill on onnxruntime-web at ${desc.standalone.hz} Hz). ${why} <span class="keys">W A S D walk · R reset</span>`);
   const pick = $("#skill");
-  pick.innerHTML = sa.skills.map((k) => `<option value="${k}"${k === sa.skill ? " selected" : ""}>${k}</option>`).join("");
+  pick.innerHTML = sa.skills.map((k) => `<option value="${esc(k)}"${k === sa.skill ? " selected" : ""}>${esc(k)}</option>`).join("");
   pick.addEventListener("change", async () => { pick.disabled = true; try { policyChip(await sa.use(pick.value)); } finally { pick.disabled = false; } });
   $("#pad").hidden = false;
   wireCommand(sa);
 }
 
 function policyChip(ready) {
-  chip("policy", `<b>${ready.skill}</b> · ${(ready.modelBytes / 1024).toFixed(0)} KB · loaded ${Math.round(ready.loadMs)} ms`, "opt");
+  chip("policy", `<b>${esc(ready.skill)}</b> · ${(ready.modelBytes / 1024).toFixed(0)} KB · loaded ${Math.round(ready.loadMs)} ms`, "opt");
 }
 
 function onStandalone(m) {
@@ -394,7 +397,7 @@ function onStandalone(m) {
     for (const el of document.querySelectorAll(".val[data-joint]")) { const v = twin.qpos(el.dataset.joint); if (v !== undefined && v !== null) el.textContent = fmt(v); }
   }
   if (m.fell) chip("fall", `fell · reset ${m.fell}`, "warn");
-  if (m.error) { chip("sim", m.error, "bad"); notice(`<b>standalone</b> — ${m.error}. The twin still draws the last pose; physics is off.`, true); }
+  if (m.error) { chip("sim", esc(m.error), "bad"); notice(`<b>standalone</b> — ${esc(m.error)}. The twin still draws the last pose; physics is off.`, true); }
 }
 
 function wireCommand(sa) {

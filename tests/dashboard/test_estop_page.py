@@ -51,3 +51,25 @@ def test_estop_button_stops_the_run_latches_and_resume_needs_approval() -> None:
     finally:
         server.stop()
         sim.close()
+
+
+def test_a_hardware_cards_latch_is_the_real_robots_not_its_twins() -> None:
+    """The card of a hardware robot is its twin. E-STOP on that card latches the REAL robot (``_robot`` resolves it),
+    so the frame the panel paints must report the real latch too, or a latched arm shows ``armed``."""
+    import test_drivers
+
+    d, _serial = test_drivers.make_driver()
+    real = Robot("so101", driver=d, id="real_arm")
+    sim = real.twin.sim
+    dash = Dashboard(sim, robots=[real])
+    try:
+        card = real.twin.id
+        assert dash.frame()["estop"] == {card: False}
+        assert dash.estop(card)["estop"] is True
+        assert real.estopped and not sim.robots[card].estopped  # the latch lives on the real robot only
+        assert dash.frame()["estop"] == {card: True}, "the frame must resolve the card to the real robot"
+        dash.resume(card, approved_by="alice", confirmed=True)  # a real body: the page sends X-Confirm
+        assert dash.frame()["estop"] == {card: False}
+    finally:
+        real.close()
+        sim.close()

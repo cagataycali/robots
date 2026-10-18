@@ -92,7 +92,7 @@ async function pollMesh() {
   const remote = (doc?.devices || []).filter((d) => !d.local);
   window.__mesh = doc;
   meshBox.hidden = remote.length === 0;
-  meshBox.innerHTML = remote.length ? `<div style="color:var(--sr-muted);margin-top:.3rem">mesh · ${doc.tenant}</div>` : "";
+  meshBox.innerHTML = remote.length ? `<div style="color:var(--sr-muted);margin-top:.3rem">mesh · ${String(doc.tenant ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])}</div>` : "";
   for (const d of remote) {
     const row = document.createElement("div");
     row.dataset.device = d.id;
