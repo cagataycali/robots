@@ -125,6 +125,19 @@ def test_editing_rebuilds_the_world_once_and_a_failed_block_changes_nothing(worl
         sim.camera("bad", attach=f"{arm.id}/nope")
     assert [o.name for o in sim.scene.objects] == names and "bad" not in [c.name for c in sim.scene.cameras]
     sim.step(1)  # the world still steps: the old scene is still the built one
+    assert sim.scene is sim.backend._scene  # restored in place: the backend rebuilds from the same scene
+    sim.set_pose(arm, position=[0.5, 0, 0])  # a fixed base rebuilds; the undone camera is not in it
+    with pytest.raises(KeyError, match="no link"), sim.editing():
+        late = Robot("so101", sim=sim)
+        sim.remove(arm)
+        sim.camera("bad", attach=f"{late.id}/nope")
+    assert list(sim.robots) == [arm.id] and arm.observe().joints.positions.shape == (6,)
+    with pytest.raises(RuntimeError, match="removed"):
+        late.observe()
+    with sim.editing():
+        sim.remove(arm)
+        assert arm.sim is sim  # detached only once the block's rebuild holds
+    assert arm.sim is None and list(sim.robots) == []
 
 
 def test_mujoco_replays_bit_exact_and_says_so():

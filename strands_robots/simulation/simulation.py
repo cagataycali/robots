@@ -74,7 +74,7 @@ class Simulation(_SceneOps):
         self.revision = 0  # bumped on every scene change (add/remove/add_object/camera/set_pose/randomize)
         self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
-        self._editing, self._pending = 0, False
+        self._editing, self._pending, self._gone = 0, False, []
         self._closed = False
         cls = load_backend(backend, physics)
         self.backend: Backend = cls(
@@ -130,8 +130,12 @@ class Simulation(_SceneOps):
                 self._editing -= 1
             try:
                 self._flush()
-            except Exception:
-                self.scene, self._robots, self._pending = scene, robots, False
+            except Exception:  # restore in place: the backend holds this same Scene object
+                for rid in set(self._robots) - set(robots):
+                    self._robots.pop(rid).detached()  # added in the failed block: a dead handle, not half-in
+                vars(self.scene).update(vars(scene))
+                self._robots.update(robots)  # removed in it: back, and still live
+                self._pending, self._gone = False, []
                 raise
 
     def _reload(self) -> None:
@@ -142,6 +146,8 @@ class Simulation(_SceneOps):
             self.backend.load(self.scene)
             self.revision += 1
             self._pending = False
+            while self._gone:  # a robot removed inside ``editing()`` detaches once its rebuild holds
+                self._gone.pop().detached()
 
     def _flush(self) -> None:
         if self._pending and not self._editing:

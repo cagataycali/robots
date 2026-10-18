@@ -31,6 +31,8 @@ class _SceneOps:
     revision: int
     render_size: tuple[int, int]
     _robots: dict[str, Member]
+    _editing: int
+    _gone: list[Member]
     _reload: Callable[[], None]  # Simulation's (rebuild now, or when ``with sim.editing():`` exits); so is _flush
     _flush: Callable[[], None]
 
@@ -79,6 +81,9 @@ class _SceneOps:
             self.scene.scales.pop(rid, None)
             self._reload()
             gone = self._robots.pop(rid)
+            if self._editing:  # a failed block restores it, so it stays live until the block commits
+                self._gone.append(gone)
+                return
         gone.detached()
 
     def add_object(
