@@ -58,11 +58,11 @@ def test_run_needs_a_bound_and_valid_hz():
 
 def test_start_stop_background_task():
     arm = Robot("so101")
-    task = arm.start(lambda o: {"wrist_roll": 0.5}, hz=200, seconds=30)
+    task = arm.start(lambda o: {"wrist_roll": 0.5}, hz=200, seconds=30, realtime=True)  # paced: still running at 0.2 s
     assert task.status == "running"
     time.sleep(0.2)
     res = arm.stop()
-    assert res is not None and res.stopped_by == "stopped" and res.steps > 5
+    assert res is not None and res.stopped_by == "stopped" and 5 < res.steps < 6000
     assert task.status == "done" and not task.running
     arm.start(lambda o: o.joints.positions, seconds=5)
     with pytest.raises(RuntimeError, match="already has a running task"):
