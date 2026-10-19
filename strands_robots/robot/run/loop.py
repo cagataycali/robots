@@ -56,8 +56,8 @@ def run(
     if hz is not None and hz <= 0:
         raise ValueError(f"hz must be > 0, got {hz}")  # before bind: a bad hz loads no checkpoint
     bound = bind(robot, policy, units)
-    emit(robot, "run.started", {"policy": repr(bound.policy)})
     try:
+        emit(robot, "run.started", {"policy": repr(bound.policy)})
         ep = episode(
             record,
             description=robot.description,

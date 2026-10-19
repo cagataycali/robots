@@ -12,6 +12,7 @@ from ...policy.base import PolicyFault
 from ...types import Observation
 from ..safety import EStopped, NonFiniteTarget
 from .bind import Bound, decide
+from .source import is_confirmed
 
 if TYPE_CHECKING:
     from ..robot import Robot
@@ -40,7 +41,8 @@ def tick(
 ) -> Tick:
     """observe (the only body read) -> stop_when -> policy (joints it leaves out hold that read) -> write.
 
-    ``gated`` (an agent's run) passes the targets through the safety chain and the operator gate first.
+    ``gated`` (an agent's run) passes the targets through the safety chain and the operator gate first; under
+    ``from_agent(confirmed=True)`` the operator step is pre-satisfied, every other step still runs.
     ``steps=None`` in lockstep: the world steps once for everyone after every robot wrote.
     """
     obs = robot.observe(images=images)
@@ -49,7 +51,7 @@ def tick(
     try:
         targets = decide(robot, bound, obs, instruction)
         if gated:
-            targets = robot.gate(targets)
+            targets = robot.gate(targets, confirmed=is_confirmed())  # a dashboard run: the operator said yes once
         if before_write is not None:  # a paced body: at least one period since the previous write
             before_write()
         robot.command(targets, steps=steps)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 import warnings
 from typing import Any
 
@@ -10,6 +12,8 @@ import numpy as np
 from ...._extras import hint
 
 HINT = f"physics='newton' needs mujoco_warp + warp: {hint('newton')}"
+SLOW_COMPILE_S = 5.0  # a warm kernel cache loads a scene in about a second; above this the kernels were compiled
+_log = logging.getLogger(__name__)
 
 
 class NewtonStepper:
@@ -30,11 +34,19 @@ class NewtonStepper:
 
     def load(self, model: Any, data: Any) -> None:
         """Put the model on the device and broadcast ``data`` to every env."""
+        t = time.perf_counter()
         with self.wp.ScopedDevice(self.device):
             self._model = model
             self.m = self.mjw.put_model(model)
             self.d = self.mjw.put_data(model, data, nworld=self.num_envs)
             self._capture(data)
+        if (took := time.perf_counter() - t) > SLOW_COMPILE_S:
+            _log.warning(
+                "newton: %.1f s to compile this scene shape's kernels; warp caches them in %s (WARP_CACHE_PATH), so "
+                "the same shape loads in about a second next time. Batch scene edits with `with sim.editing():`.",
+                took,
+                self.wp.config.kernel_cache_dir,
+            )
 
     def _capture(self, data: Any) -> None:
         """Record one step into a CUDA graph (kernel-by-kernel launches are ~10x slower); CPU devices run eagerly.

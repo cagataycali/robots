@@ -26,7 +26,7 @@ def test_sim_tool_spec_is_generated_from_the_simulations_public_verbs():
         props = tool.tool_spec["inputSchema"]["json"]["properties"]
         verbs = set(props["rpc"]["enum"])
         assert {"add_robot", "add_object", "camera", "step", "reset", "render", "describe", "remove"} <= verbs
-        assert not verbs & {"close", "add", "manual_time", "default", "unique_id"}
+        assert not verbs & {"close", "add", "manual_time", "default", "unique_id", "editing"}  # no context managers
         assert props["add_object"]["properties"]["position"]["type"] == "array"
         assert props["step"]["properties"]["n"] == {"type": "integer", "default": 1}
         add_robot = props["add_robot"]["properties"]

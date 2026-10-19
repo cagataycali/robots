@@ -1,10 +1,7 @@
-"""One world. Owns time. Holds many robots.
-
-``Simulation`` is backend-agnostic: it owns the ``Scene`` (plain data), the robot registry of the
-world and the time policy. A ``Backend`` implements a dozen methods and nothing else; MuJoCo is the
-first. Adding a robot = append to the Scene + ``backend.load(scene)`` with joint state carried over
-for the bodies that still exist. The scene-editing verbs live in the private ``_SceneOps`` base.
-"""
+"""One world. Owns time. Holds many robots. ``Simulation`` is backend-agnostic: it owns the ``Scene`` (plain data),
+the robot registry and the time policy; a ``Backend`` implements a dozen methods and nothing else (MuJoCo is the
+first). Adding a robot = append to the Scene + ``backend.load(scene)`` with joint state carried over for the
+bodies that still exist. The scene-editing verbs live in the private ``_SceneOps`` base."""
 
 from __future__ import annotations
 
@@ -13,6 +10,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from . import _describe
 from ._sceneops import _SceneOps
 from .backend import Backend, load_backend
 from .member import Member
@@ -29,11 +27,8 @@ _PHYSICS = ("native", "newton")
 
 
 class Simulation(_SceneOps):
-    """One world. Owns time. Holds many robots.
-
-    ``Simulation()`` is MuJoCo, headless. ``Simulation.default()`` is the process-wide world
-    every Robot joins when it is given none.
-    """
+    """One world. Owns time. Holds many robots. ``Simulation()`` is MuJoCo, headless; ``Simulation.default()`` is
+    the process-wide world every Robot joins when it is given none."""
 
     _default: ClassVar[Simulation | None] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
@@ -72,12 +67,14 @@ class Simulation(_SceneOps):
         self.revision = 0  # bumped on every scene change (add/remove/add_object/camera/set_pose/randomize)
         self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
+        self._editing, self._pending, self._gone = 0, False, []
+        self._built: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}  # each robot's frame as compiled
         self._closed = False
         cls = load_backend(backend, physics)
         self.backend: Backend = cls(
             physics=physics, headless=headless, device=device, num_envs=num_envs, render_size=render_size
         )
-        self.backend.load(self.scene)
+        self._load()
 
     @classmethod
     def default(cls) -> Simulation:
@@ -97,6 +94,7 @@ class Simulation(_SceneOps):
         if n < 0:
             raise ValueError(f"n must be >= 0, got {n}")
         with self.lock:
+            self._flush()
             self.backend.step(int(n))
 
     def control_step(self) -> None:
@@ -114,6 +112,49 @@ class Simulation(_SceneOps):
             yield self
         finally:
             self._manual -= 1
+
+    @contextmanager
+    def editing(self) -> Iterator[Simulation]:
+        """Batch scene edits into one rebuild on exit (on newton a new scene shape compiles kernels). A block that
+        fails, in its body or in its rebuild, restores the scene and robots as they were; step, render and set_pose
+        outside a block flush pending edits first."""
+        with self.lock:
+            scene, robots, pending, gone = self.scene.copy(), dict(self._robots), self._pending, list(self._gone)
+            self._editing += 1
+            try:
+                try:
+                    yield self
+                finally:
+                    self._editing -= 1
+                self._flush()
+            except BaseException:  # the body raised (a KeyboardInterrupt too) or the exit rebuild did: restore in
+                for rid in set(self._robots) - set(robots):  # place, the backend holds this same Scene object
+                    self._robots.pop(rid).detached()  # added in the failed block: a dead handle, not half-in
+                vars(self.scene).update(vars(scene))
+                self._robots.update(robots)  # removed in it: back, and still live
+                self._pending, self._gone = pending, gone  # a nested block owns only the edits since its entry
+                raise
+
+    def _reload(self) -> None:
+        with self.lock:
+            if self._editing:  # inside ``with sim.editing():`` the rebuild waits for the block's exit
+                self._pending = True
+                return
+            self._load()
+            self.revision += 1
+            self._pending = False
+            while self._gone:  # a robot removed inside ``editing()`` detaches once its rebuild holds
+                self._gone.pop().detached()
+
+    def _load(self) -> None:
+        """The one rebuild: the backend compiles the scene, and the frame each robot was compiled from is kept (a
+        deferred ``set_pose`` composes its delta onto that frame, not onto a scene entry an earlier call moved)."""
+        self.backend.load(self.scene)
+        self._built = {r.id: (tuple(r.position), tuple(r.orientation)) for r in self.scene.robots}
+
+    def _flush(self) -> None:
+        if self._pending and not self._editing:
+            self._reload()
 
     @property
     def time_is_manual(self) -> bool:
@@ -180,30 +221,9 @@ class Simulation(_SceneOps):
         return sim_tool(self)
 
     def describe(self) -> dict[str, Any]:
-        """Robots (spawn frame + live ``pose``), objects where they are now, cameras, physics, time; JSON-safe."""
+        """Robots (spawn frame, live ``pose``, links), objects where they are now, cameras, physics, time; JSON-safe."""
         with self.lock:
-            return self._describe()
-
-    def _describe(self) -> dict[str, Any]:
-        p = self.physics
-        return {
-            "backend": self.backend_name,
-            "physics": {"name": p.name, "timestep": p.timestep, "substeps": p.substeps, "envs": self.num_envs},
-            "time": self.time,
-            "revision": self.revision,
-            "manual_time": self.time_is_manual,
-            "robots": {
-                rid: r.description.describe()
-                | {"position": list(self.scene.robot(rid).position), "pose": self._where(rid)}
-                for rid, r in self._robots.items()
-            },
-            "objects": [{"name": o.name, "shape": o.shape or o.path} | self._where(o.name) for o in self.scene.objects],
-            "cameras": [{"name": c.name, "size": list(c.size), "attach": c.attach} for c in self.scene.cameras],
-        }
-
-    def _where(self, body: str) -> dict[str, list[float]]:
-        p = self.backend.body_pose(body)
-        return {"position": p.position.tolist(), "orientation": p.orientation.tolist()}
+            return _describe.describe(self)
 
     def close(self) -> None:
         if self._closed:

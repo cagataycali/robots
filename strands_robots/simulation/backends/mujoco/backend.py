@@ -20,7 +20,7 @@ try:
 except ImportError as exc:  # the extra the first snippet needs, so the error says how to get it
     raise ImportError(f"Simulation() needs MuJoCo: {hint('mujoco')} ({exc})") from exc
 
-from ...._gl import ensure_gl, gl_thread, on_gl_thread
+from ...._gl import close_on_gl_thread_at_exit, ensure_gl, gl_thread, on_gl_thread
 from ....types import JointState, Pose
 from ...backend import Backend
 from ...physics import Contact, Physics
@@ -52,6 +52,7 @@ class MuJoCoBackend(Backend):
         self._index: dict[str, _RobotIndex] = {}
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
         self._gl_failed: str | None = None
+        close_on_gl_thread_at_exit(self._close_renderers)
 
     def load(self, scene: Scene) -> None:
         carried = snapshot(self.model, self.data)
@@ -79,17 +80,12 @@ class MuJoCoBackend(Backend):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = spec.compile()
-        if scene.friction_scale != 1.0:
-            model.geom_friction[:, 0] *= scene.friction_scale
-        if scene.mass_scale != 1.0:
-            model.body_mass[:] *= scene.mass_scale
-            model.body_inertia[:] *= scene.mass_scale
+        build.scale_bodies(model, scene)
         data = mujoco.MjData(model)
         self.spec, self.model, self.data = spec, model, data
         self._scene = scene
         self._index = {r.id: self._make_index(model, r) for r in scene.robots}
-        if self._renderers:  # a context is freed on the thread that made it
-            on_gl_thread(self._renderers.clear)
+        self._close_renderers()  # built for the old model; freed on the GL thread, never by the collector elsewhere
         build.apply_keyframes(model, data, scene, {rid: idx.joint_ids for rid, idx in self._index.items()})
         restore(model, data, carried)
         data.time = t  # a scene change is not a reset: world time carries over like joint state
@@ -107,6 +103,11 @@ class MuJoCoBackend(Backend):
         joint_ids = [j for j in range(m.njnt) if m.joint(j).name.startswith(f"{rid}/")]
         root = next(b for b in range(1, m.nbody) if m.body_parentid[b] == 0 and m.body(b).name.startswith(f"{rid}/"))
         return _RobotIndex(act_ids, jq, jd, joint_ids, root)
+
+    def links(self, body: str) -> list[str]:
+        if self.model is None or body not in self._index:  # not built yet (inside sim.editing())
+            return []
+        return build.link_names(self.model, self._index[body].root_body)
 
     def _body_id(self, name: str) -> int:
         if name in self._index:
@@ -239,8 +240,10 @@ class MuJoCoBackend(Backend):
         assert self.model is not None
         return Physics("mujoco", float(self.model.opt.timestep), 1)
 
+    def _close_renderers(self) -> None:
+        if self._renderers:
+            on_gl_thread(lambda: [self._renderers.pop(k).close() for k in list(self._renderers)])
+
     def close(self) -> None:
-        if self._renderers:  # never start the GL thread for a world that did not render
-            on_gl_thread(lambda: [r.close() for r in self._renderers.values()])
-        self._renderers.clear()
+        self._close_renderers()
         self.model = self.data = self.spec = None

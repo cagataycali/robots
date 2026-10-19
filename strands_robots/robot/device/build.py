@@ -106,7 +106,7 @@ def manifest_for(robot: Robot, *, tenant: str = "default", labels: dict[str, str
         real=robot.is_real,
         position_hold=robot.supports_position_hold,
         world=None if sim is None else sim.backend_name,
-        cameras=() if sim is None else tuple(c.name for c in sim.scene.cameras if c.attach == robot.id),
+        cameras=() if sim is None else tuple(c.name for c in sim.scene.cameras if c.robot == robot.id),
         tenant=tenant,
         labels=labels,
         twin=None if robot.twin is None else robot.twin.id,

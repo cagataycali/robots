@@ -2,6 +2,8 @@
 
 import threading
 
+import pytest
+
 from strands_robots import Robot
 
 
@@ -35,3 +37,24 @@ def test_renders_from_any_thread_run_on_the_one_gl_thread(monkeypatch):
     assert len(rendered) >= 3 and len(set(made)) == 1 and set(rendered) == set(made)
     assert made[0].startswith("strands-gl")
     arm.close()
+
+
+def test_a_base_exception_on_the_gl_thread_reaches_the_caller_and_ends_the_worker():
+    from strands_robots import _gl
+
+    class Stop(BaseException):  # not an Exception: the worker hands it over, then stops instead of swallowing it
+        pass
+
+    def boom() -> None:
+        raise Stop()
+
+    worker = _gl._GLThread()
+    try:
+        with pytest.raises(Stop):
+            worker.submit(boom).result(5)
+        worker.t.join(5)
+        assert not worker.t.is_alive()
+        with pytest.raises(RuntimeError, match="GL thread has stopped"):
+            worker.submit(lambda: None)
+    finally:
+        worker.q.put(None)

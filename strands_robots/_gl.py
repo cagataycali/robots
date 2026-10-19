@@ -1,4 +1,4 @@
-"""Pick MuJoCo's GL backend before the first ``import mujoco`` (it reads MUJOCO_GL once).
+"""Pick MuJoCo's GL backend before the first ``import mujoco`` (it reads MUJOCO_GL once), and own the one GL thread.
 
 Linux without a display → ``egl`` if libEGL loads, else ``osmesa``; macOS/Windows use the native
 context MuJoCo picks itself. An explicit ``MUJOCO_GL`` is always respected.
@@ -6,20 +6,25 @@ context MuJoCo picks itself. An explicit ``MUJOCO_GL`` is always respected.
 
 from __future__ import annotations
 
+import atexit
 import ctypes
 import os
 import platform
+import queue
 import threading
+import weakref
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
 T = TypeVar("T")
 P = ParamSpec("P")
+
 _GL_THREAD = "strands-gl"
-_pool: ThreadPoolExecutor | None = None
-_pool_lock = threading.Lock()
+_gl: _GLThread | None = None
+_gl_lock = threading.Lock()
+_closers: list[weakref.WeakMethod[Callable[[], None]]] = []
 
 
 def _loads(lib: str) -> bool:
@@ -43,19 +48,53 @@ def ensure_gl() -> str:
     return cur
 
 
+class _GLThread:
+    """A daemon worker: it outlives ``threading._shutdown`` so contexts can still be freed on it at exit
+    (a ``ThreadPoolExecutor`` is joined before ``atexit`` runs, which would leave them to the collector)."""
+
+    def __init__(self) -> None:
+        self.q: queue.SimpleQueue[tuple[Callable[..., Any], tuple[Any, ...], Future[Any]] | None] = queue.SimpleQueue()
+        self.t = threading.Thread(target=self._loop, name=_GL_THREAD, daemon=True)
+        self.t.start()
+
+    def _loop(self) -> None:
+        while (item := self.q.get()) is not None:
+            fn, args, fut = item
+            try:
+                fut.set_result(fn(*args))
+            except Exception as exc:  # noqa: BLE001 — a render's error belongs to the caller, through the future
+                fut.set_exception(exc)
+            except BaseException as exc:  # KeyboardInterrupt / SystemExit: the caller gets it, and the worker ends
+                fut.set_exception(exc)
+                raise
+
+    def submit(self, fn: Callable[..., Any], *args: Any) -> Future[Any]:
+        if not self.t.is_alive():
+            raise RuntimeError("the GL thread has stopped")
+        fut: Future[Any] = Future()
+        self.q.put((fn, args, fut))
+        return fut
+
+    def stop(self) -> None:
+        self.q.put(None)
+        self.t.join(5.0)
+
+
 def on_gl_thread(fn: Callable[..., T], *args: Any) -> T:
     """Run ``fn`` on the one thread that owns every GL context in the process.
 
     A context is bound to the thread that made it: on macOS (CGL) a render from any other thread
-    blocks forever, so a second ``run()`` from a background ``Task`` would hang. Every render goes here.
+    blocks forever, EGL refuses it (EGL_BAD_ACCESS), so a second ``run()`` from a background ``Task``
+    would hang. Every render goes here.
     """
-    global _pool
-    if threading.current_thread().name.startswith(_GL_THREAD):
+    global _gl
+    if threading.current_thread().name == _GL_THREAD:
         return fn(*args)
-    with _pool_lock:
-        if _pool is None:
-            _pool = ThreadPoolExecutor(1, thread_name_prefix=_GL_THREAD)
-    return _pool.submit(fn, *args).result()
+    with _gl_lock:
+        if _gl is None or not _gl.t.is_alive():  # first use, or a worker a KeyboardInterrupt ended
+            _gl = _GLThread()
+            atexit.register(_release_gl)
+    return _gl.submit(fn, *args).result()
 
 
 def gl_thread(fn: Callable[P, T]) -> Callable[P, T]:
@@ -66,3 +105,25 @@ def gl_thread(fn: Callable[P, T]) -> Callable[P, T]:
         return on_gl_thread(lambda: fn(*args, **kwargs))
 
     return run
+
+
+def close_on_gl_thread_at_exit(close: Callable[[], None]) -> None:
+    """Run ``close`` (a bound method) on the GL thread before the interpreter exits: a context the collector frees
+    from another thread at shutdown is a segfault on macOS."""
+    _closers.append(weakref.WeakMethod(close))  # type: ignore[arg-type]
+
+
+def _release_gl() -> None:
+    global _gl
+    if _gl is None:
+        return
+    for ref in reversed(_closers):
+        fn = ref()
+        if fn is not None:
+            try:
+                _gl.submit(fn).result()
+            except Exception:  # best-effort teardown at exit: nobody left to report to
+                pass
+    _closers.clear()
+    _gl.stop()
+    _gl = None

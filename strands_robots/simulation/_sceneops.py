@@ -1,19 +1,18 @@
-"""Scene-editing verbs of a Simulation: add/remove a body, add an object, teleport, cameras, randomize.
-
-These are methods of ``Simulation`` (it inherits this private base); they live here so ``simulation.py``
-holds the world's lifecycle and time, and no file crosses 250 lines. Every method takes the world lock,
-so scene, backend and registry change together and a locked reader never sees them disagree.
-"""
+"""Scene-editing verbs of a Simulation (its private base): add/remove a body, add an object, teleport, cameras,
+randomize. Every verb takes the world lock, so scene, backend and registry change together and a locked reader
+never sees them disagree; ``simulation.py`` keeps the world's lifecycle and time."""
 
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any, Literal
 
 import numpy as np
 
-from ..geometry import moved_frame, vec
+from ..geometry import vec
 from ..types import Pose
+from . import _randomize, _teleport
 from .backend import Backend
 from .member import Member
 from .object import Object
@@ -32,6 +31,11 @@ class _SceneOps:
     backend_name: str
     _closed: bool
     _robots: dict[str, Member]
+    _editing: int
+    _gone: list[Member]
+    _built: dict[str, tuple[tuple[float, ...], tuple[float, ...]]]
+    _reload: Callable[[], None]  # Simulation's (rebuild now, or when ``with sim.editing():`` exits); so is _flush
+    _flush: Callable[[], None]
 
     def _open(self) -> None:
         if self._closed:
@@ -62,17 +66,12 @@ class _SceneOps:
         if keyframe is not None and keyframe not in robot.description.keyframes:
             raise ValueError(f"keyframe {keyframe!r} not in {robot.description.name}: {robot.description.keyframes}")
         with self.lock:  # scene, backend and registry change together: a locked reader never sees them disagree
-            self._grow(self.scene.robots, SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
+            self._commit(self.scene.robots, SceneRobot(robot.id, robot.description, pos, quat, keyframe))  # type: ignore[arg-type]
             self._robots[robot.id] = robot
         return robot
 
-    def _reload(self) -> None:
-        with self.lock:
-            self.backend.load(self.scene)
-            self.revision += 1
-
-    def _grow(self, items: list[Any], item: Any) -> None:
-        """Append ``item`` and rebuild; a rebuild that fails leaves the scene as it was."""
+    def _commit(self, items: list[Any], item: Any) -> None:
+        """Append ``item`` to a scene list and rebuild; a rebuild that fails leaves the scene as it was."""
         with self.lock:
             items.append(item)
             try:
@@ -91,13 +90,21 @@ class _SceneOps:
                 if (objs, cams) == (self.scene.objects, self.scene.cameras):
                     raise KeyError(f"nothing named {rid!r} in this world; robots are {list(self._robots)}")
                 self.scene.objects, self.scene.cameras = objs, cams
+                self.scene.scales.pop(rid, None)  # a body re-added under this name inherits no draw
+                self.scene.camera_jitter.pop(rid, None)
                 self._reload()
             return
         with self.lock:
             self.scene.robots = [r for r in self.scene.robots if r.id != rid]
-            self.scene.cameras = [c for c in self.scene.cameras if c.attach != rid]
+            for c in [c for c in self.scene.cameras if c.robot == rid]:
+                self.scene.camera_jitter.pop(c.name, None)
+            self.scene.cameras = [c for c in self.scene.cameras if c.robot != rid]
+            self.scene.scales.pop(rid, None)
             self._reload()
             gone = self._robots.pop(rid)
+            if self._editing:  # a failed block restores it, so it stays live until the block commits
+                self._gone.append(gone)
+                return
         gone.detached()
 
     def add_object(
@@ -132,7 +139,7 @@ class _SceneOps:
             color=vec((0.6, 0.6, 0.6, 1.0) if color is None else color, 4, "color (RGBA 0-1)"),  # type: ignore[arg-type]
             free=free,
         )
-        self._grow(self.scene.objects, obj)
+        self._commit(self.scene.objects, obj)
         return Object(self, obj)  # type: ignore[arg-type]
 
     def set_pose(
@@ -142,30 +149,14 @@ class _SceneOps:
         orientation: tuple[float, float, float, float] | None = None,
     ) -> Pose:
         """Teleport a robot or object (position m, quaternion w,x,y,z), velocities zeroed; returns where it is.
-
-        A fixed base is rebuilt where it lands and stays there. A floating base keeps its spawn
-        frame, so ``reset()`` stands it back on its keyframe instead of adding the keyframe's
-        height on top of the teleport.
-        """
+        A fixed base is rebuilt where it lands and stays there; a floating base keeps its spawn frame, so
+        ``reset()`` stands it back on its keyframe instead of adding the keyframe's height on top of the teleport."""
         name = body if isinstance(body, str) else (body.id if hasattr(body, "id") else body.name)
         if name not in self._robots and not any(o.name == name for o in self.scene.objects):
             raise KeyError(f"no body {name!r} in this world")
         with self.lock:
-            cur = self.backend.body_pose(name)
-            pose = Pose(
-                cur.position if position is None else np.asarray(vec(position, 3, "position")),
-                cur.orientation if orientation is None else np.asarray(vec(orientation, 4, "orientation (w, x, y, z)")),
-            )
-            if name in self._robots and not self._robots[name].description.floating:
-                sr = self.scene.robot(name)  # a fixed base is rebuilt from the scene, so the scene moves first
-                f = moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
-                sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # type: ignore[assignment]
-            for o in self.scene.objects:
-                if o.name == name and not o.free:
-                    o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())  # type: ignore[assignment]
-            self.backend.set_pose(name, pose, zero_velocity=True)
-            self.revision += 1
-            return self.backend.body_pose(name)
+            self._flush()
+            return _teleport.teleport(self, name, position, orientation)
 
     def camera(
         self,
@@ -182,8 +173,8 @@ class _SceneOps:
         if any(c.name == name for c in self.scene.cameras):
             raise ValueError(f"camera {name!r} already exists")
         att = attach if (attach is None or isinstance(attach, str)) else attach.id
-        if att is not None and att not in self._robots:
-            raise KeyError(f"attach={att!r} is not a robot in this world")
+        if att is not None and att.split("/")[0] not in self._robots:  # "<robot>" (its base) or "<robot>/<link>"
+            raise KeyError(f"attach={att!r} is not a robot in this world (or '<robot>/<link>')")
         cam = SceneCamera(
             name=name,
             position=vec(position, 3, "position"),  # type: ignore[arg-type]
@@ -193,14 +184,14 @@ class _SceneOps:
             size=tuple(size) if size else self.render_size,  # type: ignore[arg-type]
             attach=att,
         )
-        self._grow(self.scene.cameras, cam)
+        self._commit(self.scene.cameras, cam)
         return cam
 
     def render(self, camera: str | SceneCamera | None = None) -> np.ndarray:
         """HxWx3 uint8 from a named camera, or from an auto-framed overview camera when none is given."""
         if camera is None:  # the auto-framed overview, created on first use (user cameras never replace it)
             if not any(c.name == "overview" for c in self.scene.cameras):
-                self.camera("overview", **self._frame_all())
+                self.camera("overview", **self.scene.overview())
             name = "overview"
         else:
             name = camera if isinstance(camera, str) else camera.name
@@ -208,15 +199,8 @@ class _SceneOps:
         if not any(c.name == name for c in self.scene.cameras):
             raise KeyError(f"no camera {name!r}; cameras are {[c.name for c in self.scene.cameras]}")
         with self.lock:
+            self._flush()
             return self.backend.render(name)
-
-    def _frame_all(self) -> dict[str, Any]:
-        """A camera position that sees every robot: look at their centroid from the -y side."""
-        pts = np.array([r.position for r in self.scene.robots] or [(0.0, 0.0, 0.0)])
-        center = pts.mean(axis=0) + np.array([0.0, 0.0, 0.4])
-        spread = float(np.ptp(pts, axis=0).max()) if len(pts) > 1 else 0.0
-        dist = max(1.8, 1.4 * spread + 1.6)
-        return {"position": tuple(center + np.array([0.0, -dist, 0.65 * dist])), "target": tuple(center)}
 
     def randomize(
         self,
@@ -224,26 +208,26 @@ class _SceneOps:
         friction: float | tuple[float, float] | None = None,
         mass: float | tuple[float, float] | None = None,
         lighting: float | tuple[float, float] | None = None,
+        camera: float | None = None,
+        target: str | None = None,
         seed: int | None = None,
-    ) -> dict[str, float]:
-        """Scale friction / mass / light intensity (a factor or a (lo, hi) range to sample), rebuild; the scales."""
-        rng = np.random.default_rng(seed)
-
-        def pick(v: float | tuple[float, float] | None, current: float) -> float:
-            return current if v is None else float(v) if isinstance(v, int | float) else float(rng.uniform(*v))
-
+    ) -> dict[str, Any]:
+        """Scale friction / mass / light (a factor or a (lo, hi) range to sample), rebuild; returns what was drawn:
+        the world-wide factors, ``scales[<target>]`` per targeted body and ``camera_jitter`` per camera.
+        ``target`` scales one robot or object only; ``camera`` moves every camera up to that many metres per axis."""
+        _randomize.check(self.scene, self._robots, target, lighting)
         with self.lock:
-            sc = self.scene
-            was = (sc.friction_scale, sc.mass_scale, sc.light_scale)
-            sc.friction_scale, sc.mass_scale = pick(friction, was[0]), pick(mass, was[1])
-            sc.light_scale = pick(lighting, was[2])
+            was = _randomize.draw(
+                self.scene, friction=friction, mass=mass, lighting=lighting, camera=camera, target=target, seed=seed
+            )
             try:
                 self._reload()
             except Exception:  # an engine that cannot randomize this leaves the world as it was
-                sc.friction_scale, sc.mass_scale, sc.light_scale = was
+                _randomize.restore(self.scene, was)
                 raise
-            return {"friction_scale": sc.friction_scale, "mass_scale": sc.mass_scale, "light_scale": sc.light_scale}
+            return _randomize.scales(self.scene)
 
     def contacts(self) -> list[Contact]:
         with self.lock:  # a GPU solver mirrors its state into the CPU world on this read
+            self._flush()
             return self.backend.contacts()

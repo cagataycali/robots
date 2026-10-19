@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import atexit
 import importlib.util
+import logging
 import os
 from typing import Any
 
@@ -17,6 +18,11 @@ from ...._extras import hint
 HINT = f"Simulation('isaac') needs Isaac Sim: {hint('isaac')} (and OMNI_KIT_ACCEPT_EULA=YES)"
 
 EULA = "Simulation('isaac'): accept the NVIDIA Isaac Sim EULA yourself by setting OMNI_KIT_ACCEPT_EULA=YES"
+
+WARM_UP = (
+    "Isaac: the first scene change after a fresh install warms Kit's shader and extension caches; "
+    "it can take minutes, once per machine"
+)
 
 _APP: Any = None
 _OPEN: object | None = None
@@ -33,6 +39,7 @@ def simulation_app(headless: bool) -> Any:
         from isaacsim import SimulationApp
 
         _APP = SimulationApp({"headless": headless})
+        logging.getLogger(__name__).warning(WARM_UP)
         atexit.register(_close_app)
         from isaacsim.core.utils.extensions import enable_extension
 

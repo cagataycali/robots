@@ -24,8 +24,9 @@ class Object:
         with self.sim.lock:
             return self.sim.backend.body_pose(self.name)
 
-    def set_pose(self, position: Any = None, orientation: Any = None) -> None:
-        self.sim.set_pose(self.name, position=position, orientation=orientation)
+    def set_pose(self, position: Any = None, orientation: Any = None) -> Pose:
+        """Teleport this object; returns where it is (``Simulation.set_pose``)."""
+        return self.sim.set_pose(self.name, position=position, orientation=orientation)
 
     def __repr__(self) -> str:
         return f"Object({self.name!r}, {self.spec.shape or self.spec.path})"

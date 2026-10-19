@@ -1,6 +1,9 @@
 """The thesis: two robots, one world. A control step is one control step, a teleport lands, one render shows both."""
 
+import importlib.util
 import json
+import subprocess
+import sys
 import threading
 import time
 
@@ -150,6 +153,52 @@ def test_render_without_a_camera_is_the_overview_even_after_user_cameras(pair):
     assert sim.render("wrist").shape == (48, 64, 3)
     with pytest.raises(KeyError, match="no camera 'nope'"):
         sim.render("nope")
+
+
+def test_any_live_thread_can_render_after_another_did(pair):
+    """A GL context is bound to the thread that made it current; renders from a script, a run loop and a server
+    thread that all stay alive must share the world's cameras (EGL_BAD_ACCESS before, a hang on macOS)."""
+    sim = pair[0].sim
+    sim.camera("eye", position=[1.0, -1.0, 0.8], target=[0.3, 0, 0.3], size=(64, 48))
+    first = sim.render("eye")  # this thread renders first and stays alive
+    out: dict[str, object] = {}
+    go, done = threading.Event(), threading.Event()
+
+    def worker() -> None:
+        try:
+            out["img"] = sim.render("eye")
+        except Exception as exc:  # noqa: BLE001 - the failure is the assertion
+            out["img"] = exc
+        done.set()
+        go.wait(5)  # still alive while the first thread renders again
+
+    t = threading.Thread(target=worker)
+    t.start()
+    assert done.wait(10)
+    again = sim.render("eye")
+    go.set()
+    t.join(5)
+    assert isinstance(out["img"], np.ndarray), out["img"]
+    assert out["img"].shape == first.shape == again.shape == (48, 64, 3)
+
+
+def test_a_script_that_rendered_exits_cleanly_without_closing_its_world(tmp_path):
+    """The renderers live on the GL thread; a context the collector frees from the main thread at interpreter
+    exit is a segfault (exit code -11) once torch is loaded, as it is by every LeRobot policy and by record=.
+    They are freed on that thread before the interpreter goes."""
+    if importlib.util.find_spec("torch") is None:  # only the script imports it; this process never does
+        pytest.skip("needs torch")
+    script = tmp_path / "render_and_leave.py"
+    script.write_text(
+        "import torch  # noqa: F401\n"
+        "from strands_robots import Robot\n"
+        "arm = Robot('so101')\n"
+        "arm.sim.camera('eye', size=(64, 48), attach=arm)\n"
+        "print(arm.sim.render('eye').shape)\n"  # the renderer is still alive when the script ends
+    )
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr[-800:]
+    assert "(48, 64, 3)" in out.stdout
 
 
 def test_state_survives_add_object_and_remove(pair):

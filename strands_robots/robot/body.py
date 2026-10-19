@@ -58,7 +58,7 @@ class SimBody:
         return self.sim.backend.body_pose(self.id)
 
     def images(self) -> Mapping[str, np.ndarray]:
-        return {c.name: self.sim.backend.render(c.name) for c in self.sim.scene.cameras if c.attach == self.id}
+        return {c.name: self.sim.backend.render(c.name) for c in self.sim.scene.cameras if c.robot == self.id}
 
     def extras(self) -> Mapping[str, Any]:
         return {}

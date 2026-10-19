@@ -25,10 +25,10 @@ def look_at_quat(pos: np.ndarray, target: np.ndarray) -> np.ndarray:
 
 def refuse(scene: Scene, objects: Any, cameras: Any) -> None:
     """Every scene change Isaac cannot build, refused by name before ``load`` touches the stage."""
-    if scene.friction_scale != 1.0 or scene.mass_scale != 1.0:
+    if scene.friction_scale != 1.0 or scene.mass_scale != 1.0 or scene.scales or scene.camera_jitter:
         raise NotImplementedError(
-            "Simulation('isaac') cannot randomize friction or mass yet (PhysX materials / body masses are not "
-            "wired); randomize(lighting=) works, and Simulation('mujoco') randomizes all three"
+            "Simulation('isaac') cannot randomize friction, mass or cameras yet (PhysX materials / body masses are not "
+            "wired); randomize(lighting=) works, and Simulation('mujoco') randomizes them all"
         )
     for o in scene.objects:
         if o.name not in objects and o.path is not None:
