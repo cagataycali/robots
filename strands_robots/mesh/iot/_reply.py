@@ -30,8 +30,10 @@ def control_writes(reported: Mapping[str, Any], clear: Mapping[str, None], cap: 
         n = len(keys)
         while n and len(encode(reported, dict.fromkeys(keys[:n]))) > cap:
             n //= 2
+        if not (n or reported):  # a clear too big even alone stays in desired; AWS re-delivers it, refused again
+            return
         yield {"reported": dict(reported), **({"desired": dict.fromkeys(keys[:n])} if n else {})}
         keys = keys[n:]
         if not keys:
             return
-        reported = {"refused": None}
+        reported = {}

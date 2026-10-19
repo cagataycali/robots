@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import threading
 import time
@@ -11,6 +12,7 @@ import pytest
 
 from strands_robots import Robot, Simulation
 from strands_robots.mesh.iot import ShadowMirror, shadow_topic
+from strands_robots.mesh.iot._reply import control_writes
 from strands_robots.mesh.iot.manifest import manifest_doc
 from strands_robots.mesh.record import record
 from strands_robots.mesh.serve import ARGS
@@ -236,6 +238,8 @@ def test_an_oversized_reply_never_kills_the_worker_and_the_operator_still_gets_a
     mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
     control = shadow_topic("arm", "control", "update")
     hostile = {f"not_a_joint_{i:03d}.pos": 0.1 for i in range(150)}
+    huge = "k" * 8150  # its own clear fits no document: refused, left in desired, never looped on
+    hostile[huge] = 0.1
     op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps({"state": hostile, "metadata": {}}).encode())
     _wait(lambda: control in seen)
     mirror.drain()
@@ -243,9 +247,9 @@ def test_an_oversized_reply_never_kills_the_worker_and_the_operator_still_gets_a
     for doc in seen[control]:
         assert len(json.dumps(doc, separators=(",", ":")).encode()) <= 8 * 1024
     rep = seen[control][0]["state"]["reported"]["refused"]
-    assert rep and len(json.dumps(rep)) < 1024 and "150" in json.dumps(rep), rep  # one compact line, not 150
+    assert rep and len(json.dumps(rep)) < 1024 and "151" in json.dumps(rep), rep  # one compact line, not 150
     cleared = {k for doc in seen[control] for k in (doc["state"].get("desired") or {})}
-    assert cleared == set(hostile), "every refused key is still cleared from desired, across as many writes as needed"
+    assert cleared == set(hostile) - {huge}, "every clear that fits a document goes out, across as many writes"
     before = len(mirror.applied)
     op.publish(
         shadow_topic("arm", "control", "update/delta"), json.dumps({"state": {"shoulder_pan.pos": 0.1}}).encode()
@@ -253,6 +257,14 @@ def test_an_oversized_reply_never_kills_the_worker_and_the_operator_still_gets_a
     _wait(lambda: len(mirror.applied) > before)
     assert mirror.applied[-1] == {"shoulder_pan": 0.1}  # the control path is alive after the bad write
     mirror.stop()
+
+
+@pytest.mark.parametrize(("key_len", "writes"), [(20, 1), (8147, 2), (8148, 1), (8192, 1)])
+def test_a_clear_that_fits_no_document_ends_the_reply_instead_of_looping(key_len, writes):
+    """Yin on #4784: a key whose clear alone is over the cap made ``control_writes`` yield the same document forever."""
+    docs = list(itertools.islice(control_writes({"refused": {"k": "unknown"}}, {"k" * key_len: None}, 8192), 10))
+    assert len(docs) == writes, [len(json.dumps(d)) for d in docs]
+    assert all(len(json.dumps({"state": d}, separators=(",", ":"))) <= 8192 for d in docs)
 
 
 def test_an_exception_inside_apply_is_reported_and_the_worker_lives_on(lab):
