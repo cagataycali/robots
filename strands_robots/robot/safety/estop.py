@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from .validators import RequestRefused
@@ -21,17 +22,18 @@ class EStopped(RequestRefused):
 
 
 class Latch:
-    """Engaged / released, with who stopped it, who released it, and when (monotonic and wall clock).
+    """Engaged / released, with who stopped it, who released it, and when (the body's clock and wall clock).
 
-    ``engaged_at`` is ``time.monotonic`` for elapsed math; ``engaged_wall`` is ``time.time`` so the
-    stop can be placed on a calendar in an audit record. ``stopped_by`` names the operator who pressed
+    ``engaged_at`` is on the body's clock (``robot.clock``) for elapsed math; ``engaged_wall`` is ``time.time``
+    so the stop can be placed on a calendar in an audit record. ``stopped_by`` names the operator who pressed
     it (``None`` for a local, unattributed press).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._now = clock
         self._set = threading.Event()
         self._lock = threading.Lock()
-        self.engaged_at: float | None = None  # time.monotonic, for elapsed math
+        self.engaged_at: float | None = None  # the body's clock, for elapsed math
         self.engaged_wall: float | None = None  # time.time, to place the stop on a calendar
         self.reason: str | None = None
         self.stopped_by: str | None = None  # who pressed it (None = local, unattributed)
@@ -44,11 +46,12 @@ class Latch:
 
     def engage(self, reason: str, by: str | None = None) -> None:
         with self._lock:  # two racing e-stops count once; the first keeps the latch
-            if not self._set.is_set():
-                self.engaged_at, self.engaged_wall = time.monotonic(), time.time()
+            if not self._set.is_set():  # latch first, stamp after: a clock that raises never un-latches a stop
+                self.engaged_at, self.engaged_wall = None, time.time()
                 self.reason, self.stopped_by = reason, by
                 self.count += 1
                 self._set.set()
+                self.engaged_at = self._now()
 
     def release(self, by: str, *, stop: int | None = None) -> bool:
         """Clear the latch; with ``stop``, only while it is still engagement #``stop`` (compare-and-release).
@@ -63,17 +66,23 @@ class Latch:
             self._set.clear()
             return True
 
+    def wait(self, timeout: float) -> bool:
+        """Sleep up to ``timeout`` s, waking at once when the latch engages; True when it is engaged."""
+        return self._set.wait(timeout) if timeout > 0 else self._set.is_set()
+
     def check(self, robot_id: str) -> None:
         if self._set.is_set():
             raise EStopped(f"{robot_id}: e-stop is engaged ({self.reason}); resume(approved_by=<operator>) first")
 
 
 def engage(robot: Robot, reason: str = "estop()", by: str | None = None) -> None:
-    """Latch first (so the next tick refuses), then the body's own stop."""
-    robot.estop_latch.engage(reason, by)
-    body = robot._body
-    if body is not None:
-        body.estop()
+    """Latch first (so the next tick refuses), then the body's own stop, even if stamping the latch raised."""
+    try:
+        robot.estop_latch.engage(reason, by)
+    finally:
+        body = robot._body
+        if body is not None:
+            body.estop()
 
 
 def guarded_write(robot: Robot, targets: object) -> None:

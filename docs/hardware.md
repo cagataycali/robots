@@ -78,13 +78,23 @@ from strands_robots import Robot
 try:
     Robot("so101", confirm=lambda action: False)
 except TypeError as e:
-    print(e)                                 # confirm= is the operator gate of a hardware Robot; a simulated body is never gated
+    print(e)                                 # confirm= are hardware Robot arguments; a simulated body takes none
 ```
+
+{{drawing:d12_one_tick}}
+
+**One clock, one read, one write per tick.** A hardware robot reads time from `robot.clock` (the
+monotonic clock, or `Robot(..., clock=)`); a robot in a world reads the world's time. `Observation.t`,
+the latch, the watchdog and `RunResult.seconds` all use it. Each tick of `run()` reads the bus once and
+writes once (`robot.command(targets)` writes without reading). Writes are spaced at least one period
+apart: a slow inference is a deadline miss, counted in `RunResult.deadline_misses` and `worst_late_s`,
+and the next write waits a full period instead of catching up. `run(on_miss="fault")` ends the run at
+the late tick with `stopped_by="deadline"`.
 
 {{drawing:d11_estop_audit}}
 
 **The e-stop and resume.** `robot.estop(by="alice@corp")` latches now, bypassing the chain. The
-`Latch` records `stopped_by`, the `reason`, a monotonic `engaged_at` and a wall-clock `engaged_wall`,
+`Latch` records `stopped_by`, the `reason`, `engaged_at` on the robot's clock and a wall-clock `engaged_wall`,
 so a stop can be attributed and placed on a calendar in an audit record. Resuming takes the operator
 who cleared it: `robot.resume(approved_by="alice@corp")`. Pass the engagement `count` you showed the
 operator as `resume(approved_by=..., stop=n)` and a yes typed for the stop they saw is refused once a

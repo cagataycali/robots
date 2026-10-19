@@ -5,18 +5,21 @@ from __future__ import annotations
 import contextvars
 import threading
 import time as _time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...policy.base import PolicyFault
 from ...recording import Episode, NotRecording, episode
 from ...types import Observation
-from ..safety import EStopped, NonFiniteTarget, apply_on_disconnect
-from .bind import Bound, bind, decide, looks, release
-from .result import RunResult
-from .source import gated_write, is_agent
+from ..clock import MONOTONIC
+from ..safety import apply_on_disconnect
+from .bind import Bound, bind, looks, release
+from .common import announce, emit, rate
+from .pace import OnMiss, Pacer
+from .result import RunResult, StoppedBy
+from .source import is_agent
 from .task import Task
+from .tick import stopped, tick
 
 if TYPE_CHECKING:
     from ...policy import PolicyLike
@@ -39,69 +42,39 @@ def run(
     stop_event: threading.Event | None = None,
     record: str | Path | None = None,
     push: bool = False,
+    on_miss: OnMiss = "skip",
 ) -> RunResult:
     """observe -> policy -> act at ``hz`` (default: the policy's ``hz``, else 30) until a limit or ``stop()``.
 
     ``record=dir | "hf://owner/name"`` appends this run as one episode of a LeRobot v3 dataset;
     ``push=True`` (an ``hf://`` target only) then uploads it. Nothing leaves the machine otherwise.
+    A paced body (hardware, or ``realtime``) spaces its writes at least one period apart; a write past the next
+    tick's start is a deadline miss, counted and re-phased (``on_miss="skip"``) or the end (``"fault"``).
     """
     if seconds is None and steps is None and stop_when is None:
         raise ValueError("run needs seconds=, steps= or stop_when=")
     if hz is not None and hz <= 0:
         raise ValueError(f"hz must be > 0, got {hz}")  # before bind: a bad hz loads no checkpoint
     bound = bind(robot, policy, units)
-    _emit(robot, "run.started", {"policy": repr(bound.policy)})
+    emit(robot, "run.started", {"policy": repr(bound.policy)})
     try:
         ep = episode(
             record,
             description=robot.description,
-            hz=_rate(bound, hz),
+            hz=rate(bound, hz),
             instruction=instruction,
             units=bound.units,
             push=push,
         )
         try:
-            result = _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event, ep)
+            result = _loop(robot, bound, instruction, hz, seconds, steps, stop_when, realtime, stop_event, ep, on_miss)
         except BaseException:
             ep.abort()
             raise
     finally:
         release(bound)
-    _announce(robot, result)
+    announce(robot, result)
     return result
-
-
-def _emit(robot: Robot, event: str, payload: dict[str, Any]) -> None:
-    events = getattr(robot, "events", None)
-    if events is not None:
-        events.emit(event, {"device_id": robot.id, **payload})
-
-
-def _announce(robot: Robot, result: RunResult) -> None:
-    """``run.stopped`` for every finished run, and ``fault`` first when a policy fault ended it."""
-    if result.fault is not None and result.stopped_by == "fault":
-        _emit(robot, "fault", {"reason": result.fault})
-    _emit(robot, "run.stopped", {"stopped_by": result.stopped_by, "steps": result.steps})
-
-
-def _declared(bounds: Iterable[Bound], hz: float | None) -> float | None:
-    """The rate the policies declare (chunks are replayed at it), refusing a disagreement or an ``hz`` against it."""
-    rates = {b.hz: b.policy for b in bounds if b.hz is not None}
-    if len(rates) > 1:
-        said = ", ".join(f"{p!r} {r:g} Hz" for r, p in rates.items())
-        raise ValueError(f"these policies declare different rates: {said}; one world steps at one rate")
-    if rates and hz is not None and abs(hz - next(iter(rates))) > 1e-9:
-        rate, policy = next(iter(rates.items()))
-        raise ValueError(f"{policy!r} runs at {rate:g} Hz; hz={hz:g} would replay it at another rate (leave hz out)")
-    return next(iter(rates), None)
-
-
-def _rate(bound: Bound, hz: float | None) -> float:
-    declared = _declared([bound], hz)
-    rate = hz if hz is not None else (declared or 30.0)
-    if rate <= 0:
-        raise ValueError(f"hz must be > 0, got {rate}")
-    return float(rate)
 
 
 def _loop(
@@ -115,20 +88,24 @@ def _loop(
     realtime: bool,
     stop_event: threading.Event | None,
     ep: Episode | NotRecording,
+    on_miss: OnMiss,
 ) -> RunResult:
-    hz = _rate(bound, hz)
-    realtime = realtime or bound.realtime
+    hz = rate(bound, hz)
     dt = 1.0 / hz
     sim_steps = max(1, round(dt / robot.sim.physics.timestep)) if robot.sim is not None else None
     max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
-    n, stops0 = 0, robot.estop_latch.count
-    why: str = "steps"
-    fault: str | None = None
-    next_tick = wall0 = _time.perf_counter()
+    n, stops0, fault = 0, robot.estop_latch.count, None
+    why: StoppedBy = "steps"
     always = robot.sim is None or stop_when is not None or ep.wants_images  # a recorded step keeps its cameras
-    write = gated_write(robot) if is_agent() else robot.act  # an agent's run passes the gate on every step
+    pacer = None
+    if robot.sim is None or realtime or bound.realtime:  # hardware (or a watched world): pace on the body's clock
+        clock = robot.clock if robot.sim is None else MONOTONIC
+        sleep = robot.estop_latch.wait if clock is MONOTONIC else clock.sleep  # an e-stop never waits out a period
+        pacer = Pacer(dt, on_miss=on_miss, now=clock.now, sleep=sleep)
+    t0, wall0 = robot.clock.now(), _time.monotonic()
+    gated = is_agent()  # an agent's run passes the gate on every step
     while True:
-        if robot.estopped or robot.estop_latch.count != stops0:  # an e-stop outranks a plain stop()
+        if stopped(robot, stops0):
             why = "estop"
             break
         if stop_event is not None and stop_event.is_set():
@@ -136,32 +113,37 @@ def _loop(
             break
         if max_steps is not None and n >= max_steps:
             break
-        obs = robot.observe(images=always or looks(bound, instruction))
-        if stop_when is not None and stop_when(obs):
-            why = "stop_when"
+        if pacer is not None:
+            pacer.start()
+        step = tick(
+            robot,
+            bound,
+            instruction,
+            images=always or looks(bound, instruction),
+            gated=gated,
+            stop_when=stop_when,
+            steps=sim_steps,
+            before_write=pacer.before_write if pacer is not None else None,
+        )
+        if step.ended is not None:
+            why, fault = step.ended, step.fault
             break
-        try:
-            action = decide(robot, bound, obs, instruction)
-        except (PolicyFault, NonFiniteTarget) as e:
-            why, fault = "fault", str(e)
-            break
-        try:
-            write(action, steps=sim_steps)
-        except EStopped:
-            why = "estop"
-            break
-        ep.add(obs, action)  # after the write: a step the body refused is not in the dataset
+        ep.add(step.obs, step.targets)  # after the write: a step the body refused is not in the dataset
         n += 1
-        if robot.sim is None or realtime:  # hardware (or a watched sim): pace in wall time
-            next_tick += dt
-            _time.sleep(max(0.0, next_tick - _time.perf_counter()))
-    wall = _time.perf_counter() - wall0
-    elapsed = n * dt if robot.sim is not None else wall
-    if fault is not None:  # the policy can no longer act safely: put the body in its declared on_disconnect state
+        if pacer is not None and not pacer.after_write():
+            why, fault = "deadline", f"tick {n} ended {pacer.worst_late * 1e3:.1f} ms past its deadline"
+            break
+    if pacer is not None and n:  # the last write owns its period: the body's next write (any run) is >= dt later
+        pacer.before_write()
+    if why == "fault":  # the policy can no longer act safely: put the body in its declared on_disconnect state
         apply_on_disconnect(robot)
     final = robot.observe(images=False)
+    span = final.t - t0 if robot.sim is not None else (pacer.span() if pacer is not None else 0.0)
     recorded = ep.close(why)
-    return RunResult(n, elapsed, hz, (n / wall) if wall else 0.0, why, recorded, final, fault)  # type: ignore[arg-type]
+    misses, late = (pacer.misses, pacer.worst_late) if pacer is not None else (0, 0.0)
+    wall = _time.monotonic() - wall0
+    achieved = n / span if span > 0 else 0.0
+    return RunResult(n, span, hz, achieved, why, recorded, final, fault, misses, late, wall)
 
 
 def start(
@@ -177,6 +159,7 @@ def start(
     realtime: bool = False,
     record: str | Path | None = None,
     push: bool = False,
+    on_miss: OnMiss = "skip",
 ) -> Task:
     """``run`` in a background thread (every ``run`` keyword but ``stop_event``); ``Task.stop()`` / ``.result``."""
     if robot._task is not None and robot._task.running:
@@ -197,6 +180,7 @@ def start(
             stop_event=ev,
             record=record,
             push=push,
+            on_miss=on_miss,
         )
     )
     return robot._task

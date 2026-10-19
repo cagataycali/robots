@@ -22,7 +22,8 @@ def test_run_for_steps_reaches_target_and_measures():
     res = arm.run(lambda o: {"shoulder_pan": 0.4, "gripper": 0.8}, hz=50, steps=60)
     assert isinstance(res, RunResult) and res.steps == 60 and res.stopped_by == "steps"
     assert res.seconds == pytest.approx(60 / 50)  # sim time, not wall time
-    assert res.hz_achieved > 50  # faster than real time
+    assert res.hz_achieved == pytest.approx(50)  # the rate the body saw, on its clock (sim time)
+    assert res.steps / res.wall_seconds > 50  # and the host ran it faster than real time
     assert res.final is not None and res.final["shoulder_pan"] == pytest.approx(0.4, abs=0.02)
 
 
@@ -57,11 +58,11 @@ def test_run_needs_a_bound_and_valid_hz():
 
 def test_start_stop_background_task():
     arm = Robot("so101")
-    task = arm.start(lambda o: {"wrist_roll": 0.5}, hz=200, seconds=30)
+    task = arm.start(lambda o: {"wrist_roll": 0.5}, hz=200, seconds=30, realtime=True)  # paced: still running at 0.2 s
     assert task.status == "running"
     time.sleep(0.2)
     res = arm.stop()
-    assert res is not None and res.stopped_by == "stopped" and res.steps > 5
+    assert res is not None and res.stopped_by == "stopped" and 5 < res.steps < 6000
     assert task.status == "done" and not task.running
     arm.start(lambda o: o.joints.positions, seconds=5)
     with pytest.raises(RuntimeError, match="already has a running task"):

@@ -93,7 +93,7 @@ def test_an_agent_runs_two_robots_in_lock_step_by_id(sim, monkeypatch):
     a, b = Robot("so101", sim=sim, id="a"), Robot("so101", sim=sim, id="b", position=(0.5, 0, 0))
     gated = []
     for r in (a, b):
-        monkeypatch.setattr(r, "confirm_act", lambda act, _r=r, **kw: gated.append(_r.id) or _r.act(act, **kw))
+        monkeypatch.setattr(r, "gate", lambda act, _r=r, _g=r.gate, **kw: gated.append(_r.id) or _g(act, **kw))
     t0 = sim.time
     (r,) = _turn(sim, [{"rpc": "run", "run": {"policies": {"a": "t.left", "b": "t.right"}, "steps": 50}}])
     assert r["status"] == "success", r

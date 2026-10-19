@@ -6,11 +6,9 @@ chain and the operator gate instead of acting directly. A background ``start`` c
 
 from __future__ import annotations
 
-import functools
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
 
 _AGENT: ContextVar[bool] = ContextVar("strands_robots_agent_source", default=False)
 # The operator already said yes once for this run (the dashboard's ``X-Confirm``): the operator step of the chain is
@@ -47,11 +45,3 @@ def is_agent() -> bool:
 def is_confirmed() -> bool:
     """The operator already approved this run (``from_agent(confirmed=True)``)."""
     return _CONFIRMED.get()
-
-
-def gated_write(robot: Any) -> Callable[..., Any]:
-    """The write an agent's or a dashboard's run uses: ``confirm_act`` with the operator step pre-satisfied when the
-    operator already said yes for this run."""
-    if is_confirmed():
-        return functools.partial(robot.confirm_act, confirmed=True)
-    return robot.confirm_act

@@ -89,13 +89,14 @@ def release(bound: Bound) -> None:
         detach()
 
 
-def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None) -> Any:
-    """One inference in the policy's units, returned as an action in the robot's radians."""
-    pol, conv = bound.policy, bound.units
+def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None) -> np.ndarray:
+    """One inference in the policy's units, as full targets in the robot's radians; joints it leaves out hold
+    their position in ``obs`` (no second read)."""
+    pol, conv, q = bound.policy, bound.units, np.asarray(obs.joints.positions, dtype=float)
     if conv is None:
-        return robot.coerce(pol.act(obs, instruction=instruction))
+        return robot.coerce(pol.act(obs, instruction=instruction), measured=q)
     seen = obs.with_joints(conv.from_rad(obs.joints.positions))
-    return robot.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)))
+    return robot.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)), measured=q)
 
 
 def looks(bound: Bound, instruction: str | None) -> bool:
