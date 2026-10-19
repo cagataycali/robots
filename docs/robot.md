@@ -35,11 +35,13 @@ many physics steps each `act()` advances and time is sim time; `realtime=True` a
 wall clock. Before the first inference `policy.requirements()` is checked against a real observation, so a
 missing camera or a wrong state length is refused by name. The policy's optional hooks (`hz`, `realtime`,
 `gains`, `attach`, `detach`, `requirements`, `needs_observation`) are read once there too, and one of the
-wrong type is a `TypeError` naming it. `stop(timeout=)` raises `TimeoutError` while the run is still
+wrong type is a `TypeError` naming it. Once `attach` has run, any refusal calls `detach` before it reaches you. `stop(timeout=)` raises `TimeoutError` while the run is still
 going, and the error of a run whose policy raised, once. `units="auto"` converts joints between the
 robot's radians and the units the policy declares (`policy.units`, for example `lerobot_so10x`).
 
 {{drawing:d08_policy_hooks}}
+
+{{drawing:d13_bind_releases}}
 
 `run(record="data/wave")` appends the run as one episode of a LeRobot v3 dataset; it needs LeRobot with its
 `dataset` extra, which the one LeRobot install line carries. `Policy("data/wave?episode=0")` replays that
