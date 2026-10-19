@@ -229,6 +229,35 @@ def test_a_second_set_pose_of_a_fixed_robot_in_one_editing_block_lands_where_ask
         sim.close()
 
 
+def test_a_partial_set_pose_of_a_built_fixed_body_in_one_editing_block_keeps_the_earlier_move():
+    """Yin on #4790: inside a block ``cur`` is the pre-block backend pose, so a position-only move followed by an
+    orientation-only move of the same built fixed body filled the omitted position from ``cur`` and silently
+    dropped the first move, for a fixed-base robot and a ``free=False`` object alike. The omitted component now
+    comes from the pending pose (the moved scene entry), so both calls land."""
+    sim = Simulation()
+    arm = Robot("so101", sim=sim, position=(0.1, 0.2, 0))
+    try:
+        sim.add_object("post", shape="box", size=[0.02] * 3, position=[0.4, 0.4, 0.1], free=False)
+        sim.set_pose(arm, position=(0.5, 0, 0), orientation=(0.7071, 0, 0, 0.7071))
+        with sim.editing():
+            sim.set_pose(arm, position=(0.9, 0.1, 0))
+            second = sim.set_pose(arm, orientation=(1, 0, 0, 0))
+            assert np.allclose(second.position, [0.9, 0.1, 0], atol=1e-6), second.position
+            sim.set_pose("post", position=(0.6, 0.6, 0.1))
+            sim.set_pose("post", orientation=(0.7071, 0, 0, 0.7071))
+        assert np.allclose(sim.pose(arm.id).position, [0.9, 0.1, 0], atol=1e-6), sim.pose(arm.id).position
+        assert np.allclose(np.abs(sim.pose(arm.id).orientation), [1, 0, 0, 0], atol=1e-4), sim.pose(arm.id).orientation
+        assert np.allclose(sim.pose("post").position, [0.6, 0.6, 0.1], atol=1e-6), sim.pose("post").position
+        assert np.allclose(np.abs(sim.pose("post").orientation), [0.7071, 0, 0, 0.7071], atol=1e-3)
+        with sim.editing():  # the other order: turn, then move
+            sim.set_pose(arm, orientation=(0.7071, 0, 0, 0.7071))
+            sim.set_pose(arm, position=(0.3, 0.3, 0))
+        assert np.allclose(sim.pose(arm.id).position, [0.3, 0.3, 0], atol=1e-6)
+        assert np.allclose(np.abs(sim.pose(arm.id).orientation), [0.7071, 0, 0, 0.7071], atol=1e-3)
+    finally:
+        sim.close()
+
+
 def test_remove_leaves_no_draw_behind_for_a_body_or_camera_re_added_under_the_same_name(world):
     sim, _ = world
     base = sim.backend.model.body_mass[sim.backend.model.body("cube").id]
