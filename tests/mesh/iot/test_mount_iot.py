@@ -162,3 +162,46 @@ def test_a_bad_iot_option_refuses_before_anything_starts_and_a_refused_mount_lea
     mesh.close()
     dash.close()
     arm.sim.close()
+
+
+@pytest.mark.parametrize("step", ["watchdog", "serve", "announce"])
+def test_a_mount_that_fails_after_the_mirror_started_stops_it(monkeypatch, step):
+    """Yin on #4784: a failure in mount() after _iot_attach (a bad watchdog_ms, serve or announce raising) left the
+    mirror applying control deltas to a robot the API said is not mounted; mount now undoes what it started."""
+    import strands_robots.mesh.mesh as mesh_mod
+
+    name = f"m-{uuid.uuid4().hex[:8]}"
+    broker = FakeIotBroker.named(name)
+    dash = FakeLink(broker, "dashboard")
+    arm = Robot("so101", sim=Simulation())
+    mesh = Mesh(f"iot://fake?broker={name}", tenant="lab")
+    import threading
+
+    def dogs():
+        return sum(t.name == "mesh-watchdog" and t.is_alive() for t in threading.enumerate())
+
+    live_before, dogs_before = len(_shadow_threads()), dogs()
+    kw: dict = {"watchdog_ms": 500.0}  # serve/announce fail after the watchdog started: it stops too
+    if step == "watchdog":
+        kw["watchdog_ms"] = 0
+    else:
+
+        def boom(*a, **k):
+            raise RuntimeError(f"{step} failed")
+
+        monkeypatch.setattr(mesh_mod, step, boom)
+    with pytest.raises((ValueError, RuntimeError)):
+        mesh.mount(arm, device_id="arm", iot=IotOptions(shadow_hz=1.0), **kw)
+    time.sleep(0.3)
+    assert list(mesh._mounted) == [] and len(_shadow_threads()) == live_before, "the started mirror was stopped"
+    assert dogs() == dogs_before, "the started watchdog was stopped"
+    calls = []
+    arm.confirm_act = lambda action, **k: calls.append(action)
+    dash.publish(
+        "$aws/things/arm/shadow/name/control/update/delta", json.dumps({"state": {"shoulder_pan.pos": 0.25}}).encode()
+    )
+    time.sleep(0.5)
+    assert calls == [], "a delta to the robot the API said is not mounted reaches nothing"
+    mesh.close()
+    dash.close()
+    arm.sim.close()

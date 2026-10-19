@@ -66,8 +66,8 @@ class MeshWatchdog:
             self._stop.wait(period)
 
     def close(self) -> None:
-        for u in self._unwatch:
-            u()
+        while self._unwatch:  # idempotent: a failed mount and its undo may both close it
+            self._unwatch.pop()()
         self._stop.set()
         self._thread.join(1.0)
 
