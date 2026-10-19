@@ -51,11 +51,7 @@ def _pair(v: Any) -> bool:
 
 
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
-    """What every loop does before step one: the policy's gains, its units, its requirements, a reset.
-
-    Validate, then acquire: the checks that need no session run first, so a refusal there opens nothing; any
-    refusal after ``attach`` detaches before it propagates.
-    """
+    """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
     refuse_remote_spec(policy)  # an agent's run, by any entry point: no policy at a network address
     pol = as_policy(policy)
     for name in ("attach", "detach", "requirements", "needs_observation"):
@@ -77,7 +73,8 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
 
 
 def _ready(robot: Robot, pol: Any, units: str | None) -> Bound:
-    """Everything that needs ``attach`` and can still refuse: the rate, the gains, the units, the requirements."""
+    """What needs ``attach`` and can still refuse (rate, gains, units, requirements, reset); checks that need no
+    session ran before it in ``bind``, so a refusal there opened nothing."""
     hz = _hook(pol, "hz", _rate, "a number > 0")  # after attach: a remote policy learns its rate from the server
     realtime = _hook(pol, "realtime", _flag, "True or False", False)
     gains = _hook(pol, "gains", _pair, "a (kp, kd) pair")
