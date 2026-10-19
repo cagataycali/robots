@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from ._reply import control_writes
 from .manifest import manifest_doc
 
 MAX_SHADOW_HZ = 1.0
@@ -139,8 +140,17 @@ class ShadowMirror:
             if job is not None:
                 try:
                     self.apply(*job)
+                except Exception as exc:  # an operator's input never kills the control path: say why, stay alive
+                    self._report_failure(job[0], exc)
                 finally:
                     self._busy = False
+
+    def _report_failure(self, desired: Mapping[str, Any], exc: Exception) -> None:
+        word = f"{len(desired)} desired keys not applied: {type(exc).__name__}: {exc}"[:512]
+        try:
+            self._write_control({"refused": {"*": word}}, {str(k): None for k in desired})
+        except Exception:  # the link itself is gone; the next delta will try again
+            return
 
     def _on_state(self, payload: Mapping[str, Any]) -> None:
         doc = _plain(payload)
@@ -208,8 +218,12 @@ class ShadowMirror:
                     refused[f"{k}.pos"] = str(exc)
                     clear[f"{k}.pos"] = None
         reported["refused"] = refused or None
-        self._update("control", {"reported": reported, **({"desired": clear} if clear else {})})
+        self._write_control(reported, clear)
         return reported
+
+    def _write_control(self, reported: dict[str, Any], clear: dict[str, None]) -> None:
+        for state in control_writes(reported, clear, SHADOW_DOC_CAP):  # the reply fits the cap whatever the delta was
+            self._update("control", state)
 
     def _stale(self, key: str, stamps: Mapping[str, Any] | None) -> bool:
         """An integer stamp means "written somewhere in [ts, ts + 1 s)": the target is judged by the youngest

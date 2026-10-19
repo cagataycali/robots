@@ -108,3 +108,57 @@ def test_the_state_shadow_reports_a_local_estop_without_waiting_for_an_rpc():
         device.close()
         dash.close()
         arm.sim.close()
+
+
+def _shadow_threads():
+    import threading
+
+    return [t for t in threading.enumerate() if t.name.startswith("shadow-") and t.is_alive()]
+
+
+def test_a_bad_iot_option_refuses_before_anything_starts_and_a_refused_mount_leaves_nothing_behind(monkeypatch):
+    """Yin on #4784: telemetry_hz was validated by telemetry() AFTER the mirror had written manifest, started the
+    state stream and subscribed to control deltas; the mount raised, the device was never in _mounted, and the
+    orphan mirror kept applying deltas with no handle to stop it (STEER K2: validate, then mutate; release on every
+    exit)."""
+    name = f"m-{uuid.uuid4().hex[:8]}"
+    broker = FakeIotBroker.named(name)
+    dash = FakeLink(broker, "dashboard")
+    seen: dict[str, list] = {}
+    dash.subscribe(
+        "$aws/things/arm/shadow/name/+/update", lambda t, raw: seen.setdefault(t, []).append(json.loads(raw))
+    )
+    arm = Robot("so101", sim=Simulation())
+    mesh = Mesh(f"iot://fake?broker={name}", tenant="lab")
+    live_before = len(_shadow_threads())
+    with pytest.raises(ValueError, match="telemetry_hz"):
+        IotOptions(telemetry_hz=2.0)  # refused at construction
+    with pytest.raises(ValueError, match="telemetry_hz"):
+        mesh.mount(arm, device_id="arm", watchdog_ms=None, iot={"telemetry_hz": 2.0})
+    assert list(mesh._mounted) == [] and len(_shadow_threads()) == live_before
+    assert "$aws/things/arm/shadow/name/manifest/update" not in seen, "nothing started before the refusal"
+    for bad in ({"shadow_hz": 2.0}, {"stale_s": 0.1}):
+        with pytest.raises(ValueError):
+            IotOptions(**bad)
+
+    # A failure AFTER the mirror started (here: the telemetry rule) undoes the mirror before the error travels.
+    import strands_robots.mesh.iot.rules as rules
+
+    def boom(*a, **kw):
+        raise RuntimeError("no telemetry rule")
+
+    monkeypatch.setattr(rules, "telemetry", boom)
+    with pytest.raises(RuntimeError, match="no telemetry rule"):
+        mesh.mount(arm, device_id="arm", watchdog_ms=None, iot={"shadows": True, "telemetry_hz": 0.5})
+    time.sleep(0.3)
+    assert list(mesh._mounted) == [] and len(_shadow_threads()) == live_before, "the started mirror was stopped"
+    calls = []
+    real = arm.confirm_act
+    arm.confirm_act = lambda action, **kw: (calls.append(action), real(action, **kw))[1]
+    delta = json.dumps({"state": {"shoulder_pan.pos": 0.2}}).encode()
+    dash.publish("$aws/things/arm/shadow/name/control/update/delta", delta)
+    time.sleep(0.5)
+    assert calls == [], "a delta to the robot the API said is not mounted reaches nothing"
+    mesh.close()
+    dash.close()
+    arm.sim.close()

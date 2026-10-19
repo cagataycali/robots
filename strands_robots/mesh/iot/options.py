@@ -26,6 +26,23 @@ class IotOptions:
     stale_s: float | None = 2.0
     telemetry_hz: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Every bound is checked here, before a mount starts anything: a bad option is refused by name with no
+        side effect (a mirror that had already written the manifest would otherwise outlive the failed mount)."""
+        from .rules import MAX_TELEMETRY_HZ
+        from .shadow import MAX_SHADOW_HZ, MIN_STALE_S
+
+        if not 0 < self.shadow_hz <= MAX_SHADOW_HZ:
+            raise ValueError(f"shadow_hz={self.shadow_hz} must be in (0, {MAX_SHADOW_HZ:g}] (IoT's per-thing quota)")
+        if self.stale_s is not None and not self.stale_s >= MIN_STALE_S:
+            raise ValueError(
+                f"stale_s={self.stale_s} is under the {MIN_STALE_S:g} s stamp resolution; None applies every delta"
+            )
+        if self.telemetry_hz and not 0 < self.telemetry_hz <= MAX_TELEMETRY_HZ:
+            raise ValueError(
+                f"telemetry_hz={self.telemetry_hz} is over {MAX_TELEMETRY_HZ:g} Hz; the mesh state stream is live"
+            )
+
 
 def is_iot(transport: Any) -> bool:
     return str(getattr(transport, "url", "")).startswith("iot://")
@@ -47,27 +64,32 @@ def attach(
         raise ValueError("iot= was given but no transport of this Mesh is iot://")
     undos: list[Unsubscribe] = []
     tenant, did = str(record["tenant"]), str(record["id"])
-    for t in iot_transports:
-        link = t.link
-        if opts.shadows:
-            from .shadow import ShadowMirror
-
-            mirror = ShadowMirror(
-                link,
-                robot,
-                record,
-                shadow_hz=opts.shadow_hz,
-                stale_s=opts.stale_s,
-                lockout=lambda: lockout.synced(robot).to_dict(),  # what the lockout rpc answers, not a stale copy
-            ).start()
-            undos.append(mirror.stop)
-        if opts.telemetry_hz > 0 and hasattr(robot, "subscribe"):
-            from .rules import telemetry
-
-            undos.append(telemetry(link, tenant, did, robot, opts.telemetry_hz))
 
     def undo() -> None:
         for u in reversed(undos):
             u()
 
+    try:
+        for t in iot_transports:
+            link = t.link
+            if opts.shadows:
+                from .shadow import ShadowMirror
+
+                mirror = ShadowMirror(
+                    link,
+                    robot,
+                    record,
+                    shadow_hz=opts.shadow_hz,
+                    stale_s=opts.stale_s,
+                    lockout=lambda: lockout.synced(robot).to_dict(),  # what the lockout rpc answers, not a stale copy
+                )
+                undos.append(mirror.stop)  # registered before start(): a failure inside start() is undone too
+                mirror.start()
+            if opts.telemetry_hz > 0 and hasattr(robot, "subscribe"):
+                from .rules import telemetry
+
+                undos.append(telemetry(link, tenant, did, robot, opts.telemetry_hz))
+    except BaseException:  # nothing started here outlives a failed mount (STEER K2: release on every exit)
+        undo()
+        raise
     return undo

@@ -226,3 +226,54 @@ def test_deltas_received_during_an_apply_coalesce_and_stop_drops_what_is_queued(
     gate.set()
     time.sleep(0.2)
     assert [a for a in mirror.applied if a == {"shoulder_pan": 0.5}] == []
+
+
+def test_an_oversized_reply_never_kills_the_worker_and_the_operator_still_gets_a_word(lab):
+    """Yin on #4784: AWS accepts any desired under its own 8 KB cap; the device's answer (one refusal line per key
+    plus a clear per key) is 2-3x the delta, so 150 unknown keys made ``_update`` raise on the worker thread, the
+    thread died, and every later target was parked with no consumer while ``state`` kept reporting."""
+    arm, rec, device, op, seen = lab
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
+    control = shadow_topic("arm", "control", "update")
+    hostile = {f"not_a_joint_{i:03d}.pos": 0.1 for i in range(150)}
+    op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps({"state": hostile, "metadata": {}}).encode())
+    _wait(lambda: control in seen)
+    mirror.drain()
+    assert mirror._worker.is_alive(), "the worker survived the oversized reply"
+    for doc in seen[control]:
+        assert len(json.dumps(doc, separators=(",", ":")).encode()) <= 8 * 1024
+    rep = seen[control][0]["state"]["reported"]["refused"]
+    assert rep and len(json.dumps(rep)) < 1024 and "150" in json.dumps(rep), rep  # one compact line, not 150
+    cleared = {k for doc in seen[control] for k in (doc["state"].get("desired") or {})}
+    assert cleared == set(hostile), "every refused key is still cleared from desired, across as many writes as needed"
+    before = len(mirror.applied)
+    op.publish(
+        shadow_topic("arm", "control", "update/delta"), json.dumps({"state": {"shoulder_pan.pos": 0.1}}).encode()
+    )
+    _wait(lambda: len(mirror.applied) > before)
+    assert mirror.applied[-1] == {"shoulder_pan": 0.1}  # the control path is alive after the bad write
+    mirror.stop()
+
+
+def test_an_exception_inside_apply_is_reported_and_the_worker_lives_on(lab):
+    arm, rec, device, op, seen = lab
+    mirror = ShadowMirror(device, arm, rec, shadow_hz=1.0, stale_s=None).start()
+    control = shadow_topic("arm", "control", "update")
+    boom = {"shoulder_pan.pos": 0.1}
+    original = mirror._update
+
+    def failing(name, state):
+        if name == "control" and "shoulder_pan.pos" in (state.get("reported") or {}):
+            raise RuntimeError("link down")
+        original(name, state)
+
+    mirror._update = failing  # type: ignore[method-assign]
+    op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps({"state": boom}).encode())
+    _wait(lambda: control in seen)
+    mirror.drain()
+    assert mirror._worker.is_alive()
+    assert "link down" in json.dumps(seen[control][-1]["state"]["reported"]["refused"])
+    mirror._update = original  # type: ignore[method-assign]
+    op.publish(shadow_topic("arm", "control", "update/delta"), json.dumps({"state": {"elbow_flex.pos": 0.2}}).encode())
+    _wait(lambda: {"elbow_flex": 0.2} in mirror.applied)
+    mirror.stop()

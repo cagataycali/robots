@@ -49,7 +49,12 @@ eventually consistent; a latch must be immediate and must never replay — use t
 `state` above 1 Hz (the per-thing quota throttles at 20 updates/s and a document is capped at 8 KB). A target that
 arrives late is dropped as stale rather than moved to: `IotOptions(stale_s=2.0)` is the bound (at least 1 s, because
 AWS stamps `metadata` in whole seconds; `None` applies every delta). It is the shadow's own knob — the mesh's
-`watchdog_ms` is a 500 ms liveness check for the rpc path and stays as it is.
+`watchdog_ms` is a 500 ms liveness check for the rpc path and stays as it is. The reply always fits the 8 KB cap: a
+delta of hundreds of unknown keys gets one collapsed refusal line and its clears across as many writes as needed, and
+an exception while applying is written under `reported.refused["*"]` — the worker that applies deltas never dies on an
+operator's input. `IotOptions` checks every bound when it is built, so a bad option (`telemetry_hz=2`) is refused
+before anything starts, and a mount that fails on a later step undoes what it started: nothing stays cloud-controllable
+after the API said the mount failed.
 
 ## Certificates: one per robot, one policy for the fleet
 
