@@ -74,7 +74,7 @@ template and a pre-provisioning hook shipped as data (`claim.TEMPLATE`, `claim.H
 request only when the CSR's CN is the thing being created and that thing does not exist, so a claim holder can never
 mint a certificate for another robot (measured: a forged CN is denied in 0.55 s; the honest path takes about 5 s).
 Operators keep IAM (`provision.operator_policy`): they may send rpcs, e-stop, write shadow targets and read
-everything, and may not speak as a device. A box that holds a certificate *and* commands other robots (a controller) gets the small `controller` add-on policy on top (`register(..., controller=True)`); without it
+everything, and may not speak as a device. Its shadow grants name the tenant's own device ids (`things=`, e.g. from `registry.list_things`), because a shadow document carries no author: an account-wide shadow grant would let an operator of one tenant move another tenant's robot, so an empty `things` is refused and `all_things=True` is the explicit, cross-tenant opt-in for a single-tenant account. A box that holds a certificate *and* commands other robots (a controller) gets the small `controller` add-on policy on top (`register(..., controller=True)`); without it
 the broker refuses its rpcs, which is the point.
 
 ## Commands: two paths, one measured difference of 4 ms
@@ -110,5 +110,5 @@ carries no messaging charge and no subscriber ever sees.
 
 1. `pip install 'strands-robots[iot]'` (awsiotsdk, boto3, cryptography).
 2. `setup_tenant` once per tenant, `register` (or `claim`) once per robot; the files land in `~/.strands/iot/<id>/`.
-3. Operators: attach `operator_policy(...)` to their IAM identity; `iot:RetainPublish` is what lets a tenant e-stop be retained.
+3. Operators: attach `operator_policy(tenant, things=[...])` (the tenant's device ids) to their IAM identity; `iot:RetainPublish` is what lets a tenant e-stop be retained.
 4. Rules: one long-lived role with `iot:Publish` (republish), `sns:Publish`, `s3:PutObject`/`timestream:WriteRecords` as used.

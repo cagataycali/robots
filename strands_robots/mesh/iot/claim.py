@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from .. import wire
-from .provision import POLICY_NAME, _write, csr, group_name
+from .policy import POLICY_NAME, group_name
+from .provision import _write, csr
 
 TEMPLATE_NAME = "strands-robots-claim"
 TEMPLATE: dict[str, Any] = {

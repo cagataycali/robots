@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .provision import group_name
+from .policy import group_name
 
 
 def list_things(tenant: str, *, region: str, iot: Any = None, limit: int = 250) -> list[dict[str, Any]]:

@@ -2,36 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
 from strands_robots.mesh.iot import provision
 
 ACCOUNT, REGION = "123456789012", "us-west-2"  # placeholders, as in conftest
 
 RECORD = {"id": "arm-1", "device_type": "robot_arm", "tenant": "lab", "labels": {"role": "arm"}, "manifest": {}}
-
-
-def test_fleet_policy_fits_the_cap_and_names_no_tenant_or_thing():
-    text = provision.policy_text(provision.device_policy(REGION, ACCOUNT))
-    assert len(text) <= provision.POLICY_CAP, len(text)
-    assert "${iot:Connection.Thing.ThingName}" in text and "${iot:Connection.Thing.Attributes[tenant]}" in text
-    assert "lab" not in text and "arm" not in text
-    doc = json.loads(text)
-    actions = {a for s in doc["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
-    assert actions == {"iot:Connect", "iot:Publish", "iot:RetainPublish", "iot:Subscribe", "iot:Receive"}
-    pub = [s for s in doc["Statement"] if "iot:Publish" in s["Action"]][0]["Resource"]
-    assert not any("@estop" in r for r in pub), "a device never publishes the tenant e-stop"
-    assert any(r.endswith("@presence/${iot:Connection.Thing.ThingName}") for r in pub)
-
-
-def test_operator_policy_has_no_publish_on_the_devices_word():
-    text = provision.policy_text(provision.operator_policy(REGION, ACCOUNT, "lab"))
-    doc = json.loads(text)
-    pub = [s for s in doc["Statement"] if s["Action"] == "iot:Publish"][0]["Resource"]
-    assert any(r.endswith("strands/lab/@estop") for r in pub)
-    for word in ("@presence", "/manifest", "/lockout", "/state"):
-        assert not any(r.endswith(word) for r in pub), word
-    assert any(s["Action"] == "iot:SendDirectMessage" for s in doc["Statement"])
 
 
 def test_csr_carries_the_device_id_as_cn():

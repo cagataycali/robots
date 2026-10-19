@@ -8,89 +8,12 @@ device and only the CSR travels. ``boto3`` and ``cryptography`` are imported whe
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from .. import wire
-
-POLICY_NAME = "strands-robots-device"
-"""The one policy every device certificate carries; the tenant and thing come from the connection, not the text."""
-POLICY_CAP = 2048
-"""IoT refuses a policy document over 2,048 bytes."""
-_THING, _TENANT = "${iot:Connection.Thing.ThingName}", "${iot:Connection.Thing.Attributes[tenant]}"
-
-
-def group_name(tenant: str) -> str:
-    return f"strands-{wire.check_id(tenant, 'tenant')}"
-
-
-def device_policy(region: str, account: str) -> dict[str, Any]:
-    """The fleet policy: connect only as the attached thing; publish/subscribe only inside its own tenant and only
-    on its own device keys, presence, reply and shadows; ``@estop`` and ``@peer`` are read-only for a device."""
-    arn = f"arn:aws:iot:{region}:{account}"
-    own, tenant, shadow = f"strands/{_TENANT}/{_THING}", f"strands/{_TENANT}", f"$aws/things/{_THING}/shadow"
-    attached = {"Bool": {"iot:Connection.Thing.IsAttached": "true"}}
-    pub = [f"{arn}:topic/{own}/*", f"{arn}:topic/{tenant}/@presence/{_THING}", f"{arn}:topic/{tenant}/@reply/*",
-           f"{arn}:topic/{tenant}/@peer/*", f"{arn}:topic/{shadow}/*",
-           f"{arn}:topic/$aws/rules/*/{own}/state"]  # fmt: skip
-    sub = [f"{arn}:topicfilter/{own}/*", f"{arn}:topicfilter/{tenant}/@estop", f"{arn}:topicfilter/{tenant}/@peer/*",
-           f"{arn}:topicfilter/{tenant}/@presence/*", f"{arn}:topicfilter/{shadow}/*"]  # fmt: skip
-    recv = [f"{arn}:topic/{tenant}/*", f"{arn}:topic/{shadow}/*"]
-    doc = {"Version": "2012-10-17", "Statement": [
-        {"Effect": "Allow", "Action": "iot:Connect", "Resource": f"{arn}:client/{_THING}", "Condition": attached},
-        # RetainPublish rides with Publish: a device may retain only on its own keys (manifest, lockout), and it
-        # has no right to publish a command anywhere, so a retained command from a device is impossible.
-        {"Effect": "Allow", "Action": ["iot:Publish", "iot:RetainPublish"], "Resource": pub},
-        {"Effect": "Allow", "Action": "iot:Subscribe", "Resource": sub},
-        # Receive is coarse on purpose: Subscribe is the gate, and every byte here counts against the 2,048 cap.
-        {"Effect": "Allow", "Action": "iot:Receive", "Resource": recv},
-    ]}  # fmt: skip
-    if len(policy_text(doc)) > POLICY_CAP:
-        raise ValueError(f"device policy is {len(policy_text(doc))} bytes; IoT accepts at most {POLICY_CAP}")
-    return doc
-
-
-def controller_policy(region: str, account: str) -> dict[str, Any]:
-    """Attached IN ADDITION to the fleet policy on a certificate that also *commands* (a Greengrass core, a
-    controller box): it may send rpcs and fetch manifests inside its tenant and hear its own replies. A plain robot
-    never gets it; a certificate with it is still pinned to its own thing by the fleet policy. (Two small policies
-    instead of one: a single document would be 2,249 bytes, over IoT's 2,048 cap.)"""
-    arn, t = f"arn:aws:iot:{region}:{account}", f"strands/{_TENANT}"
-    pub = [f"{arn}:topic/{t}/*/rpc/*", f"{arn}:topic/{t}/*/manifest"]
-    return {"Version": "2012-10-17", "Statement": [
-        {"Effect": "Allow", "Action": "iot:Publish", "Resource": pub},
-        {"Effect": "Allow", "Action": "iot:Subscribe", "Resource": f"{arn}:topicfilter/{t}/@reply/{_THING}"},
-    ]}  # fmt: skip
-
-
-def policy_text(doc: Mapping[str, Any]) -> str:
-    """The document as it is sent: compact JSON (IoT counts every byte of the text against the cap)."""
-    return json.dumps(doc, separators=(",", ":"))
-
-
-def operator_policy(region: str, account: str, tenant: str) -> dict[str, Any]:
-    """An IAM policy for operators of ``tenant`` (SigV4 WebSocket): rpcs, e-stop, shadow targets, reads; no
-    publish on presence, manifest, lockout or state (those are the device's word)."""
-    arn, t = f"arn:aws:iot:{region}:{account}", f"strands/{wire.check_id(tenant, 'tenant')}"
-    shadow = "$aws/things/*/shadow"
-    pub = [f"{arn}:topic/{t}/*/rpc/*", f"{arn}:topic/{t}/@estop", f"{arn}:topic/{t}/@peer/*",
-           f"{arn}:topic/{shadow}/name/control/update", f"{arn}:topic/{shadow}/name/*/get"]  # fmt: skip
-    sub = [f"{arn}:topicfilter/{t}/*", f"{arn}:topicfilter/{t}/*/*", f"{arn}:topicfilter/{t}/*/*/*",
-           f"{arn}:topicfilter/{shadow}/name/*/*", f"{arn}:topicfilter/$aws/events/presence/*/*"]  # fmt: skip
-    recv = [f"{arn}:topic/{t}/*", f"{arn}:topic/{shadow}/*", f"{arn}:topic/$aws/events/presence/*"]
-    api = ["iot:DescribeEndpoint", "iot:ListThingsInThingGroup", "iot:DescribeThing", "iot:GetThingShadow",
-           "iot:UpdateThingShadow"]  # fmt: skip
-    return {"Version": "2012-10-17", "Statement": [
-        {"Effect": "Allow", "Action": "iot:Connect", "Resource": f"{arn}:client/strands-op-*"},
-        {"Effect": "Allow", "Action": "iot:SendDirectMessage", "Resource": f"{arn}:connection/*"},
-        {"Effect": "Allow", "Action": "iot:Publish", "Resource": pub},
-        {"Effect": "Allow", "Action": "iot:RetainPublish", "Resource": f"{arn}:topic/{t}/@estop"},
-        {"Effect": "Allow", "Action": "iot:Subscribe", "Resource": sub},
-        {"Effect": "Allow", "Action": "iot:Receive", "Resource": recv},
-        {"Effect": "Allow", "Action": api, "Resource": "*"},
-    ]}  # fmt: skip
+from .policy import POLICY_NAME, controller_policy, device_policy, group_name, policy_text
 
 
 def csr(device_id: str) -> tuple[str, str]:

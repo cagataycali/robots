@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from strands_robots.mesh.iot import claim, provision, registry
+from strands_robots.mesh.iot import claim, policy, provision, registry
 
 ACCOUNT, REGION = "123456789012", "us-west-2"
 
@@ -17,7 +17,7 @@ def test_template_binds_thing_to_device_id_and_group_to_tenant_within_10_kb():
     thing = body["Resources"]["thing"]["Properties"]
     assert thing["ThingName"] == {"Ref": "device_id"}
     assert thing["ThingGroups"] == [{"Fn::Join": ["", ["strands-", {"Ref": "tenant"}]]}]
-    assert body["Resources"]["policy"]["Properties"]["PolicyName"] == provision.POLICY_NAME
+    assert body["Resources"]["policy"]["Properties"]["PolicyName"] == policy.POLICY_NAME
     assert set(body["Parameters"]) == {"device_id", "device_type", "tenant", "AWS::IoT::Certificate::Id"}
 
 
