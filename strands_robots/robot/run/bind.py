@@ -51,7 +51,11 @@ def _pair(v: Any) -> bool:
 
 
 def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units: str | None) -> Bound:
-    """What every loop does before step one: the policy's gains, its units, its requirements, a reset."""
+    """What every loop does before step one: the policy's gains, its units, its requirements, a reset.
+
+    Validate, then acquire: the checks that need no session run first, so a refusal there opens nothing; any
+    refusal after ``attach`` detaches before it propagates.
+    """
     refuse_remote_spec(policy)  # an agent's run, by any entry point: no policy at a network address
     pol = as_policy(policy)
     for name in ("attach", "detach", "requirements", "needs_observation"):
@@ -60,9 +64,20 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
         from ..safety import RequestRefused
 
         raise RequestRefused(f"{robot.id} cannot hold position between ticks, and {pol!r} requires a body that can")
+    if units != "auto":  # a named scheme needs no session: an unknown one is refused before attach opens one
+        resolve_units(pol, units, robot.description)
     attach = getattr(pol, "attach", None)
     if attach is not None:  # connect / load / admit against THIS robot, before units and requirements
         attach(robot)
+    try:
+        return _ready(robot, pol, units)
+    except BaseException:  # a refusal after attach detaches before it propagates: nothing stays open (K2)
+        _detach(pol)
+        raise
+
+
+def _ready(robot: Robot, pol: Any, units: str | None) -> Bound:
+    """Everything that needs ``attach`` and can still refuse: the rate, the gains, the units, the requirements."""
     hz = _hook(pol, "hz", _rate, "a number > 0")  # after attach: a remote policy learns its rate from the server
     realtime = _hook(pol, "realtime", _flag, "True or False", False)
     gains = _hook(pol, "gains", _pair, "a (kp, kd) pair")
@@ -82,11 +97,15 @@ def bind(robot: Robot, policy: PolicyLike | Callable[[Observation], Any], units:
     return Bound(pol, conv, None if hz is None else float(hz), bool(realtime))
 
 
-def release(bound: Bound) -> None:
-    """After the last step: let the policy close what ``attach`` opened (a session, a server)."""
-    detach = getattr(bound.policy, "detach", None)
+def _detach(pol: Any) -> None:
+    detach = getattr(pol, "detach", None)
     if detach is not None:  # bind() refused a detach that is not a method
         detach()
+
+
+def release(bound: Bound) -> None:
+    """After the last step: let the policy close what ``attach`` opened (a session, a server)."""
+    _detach(bound.policy)
 
 
 def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None) -> np.ndarray:
