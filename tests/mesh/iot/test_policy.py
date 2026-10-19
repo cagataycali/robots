@@ -51,7 +51,7 @@ def test_operator_policy_scopes_the_shadow_to_the_tenants_things_not_the_account
     for stmt in doc["Statement"]:
         if "iot:UpdateThingShadow" in stmt["Action"]:
             assert stmt["Resource"] != "*", "UpdateThingShadow is never account-wide in the default document"
-            assert all(r.endswith(("thing/arm-1", "thing/arm-2")) for r in stmt["Resource"])
+            assert all(r.endswith(("thing/arm-1/control", "thing/arm-2/control")) for r in stmt["Resource"])
 
 
 def test_operator_policy_refuses_an_empty_thing_list():
@@ -67,3 +67,31 @@ def test_operator_policy_all_things_opts_into_the_account_wide_grant():
     pub = _by_action(doc, "iot:Publish")[0]["Resource"]
     assert any("$aws/things/*/shadow/name/control/update" in r for r in pub)
     assert any("iot:UpdateThingShadow" in s["Action"] and s["Resource"] == "*" for s in doc["Statement"])
+
+
+def test_operator_policy_names_the_control_shadow_as_iam_does():
+    # AWS scopes a NAMED shadow as thing/<name>/<shadow> (iot-action-resources: thing/thingOne/shadowOne); a grant
+    # on thing/<name> alone covers the classic shadow, so the docs' update_thing_shadow(shadowName="control")
+    # over HTTPS would be refused, and a grant on thing/<name>/* would let an operator write `state` and
+    # `manifest`, the device's word. Operators write `control` only and read every shadow.
+    doc = json.loads(policy.policy_text(policy.operator_policy(REGION, ACCOUNT, "lab", things=["arm-1", "arm-2"])))
+    upd = [s for s in doc["Statement"] if "iot:UpdateThingShadow" in s["Action"]]
+    assert len(upd) == 1 and "iot:GetThingShadow" not in upd[0]["Action"], "update and read are scoped apart"
+    assert upd[0]["Resource"] == [
+        f"arn:aws:iot:{REGION}:{ACCOUNT}:thing/arm-1/control",
+        f"arn:aws:iot:{REGION}:{ACCOUNT}:thing/arm-2/control",
+    ]
+    get = [s for s in doc["Statement"] if "iot:GetThingShadow" in s["Action"]][0]["Resource"]
+    assert (
+        f"arn:aws:iot:{REGION}:{ACCOUNT}:thing/arm-1/*" in get
+        and f"arn:aws:iot:{REGION}:{ACCOUNT}:thing/arm-2/*" in get
+    )
+    assert len(policy.policy_text(doc)) <= policy.IAM_POLICY_CAP
+
+
+def test_operator_policy_refuses_a_document_over_iams_cap_by_name():
+    # IAM refuses a managed policy over 6,144 characters; each device adds six ARNs, so about nine fit. The
+    # refusal names the cap and the fix (several documents), instead of IAM's MalformedPolicyDocument later.
+    with pytest.raises(ValueError, match="6144"):
+        policy.operator_policy(REGION, ACCOUNT, "lab", things=[f"arm-{i}" for i in range(40)])
+    policy.operator_policy(REGION, ACCOUNT, "lab", things=[f"arm-{i}" for i in range(8)])  # fits

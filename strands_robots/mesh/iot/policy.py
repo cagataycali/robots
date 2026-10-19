@@ -14,6 +14,9 @@ POLICY_NAME = "strands-robots-device"
 """The one policy every device certificate carries; the tenant and thing come from the connection, not the text."""
 POLICY_CAP = 2048
 """IoT refuses a policy document over 2,048 bytes."""
+IAM_POLICY_CAP = 6144
+"""IAM refuses a managed policy over 6,144 characters; each device adds six ARNs to the operator policy, so one
+document names about nine devices and a larger tenant attaches several."""
 _THING, _TENANT = "${iot:Connection.Thing.ThingName}", "${iot:Connection.Thing.Attributes[tenant]}"
 
 
@@ -74,7 +77,8 @@ def operator_policy(
     no author and a thing name has no tenant segment, so an account-wide shadow grant would let an operator of one
     tenant move another tenant's robot through ``update_thing_shadow``. An empty ``things`` is refused rather than
     widened to ``*``; ``all_things=True`` keeps the account-wide ``$aws/things/*`` shadow grant, which crosses the
-    tenant boundary and is only safe in a single-tenant account."""
+    tenant boundary and is only safe in a single-tenant account. A named shadow's IAM resource is
+    ``thing/<id>/<shadow>``: operators update ``control`` only and read every shadow (``thing/<id>/*``)."""
     arn, t = f"arn:aws:iot:{region}:{account}", f"strands/{wire.check_id(tenant, 'tenant')}"
     ids = [wire.check_id(i, "device_id") for i in (things or [])]
     if not ids and not all_things:
@@ -88,13 +92,14 @@ def operator_policy(
     sh_sub = [f"{arn}:topicfilter/$aws/things/{m}/shadow/name/*/*" for m in marks]
     sh_recv = [f"{arn}:topic/$aws/things/{m}/shadow/*" for m in marks]
     thing_arns: Any = "*" if all_things else [f"{arn}:thing/{m}" for m in marks]
+    read_arns: Any = "*" if all_things else [f"{arn}:thing/{m}/*" for m in marks]
+    write_arns: Any = "*" if all_things else [f"{arn}:thing/{m}/control" for m in marks]
     group = f"{arn}:thinggroup/{group_name(tenant)}"
     pub = [f"{arn}:topic/{t}/*/rpc/*", f"{arn}:topic/{t}/@estop", f"{arn}:topic/{t}/@peer/*", *sh_pub]
     sub = [f"{arn}:topicfilter/{t}/*", f"{arn}:topicfilter/{t}/*/*", f"{arn}:topicfilter/{t}/*/*/*",
            *sh_sub, f"{arn}:topicfilter/$aws/events/presence/*/*"]  # fmt: skip
     recv = [f"{arn}:topic/{t}/*", *sh_recv, f"{arn}:topic/$aws/events/presence/*"]
-    shadow_api = ["iot:DescribeThing", "iot:GetThingShadow", "iot:UpdateThingShadow"]
-    return {"Version": "2012-10-17", "Statement": [
+    doc = {"Version": "2012-10-17", "Statement": [
         {"Effect": "Allow", "Action": "iot:Connect", "Resource": f"{arn}:client/strands-op-*"},
         {"Effect": "Allow", "Action": "iot:SendDirectMessage", "Resource": f"{arn}:connection/*"},
         {"Effect": "Allow", "Action": "iot:Publish", "Resource": pub},
@@ -103,5 +108,13 @@ def operator_policy(
         {"Effect": "Allow", "Action": "iot:Receive", "Resource": recv},
         {"Effect": "Allow", "Action": "iot:DescribeEndpoint", "Resource": "*"},
         {"Effect": "Allow", "Action": "iot:ListThingsInThingGroup", "Resource": group},
-        {"Effect": "Allow", "Action": shadow_api, "Resource": thing_arns},
+        {"Effect": "Allow", "Action": "iot:DescribeThing", "Resource": thing_arns},
+        {"Effect": "Allow", "Action": "iot:GetThingShadow", "Resource": read_arns},
+        {"Effect": "Allow", "Action": "iot:UpdateThingShadow", "Resource": write_arns},
     ]}  # fmt: skip
+    if len(policy_text(doc)) > IAM_POLICY_CAP:
+        raise ValueError(
+            f"operator policy for {len(ids)} things is {len(policy_text(doc))} characters; IAM accepts at most "
+            f"{IAM_POLICY_CAP}, about nine devices: attach several documents to the operator"
+        )
+    return doc
