@@ -44,8 +44,9 @@ def teleport(ops: Any, name: str, position: Any, orientation: Any) -> Pose:
     fixed = name in ops._robots and not ops._robots[name].description.floating
     if fixed:
         sr = ops.scene.robot(name)  # a fixed base is rebuilt from the scene, so the scene moves first
-        f = moved_frame(Pose(np.asarray(sr.position), np.asarray(sr.orientation)), cur, pose)
-        sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())
+        built = ops._built.get(name, (sr.position, sr.orientation))  # the frame ``cur`` was compiled from: inside
+        f = moved_frame(Pose(np.asarray(built[0], float), np.asarray(built[1], float)), cur, pose)  # a block the
+        sr.position, sr.orientation = tuple(f.position.tolist()), tuple(f.orientation.tolist())  # entry may have moved
     for o in ops.scene.objects:
         if o.name == name and not o.free:
             o.position, o.orientation = tuple(pose.position.tolist()), tuple(pose.orientation.tolist())
@@ -54,5 +55,8 @@ def teleport(ops: Any, name: str, position: Any, orientation: Any) -> Pose:
         ops._reload()
         return pose
     ops.backend.set_pose(name, pose, zero_velocity=True)
+    if name in ops._robots and not ops._robots[name].description.floating:
+        sr = ops.scene.robot(name)  # the backend now stands on this frame: the next deferred delta composes onto it
+        ops._built[name] = (tuple(sr.position), tuple(sr.orientation))
     ops.revision += 1
     return ops.backend.body_pose(name)

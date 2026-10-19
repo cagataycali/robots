@@ -33,6 +33,7 @@ class _SceneOps:
     _robots: dict[str, Member]
     _editing: int
     _gone: list[Member]
+    _built: dict[str, tuple[tuple[float, ...], tuple[float, ...]]]
     _reload: Callable[[], None]  # Simulation's (rebuild now, or when ``with sim.editing():`` exits); so is _flush
     _flush: Callable[[], None]
 

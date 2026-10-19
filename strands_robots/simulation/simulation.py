@@ -68,12 +68,13 @@ class Simulation(_SceneOps):
         self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
         self._editing, self._pending, self._gone = 0, False, []
+        self._built: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}  # each robot's frame as compiled
         self._closed = False
         cls = load_backend(backend, physics)
         self.backend: Backend = cls(
             physics=physics, headless=headless, device=device, num_envs=num_envs, render_size=render_size
         )
-        self.backend.load(self.scene)
+        self._load()
 
     @classmethod
     def default(cls) -> Simulation:
@@ -139,11 +140,17 @@ class Simulation(_SceneOps):
             if self._editing:  # inside ``with sim.editing():`` the rebuild waits for the block's exit
                 self._pending = True
                 return
-            self.backend.load(self.scene)
+            self._load()
             self.revision += 1
             self._pending = False
             while self._gone:  # a robot removed inside ``editing()`` detaches once its rebuild holds
                 self._gone.pop().detached()
+
+    def _load(self) -> None:
+        """The one rebuild: the backend compiles the scene, and the frame each robot was compiled from is kept (a
+        deferred ``set_pose`` composes its delta onto that frame, not onto a scene entry an earlier call moved)."""
+        self.backend.load(self.scene)
+        self._built = {r.id: (tuple(r.position), tuple(r.orientation)) for r in self.scene.robots}
 
     def _flush(self) -> None:
         if self._pending and not self._editing:

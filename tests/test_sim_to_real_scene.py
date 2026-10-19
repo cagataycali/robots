@@ -209,6 +209,26 @@ def test_set_pose_on_a_body_added_in_the_same_editing_block_is_placed_by_the_blo
     assert np.allclose(sim.describe()["robots"]["late"]["position"], [0.7, 0, 0])
 
 
+@pytest.mark.parametrize("spawn", [(0.0, 0.0, 0.0), (0.2, 0.3, 0.0)])
+def test_a_second_set_pose_of_a_fixed_robot_in_one_editing_block_lands_where_asked(spawn):
+    """Inside a block the backend is not rebuilt, so ``cur`` stays the pre-block pose while the scene entry moved on
+    the first call; composing the second delta onto the moved entry added the first delta again ([1.5, 0, 0])."""
+    sim = Simulation()
+    arm = Robot("so101", sim=sim, position=spawn)
+    try:
+        with sim.editing():
+            sim.set_pose(arm, position=(0.5, 0, 0))
+            sim.set_pose(arm, position=(1.0, 0, 0))
+        assert np.allclose(sim.pose(arm.id).position, [1.0, 0, 0], atol=1e-6), sim.pose(arm.id).position
+        sim.set_pose(arm, position=(0.7, 0.1, 0))  # and outside a block, after the rebuild, still exact
+        assert np.allclose(sim.pose(arm.id).position, [0.7, 0.1, 0], atol=1e-6)
+        with sim.editing():  # a later block composes onto the frame the LAST rebuild compiled
+            sim.set_pose(arm, position=(0.2, 0.2, 0))
+        assert np.allclose(sim.pose(arm.id).position, [0.2, 0.2, 0], atol=1e-6)
+    finally:
+        sim.close()
+
+
 def test_remove_leaves_no_draw_behind_for_a_body_or_camera_re_added_under_the_same_name(world):
     sim, _ = world
     base = sim.backend.model.body_mass[sim.backend.model.body("cube").id]
