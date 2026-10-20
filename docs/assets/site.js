@@ -1,4 +1,4 @@
-/* Copy pills, the content fade on instant navigation, and the "On this page" bar. Vanilla, ~40 lines. */
+/* Copy pills, the content fade on instant navigation, and the "On this page" bar. Vanilla, ~50 lines. */
 (() => {
   function wire(root) {
     root.querySelectorAll(".sr-copy[data-clipboard-text]").forEach((b) => {
@@ -22,16 +22,21 @@
   async function live() {
     const stage = document.getElementById("hero-stage"); if (!stage || stage.__live) return;
     const url = new URLSearchParams(location.search).get("live") || stage.dataset.live; if (!url) return;
+    /* Only a dashboard on this machine, as the dashboard's own guard allows; the DOM is built, never concatenated. */
+    let u; try { u = new URL(url, location.href); } catch { return; }
+    if (!/^https?:$/.test(u.protocol) || !["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)) return;
     /* A v1 dashboard serves its mark as an SVG; anything else answering on the port is not one. */
     const ok = await new Promise((done) => {
       const img = new Image(); const t = setTimeout(() => done(false), 1500);
       img.onload = () => { clearTimeout(t); done(img.naturalWidth > 0); };
       img.onerror = () => { clearTimeout(t); done(false); };
-      img.src = url + "mark.svg?probe=" + Date.now();
+      img.src = new URL("mark.svg?probe=" + Date.now(), u).href;
     });
     if (!ok) return;
     stage.__live = true;
-    stage.innerHTML = `<iframe src="${url}" title="strands-robots dashboard, live"></iframe><span class="sr-stage__badge">live · ${url}</span>`;
+    const frame = document.createElement("iframe"); frame.src = u.href; frame.title = "strands-robots dashboard, live";
+    const badge = document.createElement("span"); badge.className = "sr-stage__badge"; badge.textContent = `live · ${u.href}`;
+    stage.replaceChildren(frame, badge);
   }
   function frog() {
     const f = document.querySelector(".sr-frog"); if (!f || f.__wired) return; f.__wired = true;
