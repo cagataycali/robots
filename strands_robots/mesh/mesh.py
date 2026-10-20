@@ -21,7 +21,7 @@ from .device import Device, Selector
 from .iot.options import attach as _iot_attach
 from .presence import Directory, announce, refuse_shared, refuse_taken
 from .record import RAISE, check_kill_switch, default_operator, default_tenant, record, state_rate
-from .remote import RemoteBody
+from .remote import connect
 from .serve import ARGS, estop_each, serve
 from .stream import listen, publish
 from .transports.base import Transport, Unsubscribe, open_transport
@@ -80,6 +80,7 @@ class Mesh:
         ``watchdog_ms`` gets ``on_disconnect``. ``iot`` adds shadows. A ``Simulation`` mounts each robot in it."""
         from ..simulation import Simulation
 
+        self._open()
         if isinstance(robot, Simulation):
             kw = {"labels": labels, "state_hz": state_hz, "watchdog_ms": watchdog_ms, "iot": iot}
             return [self.mount(r, **kw) for r in robot.robots.values()]  # type: ignore[arg-type]
@@ -131,6 +132,7 @@ class Mesh:
 
         A refusal from the device's safety chain raises ``RequestRefused`` with the device's message verbatim.
         """
+        self._open()
         if rpc not in ARGS:
             raise LookupError(f"{device_id} has no rpc {rpc!r} over the mesh; known: {sorted(ARGS)}")
         if rpc == "estop":  # also on the tenant key: a lost or diverted rpc is never the only stop
@@ -165,7 +167,12 @@ class Mesh:
     ) -> list[str]:
         """``estop``/``resume``/``hold``/``stop`` every device matching ``selector``; the ids that acked within
         ``deadline`` s. An ``estop`` also reaches devices this mesh has not discovered (they latch, unacked)."""
+        self._open()
         return broadcast(self, command, selector, deadline, approved_by)
+
+    def _open(self) -> None:
+        if self._closed:
+            raise RuntimeError(f"{self!r} is closed; make a new Mesh")
 
     def _authority(self) -> _authority.Authority:
         return self.resume_authority
@@ -185,21 +192,13 @@ class Mesh:
     def connect(self, device_id: str, *, images: bool = False) -> Any:
         """A ``Robot`` whose Body is the device ``device_id`` on this mesh: observe/act/run work unchanged, every
         write goes through the device's own safety chain. ``images=True`` carries camera frames too."""
-        from ..robot import Robot
-
-        found = [d for d in self._present() if d.id == device_id]
-        if not found:
-            raise LookupError(f"no device {device_id!r} in tenant {self.tenant!r}")
-        manifest = found[0].manifest
-        name = str((manifest.get("description") or {}).get("name") or manifest.get("name"))
-        names = tuple(str(k) for k in manifest.get("action_keys") or ())
-        hold = bool(manifest.get("position_hold", False))
-        body = RemoteBody(self, device_id, names, images=images, position_hold=hold)
-        return Robot(name, driver=body, twin=False, id=device_id)
+        self._open()
+        return connect(self, device_id, images)
 
     def subscribe(self, device_id: str, event: str, cb: Callable[[Any], Any]) -> Unsubscribe:
         """Call ``cb(payload)`` for each ``event`` (``state``, ``estop``, ``fault``, ``run.started``, ``run.stopped``)
         from ``device_id``, with the payload the device's own ``subscribe`` gives. Returns ``unsubscribe``."""
+        self._open()
         wire.check_id(device_id, "device_id")
         undos = [listen(t, self.tenant, device_id, event, cb) for t in self.transports]
         self._subs.extend(undos)
@@ -227,7 +226,7 @@ class Mesh:
         return sorted(seen.values(), key=lambda d: d.id)
 
     def close(self) -> None:
-        """Unmount everything, stop watching, close owned transports. Idempotent."""
+        """Unmount everything, stop watching, close owned transports. Idempotent; every other verb then refuses."""
         if self._closed:
             return
         self._closed = True

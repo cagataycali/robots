@@ -62,3 +62,18 @@ class RemoteBody:
 
     def close(self) -> None:
         self._last = None
+
+
+def connect(mesh: Mesh, device_id: str, images: bool) -> Any:
+    """``Mesh.connect``: a ``Robot`` driven by the device ``device_id``, shaped by its announced manifest."""
+    from ..robot import Robot
+
+    found = [d for d in mesh._present() if d.id == device_id]
+    if not found:
+        raise LookupError(f"no device {device_id!r} in tenant {mesh.tenant!r}")
+    manifest = found[0].manifest
+    name = str((manifest.get("description") or {}).get("name") or manifest.get("name"))
+    names = tuple(str(k) for k in manifest.get("action_keys") or ())
+    hold = bool(manifest.get("position_hold", False))
+    body = RemoteBody(mesh, device_id, names, images=images, position_hold=hold)
+    return Robot(name, driver=body, twin=False, id=device_id)
