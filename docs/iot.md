@@ -11,6 +11,7 @@ IoT device.
 
 {{drawing:d08_iot_core}}
 
+<!-- test: skip, needs AWS IoT credentials and device certificates -->
 ```python
 from strands_robots import Robot
 from strands_robots.mesh import Mesh

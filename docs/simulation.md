@@ -7,9 +7,10 @@ description: One world, many robots. A Simulation owns time and the scene; a Bac
 {{drawing:d02_one_world}}
 
 ```python
-from strands_robots import Simulation
+from strands_robots import Robot, Simulation
 
-sim = Simulation.default()        # MuJoCo, headless; every Robot given no world joins this one
+arm = Robot("so101"); g1 = Robot("g1", position=[1, 0, 0])   # two bodies, no world given, so they join the default one
+sim = Simulation.default()        # MuJoCo, headless; the world arm and g1 joined
 sim.robots                        # {"so101": ..., "unitree_g1": ...}: ids are unique, a second so101 is "so101_2"
 sim.physics                       # Physics("mujoco", timestep=0.002, substeps=10): control_dt is 20 ms
 sim.control_step()                # what act() costs a simulated robot: one control step for the whole world

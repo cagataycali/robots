@@ -6,6 +6,7 @@ description: The same Robot with a Driver for a body. Feetech STS3215, Unitree D
 
 {{drawing:d04_twin}}
 
+<!-- test: skip, needs a real SO-101 arm on USB -->
 ```python title="needs the arm on USB"
 from strands_robots import Robot
 
