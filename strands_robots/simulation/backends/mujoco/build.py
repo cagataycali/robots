@@ -163,3 +163,27 @@ def apply_keyframes(model: mujoco.MjModel, data: mujoco.MjData, scene: Scene, jo
 
 def _robot_actuator_ids(model: mujoco.MjModel, r: SceneRobot) -> list[int]:
     return [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{r.id}/{a}") for a in r.description.actuators]
+
+
+def add_ground(spec: mujoco.MjSpec, ground: bool | str) -> None:
+    """A ground plane in the look ``ground`` names: a checker texture (True/"checker") so a camera sees edges
+    not white on white, a flat grey plane ("plain"), or none (False)."""
+    if not ground:
+        return
+    geom: dict[str, Any] = {"name": "ground", "type": mujoco.mjtGeom.mjGEOM_PLANE, "size": [0, 0, 0.05]}
+    if ground == "plain":
+        geom["rgba"] = [0.75, 0.78, 0.82, 1]
+    else:
+        spec.add_texture(
+            name="groundtex",
+            type=mujoco.mjtTexture.mjTEXTURE_2D,
+            builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+            width=300,
+            height=300,
+            rgb1=[0.2, 0.3, 0.4],
+            rgb2=[0.3, 0.4, 0.5],
+        )
+        mat = spec.add_material(name="groundmat", texrepeat=[4, 4], texuniform=True)
+        mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "groundtex"
+        geom["material"] = "groundmat"
+    spec.worldbody.add_geom(**geom)

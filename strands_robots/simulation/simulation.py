@@ -44,7 +44,7 @@ class Simulation(_SceneOps):
         device: str | None = None,
         num_envs: int = 1,
         gravity: tuple[float, float, float] = (0.0, 0.0, -9.81),
-        ground: bool = True,
+        ground: bool | str = True,
         render_size: tuple[int, int] = (640, 480),
     ) -> None:
         if physics not in _PHYSICS:
@@ -55,8 +55,9 @@ class Simulation(_SceneOps):
             raise ValueError(f"num_envs must be >= 1, got {num_envs}")
         if num_envs > 1 and physics != "newton":
             raise ValueError(f"num_envs={num_envs} needs physics='newton'; {physics!r} steps one world")
-        self.backend_name = backend
-        self.physics_name = physics
+        if ground not in (True, False, "checker", "plain"):
+            raise ValueError(f"ground={ground!r}; choose True, False, 'checker' or 'plain'")
+        self.backend_name, self.physics_name = backend, physics
         self.headless = headless
         self.device = device
         self.num_envs = num_envs

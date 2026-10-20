@@ -64,12 +64,9 @@ class MuJoCoBackend(Backend):
         spec.nkey = sum(len(r.description.keyframes) for r in scene.robots)  # else attach warns "nkey conflict"
         spec.visual.global_.offwidth = max(self.render_size[0], *(c.size[0] for c in scene.cameras), 640)
         spec.visual.global_.offheight = max(self.render_size[1], *(c.size[1] for c in scene.cameras), 480)
-        spec.visual.headlight.diffuse = [0.6 * scene.light_scale] * 3
-        spec.visual.headlight.ambient = [0.3 * scene.light_scale] * 3
-        if scene.ground:
-            spec.worldbody.add_geom(
-                name="ground", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[0, 0, 0.05], rgba=[0.75, 0.78, 0.82, 1]
-            )
+        spec.visual.headlight.diffuse = [0.5 * scene.light_scale] * 3
+        spec.visual.headlight.ambient = [0.15 * scene.light_scale] * 3
+        build.add_ground(spec, scene.ground)
         spec.worldbody.add_light(pos=[0.5, -1.0, 3.0], dir=[-0.2, 0.4, -1.0], diffuse=[0.8 * scene.light_scale] * 3)
         for r in scene.robots:
             build.attach_robot(spec, r)

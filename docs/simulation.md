@@ -47,6 +47,13 @@ says `pip install 'strands-robots[mujoco]'`, not a bare `ModuleNotFoundError`.
 
 {{drawing:d08_missing_extra}}
 
+A world's floor and light are sized for a camera, not the eye. `ground=` chooses the floor: the default
+checker texture gives a policy edges and colour instead of a white blob on white, `"plain"` is a flat grey
+plane and `False` is none; the default lighting (headlight diffuse 0.5, ambient 0.15) leaves `light_scale`
+headroom in both directions. An unknown `ground=` is refused by name.
+
+{{drawing:d14_world_a_camera_sees}}
+
 ## The backend contract
 
 `Backend` is an abstract class: `load`, `step`, `reset`, `time`, `joint_state`, `set_targets`,

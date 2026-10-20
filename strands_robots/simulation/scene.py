@@ -59,7 +59,7 @@ class Scene:
     cameras: list[SceneCamera] = field(default_factory=list)
     gravity: tuple[float, float, float] = (0.0, 0.0, -9.81)
     timestep: float = 0.002
-    ground: bool = True
+    ground: bool | str = True  # True/"checker" textured, "plain" flat grey, False none
     friction_scale: float = 1.0
     mass_scale: float = 1.0
     light_scale: float = 1.0
