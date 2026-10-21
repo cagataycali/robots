@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from ..robot.safety import RequestRefused
 from . import wire
 from .authority import Authority, Lockout, new_epoch
 from .codec import observation_to_dict
@@ -25,6 +26,10 @@ from .watchdog import MOTION_RPCS
 AUDIT = logging.getLogger("strands_robots.audit")
 MAX_STEPS = 10_000
 """The most world steps one ``act`` may ask for: every robot in the world waits on its lock meanwhile."""
+
+WRITE_RPCS = ("act", "hold")
+"""The rpcs that physically move a body: an observe-only device (a hardware body mounted without a watchdog)
+refuses them by name, so a mover can never leave an arm commanded with nothing to recall it."""
 
 ARGS: dict[str, tuple[str, ...]] = {
     "describe": (),
@@ -162,6 +167,9 @@ def serve(
     before it runs (the watchdog). Returns the undo."""
     handlers = _handlers(robot, device_id, lockout, authority, is_local(transport.url))
     counter = itertools.count(1)
+    # a hardware body with no mesh watchdog (on_rpc is None) is served observe-only: a mover that vanishes
+    # must never leave an arm commanded with nothing to recall it; a simulated body is harmless, unchanged
+    observe_only = on_rpc is None and bool(getattr(robot, "is_real", False))
 
     def answer(key: str, payload: bytes) -> bytes:
         name = key.rsplit("/", 1)[-1]
@@ -172,6 +180,11 @@ def serve(
             env = wire.decode_envelope(payload)
             seq = int(env.get("seq", seq))  # M3: echo the request's seq so the caller can match the reply
             args = env.get("args") or {}
+            if observe_only and name in WRITE_RPCS:
+                raise RequestRefused(
+                    f"{device_id} is mounted observe-only (a hardware device with watchdog_ms=None); "
+                    f"{name} is refused. Mount it with watchdog_ms= so a vanished mover recalls it."
+                )
             if on_rpc is not None and name in MOTION_RPCS and env.get("peer") is None:
                 raise TypeError(f"{device_id}.{name} needs the caller's peer id: the watchdog arms on whoever moves it")
             if on_rpc is not None and name != "estop":

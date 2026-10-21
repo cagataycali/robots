@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+import numpy as np
 import pytest
 
 from strands_robots import Robot
@@ -102,4 +103,69 @@ def test_a_motion_rpc_without_a_peer_is_refused_where_a_watchdog_guards(tenant):
     assert abs(float(arm.observe().joints["shoulder_pan"])) < 0.05, "nothing moved"
     raw.close()
     dev.close()
+    arm.close()
+
+
+class _LimpArm:
+    """A hardware Body (speaks real JointState frames); counts holds and goal writes."""
+
+    supports_position_hold, calibration, resolution = True, None, None
+
+    def __init__(self, names):
+        self.names, self.holds = names, 0
+        self.q = np.zeros(len(names))
+
+    def read(self):
+        from strands_robots import JointState
+
+        return JointState(self.names, self.q, self.q * 0, self.q * 0)
+
+    def write(self, targets):
+        self.q = np.asarray(targets, dtype=float)
+
+    def hold(self):
+        self.holds += 1
+
+    pose = lambda self: None  # noqa: E731
+    images = extras = lambda self: {}  # noqa: E731
+    estop = close = lambda self: None  # noqa: E731
+
+    def calibrate(self, *, interactive=True):
+        raise RuntimeError("no calibration")
+
+
+def _real_arm():
+    names = Robot("so101").description.action_keys
+    bus = _LimpArm(names)
+    # the operator approves every write: only the missing watchdog may refuse it
+    return Robot("so101", driver=bus, confirm=lambda targets: True, twin=False), bus
+
+
+def test_a_hardware_device_without_a_watchdog_is_served_observe_only(mesh_pair):
+    from strands_robots.mesh import RequestRefused
+
+    a, b = mesh_pair
+    real, bus = _real_arm()
+    a.mount(real, device_id="arm", watchdog_ms=None)
+    assert b.discover("arm", min_count=1, timeout=3.0)
+    # reads still work: it is a device, just observe-only
+    assert list(b.invoke("arm", "observe").joints.names) == list(real.description.action_keys)
+    assert b.invoke("arm", "describe")["name"] == "so101"
+    # every motion verb is refused by name, and the bus never moved
+    for rpc, args in (("act", {"action": {"shoulder_pan": 0.3}}), ("hold", {})):
+        with pytest.raises(RequestRefused, match="observe-only"):
+            b.invoke("arm", rpc, **args)
+    assert bus.holds == 0 and float(real.observe().joints["shoulder_pan"]) == 0.0
+    a.close()
+    real.close()
+
+
+def test_a_simulated_device_without_a_watchdog_still_moves(mesh_pair):
+    a, b = mesh_pair
+    arm = Robot("so101")  # a simulated body: harmless without a watchdog, unchanged
+    a.mount(arm, device_id="sim-arm", watchdog_ms=None)
+    assert b.discover("sim-arm", min_count=1, timeout=3.0)
+    b.invoke("sim-arm", "act", action={"shoulder_pan": 0.2}, steps=100)
+    assert float(arm.observe().joints["shoulder_pan"]) > 0.1  # act served, the joint moved toward the target
+    a.close()
     arm.close()
