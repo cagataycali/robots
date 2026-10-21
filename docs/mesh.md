@@ -33,6 +33,11 @@ The robot stays in charge of itself: every command from the mesh goes through it
 caller can never approve a move on the operator's behalf. If whoever was driving disappears, the robot does what its
 `on_disconnect` says. Resuming after an e-stop takes the operator who pressed it.
 
+Mount a real robot with `watchdog_ms=None` and it is served observe-only: `observe` and `describe` still
+answer, but `act` and `hold` are refused by name, because with no watchdog a mover that vanished would leave
+the arm commanded with nothing to recall it. Mount it with a `watchdog_ms=` to move it over the mesh. A
+simulated body has no bus to run away and is unaffected.
+
 On one machine it's fast: robots show up in 9-53 ms, a command round trip is about 1 ms, and state streams at 500 Hz
 without dropping a beat. Need it across the internet? `Mesh("iot://us-west-2")` runs the same thing over AWS IoT Core
 (about 200 ms a command, and an e-stop to an offline robot comes straight back 404 instead of waiting in a queue).
