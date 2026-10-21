@@ -22,6 +22,7 @@ from .iot.options import attach as _iot_attach
 from .presence import Directory, announce, refuse_shared, refuse_taken
 from .record import RAISE, check_kill_switch, default_operator, default_tenant, record, state_rate
 from .remote import connect
+from .reply import the_reply
 from .serve import ARGS, estop_each, serve
 from .stream import listen, publish
 from .transports.base import Transport, Unsubscribe, open_transport
@@ -148,12 +149,12 @@ class Mesh:
             if lock["engaged"]:
                 by = str(args.get("approved_by") or self.operator)
                 args["assertion"] = _authority.sign(self.resume_key, lock["epoch"], [device_id], by)
-        self._seq += 1
-        env = wire.envelope(self.tenant, device_id, "rpc", rpc, seq=self._seq, args=args, peer=self.peer_id)
+        self._seq = seq = self._seq + 1
+        env = wire.envelope(self.tenant, device_id, "rpc", rpc, seq=seq, args=args, peer=self.peer_id)
         replies = transport.query(wire.key("rpc", self.tenant, device_id, rpc), wire.encode(env), timeout)
         if not replies:
             raise TimeoutError(f"{device_id}.{rpc}: no reply within {timeout} s")
-        reply = wire.decode_envelope(replies[0])
+        reply = the_reply(replies, self.tenant, device_id, rpc, seq)
         if reply["kind"] == "error":
             err = reply.get("error") or {}
             raise RAISE.get(err.get("type", ""), RuntimeError)(err.get("message", "remote error"))

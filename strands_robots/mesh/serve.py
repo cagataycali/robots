@@ -170,6 +170,7 @@ def serve(
         args: dict[str, Any] = {}
         try:
             env = wire.decode_envelope(payload)
+            seq = int(env.get("seq", seq))  # M3: echo the request's seq so the caller can match the reply
             args = env.get("args") or {}
             if on_rpc is not None and name in MOTION_RPCS and env.get("peer") is None:
                 raise TypeError(f"{device_id}.{name} needs the caller's peer id: the watchdog arms on whoever moves it")
