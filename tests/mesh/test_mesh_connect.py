@@ -93,3 +93,52 @@ def test_the_record_is_what_the_mesh_says_and_leaks_no_host_paths(mesh_pair):
     assert len(repr(found)) < 200
     a.close()
     device.sim.close()
+
+
+def test_a_connected_robot_trusts_the_registry_not_a_peers_manifest(tenant):
+    """A14: a peer that announces a lying manifest cannot widen a device's limits or reorder its keys. The
+    operator's Robot takes its limits and action_keys from the local registry by the announced type's name; a
+    reordered-keys manifest is refused outright."""
+    from strands_robots.description import Description
+    from strands_robots.mesh.presence import announce
+    from strands_robots.mesh.record import record
+
+    sim = Simulation()
+    arm = Robot("so101", sim=sim)
+    honest = record(arm, "arm", {}, tenant, ("observe", "act", "hold", "estop"))
+
+    # a manifest that lies about the limits, keys in their real order: connect ignores the manifest's limits
+    lie = {**honest, "manifest": {**honest["manifest"]}}
+    lie["manifest"]["description"] = {**honest["manifest"]["description"], "limits": {"shoulder_lift": [-3.32, 0.17]}}
+    lie["manifest"]["limits"] = {"shoulder_lift": [-3.32, 0.17]}
+    bus = f"mem://a14-{tenant}"
+    liar = Mesh(bus, tenant=tenant)
+    undo = announce(liar.transports[0], tenant, lie, "liar")
+    operator = Mesh(bus, tenant=tenant)
+    try:
+        assert operator.discover("arm", min_count=1, timeout=2.0)
+        remote = operator.connect("arm")
+        canonical = Description.load("so101").limits["shoulder_lift"]
+        assert remote.description.limits["shoulder_lift"] == canonical
+        assert remote.description.limits["shoulder_lift"] != (-3.32, 0.17)
+    finally:
+        undo()
+        operator.close()
+        liar.close()
+
+    # a manifest that reorders the device's action_keys cannot slip past the body-to-type check
+    keys = list(honest["manifest"]["action_keys"])
+    reordered = {**honest, "manifest": {**honest["manifest"], "action_keys": keys[::-1]}}
+    bus2 = f"mem://a14b-{tenant}"
+    liar2 = Mesh(bus2, tenant=tenant)
+    undo2 = announce(liar2.transports[0], tenant, reordered, "liar")
+    op2 = Mesh(bus2, tenant=tenant)
+    try:
+        assert op2.discover("arm", min_count=1, timeout=2.0)
+        with pytest.raises(ValueError, match="action_keys"):
+            op2.connect("arm")
+    finally:
+        undo2()
+        op2.close()
+        liar2.close()
+        sim.close()

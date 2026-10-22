@@ -132,22 +132,16 @@ def _handlers(
     }
 
 
-def is_local(url: str) -> bool:
-    """In-process (``mem://``, the fake IoT broker), or zenoh listening only on loopback with no ``connect=``.
+def in_process(url: str) -> bool:
+    """True only when no peer outside this process can reach the transport: ``mem://`` and the fake IoT broker.
 
-    A ``connect=`` to loopback is no evidence: the router or peer there may route for the whole network.
+    A zenoh endpoint is never in-process, even one that only listens on loopback: a listener accepts connections
+    from any other local process (another user, a container, an ``ssh -L`` tunnel), so a name claimed over it is
+    not trusted without operator keys.
     """
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import urlparse
 
-    if url.startswith("mem://") or (url.startswith("iot://") and urlparse(url).netloc == "fake"):
-        return True
-    if not url.startswith("zenoh://") or "?" not in url:
-        return False
-    q = parse_qs(url.split("?", 1)[1])
-    if "connect" in q:
-        return False
-    hosts = [e.split("/", 1)[-1].rsplit(":", 1)[0] for e in q.get("listen", [])]
-    return bool(hosts) and all(h in ("127.0.0.1", "localhost", "[::1]") for h in hosts)
+    return url.startswith("mem://") or (url.startswith("iot://") and urlparse(url).netloc == "fake")
 
 
 def _error(exc: BaseException) -> dict[str, str]:
@@ -165,7 +159,7 @@ def serve(
 ) -> Unsubscribe:
     """Answer ``strands/<tenant>/<device_id>/rpc/<name>`` for ``robot``; ``on_rpc(name, peer)`` sees every call
     before it runs (the watchdog). Returns the undo."""
-    handlers = _handlers(robot, device_id, lockout, authority, is_local(transport.url))
+    handlers = _handlers(robot, device_id, lockout, authority, in_process(transport.url))
     counter = itertools.count(1)
     # a hardware body with no mesh watchdog (on_rpc is None) is served observe-only: a mover that vanishes
     # must never leave an arm commanded with nothing to recall it; a simulated body is harmless, unchanged

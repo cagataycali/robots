@@ -13,6 +13,7 @@ from strands_robots.mesh import Mesh, RequestRefused, authority
 @pytest.fixture
 def lab(mesh_pair):
     a, b = mesh_pair
+    a.resume_authority = authority.Authority(trust_names=True)  # names reach the who-check on every transport
     arms = [Robot("so101", id=f"arm{i}") for i in range(3)]
     for i, arm in enumerate(arms):
         a.mount(arm, device_id=f"arm{i}", labels={"bench": "left" if i < 2 else "right"})
@@ -85,7 +86,7 @@ def test_resume_from_a_non_authority_is_refused(lab):
 
 def test_a_named_resume_authority_may_resume(mesh_pair):
     a, b = mesh_pair
-    a.resume_authority = authority.Authority(names=("safety-lead",))
+    a.resume_authority = authority.Authority(names=("safety-lead",), trust_names=True)
     arm = Robot("so101")
     a.mount(arm, device_id="arm")
     assert b.discover("arm", min_count=1, timeout=3.0)
@@ -122,16 +123,20 @@ def test_the_mesh_kill_switch(monkeypatch):
         Mesh("mem://killed")
 
 
-def test_claimed_names_are_not_trusted_on_a_real_network():
+def test_claimed_names_are_trusted_only_in_process_not_on_a_loopback_zenoh():
     from strands_robots.mesh.authority import Authority, Lockout
-    from strands_robots.mesh.serve import is_local
+    from strands_robots.mesh.serve import in_process
 
-    assert is_local("mem://x") and is_local("zenoh://?listen=tcp/127.0.0.1:7447")
-    assert not is_local("zenoh://") and not is_local("zenoh://?connect=tcp/10.0.0.5:7447")
-    assert not is_local("zenoh://?listen=tcp/127.0.0.1:7447&connect=tcp/10.0.0.5:7447")
-    assert not is_local("zenoh://?listen=tcp/0.0.0.0:7447")
-    assert not is_local("zenoh://?connect=tcp/127.0.0.1:7447")
-    assert is_local("iot://fake?broker=b") and not is_local("iot://fake-west-2?cert=c&endpoint=e")
+    # in-process: no peer outside this process can reach the transport, so a claimed name is trusted
+    assert in_process("mem://x")
+    assert in_process("iot://fake?broker=b") and not in_process("iot://fake-west-2?cert=c&endpoint=e")
+    # a zenoh endpoint is never in-process: even a loopback listener accepts other local peers (a container,
+    # another user, an ``ssh -L`` tunnel), so a name claimed over it needs keys or trust_names=True
+    assert not in_process("zenoh://?listen=tcp/127.0.0.1:7447")
+    assert not in_process("zenoh://") and not in_process("zenoh://?connect=tcp/10.0.0.5:7447")
+    assert not in_process("zenoh://?listen=tcp/127.0.0.1:7447&connect=tcp/10.0.0.5:7447")
+    assert not in_process("zenoh://?listen=tcp/0.0.0.0:7447")
+    assert not in_process("zenoh://?connect=tcp/127.0.0.1:7447")
     stop = Lockout(True, "e1", "alice")
     with pytest.raises(RequestRefused, match="needs operator keys"):
         Authority().check("arm", stop, "alice", None, local=False)
@@ -240,3 +245,31 @@ def test_an_operator_key_can_be_trusted_and_revoked_and_used_nonces_age_out():
     auth.distrust(public)
     with pytest.raises(RequestRefused, match="no trusted operator key"):
         auth.check("arm", lock, "op", authority.sign(private, "e1", ["arm"], "op"))
+
+
+def test_resume_by_name_on_a_loopback_zenoh_needs_trust_or_keys(tenant):
+    """A11: a zenoh listener - even one bound to loopback - accepts any local peer, so a name claimed over it
+    is not a credential. Resume needs operator keys or an explicit trust_names=True."""
+    import socket
+
+    pytest.importorskip("zenoh")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    device = Mesh(f"zenoh://?listen=tcp/127.0.0.1:{port}", tenant=tenant, operator="device")
+    operator = Mesh(f"zenoh://?connect=tcp/127.0.0.1:{port}", tenant=tenant, operator="alice")
+    arm = Robot("so101")
+    try:
+        device.mount(arm, device_id="arm", watchdog_ms=None)
+        assert operator.discover("arm", min_count=1, timeout=3.0)
+        operator.invoke("arm", "estop")
+        with pytest.raises(RequestRefused, match="needs operator keys"):
+            operator.invoke("arm", "resume", approved_by="alice")
+        assert arm.estopped
+        device.resume_authority = authority.Authority(trust_names=True)
+        operator.invoke("arm", "resume", approved_by="alice")
+        assert not arm.estopped
+    finally:
+        operator.close()
+        device.close()
+        arm.close()

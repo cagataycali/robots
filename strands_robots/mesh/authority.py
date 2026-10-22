@@ -93,7 +93,8 @@ class Authority:
     public_keys: tuple[str, ...] = ()
     max_age: float = 60.0
     trust_names: bool | None = None
-    """Accept claimed names without keys. ``None``: only when every transport is loopback or in-process."""
+    """Accept claimed names without keys. ``None``: only when every transport is in-process (``mem://`` or the
+    fake IoT broker); a zenoh mesh, even loopback-only, needs ``trust_names=True`` or operator keys."""
     _seen: dict[str, float] = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -112,7 +113,7 @@ class Authority:
         self, device_id: str, lockout: Lockout, approved_by: str | None, assertion: Any, *, local: bool = False
     ) -> str:
         """The name to record as the approver, or ``RequestRefused`` with the reason. ``local``: every transport the
-        request could have come over is loopback or in-process."""
+        request could have come over is in-process (``mem://`` or the fake IoT broker)."""
         if not approved_by or not str(approved_by).strip():
             raise RequestRefused(f"{device_id}: resume needs approved_by=<the operator who cleared the stop>")
         if self.public_keys:
