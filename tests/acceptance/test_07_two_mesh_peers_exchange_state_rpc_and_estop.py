@@ -28,8 +28,9 @@ DEVICE = """
 import json, sys
 from strands_robots import Robot
 from strands_robots.mesh import Mesh
+from strands_robots.mesh.authority import Authority
 arm = Robot("so101")
-mesh = Mesh(sys.argv[1], tenant=sys.argv[2])
+mesh = Mesh(sys.argv[1], tenant=sys.argv[2], resume_authority=Authority(trust_names=True))  # a zenoh peer opts in
 mesh.mount(arm, device_id="arm-a", labels={"role": "arm"}, state_hz=50.0, watchdog_ms=None)
 print("ready", flush=True)
 for line in sys.stdin:
