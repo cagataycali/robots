@@ -95,20 +95,25 @@ def test_an_agent_run_on_a_real_robot_goes_through_the_gate_every_step(hold_poli
     (r,) = _turn(real, [call])
     if real._task is not None:
         real.stop()
-    assert len(goal_writes(serial)) == before, "an agent's run wrote goal frames with confirm=None"
-    if rpc == "run":
-        assert r["status"] == "error" and "confirm=" in r["content"][0]["text"]
+    assert len(goal_writes(serial)) == before, "an agent's run wrote goal frames with no operator"
+    if rpc == "run":  # K6: an agent's run on a real arm needs the operator's one yes for the whole run (approve=)
+        assert r["status"] == "error" and "approve=" in r["content"][0]["text"]
 
 
-def test_with_the_operator_callable_an_agent_run_asks_every_step(hold_policy):
+def test_with_the_operator_callable_an_agent_run_asks_once_and_checks_every_step(hold_policy):
+    """K6: the old path asked confirm() on every tick (30 dialogs a second); here approve= is asked once with the
+    RunPlan, and the safety chain still checks every step."""
     from strands_robots import Robot
 
-    asked = []
+    asked, per_step = [], []
     d, serial = make_driver()
-    real = Robot("so101", driver=d, twin=False, confirm=lambda t: asked.append(t) or True)
+    real = Robot("so101", driver=d, twin=False, approve=lambda p: asked.append(p) or True,
+                 confirm=lambda t: per_step.append(t) or True)  # fmt: skip
+    real.validators.append(lambda r, req: per_step.append("checked"))
     (r,) = _turn(real, [_run(3)])
     assert r["status"] == "success", r
-    assert json.loads(r["content"][0]["text"])["stopped_by"] == "steps" and len(asked) == 3
+    assert json.loads(r["content"][0]["text"])["stopped_by"] == "steps" and len(asked) == 1
+    assert per_step == ["checked"] * 3  # the chain ran every step; the per-command confirm was never asked
 
 
 def test_a_background_start_inside_an_agent_call_carries_the_gate_to_its_thread():
@@ -122,7 +127,7 @@ def test_a_background_start_inside_an_agent_call_carries_the_gate_to_its_thread(
         task = real.start(lambda obs: {}, steps=3)
     from strands_robots.robot.safety import RequestRefused
 
-    with pytest.raises(RequestRefused, match="confirm="):
+    with pytest.raises(RequestRefused, match="approve="):
         task.stop()  # the refusal is loud: it re-raises where the task is collected
     assert len(goal_writes(serial)) == before
 
@@ -236,7 +241,7 @@ def test_two_runs_in_one_model_turn_are_one_run_and_one_refusal(two_policies):
     from strands_robots import Robot
 
     d, serial = make_driver()
-    real = Robot("so101", driver=d, twin=False, confirm=lambda targets: True)
+    real = Robot("so101", driver=d, twin=False, approve=lambda p: True)
     done = sorted((r["status"], r["content"][0]["text"]) for r in _turn(real, [_run_left_and_right(steps=10, hz=20)]))
     assert [status for status, _ in done] == ["error", "success"], done
     assert done[0][1] == "RuntimeError: robot 'so101' already has a running task; call stop() first"
@@ -253,7 +258,7 @@ def test_the_operators_stop_ends_an_agents_run(two_policies):
     from strands_robots import Robot
 
     d, serial = make_driver()
-    real = Robot("so101", driver=d, twin=False, confirm=lambda targets: True)
+    real = Robot("so101", driver=d, twin=False, approve=lambda p: True)
     out: list[dict] = []
     call = ("robot_so101", {"rpc": "run", "run": {"policy": "tests.left", "seconds": 3, "hz": 20}})
     turn = threading.Thread(target=lambda: out.extend(_turn(real, [call])))

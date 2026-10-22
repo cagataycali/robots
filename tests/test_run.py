@@ -238,9 +238,11 @@ def _zero_on_disconnect(robot, joint="shoulder_pan.pos"):
     """Give one of a sim body's controls on_disconnect='zero' so a fault's effect is observable."""
     import dataclasses as dc
 
+    from strands_robots.robot.device.build import manifest_key
+
     m = robot.manifest
     controls = tuple(dc.replace(c, on_disconnect="zero") if c.name == joint else c for c in m.controls)
-    robot.__dict__["manifest"] = dc.replace(m, controls=controls)
+    robot.__dict__["_manifest"] = (manifest_key(robot), dc.replace(m, controls=controls))
 
 
 def test_a_faulted_run_puts_the_body_in_its_declared_on_disconnect_state():

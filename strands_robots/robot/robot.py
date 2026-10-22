@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from ..simulation import Simulation
     from .drivers.calibration import Calibration
     from .run.result import RunResult
+    from .run.source import RunPlan
     from .run.task import Task
 
 
@@ -50,16 +51,18 @@ class Robot(DeviceVerbs):
         calibration: Any = None,
         mesh: Any = None,
         clock: Clock | None = None,
+        approve: Callable[[RunPlan], bool] | None = None,
     ) -> None:
         from ..simulation import Simulation
 
         self.description: Description = Description.load(name)
         self.name = self.description.name
         self.is_real = port is not None or driver is not None
-        hw_only = [n for n, v in (("confirm", confirm), ("clock", clock)) if v is not None]
-        if hw_only and not self.is_real:  # the operator gate and a bus clock are hardware's; a world owns its time
+        hw_only = [n for n, v in (("confirm", confirm), ("approve", approve), ("clock", clock)) if v is not None]
+        if hw_only and not self.is_real:  # the operator gates and a bus clock are hardware's; a world owns its time
             raise TypeError(f"{', '.join(hw_only)}= are hardware Robot arguments; a simulated body takes none")
-        self.confirm = confirm
+        self.confirm = confirm  # one command from an agent/dashboard: asked for exactly these targets
+        self.approve = approve  # one RUN from an agent on a real body: asked once with its RunPlan (K6)
         self.sim: Simulation | None = None
         self.twin: Robot | None = None  # on a hardware Robot: the simulated body that mirrors it
         self.twin_of: Robot | None = None  # on that twin: the hardware Robot it mirrors
@@ -158,9 +161,11 @@ class Robot(DeviceVerbs):
             _twin.mirror(self, _targets.clip_to_limits(self.description, js.positions), measured=True)
         return obs
 
-    def gate(self, action: Action, *, confirmed: bool = False) -> np.ndarray:
+    def gate(
+        self, action: Action, *, confirmed: bool = False, approved_run: bool = False, measured: np.ndarray | None = None
+    ) -> np.ndarray:
         """The operator gate for commands from an agent tool or dashboard (see ``robot.gate``)."""
-        return _gate.gate(self, action, confirmed=confirmed)
+        return _gate.gate(self, action, confirmed=confirmed, approved_run=approved_run, measured=measured)
 
     def confirm_act(self, action: Action, *, steps: int | None = None, confirmed: bool = False) -> Observation:
         """``act`` through the operator gate: what an agent tool and the dashboard call."""

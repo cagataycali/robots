@@ -22,13 +22,28 @@ class SafetyChain:
     def __init__(self, validators: tuple[Validator, ...] = ()) -> None:
         self.validators = validators
 
-    def check(self, robot: Robot, action: Action, *, confirmed: bool = False, source: str = "agent") -> np.ndarray:
+    def check(
+        self,
+        robot: Robot,
+        action: Action,
+        *,
+        confirmed: bool = False,
+        source: str = "agent",
+        approved_run: bool = False,
+        measured: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """``approved_run``: a step of an agent run the operator approved as a whole (``RunPlan``, K6): the operator
+        gate is not asked again, and a target outside ``safe`` is REFUSED instead of asked per tick."""
         from ..gate import operator_gate
 
         robot.estop_latch.check(robot.id)
-        request = Request(robot.action_keys, robot.coerce(action, clip=False), confirmed, source)
+        request = Request(robot.action_keys, robot.coerce(action, clip=False, measured=measured), confirmed, source)
         JointLimitValidator()(robot, request)
         soft = outside_safe(robot, request)
+        if soft and approved_run:
+            raise RequestRefused(f"{robot.id}: {'; '.join(soft)}: outside the approved run's safe bounds")
+        if approved_run:
+            confirmed = True  # the operator approved this run once, for its whole plan
         if soft and not confirmed:
             if robot.confirm is None or not robot.confirm(request.targets):
                 raise RequestRefused(f"{robot.id}: {'; '.join(soft)}: needs the operator's yes (confirm=)")

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
-from .build import manifest_for
+from .build import manifest_for, manifest_key
 from .manifest import Manifest
 
 if TYPE_CHECKING:
@@ -20,10 +19,19 @@ class DeviceVerbs:
     def _robot(self) -> Robot:
         return cast("Robot", self)
 
-    @cached_property
+    @property
     def manifest(self) -> Manifest:
-        """This robot's device manifest (generated once, cached)."""
-        return manifest_for(self._robot)
+        """This robot's device manifest, regenerated whenever what it is derived from changes (K4).
+
+        A camera or a twin can be added after the first read; a ``cached_property`` missed them. The cache is keyed
+        on ``manifest_key`` (cheap), so the safety chain reading the manifest every step costs a tuple compare.
+        """
+        key = manifest_key(self._robot)
+        cached = self.__dict__.get("_manifest")
+        if cached is None or cached[0] != key:
+            cached = (key, manifest_for(self._robot))
+            self.__dict__["_manifest"] = cached
+        return cached[1]
 
     @property
     def estopped(self) -> bool:

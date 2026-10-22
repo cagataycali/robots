@@ -63,6 +63,7 @@ class Latch:
             if stop is not None and stop != self.count:
                 return False
             self.resumed_by = by
+            self.reason = self.engaged_at = self.engaged_wall = None  # no stale derived state after a resume (K4)
             self._set.clear()
             return True
 

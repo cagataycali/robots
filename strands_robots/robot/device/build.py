@@ -97,6 +97,15 @@ def manifest_of(
     )
 
 
+def manifest_key(robot: Robot) -> tuple[Any, ...]:
+    """Everything a manifest is derived from that can change after the Robot is built (K4: cache on this)."""
+    sim = robot.sim
+    cams = () if sim is None else tuple(c.name for c in sim.scene.cameras if c.robot == robot.id)
+    twin = None if robot.twin is None else robot.twin.id
+    twin_of = None if robot.twin_of is None else robot.twin_of.id
+    return (None if sim is None else sim.backend_name, cams, twin, twin_of, robot.supports_position_hold)
+
+
 def manifest_for(robot: Robot, *, tenant: str = "default", labels: dict[str, str] | None = None) -> Manifest:
     """The robot's device surface, generated from its Description and where its body lives."""
     sim = robot.sim

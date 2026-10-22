@@ -154,3 +154,17 @@ def test_lockstep_emits_per_robot():
     sim.run({a: lambda o: {}, b: lambda o: {}}, steps=2)
     assert sorted(stopped) == ["a", "b"]
     sim.close()
+
+
+def test_k4_manifest_sees_a_camera_added_after_it_was_first_read():
+    """K4: manifest was a cached_property, so a camera added after the first read never reached the surface."""
+    from strands_robots import Robot, Simulation
+
+    sim = Simulation()
+    arm = Robot("so101", sim=sim)
+    assert arm.manifest.sensors == arm.manifest.sensors  # a read is stable
+    before = {s.name for s in arm.manifest.sensors}
+    sim.camera("front", attach=arm)
+    after = {s.name for s in arm.manifest.sensors}
+    assert after - before, (before, after)
+    sim.close()

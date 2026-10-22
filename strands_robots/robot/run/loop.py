@@ -14,10 +14,10 @@ from ...types import Observation
 from ..clock import MONOTONIC
 from ..safety import apply_on_disconnect
 from .bind import Bound, bind, looks, release
-from .common import announce, emit, rate
+from .common import announce, approve_run, emit, rate
 from .pace import OnMiss, Pacer
 from .result import RunResult, StoppedBy
-from .source import is_agent
+from .source import RunPlan, is_agent, is_confirmed
 from .task import Task
 from .tick import stopped, tick
 
@@ -56,6 +56,8 @@ def run(
         raise ValueError("run needs seconds=, steps= or stop_when=")
     if hz is not None and hz <= 0:
         raise ValueError(f"hz must be > 0, got {hz}")  # before bind: a bad hz loads no checkpoint
+    if is_agent() and robot.is_real and not is_confirmed():  # a real agent run asks the operator ONCE (K6),
+        approve_run(robot, RunPlan(robot.id, repr(policy), instruction, hz, seconds, steps))  # before anything acquired
     bound = bind(robot, policy, units)
     try:
         emit(robot, "run.started", {"policy": repr(bound.policy)})

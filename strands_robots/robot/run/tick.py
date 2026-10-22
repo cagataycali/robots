@@ -10,7 +10,7 @@ import numpy as np
 
 from ...policy.base import PolicyFault
 from ...types import Observation
-from ..safety import EStopped, NonFiniteTarget
+from ..safety import EStopped, NonFiniteTarget, RequestRefused
 from .bind import Bound, decide
 from .source import is_confirmed
 
@@ -49,9 +49,13 @@ def tick(
     if stop_when is not None and stop_when(obs):
         return Tick(obs, ended="stop_when")
     try:
-        targets = decide(robot, bound, obs, instruction)
-        if gated:
-            targets = robot.gate(targets, confirmed=is_confirmed())  # a dashboard run: the operator said yes once
+        targets = decide(
+            robot, bound, obs, instruction, clip=not gated
+        )  # an agent run is refused out of range, not clipped
+        if gated and is_confirmed():  # a dashboard run: the operator said yes once, for these targets
+            targets = robot.gate(targets, confirmed=True)
+        elif gated:  # an agent run the operator approved as a whole (K6): the chain every step, no per-tick ask
+            targets = robot.gate(targets, approved_run=True, measured=obs.joints.positions)
         if before_write is not None:  # a paced body: at least one period since the previous write
             before_write()
         robot.command(targets, steps=steps)
@@ -59,6 +63,10 @@ def tick(
         return Tick(obs, ended="estop")
     except (PolicyFault, NonFiniteTarget) as e:
         return Tick(obs, ended="fault", fault=str(e))
+    except RequestRefused as e:
+        if gated and not is_confirmed():  # an approved agent run: a refused step ends the run as a fault (K6)
+            return Tick(obs, ended="fault", fault=str(e))
+        raise  # a dashboard run (confirmed once) re-raises loudly, so the page sees the refusal as an error
     return Tick(obs, targets)
 
 

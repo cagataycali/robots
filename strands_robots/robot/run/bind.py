@@ -105,14 +105,17 @@ def release(bound: Bound) -> None:
     _detach(bound.policy)
 
 
-def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None) -> np.ndarray:
+def decide(robot: Robot, bound: Bound, obs: Observation, instruction: str | None, *, clip: bool = True) -> np.ndarray:
     """One inference in the policy's units, as full targets in the robot's radians; joints it leaves out hold
-    their position in ``obs`` (no second read)."""
+    their position in ``obs`` (no second read). ``clip=False`` (an agent run): an out-of-range target is kept so
+    the safety chain refuses it, instead of being silently moved to the limit (K6)."""
     pol, conv, q = bound.policy, bound.units, np.asarray(obs.joints.positions, dtype=float)
     if conv is None:
-        return robot.coerce(pol.act(obs, instruction=instruction), measured=q)
+        return robot.coerce(pol.act(obs, instruction=instruction), clip=clip, measured=q)
     seen = obs.with_joints(conv.from_rad(obs.joints.positions))
-    return robot.coerce(conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)), measured=q)
+    return robot.coerce(
+        conv.to_rad(np.asarray(pol.act(seen, instruction=instruction), dtype=float)), clip=clip, measured=q
+    )
 
 
 def looks(bound: Bound, instruction: str | None) -> bool:

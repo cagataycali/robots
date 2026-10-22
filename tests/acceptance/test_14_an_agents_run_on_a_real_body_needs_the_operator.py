@@ -39,6 +39,6 @@ def test_an_agents_run_on_a_real_body_needs_the_operator(hold_policy, rpc):
     if real._task is not None:
         real.stop()
     real.close()
-    assert goal_writes(serial) == [], "an agent's run wrote goal frames with confirm=None"
-    if rpc == "run":
-        assert result["status"] == "error" and "confirm=" in result["content"][0]["text"], result
+    assert goal_writes(serial) == [], "an agent's run wrote goal frames with no operator"
+    if rpc == "run":  # K6: an agent's run on a real arm needs the operator's one yes for the whole run (approve=)
+        assert result["status"] == "error" and "approve=" in result["content"][0]["text"], result

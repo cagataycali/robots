@@ -133,9 +133,11 @@ def test_hardware_robot_manifest_and_estop_on_a_faked_bus():
 def _narrow_safe(robot, key, safe):
     from dataclasses import replace
 
+    from strands_robots.robot.device.build import manifest_key
+
     m = robot.manifest
     controls = tuple(replace(c, safe=safe) if c.name == f"{key}.pos" else c for c in m.controls)
-    robot.__dict__["manifest"] = replace(m, controls=controls)
+    robot.__dict__["_manifest"] = (manifest_key(robot), replace(m, controls=controls))
 
 
 def test_outside_safe_inside_range_needs_the_operators_yes():
@@ -335,4 +337,17 @@ def test_a_local_press_records_no_operator_and_resume_without_a_pin_is_unchanged
     assert arm.estop_latch.stopped_by is None and arm.estop_latch.engaged_wall is not None
     arm.resume(approved_by="cagatay")  # no stop= pin: clears whatever is latched, as before
     assert not arm.estopped
+    arm.close()
+
+
+def test_k4_latch_release_clears_derived_state():
+    """K4: release left stale reason/engaged_at behind; a resumed latch must read as fully clear."""
+    arm = Robot("so101")
+    arm.estop_latch.engage("test")
+    assert arm.estop_latch.reason == "test" and arm.estop_latch.engaged_at is not None
+    arm.estop_latch.release("operator")
+    assert arm.estop_latch.reason is None
+    assert arm.estop_latch.engaged_at is None
+    assert arm.estop_latch.engaged_wall is None
+    assert arm.estop_latch.resumed_by == "operator"
     arm.close()

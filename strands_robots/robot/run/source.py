@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 _AGENT: ContextVar[bool] = ContextVar("strands_robots_agent_source", default=False)
 # The operator already said yes once for this run (the dashboard's ``X-Confirm``): the operator step of the chain is
@@ -45,3 +46,19 @@ def is_agent() -> bool:
 def is_confirmed() -> bool:
     """The operator already approved this run (``from_agent(confirmed=True)``)."""
     return _CONFIRMED.get()
+
+
+@dataclass(frozen=True)
+class RunPlan:
+    """What the operator approves for an agent's run on a REAL body: who, with what, for how long, at what rate.
+
+    An agent's run on hardware asks ``Robot(approve=callable(RunPlan) -> bool)`` once, with this whole plan, before
+    anything is acquired (K6); every step then still passes the safety chain, without asking the operator again.
+    """
+
+    robot: str
+    policy: str
+    instruction: str | None
+    hz: float | None
+    seconds: float | None
+    steps: int | None

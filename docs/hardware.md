@@ -69,6 +69,15 @@ no `confirm=` it raises and says `pass confirm=`. Every refusal (the gate, a lim
 any write, and ends a `run()` with `stopped_by="fault"`. When a run ends in a fault the body is put in
 its declared `on_disconnect` state (each control's `hold`, `zero`, `safe` or `apply`), so a policy that
 can no longer act safely leaves the arm somewhere declared safe rather than frozen at its last command.
+
+**One yes per run.** An agent's `run()` on a real body is not a single `act`: instead of asking `confirm=`
+on every tick (30 dialogs a second), it asks `Robot(approve=callable(RunPlan) -> bool)` once, with the whole
+plan (robot, policy, instruction, rate, duration), before anything is acquired; without `approve=` the run is
+refused and nothing is written. The safety chain (the e-stop, the joint range, the soft `safe` band, the
+interlocks and the validators) still runs on every step, and a target outside `safe` inside an approved run is
+refused, never re-asked each tick. `confirm=` stays the per-command gate (`confirm_act`, the dashboard).
+
+{{drawing:d16_one_yes_per_run}}
 A remote policy (`Policy("zenoh://host:7447/deployment")`) holds the last target through LeRobot's chunk
 playback and a 1.0 s grace, then raises that fault. Only a real body
 takes `confirm=`:
