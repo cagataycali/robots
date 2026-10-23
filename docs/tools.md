@@ -24,7 +24,7 @@ On a real turn, Claude looked first, then moved the joint: it landed at 0.469, t
 Nobody writes these by hand. They're generated from the robot's manifest and method signatures, so a new skill or a
 new joint shows up in the tool automatically.
 
-What an agent **can't** do: approve its own moves on a real robot (the operator decides, every step of a run),
+What an agent **can't** do: approve its own run on a real robot (the operator says yes once, to the whole plan),
 resume after an e-stop, calibrate (that turns the torque off), or plug in hardware through `sim.tool`. It *can* hit
 e-stop. That one's always allowed.
 See the duck taking orders on the [policies page](policies.md#skills-an-agent-a-robot-that-listens).
