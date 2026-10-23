@@ -20,10 +20,8 @@ if TYPE_CHECKING:
 class RemoteBody:
     """The device ``device_id`` on ``mesh``, as a Body (and a Driver: hold, estop)."""
 
-    def __init__(
-        self, mesh: Mesh, device_id: str, names: tuple[str, ...], *, images: bool = False, position_hold: bool = False
-    ) -> None:
-        self.supports_position_hold = position_hold  # what the device's manifest declares; False if it does not say
+    def __init__(self, mesh: Mesh, device_id: str, names: tuple[str, ...], *, images: bool = False) -> None:
+        self.supports_position_hold = False  # the registry decides via its type; a peer's manifest cannot grant a hold
         self.calibration, self.resolution = None, None  # the device's own bus owns its calibration
         self.mesh = mesh
         self.device_id = device_id
@@ -74,6 +72,5 @@ def connect(mesh: Mesh, device_id: str, images: bool) -> Any:
     manifest = found[0].manifest
     name = str((manifest.get("description") or {}).get("name") or manifest.get("name"))
     names = tuple(str(k) for k in manifest.get("action_keys") or ())
-    hold = bool(manifest.get("position_hold", False))
-    body = RemoteBody(mesh, device_id, names, images=images, position_hold=hold)
+    body = RemoteBody(mesh, device_id, names, images=images)
     return Robot(name, driver=body, twin=False, id=device_id)

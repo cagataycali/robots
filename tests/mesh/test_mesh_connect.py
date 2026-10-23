@@ -142,3 +142,36 @@ def test_a_connected_robot_trusts_the_registry_not_a_peers_manifest(tenant):
         op2.close()
         liar2.close()
         sim.close()
+
+
+@pytest.mark.parametrize(
+    ("robot_type", "manifest_claim", "expected"),
+    [
+        ("koch", True, False),  # registry leaves position_hold undeclared: a True claim cannot grant it
+        ("so101", False, True),  # registry declares it: a False claim cannot take it away
+    ],
+)
+def test_the_registry_not_a_manifest_decides_position_hold(tenant, robot_type, manifest_claim, expected):
+    """A14 remainder: ``connect`` trusts the registry's ``hardware.position_hold`` for the announced type, never the
+    peer's manifest. An undeclared type whose manifest claims a hold does not get one; a declared type keeps its
+    registry answer whatever the manifest says."""
+    from strands_robots.mesh.presence import announce
+    from strands_robots.mesh.record import record
+
+    sim = Simulation()
+    arm = Robot(robot_type, sim=sim)
+    honest = record(arm, "arm", {}, tenant, ("observe", "act", "hold", "estop"))
+    lie = {**honest, "manifest": {**honest["manifest"], "position_hold": manifest_claim}}
+    bus = f"mem://a14hold-{robot_type}-{tenant}"
+    liar = Mesh(bus, tenant=tenant)
+    undo = announce(liar.transports[0], tenant, lie, "liar")
+    operator = Mesh(bus, tenant=tenant)
+    try:
+        assert operator.discover("arm", min_count=1, timeout=2.0)
+        remote = operator.connect("arm")
+        assert remote.supports_position_hold is expected
+    finally:
+        undo()
+        operator.close()
+        liar.close()
+        sim.close()
