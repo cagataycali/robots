@@ -207,6 +207,18 @@ def test_driver_reads_through_calibration_and_writes_goals():
     assert s.regs[1][ft.REG_TORQUE_ENABLE] == 0 and s.closed
 
 
+def test_write_computes_goals_before_torque_comes_on():
+    """A non-finite target is refused before torque is enabled: a refused write leaves a limp arm limp."""
+    d, s = make_driver()
+    s.frames.clear()
+    targets = np.zeros(6)
+    targets[2] = np.nan
+    with pytest.raises(ValueError, match="non-finite"):
+        d.write(targets)
+    assert s.frames == []  # nothing on the wire: torque was never enabled, no stale Goal_Position
+    assert d.extras()["torque"] is False
+
+
 def test_uncalibrated_driver_uses_full_turn_counts():
     d, _ = make_driver(cal=None)
     assert d.calibration is None and "raw" in d.extras()["calibration"]

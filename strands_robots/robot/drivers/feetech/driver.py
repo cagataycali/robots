@@ -128,12 +128,14 @@ class FeetechDriver:
         return JointState(self.names, np.array(pos), np.array(vel), np.array(load))
 
     def write(self, targets: np.ndarray) -> None:
-        if not self._torque_on:
-            self.bus.torque(self.ids, True)
-            self._torque_on = True
+        # Every goal is computed (and a non-finite target refused) BEFORE torque comes on, so a refused
+        # write leaves a limp arm limp instead of stiffening it against a stale Goal_Position.
         goals = {
             mid: word(self.rad_to_counts(n, float(t))) for n, mid, t in zip(self.names, self.ids, targets, strict=True)
         }
+        if not self._torque_on:
+            self.bus.torque(self.ids, True)
+            self._torque_on = True
         self.bus.sync_write(REG_GOAL_POSITION, 2, goals)
 
     def pose(self) -> Pose | None:
