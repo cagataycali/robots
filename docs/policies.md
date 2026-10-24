@@ -12,6 +12,7 @@ A policy is whatever does the thinking. You pick one by how you write it:
 | you write | you get |
 |---|---|
 | `lambda obs: {...}` | your own function, called every step |
+| `"hold"` | stand still at the pose the run started at (`robot.hold()`, as a run) |
 | `"microduck?skill=velstand&vx=0.3"`, `"holosoma"` | a ready-made ONNX skill |
 | `"lerobot/smolvla_base"` | a LeRobot model, running in your process |
 | `"zenoh://gpu-box:7447/smolvla"` | a LeRobot model running on another machine |

@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from strands_robots import JointState, Robot, Simulation
+from strands_robots import JointState, Policy, Robot, Simulation
 from strands_robots.policy import SequencePolicy
 from strands_robots.robot import RunResult
 
@@ -281,3 +281,30 @@ def test_lockstep_applies_on_disconnect_only_to_the_robot_that_faulted():
     ib = sim.backend._index[b.id].actuator_ids[0]
     assert sim.backend.data.ctrl[ia] == pytest.approx(0.0)  # a faulted: on_disconnect='zero' applied
     assert sim.backend.data.ctrl[ib] != pytest.approx(0.0)  # b kept running, no disconnect applied
+
+
+def _posed(gravity):
+    arm = Robot("so101", sim=Simulation(gravity=gravity))
+    arm.run(lambda o: {"shoulder_lift": 0.5, "elbow_flex": -0.6}, hz=50, steps=100)  # away from the zero pose
+    return arm
+
+
+def test_hold_is_a_policy_that_keeps_the_pose_the_run_started_at():
+    arm = _posed((0.0, 0.0, 0.0))  # no gravity: a position servo at its own pose does not move
+    first = arm.observe().joints.positions
+    res = arm.run(policy="hold", seconds=0.5, hz=20)
+    assert (res.steps, res.stopped_by, repr(Policy("hold"))) == (10, "steps", "Policy('hold')")
+    assert res.final is not None and res.final.joints.positions == pytest.approx(first, abs=1e-3)
+    both = arm.sim.run({arm.id: "hold"}, seconds=0.5, hz=20)
+    assert list(both) == [arm.id] and both[arm.id].steps == 10
+    assert arm.observe().joints.positions == pytest.approx(first, abs=1e-3)
+
+
+def test_run_hold_is_robot_hold_for_the_same_time():
+    run, verb = _posed((0.0, 0.0, -9.81)), _posed((0.0, 0.0, -9.81))  # gravity: both sag the same servo error
+    t0 = run.sim.time
+    res = run.run("hold", seconds=0.5, hz=20)
+    verb.hold()
+    while verb.sim.time < t0 + 0.5 - 1e-9:
+        verb.sim.step()
+    assert res.final is not None and res.final.joints.positions == pytest.approx(verb.observe().joints.positions)

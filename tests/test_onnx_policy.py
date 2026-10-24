@@ -136,7 +136,7 @@ def test_a_preset_name_is_independent_of_a_directory_of_the_same_name_in_cwd(tmp
 @pytest.mark.parametrize(
     ("spec", "kw", "err", "names"),
     [
-        ("nope", {}, ValueError, "known presets: holosoma, microduck"),
+        ("nope", {}, ValueError, "known presets: hold, holosoma, microduck"),
         ("microduck?vz=1", {}, ValueError, "unknown parameter 'vz'; known: skill, vx, vy, wz"),
         ("holosoma?speed=1", {}, ValueError, "known: algorithm, vx, vy, wz"),
         ("microduck?vx=fast", {}, ValueError, "expected a number"),
