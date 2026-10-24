@@ -68,10 +68,9 @@ class Units:
         return self.lo_u + frac * (self.hi_u - self.lo_u)
 
     def to_rad(self, u: np.ndarray) -> np.ndarray:
-        """policy units -> rad; a bounded key clamps first, as LeRobot's ``_unnormalize`` does (K9)."""
+        """policy units -> rad, unclamped: an agent run's safety chain refuses a target past the range (K6)."""
         u = np.asarray(u, dtype=float)
         frac = (u - self.lo_u) / (self.hi_u - self.lo_u)
-        frac = np.where(self.bounded, np.clip(frac, 0.0, 1.0), frac)
         return self.lo + frac * (self.hi - self.lo)
 
 

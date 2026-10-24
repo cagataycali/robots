@@ -165,18 +165,44 @@ def test_k6_operator_refuses_the_run():
     real.close()
 
 
-def test_k6_every_step_still_passes_limits_and_validators():
+class _LeRobotUnits:
+    """A policy in LeRobot range units: holds what it sees, 99999 on shoulder_pan at tick 4."""
+
+    units = "lerobot"
+
+    def __init__(self):
+        self.k = 0
+
+    def act(self, obs, instruction=None):
+        self.k += 1
+        out = np.array(obs.joints.positions, dtype=float)
+        if self.k == 4:
+            out[0] = 99999.0
+        return out
+
+    def reset(self):
+        pass
+
+
+def _rad_policy():
+    k = [0]
+
+    def pol(obs):
+        k[0] += 1
+        return {"shoulder_pan": 99.0} if k[0] == 4 else {}  # beyond the hard range on tick 4
+
+    return pol
+
+
+@pytest.mark.parametrize("make_policy", [_rad_policy, _LeRobotUnits], ids=["rad", "lerobot_units"])
+def test_k6_every_step_still_passes_limits_and_validators(make_policy):
     from strands_robots.robot.run import from_agent
 
     seen: list[np.ndarray] = []
     d, _ = make_driver()
     real = Robot("so101", driver=d, twin=False, approve=lambda p: True)
     real.validators.append(lambda r, req: seen.append(req.targets.copy()))
-    k = [0]
-
-    def pol(obs):
-        k[0] += 1
-        return {"shoulder_pan": 99.0} if k[0] == 4 else {}  # beyond the hard range on tick 4
+    pol = make_policy()
 
     with from_agent():
         res = real.run(pol, steps=10, hz=50)

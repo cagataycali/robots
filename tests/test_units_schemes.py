@@ -75,7 +75,7 @@ def test_counts_to_rad_to_lerobot_equals_lerobots_own_normalisation():
 
 def test_range_modes_clamp_outside_the_range_but_degrees_extrapolate():
     """K9: a bounded ``range_*`` key clamps to its ends outside the calibrated travel, as LeRobot's
-    ``_normalize``/``_unnormalize`` do; a ``degrees`` key is unbounded and keeps extrapolating."""
+    ``_normalize`` does; a write is never clamped; a ``degrees`` key is unbounded and keeps extrapolating."""
     d = Description.load("so101")
     body = d.action_keys.index("shoulder_pan")
     grip = d.action_keys.index("gripper")
@@ -86,9 +86,9 @@ def test_range_modes_clamp_outside_the_range_but_degrees_extrapolate():
     assert ranged.from_rad(below)[body] == pytest.approx(-100.0)  # clamped, not -300
     assert ranged.from_rad(below)[grip] == pytest.approx(0.0)
     assert ranged.from_rad(above)[body] == pytest.approx(100.0)
-    # to_rad clamps a unit value past the end back to the joint limit
+    # to_rad does not clamp: a write past the end stays out of range for the safety chain to refuse (K6)
     past = np.full(len(d.action_keys), 400.0)
-    np.testing.assert_allclose(ranged.to_rad(past)[body], hi[body])
+    assert ranged.to_rad(past)[body] > hi[body] + 1.0
     # degrees extrapolate: no clamp
     degrees = lerobot_scheme_units(d, {"*": "degrees", "gripper": "range_0_100"})
     assert not bool(degrees.bounded[body])
