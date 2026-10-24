@@ -21,6 +21,7 @@ Every refusal (the operator said no, a limit, the e-stop) raises ``RequestRefuse
 
 from __future__ import annotations
 
+from . import _gl as _gl  # first: picks MUJOCO_GL before anything imports mujoco, which reads it once
 from .description import Description
 from .mesh import Mesh
 from .policy import Policy

@@ -20,7 +20,7 @@ try:
 except ImportError as exc:  # the extra the first snippet needs, so the error says how to get it
     raise ImportError(f"Simulation() needs MuJoCo: {hint('mujoco')} ({exc})") from exc
 
-from ...._gl import close_on_gl_thread_at_exit, ensure_gl, gl_thread, on_gl_thread, release_before_gl_teardown
+from ...._gl import close_on_gl_thread_at_exit, gl_in_effect, gl_thread, on_gl_thread, release_before_gl_teardown
 from ....types import JointState, Pose
 from ...backend import Backend
 from ...physics import Contact, Physics
@@ -214,7 +214,7 @@ class MuJoCoBackend(Backend):
             try:
                 r = mujoco.Renderer(self.model, height=size[1], width=size[0])
             except Exception as exc:  # noqa: BLE001 — no GL on this host
-                self._gl_failed = f"{type(exc).__name__}: {exc} (MUJOCO_GL={ensure_gl() or 'default'})"
+                self._gl_failed = f"{type(exc).__name__}: {exc} ({gl_in_effect()})"
                 raise RuntimeError(f"rendering unavailable: {self._gl_failed}") from exc
             self._renderers[size] = r
             release_before_gl_teardown()

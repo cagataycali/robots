@@ -11,6 +11,7 @@ import ctypes
 import os
 import platform
 import queue
+import sys
 import threading
 import weakref
 from collections.abc import Callable
@@ -46,6 +47,17 @@ def ensure_gl() -> str:
                 os.environ["MUJOCO_GL"] = value
                 return value
     return cur
+
+
+def gl_in_effect() -> str:
+    """Say which GL MuJoCo really uses: it reads MUJOCO_GL once, when ``mujoco`` is first imported."""
+    want = ensure_gl()
+    ctx = sys.modules.get("mujoco.rendering.classic.gl_context") or sys.modules.get("mujoco.gl_context")
+    chosen = getattr(ctx, "_MUJOCO_GL", want)
+    if chosen == want:
+        return f"MUJOCO_GL={want or 'default'}"
+    fix = f"set MUJOCO_GL={want} before the first import of mujoco"
+    return f"mujoco was imported with MUJOCO_GL={chosen or 'unset'}; {fix}"
 
 
 class _GLThread:
@@ -134,3 +146,6 @@ def _release_gl() -> None:
     _closers.clear()
     _gl.stop()
     _gl = None
+
+
+ensure_gl()  # at `import strands_robots`: a headless Linux host renders even if the caller imports mujoco next
