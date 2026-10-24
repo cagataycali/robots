@@ -99,16 +99,19 @@ cube to 4.7 mm.
 ## Memory: what a robot costs
 
 A MuJoCo world keeps the compiled model and its data, not the `MjSpec` it was built from (the spec holds every
-mesh a second time). `python scripts/profile_robot_rss.py 8` prints resident memory as robots join one world;
+mesh a second time), and robots of one model share its meshes in that compiled model (`MjSpec.dedup_assets`,
+MuJoCo 3.17+). `python scripts/profile_robot_rss.py 8` prints resident memory as robots join one world;
 measured on an aarch64 host with MuJoCo 3.17:
 
 | robots `so101` | 1 | 2 | 4 | 8 |
 |---|---|---|---|---|
-| resident memory, before | 648 MB | 955 MB | 1623 MB | 3027 MB |
-| resident memory, now | 620 MB | 682 MB | 898 MB | 1162 MB |
+| keeping the spec | 648 MB | 955 MB | 1623 MB | 3027 MB |
+| one mesh set per robot | 623 MB | 679 MB | 881 MB | 1185 MB |
+| one mesh set per model, now | 611 MB | 646 MB | 682 MB | 729 MB |
 
-An added so101 costs about 90 MB, most of it the 62 MB compiled model (mesh collision trees). The Python heap
-stays near 5 MB throughout: the growth is MuJoCo's C memory, which `tracemalloc` does not see.
+An added so101 costs about 17 MB: the compiled model stays at 62 MB however many so101 join, since their
+meshes and mesh collision trees are stored once. The Python heap stays near 5 MB throughout: the growth is
+MuJoCo's C memory, which `tracemalloc` does not see.
 
 ## GPU worlds: the first scene is slow
 

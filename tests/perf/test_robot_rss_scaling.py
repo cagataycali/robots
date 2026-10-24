@@ -6,12 +6,12 @@ import sys
 
 import pytest
 
-pytest.importorskip("mujoco")
+mujoco = pytest.importorskip("mujoco")
 from strands_robots import Robot, Simulation  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads RSS from /proc/self/statm")
 
-BUDGET_MB = 150  # an so101 compiles to ~62 MB; before this pin each one also kept its MjSpec (~330 MB per robot)
+BUDGET_MB = 40  # an added so101 costs ~14 MB once copies share meshes (~78 MB each before, ~330 MB with its spec)
 
 
 def _rss_mb() -> float:
@@ -33,3 +33,14 @@ def test_each_added_so101_stays_under_the_budget():
 def test_the_world_keeps_the_compiled_model_not_the_spec():
     Robot("so101")
     assert not hasattr(Simulation.default().backend, "spec")
+
+
+@pytest.mark.skipif(not hasattr(mujoco.MjSpec, "dedup_assets"), reason="MjSpec.dedup_assets needs MuJoCo 3.17")
+def test_four_so101_share_one_set_of_meshes_in_the_compiled_world():
+    """Four so101 compile to the 13 meshes of one so101, not 52."""
+    Simulation.default().reset()
+    for i in range(4):
+        Robot("so101", position=[0.5 * i, 0.0, 0.0])
+    model = Simulation.default().backend.model
+    assert model is not None
+    assert model.nmesh == 13, f"four so101 compile to {model.nmesh} mesh assets; expected 13 shared"

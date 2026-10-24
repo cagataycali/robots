@@ -73,6 +73,8 @@ class MuJoCoBackend(Backend):
             build.add_object(spec, o)
         for c in scene.cameras:
             build.add_camera(spec, c, scene)
+        if hasattr(spec, "dedup_assets"):  # MuJoCo 3.17+: N copies of a robot share one mesh, not one each
+            spec.dedup_assets()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = spec.compile()
