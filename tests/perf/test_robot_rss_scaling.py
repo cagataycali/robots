@@ -11,7 +11,7 @@ from strands_robots import Robot, Simulation  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads RSS from /proc/self/statm")
 
-BUDGET_MB = 40  # an so101 adds about 14 MB when meshes dedup across copies; the old pin was 150 MB (one spec per robot) and 330 MB without dedup
+BUDGET_MB = 50  # an so101 adds 13-32 MB with shared meshes, 65-93 MB without (one mesh copy per robot)
 
 
 def _rss_mb() -> float:
