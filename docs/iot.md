@@ -83,6 +83,28 @@ Operators keep IAM (`provision.operator_policy`): they may send rpcs, e-stop, wr
 everything, and may not speak as a device. Its shadow grants name the tenant's own device ids (`things=`, e.g. from `registry.list_things`), because a shadow document carries no author: an account-wide shadow grant would let an operator of one tenant move another tenant's robot, so an empty `things` is refused and `all_things=True` is the explicit, cross-tenant opt-in for a single-tenant account. The grant is `thing/<id>/control` for writes and `thing/<id>/*` for reads, the way IAM names a named shadow; about nine devices fit IAM's 6,144-character cap, so a larger tenant attaches several documents. A box that holds a certificate *and* commands other robots (a controller) gets the small `controller` add-on policy on top (`register(..., controller=True)`); without it
 the broker refuses its rpcs, which is the point.
 
+### Keys in a hardware token (PKCS#11)
+
+By default the private key is a PEM file on the robot (`key.pem`, mode 0600). A device with a hardware security
+module (or SoftHSM in a test) keeps the key in the token instead, so it never exists as a file. Point the link's
+`key=` at an RFC 7512 `pkcs11:` URI and the mesh signs the TLS handshake inside the token
+(`mtls_with_pkcs11`); `module-path=` names the driver `.so` (or the `PKCS11_MODULE` env var), `pin-value=` the
+user PIN (or `PKCS11_PIN`):
+
+<!-- test: skip, needs a PKCS#11 token (a hardware HSM or SoftHSM) -->
+```python
+key = "pkcs11:token=lab-a;object=arm-1?module-path=/usr/lib/softhsm/libsofthsm2.so&pin-value=1234"
+Mesh(f"iot://us-west-2?client=arm-1&cert=~/.strands/iot/arm-1/cert.pem&key={key}", tenant="lab-a")
+```
+
+To provision without ever writing the key, generate it in the token and hand `register` the matching CSR and the
+token URI: only `cert.pem` is written, and `out["query"]` carries the `pkcs11:` key.
+
+<!-- test: skip, needs a PKCS#11 token (a hardware HSM or SoftHSM) -->
+```python
+out = provision.register(iot, record, "~/.strands/iot", csr_pem=hsm_csr, key=key)   # no key.pem on disk
+```
+
 ## Commands: two paths, one measured difference of 4 ms
 
 An operator with IAM sends an rpc as a **Direct Message**: one HTTPS call that returns 404 in 0.08 s when the robot

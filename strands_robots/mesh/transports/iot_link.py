@@ -125,6 +125,19 @@ class FakeLink:
         self.subs.close()
 
 
+def _device_client(cert: str, key: str, **kw: Any) -> Any:
+    """The MQTT5 client for a device certificate: a ``pkcs11:`` key is a token (mTLS with PKCS#11), any other key
+    is a PEM file on disk (mTLS from path)."""
+    from awsiot import mqtt5_client_builder
+
+    from .pkcs11 import client as pkcs11_client
+    from .pkcs11 import is_pkcs11
+
+    if is_pkcs11(key):
+        return pkcs11_client(cert, key, **kw)
+    return mqtt5_client_builder.mtls_from_path(cert_filepath=cert, pri_key_filepath=key, **kw)
+
+
 class AwsLink:
     """One MQTT5 connection to AWS IoT Core (mTLS with cert/key, else SigV4 WebSocket) + boto3 SendDirectMessage."""
 
@@ -160,7 +173,7 @@ class AwsLink:
             on_lifecycle_stopped=lambda *_: self._down.set(),
         )
         if cert and key:
-            self.client = mqtt5_client_builder.mtls_from_path(cert_filepath=cert, pri_key_filepath=key, **kw)
+            self.client = _device_client(cert, key, **kw)
         else:
             creds = auth.AwsCredentialsProvider.new_default_chain()
             self.client = mqtt5_client_builder.websockets_with_default_aws_signing(
