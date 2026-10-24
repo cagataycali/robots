@@ -47,7 +47,6 @@ class MuJoCoBackend(Backend):
         super().__init__(**cfg)
         self.model: mujoco.MjModel | None = None
         self.data: mujoco.MjData | None = None
-        self.spec: mujoco.MjSpec | None = None
         self._scene: Scene = Scene()
         self._index: dict[str, _RobotIndex] = {}
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
@@ -79,7 +78,7 @@ class MuJoCoBackend(Backend):
             model = spec.compile()
         build.scale_bodies(model, scene)
         data = mujoco.MjData(model)
-        self.spec, self.model, self.data = spec, model, data
+        self.model, self.data = model, data  # the spec is not kept: it holds every mesh again (~250 MB per so101)
         self._scene = scene
         self._index = {r.id: self._make_index(model, r) for r in scene.robots}
         self._close_renderers()  # built for the old model; freed on the GL thread, never by the collector elsewhere
@@ -189,7 +188,7 @@ class MuJoCoBackend(Backend):
         place(self.model, self.data, idx.joint_qadr, idx.joint_dadr, positions)
 
     def set_pose(self, body: str, pose: Pose, *, zero_velocity: bool = True) -> None:
-        assert self.model is not None and self.data is not None and self.spec is not None
+        assert self.model is not None and self.data is not None
         m, d = self.model, self.data
         b = self._body_id(body)
         j = int(m.body_jntadr[b])
@@ -243,4 +242,4 @@ class MuJoCoBackend(Backend):
 
     def close(self) -> None:
         self._close_renderers()
-        self.model = self.data = self.spec = None
+        self.model = self.data = None

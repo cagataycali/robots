@@ -96,6 +96,20 @@ Measured on one NVIDIA Blackwell GPU (CUDA 13), so101 plus a cube, 200 control s
 MuJoCo and Newton are different integrators: over the same 4 s the joints agree to 1.5e-7 rad and the
 cube to 4.7 mm.
 
+## Memory: what a robot costs
+
+A MuJoCo world keeps the compiled model and its data, not the `MjSpec` it was built from (the spec holds every
+mesh a second time). `python scripts/profile_robot_rss.py 8` prints resident memory as robots join one world;
+measured on an aarch64 host with MuJoCo 3.17:
+
+| robots `so101` | 1 | 2 | 4 | 8 |
+|---|---|---|---|---|
+| resident memory, before | 648 MB | 955 MB | 1623 MB | 3027 MB |
+| resident memory, now | 620 MB | 682 MB | 898 MB | 1162 MB |
+
+An added so101 costs about 90 MB, most of it the 62 MB compiled model (mesh collision trees). The Python heap
+stays near 5 MB throughout: the growth is MuJoCo's C memory, which `tracemalloc` does not see.
+
 ## GPU worlds: the first scene is slow
 
 `physics="newton"` compiles warp kernels for each new scene shape and caches them (`WARP_CACHE_PATH`,
