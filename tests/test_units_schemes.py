@@ -14,6 +14,7 @@ from strands_robots.description import Description, registry
 from strands_robots.robot.drivers.calibration import Calibration, JointCalibration
 from strands_robots.robot.drivers.feetech import FeetechDriver
 from strands_robots.units import SCHEMES, Units
+from strands_robots.units import lerobot_units as lerobot_scheme_units
 
 
 def _gripper_robots():
@@ -70,3 +71,25 @@ def test_counts_to_rad_to_lerobot_equals_lerobots_own_normalisation():
         for i, k in enumerate(d.action_keys):
             expected = frac * 100.0 if k in d.gripper.keys else frac * 200.0 - 100.0
             assert abs(got[i] - expected) < 1e-9, f"{k} at {counts}: {got[i]} vs {expected}"
+
+
+def test_range_modes_clamp_outside_the_range_but_degrees_extrapolate():
+    """K9: a bounded ``range_*`` key clamps to its ends outside the calibrated travel, as LeRobot's
+    ``_normalize``/``_unnormalize`` do; a ``degrees`` key is unbounded and keeps extrapolating."""
+    d = Description.load("so101")
+    body = d.action_keys.index("shoulder_pan")
+    grip = d.action_keys.index("gripper")
+    ranged = Units.for_robot(d, "lerobot")  # registry default: range_m100_100 body, range_0_100 gripper
+    lo, hi = ranged.lo, ranged.hi
+    below = lo - (hi - lo)  # one full range below every lower limit
+    above = hi + (hi - lo)
+    assert ranged.from_rad(below)[body] == pytest.approx(-100.0)  # clamped, not -300
+    assert ranged.from_rad(below)[grip] == pytest.approx(0.0)
+    assert ranged.from_rad(above)[body] == pytest.approx(100.0)
+    # to_rad clamps a unit value past the end back to the joint limit
+    past = np.full(len(d.action_keys), 400.0)
+    np.testing.assert_allclose(ranged.to_rad(past)[body], hi[body])
+    # degrees extrapolate: no clamp
+    degrees = lerobot_scheme_units(d, {"*": "degrees", "gripper": "range_0_100"})
+    assert not bool(degrees.bounded[body])
+    assert abs(degrees.from_rad(below)[body]) > abs(degrees.from_rad(lo)[body]) + 1.0

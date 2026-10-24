@@ -73,3 +73,29 @@ def test_a_hardware_run_binds_the_calibrated_degrees():
     sim = bind(Robot("so101"), DegreesPolicy(), "auto").units
     assert not np.array_equal(sim.lo_u, conv.lo_u)  # sim keeps rad2deg about the joint-range midpoint
     real.close()
+
+
+def test_feetech_normalize_matches_lerobot_outside_the_calibrated_range():
+    """K9: for counts BELOW range_min or ABOVE range_max, a range-mode read equals LeRobot's own
+    ``_normalize`` (clamped to +-100 / 0..100), not an extrapolation hundreds of units past the end."""
+    norm = {"*": "range_m100_100", "gripper": "range_0_100"}
+    motors = {
+        n: motors_mod.Motor(
+            c["id"],
+            "sts3215",
+            motors_mod.MotorNormMode.RANGE_0_100 if n == "gripper" else motors_mod.MotorNormMode.RANGE_M100_100,
+        )
+        for n, c in CAL.items()
+    }
+    cal = {n: motors_mod.MotorCalibration(**c) for n, c in CAL.items()}
+    bus = FeetechMotorsBus(port="/dev/null", motors=motors, calibration=cal)
+    driver, _ = make_driver(cal=CAL)
+    units = calibrated(lerobot_units(driver.description, norm), driver.calibration, resolution=4096)
+    for counts_val in (0, 4095):  # both ends of the encoder, well outside any calibrated travel
+        counts = dict.fromkeys(CAL, counts_val)
+        theirs = bus._normalize({CAL[n]["id"]: v for n, v in counts.items()})
+        rad = np.array([driver.counts_to_rad(n, counts[n]) for n in driver.names])
+        ours = units.from_rad(rad)
+        for i, n in enumerate(driver.names):
+            assert ours[i] == pytest.approx(theirs[CAL[n]["id"]], abs=1e-9), (n, counts_val)
+            assert -100.0 - 1e-9 <= ours[i] <= 100.0 + 1e-9  # clamped, never hundreds of units out

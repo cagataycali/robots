@@ -55,14 +55,23 @@ class Units:
     def is_identity(self) -> bool:
         return self.name == RAD
 
+    @property
+    def bounded(self) -> np.ndarray:
+        """Per key: does this unit system clamp to its range (LeRobot's ``range_*`` modes do, ``degrees`` not)."""
+        return np.array([m.startswith("range_") for m in self.modes] or [False] * len(self.keys), dtype=bool)
+
     def from_rad(self, q: np.ndarray) -> np.ndarray:
+        """rad -> policy units; a bounded key clamps into its range exactly as LeRobot's ``_normalize`` does (K9)."""
         q = np.asarray(q, dtype=float)
         frac = (q - self.lo) / (self.hi - self.lo)
+        frac = np.where(self.bounded, np.clip(frac, 0.0, 1.0), frac)
         return self.lo_u + frac * (self.hi_u - self.lo_u)
 
     def to_rad(self, u: np.ndarray) -> np.ndarray:
+        """policy units -> rad; a bounded key clamps first, as LeRobot's ``_unnormalize`` does (K9)."""
         u = np.asarray(u, dtype=float)
         frac = (u - self.lo_u) / (self.hi_u - self.lo_u)
+        frac = np.where(self.bounded, np.clip(frac, 0.0, 1.0), frac)
         return self.lo + frac * (self.hi - self.lo)
 
 
