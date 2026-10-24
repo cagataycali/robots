@@ -21,6 +21,9 @@ On a real turn, Claude looked first, then moved the joint: it landed at 0.469, t
 | `sim.tool` | add robots, objects and cameras, step, reset, render a picture to look at |
 | `mesh.tool` | the same, for every robot on the mesh |
 
+One agent can hold both: [`agent_builds_a_scene.py`](https://github.com/strands-labs/robots/blob/dev/notebooks/examples/agent_builds_a_scene.py)
+gives it `sim.tool` and `arm.tool`; it places three cubes and a camera, moves `shoulder_pan` and renders what it built.
+
 Nobody writes these by hand. They're generated from the robot's manifest and method signatures, so a new skill or a
 new joint shows up in the tool automatically.
 

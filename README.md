@@ -56,6 +56,9 @@ Agent(tools=[duck.tool])("walk forward a bit, turn left, do a roll, then chill")
 The agent picks skills (Pollen Robotics' open microduck policies), the skills move the motors, the loop keeps it
 safe. That GIF up top is a real Claude turn doing exactly this.
 
+The same works for a world the agent builds itself: [`notebooks/examples/agent_builds_a_scene.py`](notebooks/examples/agent_builds_a_scene.py)
+hands `sim.tool` and `arm.tool` to one agent, which places three cubes and a camera, moves the arm and looks at the result.
+
 ## What's in the box
 
 | | |
