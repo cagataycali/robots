@@ -97,13 +97,21 @@ def test_register_with_an_hsm_csr_writes_no_key_pem(aws, tmp_path):
     provision.setup_tenant(aws, "lab", region=REGION, account=ACCOUNT)
     _, csr_pem = provision.csr("arm-9")  # stands in for a CSR whose key was generated in an HSM
     rec = {**RECORD, "id": "arm-9"}
-    key_uri = "pkcs11:token=lab;object=arm-9?module-path=/opt/hsm.so&pin-value=5678"
+    key_uri = "pkcs11:token=lab;object=arm-9?module-path=/opt/hsm.so"
     out = provision.register(aws, rec, tmp_path, csr_pem=csr_pem, key=key_uri)
     assert not (tmp_path / "arm-9" / "key.pem").exists()  # nothing private is a PEM on disk
     assert (tmp_path / "arm-9" / "cert.pem").exists()
     assert out["key"] == key_uri
     assert parse_qs(out["query"])["key"][0] == key_uri  # url-decoded back to the token URI
     assert aws.describe_certificate(certificateId=out["certificate_id"])["certificateDescription"]["status"] == "ACTIVE"
+
+
+def test_register_refuses_a_key_uri_carrying_its_pin_before_issuing(aws, tmp_path):
+    provision.setup_tenant(aws, "lab", region=REGION, account=ACCOUNT)
+    key_uri = "pkcs11:token=lab;object=arm-9?module-path=/opt/hsm.so&pin-value=5678"
+    with pytest.raises(ValueError, match="PKCS11_PIN"):
+        provision.register(aws, {**RECORD, "id": "arm-9"}, tmp_path, csr_pem=provision.csr("arm-9")[1], key=key_uri)
+    assert not (tmp_path / "arm-9").exists() and aws.list_certificates()["certificates"] == []
 
 
 def test_register_needs_both_an_hsm_csr_and_its_key_uri(aws, tmp_path):

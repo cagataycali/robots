@@ -23,8 +23,8 @@ def test_is_pkcs11_tells_a_token_uri_from_a_pem_path():
     "uri, expected",
     [
         (
-            "pkcs11:token=lab;object=arm-1?module-path=/opt/hsm.so&pin-value=4321",
-            {"module": "/opt/hsm.so", "user_pin": "4321", "token_label": "lab", "private_key_label": "arm-1"},
+            "pkcs11:token=lab;object=arm-1?module-path=/opt/hsm.so",
+            {"module": "/opt/hsm.so", "user_pin": None, "token_label": "lab", "private_key_label": "arm-1"},
         ),
         (
             "pkcs11:slot-id=7;object=arm-2?module-name=/opt/hsm.so",
@@ -155,7 +155,8 @@ def token(tmp_path, monkeypatch):
         capture_output=True,
     )
     key_pem.unlink()  # the private key now lives only in the token
-    uri = f"pkcs11:token=e5tok;object=devkey?module-path={module}&pin-value=5678"
+    monkeypatch.setenv("PKCS11_PIN", "5678")
+    uri = f"pkcs11:token=e5tok;object=devkey?module-path={module}"
     return uri, str(cert_path), tmp_path
 
 
@@ -175,9 +176,41 @@ def test_an_iot_link_hands_the_whole_percent_encoded_token_uri_to_the_client(mon
 
     seen: dict[str, object] = {}
     monkeypatch.setattr(iot, "AwsLink", lambda endpoint, region, client, cert, key: seen.update(key=key) or "LINK")
-    uri = "pkcs11:token=lab-a;object=arm-1?module-path=/opt/hsm.so&pin-value=1234"
+    monkeypatch.setenv("PKCS11_PIN", "1234")
+    uri = "pkcs11:token=lab-a;object=arm-1?module-path=/opt/hsm.so&module-name=x"
     base = "iot://us-west-2?endpoint=e&client=arm-1&cert=c.pem&key="
     assert iot._link(base + quote(uri, safe="")) == "LINK"
     assert seen["key"] == uri and pkcs11.parse(str(seen["key"]))["user_pin"] == "1234"
-    with pytest.raises(ValueError, match="percent-encode"):  # bare: '&pin-value' would leave the key, PIN-less
+    with pytest.raises(ValueError, match="percent-encode"):  # bare: '&module-name' would leave the key
         iot._link(base + uri)
+
+
+PIN = "pkcs11:token=lab-a;object=arm-1?module-path=/opt/hsm.so&pin-value=1234"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(lambda: pkcs11.parse(PIN), id="parse"),
+        pytest.param(lambda: _iot()._link(f"iot://fake?client=a&cert=c&key={_quote(PIN)}"), id="encoded-link"),
+        pytest.param(lambda: _iot()._link(f"iot://fake?client=a&cert=c&key={PIN}"), id="split-link"),
+        pytest.param(lambda: _iot().IotTransport(f"iot://fake?client=a&cert=c&key={_quote(PIN)}"), id="transport"),
+    ],
+)
+def test_a_pin_on_a_pkcs11_key_is_refused_and_never_echoed(call):
+    """The PIN comes only from PKCS11_PIN: a link is rendered by Mesh.__repr__, its closed error and use_mesh."""
+    with pytest.raises(ValueError, match="PKCS11_PIN") as err:
+        call()
+    assert "1234" not in str(err.value)
+
+
+def _iot():
+    from strands_robots.mesh.transports import iot
+
+    return iot
+
+
+def _quote(text: str) -> str:
+    from urllib.parse import quote
+
+    return quote(text, safe="")

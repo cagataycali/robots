@@ -27,6 +27,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import parse_qs, urlparse
 
 from ..iot.direct import reply_ok, rpc_mode
+from . import pkcs11
 from .base import OnAlive, OnQuery, OnSample, RemoteError, Unsubscribe
 from .iot_link import AwsLink, FakeIotBroker, FakeLink, Link
 
@@ -43,7 +44,10 @@ def _filter(key_expr: str) -> str:
 def _link(url: str) -> Link:
     u = urlparse(url)
     q = {k: v[0] for k, v in parse_qs(u.query).items()}
-    if (q.get("key") or "").startswith("pkcs11:") and {"pin-value", "module-path", "module-name"} & q.keys():
+    if "pin-value" in q:  # a split or a bare pkcs11: key with its PIN: refused before the URL is kept anywhere
+        raise ValueError(pkcs11.PIN_REFUSED)
+    pkcs11.refuse_pin(q.get("key") or "")
+    if (q.get("key") or "").startswith("pkcs11:") and {"module-path", "module-name"} & q.keys():
         raise ValueError("percent-encode a pkcs11: key= on an iot:// link (quote(key, safe='')): its '&' split it")
     client = q.get("client") or f"strands-{uuid.uuid4().hex[:12]}"
     if u.netloc == "fake":

@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .. import wire
+from ..transports.pkcs11 import refuse_pin
 from .policy import POLICY_NAME, controller_policy, device_policy, group_name, policy_text
 
 
@@ -135,6 +136,7 @@ def rotate(
 def _pair(csr_pem: str | None, key: str | None) -> None:
     if (csr_pem is None) != (key is None):
         raise ValueError("give both csr_pem (an HSM-generated CSR) and key (its pkcs11: URI), or neither")
+    refuse_pin(key or "")
 
 
 def _issue(
