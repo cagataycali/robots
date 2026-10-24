@@ -58,3 +58,26 @@ def test_a_base_exception_on_the_gl_thread_reaches_the_caller_and_ends_the_worke
             worker.submit(lambda: None)
     finally:
         worker.q.put(None)
+
+
+def test_a_script_that_rendered_exits_without_egl_errors():
+    """mujoco.egl registers ``eglTerminate`` at exit when it makes its first context; the renderers must be freed
+    before it runs, or every rendering script ends with ``EGL_NOT_INITIALIZED`` tracebacks on stderr."""
+    import ctypes
+    import subprocess
+    import sys
+
+    try:
+        ctypes.CDLL("libEGL.so.1")
+    except OSError:
+        pytest.skip("no libEGL on this host")
+    script = (
+        "from strands_robots import Robot\n"
+        "arm = Robot('so101')\n"
+        "arm.sim.camera('front', position=[0.6, 0, 0.4], target=[0, 0, 0.2], size=(64, 48))\n"
+        "assert arm.sim.render('front').shape == (48, 64, 3)\n"
+    )
+    env = {**__import__("os").environ, "MUJOCO_GL": "egl"}
+    out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=120)
+    assert out.returncode == 0, out.stderr
+    assert "EGL" not in out.stderr and "Exception ignored" not in out.stderr, out.stderr

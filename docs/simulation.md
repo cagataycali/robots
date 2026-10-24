@@ -61,7 +61,7 @@ headroom in both directions. An unknown `ground=` is refused by name.
 `body_pose`, `set_pose`, `set_gains`, `render`, `contacts`, `physics` and `close`. `mujoco` is the
 first backend (MuJoCo 3.3.4 or newer): one `MjSpec`, each robot attached under an `id/` prefix,
 rebuilt on every scene change with time kept and joint state carried by joint name. `mujoco` is imported when the first world is made, not by
-`import strands_robots`. Rendering uses EGL when no display is present (`MUJOCO_GL` is respected). Every render runs on one GL thread, whichever thread asks, so a `start()` after a `run()` renders from its background thread too.
+`import strands_robots`. Rendering uses EGL when no display is present (`MUJOCO_GL` is respected). Every render runs on one GL thread, whichever thread asks, so a `start()` after a `run()` renders from its background thread too. Its contexts are freed before EGL shuts down at exit, so a script that rendered ends quietly; an `EGL_NOT_INITIALIZED` traceback after the last line of a script is a teardown bug to report, not a failed render.
 
 Measured headless: 2000 physics steps of so101 plus unitree_g1 take 85 us each (MuJoCo 3.15, one CPU core).
 

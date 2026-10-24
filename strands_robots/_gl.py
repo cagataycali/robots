@@ -113,6 +113,13 @@ def close_on_gl_thread_at_exit(close: Callable[[], None]) -> None:
     _closers.append(weakref.WeakMethod(close))  # type: ignore[arg-type]
 
 
+def release_before_gl_teardown() -> None:
+    """Call after making a context: ``mujoco.egl`` registers ``eglTerminate`` at exit with its first one, and exit
+    hooks run last-registered first, so the release moves behind it or the contexts die on a dead display."""
+    atexit.unregister(_release_gl)
+    atexit.register(_release_gl)
+
+
 def _release_gl() -> None:
     global _gl
     if _gl is None:
