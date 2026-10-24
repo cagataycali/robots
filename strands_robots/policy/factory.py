@@ -78,3 +78,11 @@ def from_spec(spec: str) -> Any:
     if not isinstance(spec, str):
         raise TypeError(f"from_spec takes a spec string, got {type(spec).__name__}")
     return make(spec)
+
+
+def spec_help() -> str:
+    """What a model is told a policy spec may be: every shipped preset and every form that crosses a wire."""
+    from .onnx import preset_names
+
+    forms = "; ".join(" ".join(f.split()) for f in FORMS if not f.startswith("<callable>"))
+    return f"a policy spec. Shipped presets: {', '.join(map(repr, preset_names()))}. Forms: {forms}"

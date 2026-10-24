@@ -22,7 +22,8 @@ On a real turn, Claude looked first, then moved the joint: it landed at 0.469, t
 | `mesh.tool` | the same, for every robot on the mesh |
 
 Nobody writes these by hand. They're generated from the robot's manifest and method signatures, so a new skill or a
-new joint shows up in the tool automatically.
+new joint shows up in the tool automatically. A `policy` argument lists the shipped presets (`holosoma`,
+`microduck`) and every spec form an agent can send, so its first `run` names a real policy.
 
 What an agent **can't** do: approve its own run on a real robot (the operator says yes once, to the whole plan),
 resume after an e-stop, calibrate (that turns the torque off), or plug in hardware through `sim.tool`. It *can* hit

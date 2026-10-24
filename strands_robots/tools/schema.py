@@ -4,8 +4,8 @@ An annotation is read as an expression tree (``ast``), so nested generics and un
 the names a module only imports for type checking. ``int``/``float``/``str``/``bool`` map to JSON types, ``X | None``
 becomes nullable, ``X | Y`` an ``anyOf``, ``Literal[...]`` an enum, ``tuple``/``list``/``Sequence`` arrays,
 ``Mapping``/``dict`` objects (a key union that admits ``str`` has string keys), ``Any`` any JSON, an
-``Action`` one number per joint and a policy a spec string (an ``Any`` whose default is a tuple of numbers is
-that many numbers). Parameters that cannot cross a wire (callables,
+``Action`` one number per joint and a policy a spec string naming the shipped presets and forms (an ``Any``
+whose default is a tuple of numbers is that many numbers). Parameters that cannot cross a wire (callables,
 events, live objects) are left out; a required one is an error, so a model is never offered a verb it cannot call.
 """
 
@@ -87,7 +87,9 @@ def _one(node: ast.expr, joints: Sequence[str]) -> dict[str, Any] | None:
             "description": f"joint -> target, any subset of {list(joints)}",
         }
     if name == "PolicyLike":
-        return {"type": "string", "description": "a policy spec, e.g. a LeRobot checkpoint id"}
+        from ..policy.factory import spec_help
+
+        return {"type": "string", "description": spec_help()}
     return None
 
 
