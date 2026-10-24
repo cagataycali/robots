@@ -89,12 +89,15 @@ By default the private key is a PEM file on the robot (`key.pem`, mode 0600). A 
 module (or SoftHSM in a test) keeps the key in the token instead, so it never exists as a file. Point the link's
 `key=` at an RFC 7512 `pkcs11:` URI and the mesh signs the TLS handshake inside the token
 (`mtls_with_pkcs11`); `module-path=` names the driver `.so` (or the `PKCS11_MODULE` env var), `pin-value=` the
-user PIN (or `PKCS11_PIN`):
+user PIN (or `PKCS11_PIN`). The URI's own `?` and `&` would split the link's query, so `key=` carries it
+percent-encoded, as `register` returns it; a bare one is refused:
 
 <!-- test: skip, needs a PKCS#11 token (a hardware HSM or SoftHSM) -->
 ```python
+from urllib.parse import quote
+
 key = "pkcs11:token=lab-a;object=arm-1?module-path=/usr/lib/softhsm/libsofthsm2.so&pin-value=1234"
-Mesh(f"iot://us-west-2?client=arm-1&cert=~/.strands/iot/arm-1/cert.pem&key={key}", tenant="lab-a")
+Mesh(f"iot://us-west-2?client=arm-1&cert=~/.strands/iot/arm-1/cert.pem&key={quote(key, safe='')}", tenant="lab-a")
 ```
 
 To provision without ever writing the key, generate it in the token and hand `register` the matching CSR and the

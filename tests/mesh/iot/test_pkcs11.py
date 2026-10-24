@@ -166,3 +166,18 @@ def test_a_token_key_builds_an_mqtt_client_with_no_pem_on_disk(token):
     assert not (tmp_path / "key.pem").exists()  # no private key as a file
     client = pkcs11.client(cert, uri, endpoint="example-ats.iot.us-west-2.amazonaws.com", client_id="arm-1")
     assert isinstance(client, Client)  # awscrt found and loaded the key from the token
+
+
+def test_an_iot_link_hands_the_whole_percent_encoded_token_uri_to_the_client(monkeypatch):
+    from urllib.parse import quote
+
+    from strands_robots.mesh.transports import iot
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(iot, "AwsLink", lambda endpoint, region, client, cert, key: seen.update(key=key) or "LINK")
+    uri = "pkcs11:token=lab-a;object=arm-1?module-path=/opt/hsm.so&pin-value=1234"
+    base = "iot://us-west-2?endpoint=e&client=arm-1&cert=c.pem&key="
+    assert iot._link(base + quote(uri, safe="")) == "LINK"
+    assert seen["key"] == uri and pkcs11.parse(str(seen["key"]))["user_pin"] == "1234"
+    with pytest.raises(ValueError, match="percent-encode"):  # bare: '&pin-value' would leave the key, PIN-less
+        iot._link(base + uri)

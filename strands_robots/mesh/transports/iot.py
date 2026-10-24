@@ -43,6 +43,8 @@ def _filter(key_expr: str) -> str:
 def _link(url: str) -> Link:
     u = urlparse(url)
     q = {k: v[0] for k, v in parse_qs(u.query).items()}
+    if (q.get("key") or "").startswith("pkcs11:") and {"pin-value", "module-path", "module-name"} & q.keys():
+        raise ValueError("percent-encode a pkcs11: key= on an iot:// link (quote(key, safe='')): its '&' split it")
     client = q.get("client") or f"strands-{uuid.uuid4().hex[:12]}"
     if u.netloc == "fake":
         return FakeLink(FakeIotBroker.named(q.get("broker", "default")), client)
