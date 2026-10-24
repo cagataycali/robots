@@ -106,7 +106,10 @@ token URI: only `cert.pem` is written, and `out["query"]` carries the `pkcs11:` 
 <!-- test: skip, needs a PKCS#11 token (a hardware HSM or SoftHSM) -->
 ```python
 out = provision.register(iot, record, "~/.strands/iot", csr_pem=hsm_csr, key=key)   # no key.pem on disk
+rot = provision.rotate(iot, "arm-1", "~/.strands/iot", csr_pem=new_hsm_csr, key=key)  # same token key URI
 ```
+
+`rotate` on such an identity without `csr_pem` is refused, so it never writes a software key over the token's.
 
 ## Commands: two paths, one measured difference of 4 ms
 

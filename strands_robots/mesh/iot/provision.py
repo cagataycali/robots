@@ -93,8 +93,7 @@ def register(
     (0600). Give ``csr_pem`` (a CSR whose key was generated in an HSM) and its ``key`` (a ``pkcs11:`` URI) to
     register an identity whose private key is never a PEM: only ``cert.pem`` is written and the query's ``key=``
     is the token URI. Returns ids plus the ``iot://`` query to use."""
-    if (csr_pem is None) != (key is None):
-        raise ValueError("give both csr_pem (an HSM-generated CSR) and key (its pkcs11: URI), or neither")
+    _pair(csr_pem, key)
     did, dtype, tenant = str(record["id"]), str(record["device_type"]), str(record["tenant"])
     labels = {str(k): str(v)[:800] for k, v in (record.get("labels") or {}).items()}
     attrs, ttype = {"tenant": tenant, "device_type": dtype, **labels}, _segment(dtype)
@@ -109,14 +108,33 @@ def register(
             "certificate_id": cert["certificateId"], **paths, "query": query}  # fmt: skip
 
 
-def rotate(iot: Any, device_id: str, out_dir: str | Path, *, policy: str = POLICY_NAME) -> dict[str, Any]:
+def rotate(
+    iot: Any,
+    device_id: str,
+    out_dir: str | Path,
+    *,
+    policy: str = POLICY_NAME,
+    csr_pem: str | None = None,
+    key: str | None = None,
+) -> dict[str, Any]:
     """A new certificate for ``device_id`` with the same CN and every policy its current ones carry (``policy`` if
-    none) over the old files; those stay ACTIVE until ``retire``, so the device reconnects first and nothing breaks."""
+    none) over the old files; those stay ACTIVE until ``retire``, so the device reconnects first and nothing breaks.
+    An identity registered with ``csr_pem``/``key`` rotates the same way (a CSR signed by its token key and the
+    unchanged URI); without them it is refused, so a software key never replaces the token's."""
+    _pair(csr_pem, key)
+    folder = Path(out_dir) / device_id
+    if csr_pem is None and (folder / "cert.pem").exists() and not (folder / "key.pem").exists():
+        raise ValueError(f"{device_id}'s key lives in a token: give rotate csr_pem (signed by it) and key (its URI)")
     arns = _principals(iot, device_id)
     names = {p["policyName"] for a in arns for p in iot.list_attached_policies(target=a).get("policies", [])}
-    cert, paths = _issue(iot, device_id, out_dir, sorted(names or {policy}))
+    cert, paths = _issue(iot, device_id, out_dir, sorted(names or {policy}), csr_pem=csr_pem, key=key)
     old = [a.rsplit("/", 1)[-1] for a in arns]
     return {"thing": device_id, "certificate_id": cert["certificateId"], "retire": old, **paths}
+
+
+def _pair(csr_pem: str | None, key: str | None) -> None:
+    if (csr_pem is None) != (key is None):
+        raise ValueError("give both csr_pem (an HSM-generated CSR) and key (its pkcs11: URI), or neither")
 
 
 def _issue(
