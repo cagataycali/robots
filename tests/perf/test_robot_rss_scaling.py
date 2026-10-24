@@ -11,7 +11,7 @@ from strands_robots import Robot, Simulation  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads RSS from /proc/self/statm")
 
-BUDGET_MB = 150  # an so101 compiles to ~62 MB; before this pin each one also kept its MjSpec (~330 MB per robot)
+BUDGET_MB = 40  # an so101 adds about 14 MB when meshes dedup across copies; the old pin was 150 MB (one spec per robot) and 330 MB without dedup
 
 
 def _rss_mb() -> float:
@@ -33,3 +33,14 @@ def test_each_added_so101_stays_under_the_budget():
 def test_the_world_keeps_the_compiled_model_not_the_spec():
     Robot("so101")
     assert not hasattr(Simulation.default().backend, "spec")
+
+
+def test_four_so101_share_one_set_of_meshes_in_the_compiled_world():
+    """dedup_assets collapses the four copies of each so101 mesh (13 per so101)
+    into a single shared mesh asset: nmesh reads 13, not 52."""
+    Simulation.default().reset()
+    for i in range(4):
+        Robot("so101", position=[0.5 * i, 0.0, 0.0])
+    model = Simulation.default().backend.model
+    assert model is not None
+    assert model.nmesh == 13, f"four so101 compile to {model.nmesh} mesh assets; expected 13 shared"

@@ -73,6 +73,7 @@ class MuJoCoBackend(Backend):
             build.add_object(spec, o)
         for c in scene.cameras:
             build.add_camera(spec, c, scene)
+        spec.dedup_assets()  # one mesh per shape across N copies, not one per robot
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model = spec.compile()
