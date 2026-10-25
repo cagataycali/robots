@@ -144,6 +144,22 @@ def test_calibrate_and_resume_are_the_operators_and_never_reach_the_bus(rpc):
     assert len(serial.frames) == frames  # not a byte on the bus: no torque off, no offsets rewritten
 
 
+def test_an_agent_reaches_a_pose_with_one_act_and_the_operator_is_asked_once():
+    from strands_robots import Robot
+    from strands_robots.tools import tool_spec
+
+    asked: list = []
+    d, serial = make_driver()
+    real = Robot("so101", driver=d, twin=False, confirm=lambda targets: asked.append(targets) or True)
+    act = tool_spec(real)["inputSchema"]["json"]["properties"]["act"]["properties"]
+    assert "seconds" in act  # the model is offered the way to reach a pose before it invents one
+    (r,) = _turn(real, [_act(0.2, seconds=0.2)])
+    assert r["status"] == "success", r
+    assert len(asked) == 1 and len(goal_writes(serial)) >= 6  # one yes, then a ramp of writes at 30 Hz
+    assert asked[0][real.action_keys.index("shoulder_pan")] == pytest.approx(0.2)
+    real.close()
+
+
 @pytest.mark.parametrize("answer, moved", [(False, False), (True, True)])
 def test_an_agent_hold_on_a_limp_arm_asks_the_operator_before_torque_goes_on(answer, moved):
     from strands_robots import Robot

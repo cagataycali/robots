@@ -13,6 +13,7 @@ arm = Robot("so101")                        # a body in Simulation.default(); ar
 g1 = Robot("g1", position=[1, 0, 0])        # the same world: arm.sim is g1.sim
 arm.observe()                               # Observation: joints, base pose, images of cameras attached to it
 arm.act({"shoulder_pan": 0.3})              # write targets for THIS body, then one control step for the world
+arm.act({"gripper": 1.0}, seconds=1.0)      # reach the pose: ramp there from the measured one, then read back
 res = arm.run(lambda obs: {"elbow_flex": 0.4}, hz=50, steps=60)   # RunResult(steps, seconds, ..., final)
 task = arm.start(my_policy, seconds=30)     # the same loop in the background; arm.stop() returns its RunResult
 arm.sim.run({arm: my_policy, g1: my_policy}, steps=20)   # many robots in lock-step, each policy bound as run() binds it
@@ -28,6 +29,11 @@ they are). An unknown joint raises `KeyError`, a vector of the wrong length rais
 target is clipped to the joint limits. `set_pose` teleports, `set_gains(kp, kd)` sets the PD gains of
 its actuators, `describe()` is JSON-safe, `close()` removes it from its world (a removed robot raises
 `RuntimeError` on its next `observe`).
+
+`act(action, seconds=)` reaches a pose instead of taking one step toward it: the targets ramp from the
+measured pose to `action` at 30 Hz, settle there, and the returned `Observation` is the pose reached. Through
+an agent tool (`confirm_act`) the operator gate is asked once, for the target. To stand
+still, call `hold()`; there is no `"hold"` policy.
 
 `run(policy, hz=, seconds=|steps=|stop_when=)` takes a `Policy` subclass, anything with `act(obs)` and
 `reset()`, or a bare callable (it receives `instruction=` when it declares it). In a world, `hz` sets how
