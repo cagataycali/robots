@@ -34,14 +34,17 @@ class WorldLock:
             if not blocking:
                 return False
             self._queue.append(me)
-            turn = self._cv.wait_for(
-                lambda: self._owner is None and self._queue[0] == me, None if timeout < 0 else timeout
-            )
-            self._queue.remove(me)
-            if turn:
-                self._owner, self._depth = me, 1
-            else:
-                self._cv.notify_all()  # the next in line may be free to go now that this waiter left
+            turn = False
+            try:  # an interrupt mid-wait (Ctrl-C) still leaves the queue, or it would wedge every waiter behind it
+                turn = self._cv.wait_for(
+                    lambda: self._owner is None and self._queue[0] == me, None if timeout < 0 else timeout
+                )
+            finally:
+                self._queue.remove(me)
+                if turn:
+                    self._owner, self._depth = me, 1
+                else:
+                    self._cv.notify_all()  # the next in line may be free to go now that this waiter left
             return turn
 
     def release(self) -> None:

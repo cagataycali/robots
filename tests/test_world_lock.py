@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import threading
 import time
 
@@ -82,3 +83,33 @@ def test_reentry_and_refusals(case, expect):
 def test_release_by_a_thread_that_does_not_hold_it_raises():
     with pytest.raises(RuntimeError, match="un-acquired"):
         WorldLock().release()
+
+
+def test_a_waiter_interrupted_mid_wait_leaves_the_queue():
+    class Interrupted(Exception):
+        pass
+
+    def interrupt(*_: object) -> None:
+        raise Interrupted
+
+    lock, held, go, got = WorldLock(), threading.Event(), threading.Event(), []
+
+    def holder() -> None:
+        with lock:
+            held.set()
+            go.wait()
+
+    threading.Thread(target=holder, daemon=True).start()
+    held.wait()
+    previous = signal.signal(signal.SIGUSR1, interrupt)
+    try:
+        threading.Timer(0.05, signal.pthread_kill, (threading.main_thread().ident, signal.SIGUSR1)).start()
+        with pytest.raises(Interrupted):
+            lock.acquire()
+    finally:
+        signal.signal(signal.SIGUSR1, previous)
+    go.set()
+    t = threading.Thread(target=lambda: got.append(lock.acquire(timeout=1.0)))
+    t.start()
+    t.join(2)
+    assert got == [True] and not lock._queue
