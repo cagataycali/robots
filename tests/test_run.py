@@ -283,28 +283,29 @@ def test_lockstep_applies_on_disconnect_only_to_the_robot_that_faulted():
     assert sim.backend.data.ctrl[ib] != pytest.approx(0.0)  # b kept running, no disconnect applied
 
 
-def _posed(gravity):
-    arm = Robot("so101", sim=Simulation(gravity=gravity))
-    arm.run(lambda o: {"shoulder_lift": 0.5, "elbow_flex": -0.6}, hz=50, steps=100)  # away from the zero pose
-    return arm
+@pytest.mark.parametrize(
+    ("spec", "says"),
+    [
+        ("hold", "use robot.hold() to stand still, robot.act(..., seconds=) to reach a pose"),
+        ("nope", "known presets: holosoma, microduck;"),  # hold is not offered as a preset
+    ],
+)
+def test_hold_is_not_a_policy_spec_and_the_refusal_names_the_verbs(spec, says):
+    with pytest.raises(ValueError) as err:
+        Policy(spec)
+    assert says in str(err.value) and "stand still at the pose" not in str(err.value)
 
 
-def test_hold_is_a_policy_that_keeps_the_pose_the_run_started_at():
-    arm = _posed((0.0, 0.0, 0.0))  # no gravity: a position servo at its own pose does not move
-    first = arm.observe().joints.positions
-    res = arm.run(policy="hold", seconds=0.5, hz=20)
-    assert (res.steps, res.stopped_by, repr(Policy("hold"))) == (10, "steps", "Policy('hold')")
-    assert res.final is not None and res.final.joints.positions == pytest.approx(first, abs=1e-3)
-    both = arm.sim.run({arm.id: "hold"}, seconds=0.5, hz=20)
-    assert list(both) == [arm.id] and both[arm.id].steps == 10
-    assert arm.observe().joints.positions == pytest.approx(first, abs=1e-3)
-
-
-def test_run_hold_is_robot_hold_for_the_same_time():
-    run, verb = _posed((0.0, 0.0, -9.81)), _posed((0.0, 0.0, -9.81))  # gravity: both sag the same servo error
-    t0 = run.sim.time
-    res = run.run("hold", seconds=0.5, hz=20)
-    verb.hold()
-    while verb.sim.time < t0 + 0.5 - 1e-9:
-        verb.sim.step()
-    assert res.final is not None and res.final.joints.positions == pytest.approx(verb.observe().joints.positions)
+def test_act_seconds_reaches_the_pose_in_one_call_and_one_plain_act_is_one_step_along():
+    one, ramp = Robot("so101", sim=Simulation()), Robot("so101", sim=Simulation())
+    home = {"shoulder_lift": 0.8, "elbow_flex": -0.8, "gripper": 1.0}
+    stepped = one.act(home).joints.as_dict()
+    t0, reached = ramp.sim.time, ramp.act(home, seconds=1.0).joints.as_dict()
+    assert ramp.sim.time - t0 == pytest.approx(1.0, abs=0.04)  # the world advanced the seconds asked for
+    for j, q in home.items():
+        assert reached[j] == pytest.approx(q, abs=0.05), j
+        assert abs(stepped[j] - q) > 0.1, j  # one step of a far target is still on its way
+    with pytest.raises(ValueError, match="not both"):
+        ramp.act(home, steps=2, seconds=1.0)
+    with pytest.raises(ValueError, match="> 0"):
+        ramp.act(home, seconds=0)

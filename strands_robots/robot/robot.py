@@ -15,6 +15,7 @@ import numpy as np
 from ..description import Description
 from ..types import Action, Observation, Pose
 from . import gate as _gate
+from . import reach as _reach
 from . import targets as _targets
 from . import twin as _twin
 from .body import Body, SimBody
@@ -172,16 +173,24 @@ class Robot(DeviceVerbs):
         """The operator gate for commands from an agent tool or dashboard (see ``robot.gate``)."""
         return _gate.gate(self, action, confirmed=confirmed, approved_run=approved_run, measured=measured)
 
-    def confirm_act(self, action: Action, *, steps: int | None = None, confirmed: bool = False) -> Observation:
-        """``act`` through the operator gate: what an agent tool and the dashboard call."""
-        return _gate.confirm_act(self, action, steps=steps, confirmed=confirmed)
+    def confirm_act(
+        self, action: Action, *, steps: int | None = None, seconds: float | None = None, confirmed: bool = False
+    ) -> Observation:
+        """``act`` through the operator gate (asked once, for the target): what an agent tool and the dashboard call."""
+        return _gate.confirm_act(self, action, steps=steps, seconds=seconds, confirmed=confirmed)
 
-    def act(self, action: Action, *, steps: int | None = None) -> Observation:
+    def act(self, action: Action, *, steps: int | None = None, seconds: float | None = None) -> Observation:
         """Write targets for THIS body and advance its world (a real body: its twin's) one control step.
 
-        Returns what the body reports after the step (one read); a run loop calls ``command`` instead.
+        ``seconds``: reach the pose instead, ramping there from the measured one over that long (``robot.reach``).
+        Returns what the body reports after (one read); a run loop calls ``command`` instead.
         """
-        self.command(self.coerce(action), steps=steps)
+        if seconds is None:
+            self.command(self.coerce(action), steps=steps)
+        elif steps is not None:
+            raise ValueError("act takes steps= or seconds=, not both")
+        else:
+            _reach.reach(self, self.coerce(action), seconds)
         return self.observe(images=False)
 
     def command(self, targets: np.ndarray, *, steps: int | None = None) -> None:

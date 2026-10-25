@@ -10,7 +10,6 @@ from urllib.parse import parse_qsl, urlparse
 _REPO = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 _PRESET = re.compile(r"^[a-z][a-z0-9_]*(\?[^\s/]*)?$")
 FORMS = (
-    "hold                             stand still at the pose the run started at",
     "<preset>[?k=v&k2=v2]            a named ONNX preset, run in-process",
     "zenoh://host:port/<deployment>   a lerobot-policy-server",
     "<owner>/<repo>                   a LeRobot checkpoint on the Hugging Face Hub, run in-process",
@@ -18,6 +17,7 @@ FORMS = (
     "<dir with meta/info.json>[?episode=n]   a recorded LeRobot dataset, one episode replayed",
     "<callable>                       f(obs) -> action",
 )
+HOLD_HINT = "use robot.hold() to stand still, robot.act(..., seconds=) to reach a pose"
 
 
 def make(spec: Any, **kw: Any) -> Any:
@@ -36,10 +36,8 @@ def make(spec: Any, **kw: Any) -> Any:
         if not u.hostname or not u.port or not deployment or "/" in deployment:
             raise ValueError(f"{s!r}: expected zenoh://host:port/<deployment>")
         return ZenohPolicy(endpoint=f"tcp/{u.hostname}:{u.port}", deployment=deployment, **kw)
-    if s == "hold":  # the rpc ``hold`` as a run: one word, one meaning
-        from .hold import HoldPolicy
-
-        return HoldPolicy(**kw)
+    if s == "hold":  # a run of it moved nothing, yet an agent read the word as "reach a pose": no such spec
+        raise ValueError(f"Policy({s!r}): not a policy; {HOLD_HINT}")
     path, _, query = s.partition("?")
     if _PRESET.match(s):  # a known preset wins: the spec is a name, never a path in the CWD
         from .onnx import preset, preset_names
@@ -73,7 +71,7 @@ def make(spec: Any, **kw: Any) -> Any:
     if _PRESET.match(s):
         from .onnx import preset_names
 
-        known = f"; known presets: {', '.join(('hold', *preset_names()))}"
+        known = f"; known presets: {', '.join(preset_names())}"
         raise ValueError(f"Policy({s!r}): unknown form{known}; forms:\n  " + "\n  ".join(FORMS))
     raise ValueError(f"Policy({s!r}): unknown form; forms:\n  " + "\n  ".join(FORMS))
 

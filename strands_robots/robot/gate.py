@@ -49,6 +49,12 @@ def operator_gate(robot: Robot, targets: np.ndarray, *, confirmed: bool = False)
         raise RequestRefused(f"{robot.id}: the operator gate refused this action")
 
 
-def confirm_act(robot: Robot, action: Action, *, steps: int | None = None, confirmed: bool = False) -> Observation:
-    """``act`` through the operator gate: what an agent tool and the dashboard call."""
-    return robot.act(gate(robot, action, confirmed=confirmed), steps=steps)
+def confirm_act(
+    robot: Robot, action: Action, *, steps: int | None = None, seconds: float | None = None, confirmed: bool = False
+) -> Observation:
+    """``act`` through the operator gate: what an agent tool and the dashboard call.
+
+    The gate is asked once, for the target; a ``seconds`` ramp from the measured pose stays inside the box of the
+    two, so every point of it passes the limits the target passed.
+    """
+    return robot.act(gate(robot, action, confirmed=confirmed), steps=steps, seconds=seconds)

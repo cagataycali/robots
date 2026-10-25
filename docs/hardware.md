@@ -14,6 +14,7 @@ real = Robot("so101", port="/dev/ttyACM0", confirm=lambda action: input(f"move t
 real.calibrate(interactive=False)            # the LeRobot calibration JSON lerobot-calibrate wrote, unchanged
 obs = real.observe()                         # measured joints in radians, also pushed into real.twin
 real.confirm_act(obs.joints)                 # a hold, through the operator gate; the twin mirrors it
+real.confirm_act({"gripper": 1.0}, seconds=1.5)   # reach a pose: one yes, a 30 Hz ramp, the joints read back
 real.twin.sim.render()                       # what the arm is doing, drawn in MuJoCo
 real.close()                                 # torque off, port closed, twin removed
 ```
