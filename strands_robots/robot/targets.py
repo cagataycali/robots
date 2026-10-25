@@ -39,6 +39,12 @@ def coerce(robot: Robot, action: Action, *, clip: bool = True, measured: np.ndar
     if isinstance(action, Mapping):
         unknown = [k for k in action if k not in keys]
         if unknown:
+            if any(k.endswith(".pos") for k in unknown):  # a LeRobot-format dict: its units are not act()'s to guess
+                raise KeyError(
+                    f"{robot.id}: {unknown} are LeRobot '<joint>.pos' names in the policy's units; act() takes a "
+                    f"'<joint>' target in radians. Pass a LeRobot Teleoperator/Robot to run(), or drop the '.pos' "
+                    f"suffix and the units. action_keys are {list(keys)}"
+                )
             raise KeyError(f"unknown joint(s) {unknown} for {robot.id}; action_keys are {list(keys)}")
         if measured is None:
             with robot._lock:

@@ -38,4 +38,8 @@ def as_policy(p: Any) -> PolicyLike:
         return as_policy(make(p))
     if callable(p):
         return CallablePolicy(p)
+    from .source import SourcePolicy, is_lerobot_source
+
+    if is_lerobot_source(p):  # a LeRobot Teleoperator/Robot drives the run directly (its bus declares the units)
+        return SourcePolicy(p)
     raise TypeError(f"not a policy: {type(p).__name__} (need .act(obs) or a callable)")

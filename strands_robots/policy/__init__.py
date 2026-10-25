@@ -12,6 +12,7 @@ from .factory import from_spec
 from .perturb import Perturb
 from .requirements import Requirements
 from .sequence import SequencePolicy
+from .source import SourcePolicy
 
 __all__ = [
     "Policy",
@@ -22,4 +23,5 @@ __all__ = [
     "as_policy",
     "Requirements",
     "from_spec",
+    "SourcePolicy",
 ]

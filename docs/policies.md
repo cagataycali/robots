@@ -71,3 +71,21 @@ Need the server config? `server_config(robot.description, "lerobot/smolvla_base"
 We tried every LeRobot family on an L40S: **13 drive our robots** (ACT, SmolVLA, π0, π0.5, GR00T, XVLA, EVO1, LaWAM,
 VLA-JEPA, FineART, MolmoAct2, DM05, and SmolVLA in RTC mode). The rest are turned away by LeRobot itself, politely
 and before anything moves. The same model gives the exact same actions locally and served.
+
+## A leader arm is a policy
+
+{{drawing:d18_leader_source}}
+
+Teleoperation is just a run whose policy is the leader. Hand a LeRobot `Teleoperator` (or a `Robot` you are
+mirroring) straight to `run()`:
+
+```python
+# a LeRobot SO-101 leader on its own serial port drives the follower for a minute
+arm.run(leader, hz=30, seconds=60)
+```
+
+`as_policy` wraps the leader in a `SourcePolicy`, so no glue loop and no unit guesswork: the leader's bus already declares each motor's norm mode, so the follower converts
+every reading through its own calibration, exactly as LeRobot's `teleoperate` does. A degrees leader drives a
+range-mode follower to within one encoder count. A source that declares no units is refused, naming the fix; a raw
+`{"shoulder_pan.pos": ...}` dict handed to `act()` is refused too, because `act()` takes a `<joint>` target in
+radians, not a LeRobot name in the policy's units.
