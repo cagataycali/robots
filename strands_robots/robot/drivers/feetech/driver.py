@@ -15,6 +15,7 @@ import numpy as np
 from ....description import Description
 from ....types import JointState, Pose
 from ..calibration import Calibration, JointCalibration, lerobot_calibration_candidates, lerobot_calibration_path
+from ..cameras import Cameras
 from .bus import (
     REG_GOAL_POSITION,
     REG_HOMING_OFFSET,
@@ -39,7 +40,7 @@ class FeetechDriver:
         description: Description,
         *,
         port: str | None,
-        cameras: Mapping[str, int | str] | None = None,
+        cameras: Mapping[str, Any] | None = None,
         baud: int = 1_000_000,
         calibration: str | Path | Mapping[str, Any] | Calibration | None = None,
         robot_id: str | None = None,
@@ -54,8 +55,7 @@ class FeetechDriver:
             int(description.unlabel(n)) if description.unlabel(n).isdigit() else i + 1 for i, n in enumerate(self.names)
         ]
         self.bus = bus or FeetechBus(port or "", baud=baud)
-        self.cameras_cfg = dict(cameras or {})
-        self._cams: dict[str, Any] = {}
+        self.cameras = Cameras(cameras)
         self._torque_on = False
         self.calibration: Calibration | None = None
         self.calibration_source: str | None = None
@@ -142,20 +142,7 @@ class FeetechDriver:
         return None
 
     def images(self) -> Mapping[str, np.ndarray]:
-        out: dict[str, np.ndarray] = {}
-        for name, src in self.cameras_cfg.items():
-            cap = self._cams.get(name)
-            if cap is None:
-                try:
-                    import cv2
-                except ImportError as exc:
-                    raise ImportError("cameras need opencv: pip install opencv-python") from exc
-                cap = cv2.VideoCapture(src)
-                self._cams[name] = cap
-            ok, bgr = cap.read()
-            if ok:
-                out[name] = np.ascontiguousarray(bgr[:, :, ::-1])
-        return out
+        return self.cameras.read()
 
     def extras(self) -> Mapping[str, Any]:
         return {"torque": self._torque_on, "calibration": self.calibration_source or "none (raw full-turn counts)"}
@@ -228,6 +215,5 @@ class FeetechDriver:
         if self._torque_on:
             self.bus.torque(self.ids, False)
             self._torque_on = False
-        for cap in self._cams.values():
-            cap.release()
+        self.cameras.close()
         self.bus.close()

@@ -31,6 +31,19 @@ description to `Simulation.default()`: `real.twin` is `so101_twin`, its `twin_of
 `real.is_real` is true (`twin=False` to skip). `observe()` places the twin at the measured joints
 (`Backend.set_joints`, no step), so `real.twin.sim.render()` draws the real pose; `act()` mirrors the targets and steps the twin's world one control step (`manual_time()` stops it). `set_pose` raises on hardware; `real.twin.set_pose` works.
 
+**Driver options.** `Robot(name, port=, **driver_options)` hands any extra keyword to the driver
+unchanged: the `FeetechDriver` takes `robot_id=` (which calibration file to load) and `baud=`, the unitree
+and microduck links take `timeout=`. `make_driver` forwards them and checks each against
+`driver_parameters` for that driver, so a misspelt option (`baudrate=` for `baud=`) raises a `TypeError`
+that names what the driver takes instead of being silently dropped, and a new parameter on a driver with
+no public path fails the pass-through test. A robot in a world has no bus, so it takes no driver options:
+`Robot("so101", baud=...)` with no `port=` is refused the same way. Hardware camera specs are
+`cameras={"wrist": {"index": 1, "width": 640, "height": 480, "fps": 30}}` (LeRobot's `OpenCVCameraConfig`
+field names); a bare index takes the device default, and a camera that delivers another size than asked is
+refused at the first frame, because every checkpoint is trained at one size.
+
+{{drawing:d17_driver_options}}
+
 {{drawing:d07_twin_steps}}
 
 {{drawing:d09_twin_measured}}

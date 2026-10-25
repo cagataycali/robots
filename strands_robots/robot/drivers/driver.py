@@ -68,8 +68,9 @@ def make_driver(
     *,
     port: str | None,
     driver: str | Driver | None,
-    cameras: Mapping[str, int | str] | None,
+    cameras: Mapping[str, Any] | None,
     calibration: Any = None,
+    options: Mapping[str, Any] | None = None,
 ) -> Driver:
     if driver is not None and not isinstance(driver, str):
         if not isinstance(driver, Driver):
@@ -77,8 +78,8 @@ def make_driver(
                 f"driver= must be a driver name or a Driver instance, got {type(driver).__name__} "
                 f"(a Driver declares names, supports_position_hold, calibration, resolution and the Body verbs)"
             )
-        if calibration is not None:
-            raise TypeError("calibration= is for a driver Robot builds; pass it to your Driver instead")
+        if calibration is not None or options:
+            raise TypeError("calibration= and driver options are for a driver Robot builds; pass them to your Driver")
         if tuple(driver.names) != tuple(description.action_keys):  # targets are written in action_keys order
             raise ValueError(
                 f"{type(driver).__name__}.names {list(driver.names)} must be {description.name}'s action_keys "
@@ -95,9 +96,27 @@ def make_driver(
         raise ValueError(f"unknown driver {kind!r}; known drivers: {sorted(_DRIVERS)}")
     mod_name, cls_name = _DRIVERS[kind].split(":")
     cls = getattr(importlib.import_module(mod_name), cls_name)
-    return cls(
-        description, port=port, cameras=cameras or {}, **({} if calibration is None else {"calibration": calibration})
-    )
+    kw = {**(options or {}), **({} if calibration is None else {"calibration": calibration})}
+    accepted = driver_parameters(cls)
+    unknown = sorted(set(kw) - set(accepted))
+    if unknown:  # D3/D4: a misspelt option is an error naming what the driver takes, never silently dropped
+        raise TypeError(f"the {kind} driver takes no {unknown}; it takes {sorted(accepted)}")
+    return cls(description, port=port, cameras=cameras or {}, **kw)
 
 
-__all__ = ["Driver", "Calibration", "make_driver", "driver_kind"]
+def driver_parameters(cls: Any) -> tuple[str, ...]:
+    """The keyword parameters a driver class accepts besides ``description`` (what ``Robot(**options)`` reaches)."""
+    import inspect
+
+    for klass in cls.__mro__:  # a subclass that forwards **kw (a wrapper, a test spy) takes what its base takes
+        if "__init__" not in vars(klass):
+            continue
+        ps = inspect.signature(vars(klass)["__init__"]).parameters
+        if not any(p.kind is p.VAR_KEYWORD for p in ps.values()):
+            return tuple(n for n, p in ps.items() if n not in ("self", "description") and p.kind is p.KEYWORD_ONLY)
+    return ()
+
+
+__all__ = ["Driver", "Calibration", "make_driver", "driver_kind", "driver_parameters", "DRIVERS"]
+
+DRIVERS = _DRIVERS

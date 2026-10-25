@@ -52,6 +52,7 @@ class Robot(DeviceVerbs):
         mesh: Any = None,
         clock: Clock | None = None,
         approve: Callable[[RunPlan], bool] | None = None,
+        **driver_options: Any,  # feetech robot_id=/baud=, unitree timeout=... reach the driver unchanged (D3)
     ) -> None:
         from ..simulation import Simulation
 
@@ -81,16 +82,20 @@ class Robot(DeviceVerbs):
 
             self.id = id or self.name
             hw = {"port": port, "driver": driver, "cameras": cameras, "calibration": calibration}
-            self._body = make_driver(self.description, **hw)
+            self._body = make_driver(self.description, **hw, options=driver_options)
             self.supports_position_hold = position_hold_of(self.description, self._body)
             if twin:
                 self.twin = Robot(
                     name, position=position, orientation=orientation, keyframe=keyframe, id=f"{self.id}_twin"
                 )
                 self.twin.twin_of = self
-        elif cameras is not None or calibration is not None:
-            raise TypeError("cameras=/calibration= are hardware arguments; in a world: sim.camera(name, attach=robot)")
         else:
+            if driver_options:
+                raise TypeError(f"{sorted(driver_options)} are hardware driver options; a world's robot takes none")
+            if cameras is not None or calibration is not None:
+                raise TypeError(
+                    "cameras=/calibration= are hardware arguments; in a world: sim.camera(name, attach=robot)"
+                )
             world = sim if sim is not None else Simulation.default()
             self.sim, self.id = world, world.unique_id(id or self.name)
             self.clock = WorldClock(world)
