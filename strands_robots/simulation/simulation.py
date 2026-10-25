@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from . import _describe
 from ._sceneops import _SceneOps
 from .backend import Backend, load_backend
+from .lock import WorldLock
 from .member import Member
 from .physics import Physics
 from .scene import Scene
@@ -58,15 +59,14 @@ class Simulation(_SceneOps):
         if ground not in (True, False, "checker", "plain"):
             raise ValueError(f"ground={ground!r}; choose True, False, 'checker' or 'plain'")
         self.backend_name, self.physics_name = backend, physics
-        self.headless = headless
-        self.device = device
+        self.headless, self.device = headless, device
         self.num_envs = num_envs
         self.render_size = render_size
         self.scene = Scene(gravity=gravity, timestep=timestep, ground=ground)
         self._substeps = substeps
         self._robots: dict[str, Member] = {}
         self.revision = 0  # bumped on every scene change (add/remove/add_object/camera/set_pose/randomize)
-        self.lock = threading.RLock()  # one lock around the world: agents' act() and a dashboard's reads share it
+        self.lock = WorldLock()  # one lock around the world: agents' act() and a dashboard's reads share it
         self._manual = 0
         self._editing, self._pending, self._gone = 0, False, []
         self._built: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}  # each robot's frame as compiled

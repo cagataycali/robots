@@ -29,7 +29,8 @@ A `Simulation` owns the `Scene` (plain data: robots, objects, cameras, gravity, 
 in it and the time. Every scene change (`add`, `remove`, `add_object`, `camera`, `set_pose`,
 `randomize`) bumps `revision`; motion does not. Adding a robot appends to the scene and rebuilds the
 world, and every body that survives keeps its joint state. `sim.lock` is one re-entrant lock around
-the world, so a reader and a stepping loop never see a half-built world.
+the world, so a reader and a stepping loop never see a half-built world. It is fair: a release hands it to
+the oldest waiter, so a reader looping on `with sim.lock:` never starves an `act()`.
 
 `set_pose` moves a fixed base by moving its spawn frame in the scene and rebuilding, the path every
 scene change takes: joint state, time and randomised physics carry over. A floating base is teleported in place and keeps its spawn frame, so `reset()` stands it back

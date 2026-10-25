@@ -4,7 +4,6 @@ never sees them disagree; ``simulation.py`` keeps the world's lifecycle and time
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -14,6 +13,7 @@ from ..geometry import vec
 from ..types import Pose
 from . import _randomize, _teleport
 from .backend import Backend
+from .lock import WorldLock
 from .member import Member
 from .object import Object
 from .physics import Contact
@@ -25,7 +25,7 @@ class _SceneOps:
 
     scene: Scene
     backend: Backend
-    lock: threading.RLock
+    lock: WorldLock
     revision: int
     render_size: tuple[int, int]
     backend_name: str
