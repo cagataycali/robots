@@ -21,6 +21,7 @@ def table() -> dict[str, dict[str, Any]]:
 def units_for_semantics(semantics: str, description: Description) -> Units | None:
     """The converter for a LeRobot semantics label (None = radians), or a refusal naming the file."""
     entry = table().get(semantics)
+    entry = table().get(entry["same_as"]) if entry and "same_as" in entry else entry
     if entry is None:
         raise ValueError(
             f"unknown LeRobot semantics {semantics!r}: add it to strands_robots/units/semantics.json "

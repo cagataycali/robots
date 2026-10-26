@@ -127,6 +127,12 @@ def test_unknown_semantics_are_refused_naming_the_table(deployment):
             _arm().run(Policy(url), seconds=1)
 
 
+def test_a_lerobot_normalized_deployment_attaches_and_runs(deployment):
+    cfg, server = deployment(semantics="so101-normalized-v1")  # the label LeRobot-normalised servers send
+    with server as url:
+        assert _arm().run(Policy(url), steps=3).steps == 3
+
+
 def test_a_busy_deployment_refuses_a_second_robot(deployment):
     cfg, server = deployment()
     with server as url:

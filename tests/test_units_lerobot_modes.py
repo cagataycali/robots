@@ -46,3 +46,18 @@ def test_an_unknown_mode_or_label_is_refused_by_name():
         lerobot_units(d, {"*": "furlongs"})
     with pytest.raises(ValueError, match=r"unknown LeRobot semantics 'x-v9'.*semantics.json"):
         units_for_semantics("x-v9", d)
+
+
+@pytest.mark.parametrize(
+    ("label", "same_as"),
+    [
+        ("so101-normalized-v1", "so101-range-gripper-percent-v1"),
+        ("so100-normalized-v1", "so100-range-gripper-percent-v1"),
+    ],
+)
+def test_a_lerobot_normalized_label_is_an_alias_that_never_becomes_the_default(label, same_as):
+    d = Description.load("so101")
+    got, want = units_for_semantics(label, d), units_for_semantics(same_as, d)
+    np.testing.assert_allclose(got.hi_u, want.hi_u)
+    np.testing.assert_allclose(got.lo_u, want.lo_u)
+    assert semantics_for(d) == "so101-range-gripper-percent-v1"  # strands still writes its own label
