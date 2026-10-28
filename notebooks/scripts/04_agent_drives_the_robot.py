@@ -19,7 +19,6 @@ import os
 import sys
 
 import numpy as np
-from PIL import Image
 from strands import Agent
 from strands.tools.executors import SequentialToolExecutor
 

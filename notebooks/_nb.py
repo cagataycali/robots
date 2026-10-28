@@ -96,7 +96,7 @@ def quiet_lerobot() -> None:
 
         av.logging.set_libav_level(av.logging.ERROR)
     except ImportError:
-        pass
+        pass  # PyAV absent: no libav logger to quiet
 
 
 def gif(frames, name: str, *, width: int = 360, fps: int = 25, colors: int | None = None) -> Path:

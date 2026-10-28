@@ -443,7 +443,7 @@ else:
 # bundle; here it goes to a temporary folder served by a plain static file server.
 
 # %%
-import functools, http.server, subprocess, sys, tempfile
+import http.server, posixpath, subprocess, sys, tempfile, urllib.parse
 from pathlib import Path
 import strands_robots.dashboard as dashboard_pkg
 
@@ -461,7 +461,7 @@ class Files(http.server.SimpleHTTPRequestHandler):
                       ".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "application/wasm"}
 
     def translate_path(self, path):
-        path = path.split("?", 1)[0]
+        path = posixpath.normpath(urllib.parse.unquote(path.split("?", 1)[0]))  # no `..` climbs out of a root
         if path.startswith("/bundle/"):
             return str(bundle / path[len("/bundle/"):])
         return str(STATIC / path.lstrip("/"))

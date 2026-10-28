@@ -2,7 +2,8 @@
 import json, sys
 bad = 0
 for f in sys.argv[1:]:
-    nb = json.load(open(f))
+    with open(f) as fh:
+        nb = json.load(fh)
     for i, c in enumerate(nb["cells"]):
         for o in c.get("outputs", []):
             if o["output_type"] == "error" or (o["output_type"] == "stream" and o["name"] == "stderr"):
