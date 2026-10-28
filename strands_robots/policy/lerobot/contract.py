@@ -12,7 +12,8 @@ import numpy as np
 from ..._extras import hint
 from ...description import Description
 from ...types import Observation
-from ...units import Units, semantics_for, units_for_semantics
+from ...units import Units, lerobot_units, semantics_for, units_for_semantics
+from ...units.semantics import table
 from ..requirements import Requirements
 
 if TYPE_CHECKING:
@@ -107,6 +108,47 @@ class Contract:
         return out
 
 
+def _misfit(units: Units, stats: Mapping[str, np.ndarray], margin: float = 0.1) -> str | None:
+    """The first saved min/max that cannot be in ``units`` (beyond ``margin`` of a joint's span), or None."""
+    span = np.abs(units.hi_u - units.lo_u)
+    lo, hi = np.minimum(units.lo_u, units.hi_u) - margin * span, np.maximum(units.lo_u, units.hi_u) + margin * span
+    for feat in (STATE, ACTION):
+        mn, mx = stats.get(f"{feat}.min"), stats.get(f"{feat}.max")
+        if mn is None or mx is None or len(mn) != len(units.keys):
+            continue
+        for i, k in enumerate(units.keys):
+            if mn[i] < lo[i] or mx[i] > hi[i]:
+                mode = units.modes[i] if units.modes else "these units"
+                return f"{feat} {k} spans {mn[i]:.1f}..{mx[i]:.1f}, impossible in {mode} ({lo[i]:.0f}..{hi[i]:.0f})"
+    return None
+
+
+def check_units(description: Description, artifact: Path, checkpoint: str, semantics: str) -> None:
+    """Refuse a checkpoint whose own normalizer stats cannot be in ``semantics``: units are checked, not assumed.
+
+    A LeRobot checkpoint saves its dataset's per-joint min/max (``policy_preprocessor_*normalizer*.safetensors``).
+    A degrees dataset read as ``range_m100_100`` drives a joint toward its limit; this names the joint and the
+    labels its numbers do fit. A checkpoint that saved no min/max (mean/std only) is not checked.
+    """
+    files = sorted(artifact.glob("policy_preprocessor*normalizer*.safetensors"))
+    units = units_for_semantics(semantics, description)
+    if not files or units is None:
+        return
+    from safetensors.numpy import load_file
+
+    stats = load_file(str(files[0]))
+    why = _misfit(units, stats)
+    if why is None:
+        return
+    mine = {k: v["lerobot_norm"] for k, v in table().items() if "lerobot_norm" in v and k != semantics}
+    rows = [n for k, n in mine.items() if k.startswith(f"{description.name}-")]
+    fits = [f"norm={n}" for n in rows if _misfit(lerobot_units(description, n), stats) is None]
+    raise ValueError(
+        f"{checkpoint} was not trained in {semantics}: its saved stats say {why}. "
+        f"Pass the units its data was recorded in ({' or '.join(fits) or 'semantics=<label>'})"
+    )
+
+
 def server_config(
     description: Description,
     checkpoint: str,
@@ -125,7 +167,8 @@ def server_config(
 
     State/action names are ``<action key>.pos`` in the robot's order, cameras are the checkpoint's own
     ``observation.images.*`` at its trained size (HWC), the semantics label comes from ``norm`` (default:
-    the registry's ``hardware.lerobot_norm``) through ``units/semantics.json``.
+    the registry's ``hardware.lerobot_norm``) through ``units/semantics.json``, and checked against the
+    checkpoint's own saved min/max (``check_units``): a checkpoint whose numbers cannot be in those units is refused.
     """
     lerobot()
     from lerobot.configs.policies import PreTrainedConfig
@@ -134,8 +177,10 @@ def server_config(
     from lerobot.remote_inference.deployment import resolve_artifact
     from lerobot.transport import ZenohConfig
 
-    cfg = PreTrainedConfig.from_pretrained(resolve_artifact(checkpoint, revision))
+    artifact = resolve_artifact(checkpoint, revision)
+    cfg = PreTrainedConfig.from_pretrained(artifact)
     sem = semantics or semantics_for(description, dict(norm) if norm is not None else None)
+    check_units(description, artifact, checkpoint, sem)
     names = tuple(f"{k}.pos" for k in description.action_keys)
     feats = []
     for key, ft in cfg.input_features.items():
