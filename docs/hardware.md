@@ -97,7 +97,9 @@ refused, never re-asked each tick. `confirm=` stays the per-command gate (`confi
 
 {{drawing:d16_one_yes_per_run}}
 A remote policy (`Policy("zenoh://host:7447/deployment")`) holds the last target through LeRobot's chunk
-playback and a 1.0 s grace, then raises that fault. Only a real body
+playback and a 1.0 s grace, then raises that fault. Under either execution (`"splice"` or `"sequential"`)
+`policy.calls` lists every chunk the session received: `wall_s` (the round trip), `rows`, the `server` split and the
+`instruction`. Only a real body
 takes `confirm=`:
 
 ```python
