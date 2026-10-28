@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,45 @@ from .contract import Contract, lerobot
 
 if TYPE_CHECKING:
     from ...description import Description
+
+WAN_TIMEOUT_S = (
+    30.0  # a first call across the internet wakes the model and carries two frames: LeRobot's 5-10 s are too tight
+)
+
+
+def is_local(endpoint: str) -> bool:
+    """``<link>/host:port`` names this machine or its LAN (loopback, private ranges, link-local, ``.local``)."""
+    host = endpoint.split("/", 1)[-1].rpartition(":")[0].strip("[]")
+    if host in ("localhost", "") or host.endswith(".local"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def wan_defaults(endpoint: str, settings: dict[str, Any], descriptor: dict[str, Any] | None = None) -> dict[str, Any]:
+    """LeRobot client settings a link implies, under anything the caller set by name.
+
+    Off the LAN: handshake/action/startup timeouts >= 30 s and JPEG frames. A ``tls``/``quic``/``ws`` link is a
+    router, so ``zenoh_mode="client"``. Once the server has spoken, the action timeout also covers its own
+    ``action_deadline_s`` (the hello's ``limits``) — a server allowed 5 s to answer is not a client fault at 5 s.
+    """
+    out: dict[str, Any] = {}
+    link = endpoint.split("/", 1)[0]
+    if link in ("tls", "quic", "ws", "wss"):
+        out["zenoh_mode"] = "client"
+    if not is_local(endpoint):
+        out.update(handshake_timeout_s=WAN_TIMEOUT_S, action_timeout_s=WAN_TIMEOUT_S, startup_timeout_s=WAN_TIMEOUT_S)
+        out["encoding"] = "jpeg"
+    if descriptor is not None:
+        deadline = float((descriptor.get("limits") or {}).get("action_deadline_s") or 0.0)
+        if deadline:
+            out["action_timeout_s"] = max(
+                out.get("action_timeout_s", 5.0), deadline + (0.0 if is_local(endpoint) else 5.0)
+            )
+    out.update(settings)  # the caller's word wins
+    return out
 
 
 class ZenohPolicy:
@@ -47,11 +87,12 @@ class ZenohPolicy:
         finally:
             client.close()
 
-    def _config(self, semantics: str = "?") -> Any:
+    def _config(self, semantics: str = "?", descriptor: dict[str, Any] | None = None) -> Any:
         from lerobot.inference import RemoteInferenceConfig
 
-        blend = self.settings.get("blend_components")
-        kw = dict(self.settings, blend_components=[f"{k}.pos" if "." not in k else k for k in blend or []])
+        kw = wan_defaults(self.endpoint, self.settings, descriptor)
+        blend = kw.get("blend_components")
+        kw["blend_components"] = [f"{k}.pos" if "." not in k else k for k in blend or []]
         return RemoteInferenceConfig(endpoint=self.endpoint, deployment=self.deployment, semantics=semantics, **kw)
 
     def _connect(self) -> Any:
@@ -69,7 +110,7 @@ class ZenohPolicy:
             contract.check()
             contract.units()  # unknown semantics -> refused by name, before a session exists
             contract.requirements().check(robot.observe(), who=repr(self))
-            config = self._config(sem)
+            config = self._config(sem, client.descriptor)  # the hello's limits widen the action timeout
             client.config = config
             client.admit(
                 features=caps.features,
@@ -136,4 +177,4 @@ class ZenohPolicy:
         return self._last
 
     def __repr__(self) -> str:
-        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}')"
+        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}')"  # tls/… stays visible
