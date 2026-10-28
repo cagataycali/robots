@@ -195,18 +195,29 @@ class _CVCapture:
         self.cap.release()
 
 
+AV_DEFAULT_SIZE = (640, 480)  # what an undeclared, unfitted camera opens at; ``Cameras.fit`` overrides it
+AV_DEFAULT_FPS = 30.0
+
+
+def av_options(s: CameraSpec) -> dict[str, str]:
+    """ffmpeg avfoundation options for a spec: ALWAYS a size and a rate.
+
+    Measured on two USB cameras (Logi 4K Pro, USB2.0_CAM1, macOS 26): without ``framerate`` the indev fails every
+    open with ``OSError(5, 'Input/output error')`` whatever the size; with a rate but no size it asks for the device's
+    native mode, which hangs ``av.open`` (USB2.0_CAM1, 1920x1080 uyvy @30 is not a mode it has) or costs the full
+    sensor (Logi: 4096x2160). A declared or fitted size wins; a camera that declared none opens at ``AV_DEFAULT_SIZE``.
+    """
+    w, h = (s.width, s.height) if s.width and s.height else AV_DEFAULT_SIZE
+    return {"pixel_format": "uyvy422", "video_size": f"{w}x{h}", "framerate": f"{s.fps or AV_DEFAULT_FPS:g}"}
+
+
 class _AVCapture:
     """AVFoundation by device name through PyAV; ffmpeg's indev keeps only the latest frame, so a read is fresh."""
 
     def __init__(self, name: str, s: CameraSpec) -> None:
         import av
 
-        options = {"pixel_format": "uyvy422"}
-        if s.width and s.height:
-            options["video_size"] = f"{s.width}x{s.height}"
-        if s.fps:
-            options["framerate"] = f"{s.fps:g}"
-        self.container = av.open(name, format="avfoundation", options=options)
+        self.container = av.open(name, format="avfoundation", options=av_options(s))
         self.stream = self.container.streams.video[0]
 
     def read(self, wait_s: float = 0.5) -> np.ndarray | None:

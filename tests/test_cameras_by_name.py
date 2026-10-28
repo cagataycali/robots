@@ -98,3 +98,21 @@ def test_the_v4l2_list_skips_metadata_nodes(tmp_path):
         (d / "name").write_text(name + "\n")
         (d / "index").write_text(index + "\n")
     assert mod._v4l2(tmp_path) == [("Logi 4K Pro", "/dev/video0"), ("USB2.0_CAM1", "/dev/video2")]
+
+
+def test_avfoundation_always_gets_a_size_and_a_rate_and_a_declared_one_wins():
+    # ffmpeg's avfoundation indev: no framerate -> OSError EIO on every open, a rate with no size -> the device's native
+    # mode (a hang on USB2.0_CAM1, 4096x2160 on a Logi 4K Pro). Measured on the bench, 2026-10-28.
+    assert mod.av_options(CameraSpec(name="Logi 4K")) == {
+        "pixel_format": "uyvy422",
+        "video_size": "640x480",
+        "framerate": "30",
+    }
+    assert mod.av_options(CameraSpec(name="Logi 4K", width=1280, height=720, fps=15)) == {
+        "pixel_format": "uyvy422",
+        "video_size": "1280x720",
+        "framerate": "15",
+    }
+    fitted = Cameras({"front": "Logi 4K"})
+    fitted.fit({"front": (320, 240)})
+    assert mod.av_options(fitted.specs["front"])["video_size"] == "320x240"

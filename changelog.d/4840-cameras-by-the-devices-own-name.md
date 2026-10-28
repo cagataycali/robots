@@ -9,3 +9,7 @@ spec form; a bare index/path and `{index, width, height, fps}` are unchanged. A 
 policy's at `run()` (`Cameras.fit` from the policy's requirements, before the first frame — an open camera reopens),
 so the dict's keys are the policy's image keys and there is no size or rename map to write. The device keeps its own
 frame rate: a camera read at a slower policy rate would wait a whole camera period for a fresh frame.
+A named camera on macOS always opens with a size and a rate (`av_options`): ffmpeg's AVFoundation input refuses every
+open with `OSError(5, 'Input/output error')` when no `framerate` is given, and a rate without a size asks for the
+device's native mode (a hang on one USB camera, the full 4096x2160 sensor on another). A declared or fitted size wins;
+an undeclared one opens at 640x480 @ 30.
