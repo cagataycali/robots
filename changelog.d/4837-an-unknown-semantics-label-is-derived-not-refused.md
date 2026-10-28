@@ -9,3 +9,6 @@ calibration JSON is written for), the gripper keeps that convention (`gripper-pe
 remains for the one case nobody can answer: an unknown label on a robot with no LeRobot convention, naming both.
 Before, `Policy("zenoh://…")` was refused at `attach()` for every label outside the table, and the remote path had no
 `units=` to follow the message's own advice.
+`Robot("so101", port=…, id="blue_follower")` reads the calibration LeRobot wrote for that id (`so_follower/blue_follower.json`):
+the Robot's id reaches a driver that takes `robot_id` unless one was named. A hardware Feetech arm that finds no
+calibration now warns, naming where it looked; before, it ran uncalibrated with nothing said.
