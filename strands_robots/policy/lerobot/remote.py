@@ -13,6 +13,7 @@ chunked deployment.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -59,12 +60,25 @@ class ZenohPolicy:
     realtime = True  # LeRobot ages observations and paces chunks on time.monotonic()
     requires_position_hold = True  # LeRobot admits only a robot that holds between motor ticks
 
-    def __init__(self, *, endpoint: str, deployment: str, execution: Execution = "auto", **settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        deployment: str,
+        execution: Execution = "auto",
+        tasks: Sequence[str] | None = None,
+        **settings: Any,
+    ) -> None:
+        """``tasks``: the instructions the deployment was trained on; ``run(instruction=)`` with any other string is
+        refused naming them, before the first frame goes out. Left out, the server's descriptor may say (``tasks``);
+        else any instruction is sent."""
         if execution not in EXECUTIONS:
             raise ValueError(f"execution must be one of {', '.join(map(repr, EXECUTIONS))}, got {execution!r}")
         self.endpoint, self.deployment, self.settings = endpoint, deployment, settings
         self.asked: Execution = execution
         self.execution: str | None = None  # resolved at attach, from the server
+        self._tasks = None if tasks is None else tuple(str(t) for t in tasks)
+        self.tasks: tuple[str, ...] = self._tasks or ()
         self.contract: Contract | None = None
         self.hz: float | None = None
         self.calls: list[dict[str, Any]] = []  # every chunk a sequential session received (wall s, rows, server)
@@ -128,6 +142,9 @@ class ZenohPolicy:
             raise
         self.contract, self._client, self.hz = contract, client, 1.0 / caps.action_interval
         self.execution = execution
+        if self._tasks is None:  # the server's word on what it was trained to do, when it has one
+            said = client.descriptor.get("tasks")
+            self.tasks = tuple(str(t) for t in said) if isinstance(said, list | tuple) else ()
         if execution == "sequential":  # no engine: ``act`` asks for a chunk only when the queue is empty
             self._seq = Sequential(client, contract, repr(self), self.calls)
             return
@@ -160,6 +177,15 @@ class ZenohPolicy:
     def requirements(self) -> Requirements:
         return self.contract.requirements() if self.contract is not None else Requirements()
 
+    def check_task(self, instruction: str) -> None:
+        """An instruction outside ``tasks`` (when known) is refused by name: the model never saw it."""
+        if self.tasks and instruction.strip() not in self.tasks:
+            shown = ", ".join(repr(t) for t in self.tasks[:20]) + (", …" if len(self.tasks) > 20 else "")
+            raise ValueError(
+                f"{self!r} refused the instruction {instruction!r}: not one of the {len(self.tasks)} it was trained on:"
+                f" {shown}"
+            )
+
     def reset(self) -> None:
         if self._engine is not None and self._last is not None:  # a fresh session needs no reset
             self._engine.reset()
@@ -172,6 +198,7 @@ class ZenohPolicy:
         c = self._need()
         if self._seq is not None:
             if instruction is not None and instruction != self._seq.task:  # a new instruction drops the old plan
+                self.check_task(instruction)
                 self._seq.retarget(instruction)
             out = self._seq.step(c.frame(obs))
             if out is not None:
@@ -184,6 +211,7 @@ class ZenohPolicy:
 
         engine = self._engine
         if instruction is not None and instruction != self._task:
+            self.check_task(instruction)
             if error := engine.text_input_error(instruction, instruction=True):
                 raise ValueError(f"{self!r} refused the instruction: {error}")
             engine.set_task(instruction)

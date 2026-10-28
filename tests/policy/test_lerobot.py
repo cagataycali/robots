@@ -183,6 +183,34 @@ def test_execution_is_the_servers_word_then_the_contracts():
         ZenohPolicy(endpoint="tcp/h:1", deployment="d", execution="rtc")
 
 
+def test_an_untrained_instruction_is_refused_naming_the_trained_ones(deployment, monkeypatch):
+    """The caller's ``tasks``, else the server's descriptor ``tasks``; nothing is sent for a string never trained."""
+    from lerobot.remote_inference import RemoteClient
+
+    cfg, server = deployment()
+    with server as url:
+        arm = _arm()
+        p = Policy(url, tasks=["pick up the x piece and place it on the center cell", "clean up the board"])
+        assert p.tasks == ("pick up the x piece and place it on the center cell", "clean up the board")
+        with pytest.raises(ValueError, match=r"refused the instruction 'juggle'.*2 it was trained on: 'pick up the x"):
+            arm.run(p, steps=3, instruction="juggle")
+        assert arm.run(p, steps=3, instruction="clean up the board").steps == 3
+        assert arm.run(p, steps=3).steps == 3  # no instruction: nothing to refuse
+        connect = RemoteClient.connect
+
+        def said(cfg):  # a server whose descriptor names its tasks
+            c = connect(cfg)
+            c.descriptor["tasks"] = ["wave"]
+            return c
+
+        monkeypatch.setattr(RemoteClient, "connect", staticmethod(said))
+        q = Policy(url)
+        with pytest.raises(ValueError, match=r"not one of the 1 it was trained on: 'wave'"):
+            arm.run(q, steps=3, instruction="bow")
+        assert q.tasks == ("wave",) and arm.run(q, steps=3, instruction="wave").steps == 3
+        assert Policy(url, tasks=[]).tasks == () and arm.run(Policy(url, tasks=[]), steps=1, instruction="x").steps == 1
+
+
 def test_unknown_semantics_are_derived_from_the_robots_convention_with_a_warning(deployment):
     """A server labels its units as it likes; the deployment already matched this robot joint by joint, so an
     unknown label is read as the robot's own LeRobot convention (and what the label's words say), not refused."""
