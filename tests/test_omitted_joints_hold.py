@@ -107,3 +107,23 @@ def test_after_a_reset_an_omitted_joint_holds_the_spawn_pose_not_the_old_target(
     target = arm.coerce({"elbow_flex": 0.4})
     others = [i for i in range(len(KEYS)) if i != ELBOW]
     np.testing.assert_allclose(target[others], spawn[others], atol=1e-6)
+
+
+def test_a_stop_landing_mid_write_forgets_the_target_that_write_carried():
+    arm, drv = _hw()
+    arm.act(np.full(len(KEYS), 0.3))
+    write = drv.write
+
+    def write_then_stop(targets) -> None:  # the stop lands while the sync-write is on the bus
+        write(targets)
+        arm.estop()
+
+    drv.write = write_then_stop  # type: ignore[method-assign]
+    with pytest.raises(PermissionError):
+        arm.act(np.full(len(KEYS), 0.9))
+    drv.write = write  # type: ignore[method-assign]
+    arm.resume(approved_by="op", stop=arm.estop_latch.count)
+    measured = np.array(arm.observe().joints.positions)
+    arm.act({"elbow_flex": 0.4})
+    others = [i for i in range(len(KEYS)) if i != ELBOW]
+    np.testing.assert_allclose(drv.goal[others], measured[others])  # never the 0.9 the stopped write carried

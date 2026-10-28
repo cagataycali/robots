@@ -95,6 +95,7 @@ def guarded_write(robot: Robot, targets: object) -> None:
     body.write(targets)  # type: ignore[arg-type]
     robot._held = np.array(targets, dtype=float)  # a joint the next Action omits keeps this
     if latch.engaged:
+        robot._held = None  # the stop that landed mid-write wins here too
         body.estop()
         latch.check(robot.id)
 
