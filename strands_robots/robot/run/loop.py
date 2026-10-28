@@ -13,8 +13,8 @@ import numpy as np
 
 from ...recording import Episode, NotRecording, episode
 from ...types import Observation
-from .. import reach as _reach
 from ..clock import MONOTONIC
+from ..reach import reach as _reach_to
 from ..safety import apply_on_disconnect
 from .bind import Bound, bind, looks, release
 from .common import announce, approve_run, emit, rate
@@ -108,7 +108,7 @@ def start_pose(robot: Robot, bound: Bound) -> bool:
     targets = robot.coerce(pose if bound.units is None else bound.units.to_rad(pose), measured=q)
     gate = (lambda t: robot.gate(t, approved_run=True, measured=q)) if is_agent() else None
     emit(robot, "run.started", {"policy": repr(bound.policy), "start_pose": targets.tolist(), "seconds": seconds})
-    _reach.reach(robot, targets, seconds, gate=gate)
+    _reach_to(robot, targets, seconds, gate=gate)
     return True
 
 

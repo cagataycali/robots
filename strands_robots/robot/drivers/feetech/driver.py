@@ -162,8 +162,14 @@ class FeetechDriver:
         }
 
     def hold(self) -> None:
-        """Goal_Position := Present_Position, under torque (gravity-loaded joints keep their pose)."""
-        self.write(np.array(self.read().positions, dtype=float))
+        """Goal_Position := Present_Position, under torque (gravity-loaded joints keep their pose).
+
+        Written as measured, never through the speed cap: a joint that is blocked, stalled or lagging under load
+        is exactly the one an e-stop is for, and a capped hold would leave its goal out past the present
+        position with the servo still pushing toward it. The cap re-anchors on the held pose."""
+        present = np.array(self.read().positions, dtype=float)
+        self.slew.reset(present)
+        self.write(present)
 
     def estop(self) -> None:
         """Fastest stop that does not drop the arm: a hold if torque is on; a limp arm is left limp."""

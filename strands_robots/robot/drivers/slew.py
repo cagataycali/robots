@@ -39,6 +39,13 @@ class Slew:
         """Torque off: the body may be moved by hand, so the next write ramps from a read, not from the old goal."""
         self._goal = self._t = None
 
+    def reset(self, anchor: np.ndarray) -> None:
+        """A hold: the goal IS ``anchor`` (the measured pose), whatever the last goal was and however far away.
+
+        The cap exists to stop a far goal; a hold is the opposite, Goal_Position := Present_Position, and must not
+        be bent toward the old goal. The ramp continues from ``anchor`` afterwards."""
+        self._goal, self._t = np.asarray(anchor, dtype=float).copy(), self._now()
+
     def apply(self, targets: np.ndarray) -> np.ndarray:
         """The goal to write now: ``targets``, or as far toward them as ``max_speed`` allows since the last write."""
         t = np.asarray(targets, dtype=float)

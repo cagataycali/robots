@@ -604,3 +604,35 @@ def test_the_cap_anchors_on_a_read_again_after_torque_goes_off_and_max_speed_non
     assert raw.read()["shoulder_pan"] == pytest.approx(hi, abs=1e-3) and raw.extras()["max_speed"] is None
     with pytest.raises(ValueError, match="max_speed must be > 0"):
         make_driver(max_speed=0)
+
+
+def test_a_hold_and_the_estop_write_the_measured_pose_through_no_cap_even_when_a_joint_is_blocked():
+    """A blocked servo never reaches its goal. Through the cap, ``hold()`` would have moved the goal toward the
+    present pose by only ``max_speed * dt`` and left the servo pushing; it must write Present_Position itself."""
+    from strands_robots.robot.drivers.slew import MAX_SPEED
+
+    class Blocked(FakeSerial):
+        def write(self, data):
+            keep = self.actual[1]
+            super().write(data)
+            self.actual[1] = keep  # servo 1 is held in place: the goal moves, the encoder does not
+
+    clock = [100.0]
+    d, s = make_driver(serial=Blocked(), max_speed=MAX_SPEED)
+    d.slew._now = lambda: clock[0]
+    present = d.read().positions.copy()
+    lo, hi = d.description.limits["shoulder_pan"]
+    far = present.copy()
+    far[0] = hi
+    for _ in range(30):  # one second of a run commanding a far goal: the goal ramps away, the joint stays
+        clock[0] += 1 / 30
+        d.write(far)
+    goal_rad = d.counts_to_rad("shoulder_pan", _goal(s, 1))
+    assert goal_rad - present[0] > 0.9 * MAX_SPEED, "the ramp should have carried the goal ~2 rad away"
+    clock[0] += 1 / 30
+    d.estop()  # -> hold(): Goal_Position := Present_Position, in ONE write
+    assert d.counts_to_rad("shoulder_pan", _goal(s, 1)) == pytest.approx(present[0], abs=2e-3)
+    assert abs(d.counts_to_rad("shoulder_pan", _goal(s, 1)) - d.read()["shoulder_pan"]) < 2e-3  # not pushing
+    clock[0] += 1 / 30
+    d.write(far)  # the cap continues from the held pose, not from the pre-hold goal
+    assert d.counts_to_rad("shoulder_pan", _goal(s, 1)) == pytest.approx(present[0] + MAX_SPEED / 30, abs=2e-3)
