@@ -15,6 +15,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 COMPONENT = "com.strands.robots"
+# One variable per key: the nucleus resolves ``{configuration:/<key>}`` (RFC 6901; ``/`` alone is the key "",
+# not the root), writing text as is and numbers, arrays and objects as JSON.
+KEYS = ("tenant", "transports", "robots", "state_hz", "shadow_hz")
 
 
 def recipe(
@@ -48,7 +51,7 @@ def recipe(
                     "Install": {"Script": f"{python} -m pip install --user {{artifacts:path}}/{wheel}", "Timeout": 600},
                     "Run": {
                         "Script": f"{python} -m strands_robots.mesh.iot.greengrass",
-                        "Setenv": {"STRANDS_GG_CONFIG": "{configuration:/}"},
+                        "Setenv": {f"STRANDS_GG_{k.upper()}": f"{{configuration:/{k}}}" for k in KEYS},
                         "RequiresPrivilege": False,
                     },
                 },
@@ -81,6 +84,19 @@ def deploy(gg: Any, target_arn: str, version: str) -> str:
     return str(gg.create_deployment(**deployment(target_arn, version))["deploymentId"])
 
 
+def from_env(env: Mapping[str, str]) -> dict[str, Any]:
+    """The configuration the ``Run`` step's ``Setenv`` hands the component; an unresolved pointer is refused."""
+    cfg: dict[str, Any] = {}
+    for k in KEYS:
+        v = env.get(f"STRANDS_GG_{k.upper()}")
+        if v is None:
+            continue
+        if v.startswith("{configuration:"):
+            raise ValueError(f"STRANDS_GG_{k.upper()} is {v!r}: the component configuration has no {k!r}")
+        cfg[k] = v if k == "tenant" else json.loads(v)
+    return cfg
+
+
 def main(config: Mapping[str, Any] | None = None, stop: Any = None) -> None:
     """The component's ``Run``: mount every configured robot on one Mesh and stay up until SIGTERM (or ``stop``)."""
     import signal
@@ -91,7 +107,7 @@ def main(config: Mapping[str, Any] | None = None, stop: Any = None) -> None:
 
     from .options import IotOptions
 
-    cfg = dict(config or json.loads(os.environ.get("STRANDS_GG_CONFIG") or "{}"))
+    cfg = dict(config or from_env(os.environ))
     mesh = Mesh(tuple(cfg.get("transports") or ("zenoh://",)), tenant=cfg.get("tenant"))
     on_iot = any(t.url.startswith("iot://") for t in mesh.transports)
     iot = IotOptions(shadow_hz=float(cfg.get("shadow_hz", 0.5))) if on_iot else None

@@ -103,6 +103,45 @@ def test_publish_cameras_refuses_without_a_producer_before_any_thread_starts():
     assert kvs.publish_cameras({**RECORD, "manifest": {}}, Arm())() is None  # no cameras: a no-op undo
 
 
+def _resolve(value: str, config: dict) -> str:
+    """The nucleus' ``{configuration:<ptr>}`` interpolation (RFC 6901, as Jackson's ``JsonNode.at``): text as is,
+    numbers and containers as JSON, a missing node leaves the variable untouched."""
+
+    def one(m: re.Match) -> str:
+        node: object = config
+        for part in m.group(1).split("/")[1:] if m.group(1) else []:
+            key = part.replace("~1", "/").replace("~0", "~")
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            elif isinstance(node, list) and key.isdigit() and int(key) < len(node):
+                node = node[int(key)]
+            else:
+                return m.group(0)
+        return node if isinstance(node, str) else json.dumps(node)
+
+    return re.sub(r"\{configuration:([^}]*)\}", one, value)
+
+
+def _component_env(r: dict) -> dict[str, str]:
+    cfg = r["ComponentConfiguration"]["DefaultConfiguration"]
+    return {k: _resolve(v, cfg) for k, v in r["Manifests"][0]["Lifecycle"]["Run"]["Setenv"].items()}
+
+
+def test_resolver_follows_rfc6901_so_slash_alone_is_not_the_root():
+    assert _resolve("{configuration:/}", {"tenant": "lab"}) == "{configuration:/}"
+    assert _resolve("{configuration:/tenant}", {"tenant": "lab"}) == "lab"
+    assert _resolve("{configuration:/robots}", {"robots": [{"name": "so101"}]}) == '[{"name": "so101"}]'
+
+
+def test_the_run_step_environment_resolves_to_the_default_configuration():
+    r = greengrass.recipe("1.0.0", "s3://b/w.whl", tenant="lab", robots=[{"name": "so101", "device_id": "arm-1"}])
+    env = _component_env(r)
+    assert not any("{configuration:" in v for v in env.values())  # every pointer names a node
+    assert greengrass.from_env(env) == r["ComponentConfiguration"]["DefaultConfiguration"]
+    with pytest.raises(ValueError, match="STRANDS_GG_ROBOTS"):
+        greengrass.from_env({"STRANDS_GG_ROBOTS": "{configuration:/robots}"})
+
+
 def test_recipe_and_deployment_are_small_and_point_at_the_module():
     r = greengrass.recipe("1.0.0", "s3://bucket/strands_robots-1.0.0-py3-none-any.whl", tenant="lab",
                           robots=[{"name": "so101", "device_id": "arm-1"}])  # fmt: skip
@@ -124,8 +163,10 @@ def test_component_main_mounts_the_configured_robots_on_a_mem_mesh(monkeypatch):
     from strands_robots.mesh import Mesh
 
     name = f"mem://gg-{uuid.uuid4().hex[:8]}"
-    cfg = {"tenant": "lab", "transports": [name], "robots": [{"name": "so101", "device_id": "arm-1"}], "state_hz": 5}
-    monkeypatch.setenv("STRANDS_GG_CONFIG", json.dumps(cfg))
+    r = greengrass.recipe("1.0.0", "s3://b/w.whl", tenant="lab", robots=[{"name": "so101", "device_id": "arm-1"}],
+                          transports=[name], state_hz=5)  # fmt: skip
+    for k, v in _component_env(r).items():  # what the nucleus hands the Run step
+        monkeypatch.setenv(k, v)
     mounted = []
     real = Mesh.mount
 
