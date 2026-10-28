@@ -345,3 +345,47 @@ def test_k7_lockstep_honours_a_stop_event():
     res = lockstep(sim, {a: pa, b: lambda o: {}}, steps=50, stop_event=ev)
     assert res["a"].stopped_by == "stopped" and res["a"].steps == 4
     sim.close()
+
+
+def test_k3_a_policy_that_returns_none_holds_without_a_write_or_a_miss():
+    """A remote policy waiting for its chunk returns None: the body keeps its last target, the tick counts as a hold,
+    the pacer's grid moves on and nothing is booked as a deadline miss."""
+    robot, drv = _hw()
+    calls = [0]
+
+    def pol(obs):
+        calls[0] += 1
+        return None if 3 <= calls[0] <= 7 else {"shoulder_pan": 0.1 * calls[0]}  # five ticks of waiting
+
+    res = robot.run(pol, steps=10, hz=50)
+    assert (res.steps, res.holds, res.deadline_misses) == (10, 5, 0)
+    assert len(drv.writes) == 5 and len(drv.reads) == 1 + 10 + 1  # one read per tick, held or not
+    gaps = np.diff([t for t, _ in drv.writes])
+    assert gaps[1] == pytest.approx(6 / 50)  # the five held periods sit between write 2 and write 3
+    assert res.held_seconds == pytest.approx(5 / 50) and res.seconds == pytest.approx(10 / 50)
+    assert res.hz_achieved == pytest.approx(50.0)
+
+
+def test_k3_a_hold_on_the_pacer_moves_the_grid_one_period_without_a_miss():
+    clock, dt = VirtualClock(), 1 / 50
+    p = Pacer(dt, now=clock.now, sleep=clock.sleep)
+    p.start()
+    p.before_write()
+    p.after_write()
+    for _ in range(3):  # three held ticks: each starts at its grid point and writes nothing
+        p.start()
+        clock.advance(0.004)
+        p.hold()
+    p.start()
+    assert clock.now() == pytest.approx(1000.0 + 4 * dt)
+    p.before_write()
+    p.after_write()
+    assert p.misses == 0 and p.span() == pytest.approx(5 * dt)
+
+
+def test_k3_a_sim_hold_still_advances_the_world():
+    sim = Simulation()
+    arm = Robot("so101", sim=sim)
+    t0 = sim.time
+    res = arm.run(lambda obs: None, steps=10, hz=50)
+    assert (res.steps, res.holds) == (10, 10) and sim.time - t0 == pytest.approx(10 / 50, abs=1e-6)
