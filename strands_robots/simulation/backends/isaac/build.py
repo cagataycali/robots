@@ -30,6 +30,11 @@ def refuse(scene: Scene, objects: Any, cameras: Any) -> None:
             "Simulation('isaac') cannot randomize friction, mass or cameras yet (PhysX materials / body masses are not "
             "wired); randomize(lighting=) works, and Simulation('mujoco') randomizes them all"
         )
+    if scene.lights:
+        raise NotImplementedError(
+            "Simulation('isaac') cannot add lights yet; randomize(lighting=) scales its dome and sun, and "
+            "Simulation('mujoco') adds them"
+        )
     for o in scene.objects:
         if o.name not in objects and o.path is not None:
             raise NotImplementedError(
@@ -74,7 +79,8 @@ def add_object(world: Any, o: SceneObject) -> Any:
     return prim
 
 
-def add_camera(c: SceneCamera) -> Any:
+def add_camera(c: SceneCamera, cam: Any = None) -> Any:
+    """A new camera prim, or ``cam`` (already on the stage) re-aimed where ``camera()`` moved it."""
     from isaacsim.sensors.camera import Camera
 
     pos = np.asarray(c.position, dtype=float)
@@ -82,10 +88,13 @@ def add_camera(c: SceneCamera) -> Any:
         quat = np.asarray(c.orientation, dtype=float)
     else:
         quat = look_at_quat(pos, np.asarray(c.target if c.target is not None else (0, 0, 0), dtype=float))
-    cam = Camera(prim_path=f"/World/cameras/{c.name}", position=pos, frequency=30, resolution=tuple(c.size))
+    made = cam is None
+    if made:
+        cam = Camera(prim_path=f"/World/cameras/{c.name}", position=pos, frequency=30, resolution=tuple(c.size))
     cam.set_world_pose(pos, quat, camera_axes="world")
     cam.set_focal_length(1.0 / math.tan(math.radians(c.fov) / 2))  # Isaac's 2 cm horizontal aperture
-    cam.initialize()
+    if made:
+        cam.initialize()
     return cam
 
 
