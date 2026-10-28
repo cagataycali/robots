@@ -191,7 +191,10 @@ class _SceneOps:
         """HxWx3 uint8 from a named camera, or from an auto-framed overview camera when none is given."""
         if camera is None:  # the auto-framed overview, created on first use (user cameras never replace it)
             if not any(c.name == "overview" for c in self.scene.cameras):
-                self.camera("overview", **self.scene.overview())
+                with self.lock:
+                    self._flush()
+                    w, h = self.render_size
+                    self.camera("overview", **self.scene.overview(self.backend.outline(), w / h))
             name = "overview"
         else:
             name = camera if isinstance(camera, str) else camera.name
