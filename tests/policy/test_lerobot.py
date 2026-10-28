@@ -58,8 +58,29 @@ def test_a_missing_camera_is_refused_by_name_before_a_session(deployment):
         assert r.stopped_by == "steps"
 
 
-@pytest.mark.parametrize("execution", ["splice", "sequential"])
-def test_a_server_drives_the_arm_and_matches_the_local_checkpoint(deployment, tiny_act, execution):
+def _coalesce_one_wake(monkeypatch, at=10, late=1 / 30 + 0.00076):
+    """Tick ``at`` wakes ``late`` s past its grid point, as a coalesced timer on a loaded host does."""
+    from strands_robots.robot.run.pace import Pacer
+
+    start, calls = Pacer.start, [0]
+
+    def coalesced(self):
+        start(self)
+        calls[0] += 1
+        if calls[0] == at:
+            time.sleep(late)
+
+    monkeypatch.setattr(Pacer, "start", coalesced)
+
+
+@pytest.mark.parametrize(
+    "execution, coalesced",
+    [("splice", False), ("sequential", False), ("splice", True)],
+    ids=["splice", "sequential", "coalesced"],
+)
+def test_a_server_drives_the_arm_and_matches_the_local_checkpoint(
+    deployment, tiny_act, monkeypatch, execution, coalesced
+):
     cfg, server = deployment()
     with server as url:
         p = Policy(url, execution=execution, chunk_merge="append")  # append: the first served action is chunk[0]
@@ -77,6 +98,8 @@ def test_a_server_drives_the_arm_and_matches_the_local_checkpoint(deployment, ti
         ZenohPolicy.act = spy
         try:
             arm = _arm()
+            if coalesced:
+                _coalesce_one_wake(monkeypatch)
             t = time.perf_counter()
             r = arm.run(p, seconds=2)
             wall = time.perf_counter() - t
@@ -85,7 +108,11 @@ def test_a_server_drives_the_arm_and_matches_the_local_checkpoint(deployment, ti
         assert r.stopped_by == "steps" and r.steps == 60 and r.fault is None
         assert r.hz_target == 30.0 and 1.8 < wall < 4.0  # paced in wall time: LeRobot's clock
         assert _inside_limits(arm, r.final.joints.positions)
-        assert p.execution == execution and r.deadline_misses == 0
+        # wall-clock pacing: a late wake is a sub-period miss that re-phases the grid, never a write a period late;
+        # the exact miss and hold accounting is pinned on a virtual clock (tests/test_kernel.py k3/k5)
+        assert p.execution == execution and r.worst_late_s < 1 / r.hz_target, (r.deadline_misses, r.worst_late_s)
+        if coalesced:
+            assert r.deadline_misses >= 1
         if execution == "sequential":  # the startup wait and every refill are holds, not misses
             assert r.holds >= 1 and r.holds == sum(a is None for a in actions) and len(p.calls) >= 2
             assert r.held_seconds == pytest.approx(r.holds / 30.0)
