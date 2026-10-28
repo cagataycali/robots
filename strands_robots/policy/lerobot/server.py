@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from .contract import lerobot
+from .contract import lerobot, quiet_load
 
 
 @contextmanager
@@ -20,7 +20,8 @@ def serve(cfg: Any, *, ready_timeout: float = 120.0) -> Iterator[str]:
     from lerobot.remote_inference import PolicyServer, SessionWorker, load_deployment
     from lerobot.transport import ZenohTransport
 
-    runner, identity = load_deployment(cfg)
+    with quiet_load():
+        runner, identity = load_deployment(cfg)
     worker = SessionWorker(
         runner,
         deployment=cfg.deployment,

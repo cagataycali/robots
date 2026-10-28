@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import contextlib
+import io
+import logging
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +32,20 @@ def lerobot() -> Any:
     except ImportError as e:
         raise ImportError(f"LeRobot policies need the lerobot extra: {hint('lerobot')} ({e})") from e
     return lr
+
+
+@contextlib.contextmanager
+def quiet_load() -> Iterator[None]:
+    """A checkpoint loads without LeRobot's warning about its saved device (the asked-for device replaces it)
+    or its "Loading weights" print."""
+    log = logging.getLogger("lerobot.configs.policies")
+    level = log.level
+    log.setLevel(logging.ERROR)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            yield
+    finally:
+        log.setLevel(level)
 
 
 def default_device() -> str:
@@ -134,7 +151,8 @@ def server_config(
     from lerobot.remote_inference.deployment import resolve_artifact
     from lerobot.transport import ZenohConfig
 
-    cfg = PreTrainedConfig.from_pretrained(resolve_artifact(checkpoint, revision))
+    with quiet_load():  # only its features are read here; ModelConfig below carries the device
+        cfg = PreTrainedConfig.from_pretrained(resolve_artifact(checkpoint, revision))
     sem = semantics or semantics_for(description, dict(norm) if norm is not None else None)
     names = tuple(f"{k}.pos" for k in description.action_keys)
     feats = []
