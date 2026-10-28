@@ -63,6 +63,9 @@ lerobot-policy-server --config_path=smolvla.yaml
 arm.run(Policy("zenoh://gpu-box:7447/smolvla"), instruction="pick up the cube", seconds=10)
 ```
 
+A server across the internet is the same line with the link it listens on: `Policy("zenoh://tls/host:7447/deployment")`
+(the locator a lease hands you, `tls/host:7447`, written as given). Off the LAN the client waits up to 30 s for the first
+answer, sends JPEG frames and speaks to the router as a client; name any of those yourself to override.
 A deployment that knows what it was trained to do says so — `Policy("zenoh://…", tasks=[...])`, or the server's own
 descriptor — and `run(instruction=)` with any other string is refused naming the trained ones, before a frame goes out;
 `policy.tasks` lists them.

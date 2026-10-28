@@ -23,6 +23,7 @@ from ...units import Units
 from ..base import PolicyFault
 from ..requirements import Requirements
 from .contract import Contract, lerobot
+from .link import wan_defaults
 from .sequential import Sequential
 
 if TYPE_CHECKING:
@@ -96,11 +97,12 @@ class ZenohPolicy:
         finally:
             client.close()
 
-    def _config(self, semantics: str = "?", **forced: Any) -> Any:
+    def _config(self, semantics: str = "?", descriptor: dict[str, Any] | None = None, **forced: Any) -> Any:
         from lerobot.inference import RemoteInferenceConfig
 
-        blend = self.settings.get("blend_components")
-        kw = dict(self.settings, blend_components=[f"{k}.pos" if "." not in k else k for k in blend or []])
+        kw = wan_defaults(self.endpoint, self.settings, descriptor)
+        blend = kw.get("blend_components")
+        kw["blend_components"] = [f"{k}.pos" if "." not in k else k for k in blend or []]
         kw.update(forced)
         return RemoteInferenceConfig(endpoint=self.endpoint, deployment=self.deployment, semantics=semantics, **kw)
 
@@ -123,12 +125,12 @@ class ZenohPolicy:
             if execution == "sequential":  # whole chunks, appended: an aligned session would demand RTC cursors
                 from lerobot.inference import chunk_settings
 
-                config = self._config(sem, mode="chunk", chunk_merge="append")
+                config = self._config(sem, client.descriptor, mode="chunk", chunk_merge="append")
                 client.chunk_settings = chunk_settings(  # the client derived them from the describe-time config
                     config.chunk_merge, config.blend_steps, config.blend_weight, config.blend_components
                 )
             else:
-                config = self._config(sem)
+                config = self._config(sem, client.descriptor)  # the hello's limits widen the action timeout
             client.config = config
             client.admit(
                 features=caps.features,
@@ -229,4 +231,4 @@ class ZenohPolicy:
 
     def __repr__(self) -> str:
         mode = "" if self.asked == "auto" else f", execution={self.asked!r}"
-        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}'{mode})"
+        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}'{mode})"  # tls/… stays visible
