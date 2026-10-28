@@ -36,14 +36,19 @@ class ZenohPolicy:
         *,
         endpoint: str,
         deployment: str,
+        tasks: Sequence[str] | None = None,
         start_pose: Mapping[str, float] | Sequence[float] | None = None,
         start_seconds: float = 3.0,
         **settings: Any,
     ) -> None:
-        """``start_pose`` (the deployment's units; a mapping of joint -> value or a full vector) is where its episodes
-        begin: ``robot.run`` ramps there over ``start_seconds`` first. Left out, the server's descriptor may say
-        (``start_pose``); else the run begins where the body is."""
+        """``tasks``: the instructions the deployment was trained on; ``run(instruction=)`` with any other string is
+        refused naming them, before the first frame goes out. Left out, the server's descriptor may say (``tasks``);
+        else any instruction is sent. ``start_pose`` (the deployment's units; a mapping of joint -> value or a full
+        vector) is where its episodes begin: ``robot.run`` ramps there over ``start_seconds`` first. Left out, the
+        server's descriptor may say (``start_pose``); else the run begins where the body is."""
         self.endpoint, self.deployment, self.settings = endpoint, deployment, settings
+        self._tasks = None if tasks is None else tuple(str(t) for t in tasks)
+        self.tasks: tuple[str, ...] = self._tasks or ()
         self._start_pose, self.start_seconds = start_pose, float(start_seconds)
         self.start_pose: Mapping[str, float] | Sequence[float] | None = start_pose
         self.contract: Contract | None = None
@@ -99,6 +104,9 @@ class ZenohPolicy:
         from lerobot.utils.action_interpolator import ActionInterpolator
 
         self.contract, self._client, self.hz = contract, client, 1.0 / caps.action_interval
+        if self._tasks is None:  # the server's word on what it was trained to do, when it has one
+            said = client.descriptor.get("tasks")
+            self.tasks = tuple(str(t) for t in said) if isinstance(said, list | tuple) else ()
         if self._start_pose is None:  # the server's word on where its episodes begin, when it has one
             said = client.descriptor.get("start_pose")
             self.start_pose = said if isinstance(said, Mapping | list | tuple) and len(said) else None
@@ -126,6 +134,15 @@ class ZenohPolicy:
     def requirements(self) -> Requirements:
         return self.contract.requirements() if self.contract is not None else Requirements()
 
+    def check_task(self, instruction: str) -> None:
+        """An instruction outside ``tasks`` (when known) is refused by name: the model never saw it."""
+        if self.tasks and instruction.strip() not in self.tasks:
+            shown = ", ".join(repr(t) for t in self.tasks[:20]) + (", …" if len(self.tasks) > 20 else "")
+            raise ValueError(
+                f"{self!r} refused the instruction {instruction!r}: not one of the {len(self.tasks)} it was trained on:"
+                f" {shown}"
+            )
+
     def reset(self) -> None:
         if self._engine is not None and self._last is not None:  # a fresh session needs no reset
             self._engine.reset()
@@ -137,6 +154,7 @@ class ZenohPolicy:
 
         c, engine = self._need(), self._engine
         if instruction is not None and instruction != self._task:
+            self.check_task(instruction)
             if error := engine.text_input_error(instruction, instruction=True):
                 raise ValueError(f"{self!r} refused the instruction: {error}")
             engine.set_task(instruction)

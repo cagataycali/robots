@@ -636,3 +636,26 @@ def test_a_hold_and_the_estop_write_the_measured_pose_through_no_cap_even_when_a
     clock[0] += 1 / 30
     d.write(far)  # the cap continues from the held pose, not from the pre-hold goal
     assert d.counts_to_rad("shoulder_pan", _goal(s, 1)) == pytest.approx(present[0] + MAX_SPEED / 30, abs=2e-3)
+
+
+def test_robot_id_names_the_lerobot_calibration_file_and_an_uncalibrated_arm_warns(tmp_path, monkeypatch):
+    # agi-agent-min.py on the real bench: Robot(..., id="blue_follower") read calibration_source None, so the arm ran
+    # uncalibrated with nothing said. The Robot's id is LeRobot's --robot.id, the calibration file's name.
+    monkeypatch.setenv("HF_LEROBOT_CALIBRATION", str(tmp_path))
+    from strands_robots.robot.drivers.feetech import driver as ftd
+
+    monkeypatch.setattr(ftd, "FeetechBus", lambda port, baud: ft.FeetechBus(port, serial=FakeSerial()))
+    p = tmp_path / "robots" / "so_follower" / "blue_follower.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps(CAL))
+    (p.parent / "other.json").write_text(json.dumps(CAL))  # two files: no "only file" fallback
+    arm = Robot("so101", port="/dev/fake", id="blue_follower", twin=False)
+    assert arm.body.calibration_source == str(p) and arm.body.calibration == Calibration.from_json(CAL)
+    arm.close()
+    named = Robot("so101", port="/dev/fake", id="blue_follower", robot_id="other", twin=False)
+    assert named.body.calibration_source == str(p.parent / "other.json")  # an explicit robot_id= still wins
+    named.close()
+    with pytest.warns(UserWarning, match=r"no calibration found.*so_follower/nobody\.json"):
+        bare = Robot("so101", port="/dev/fake", id="nobody", twin=False)
+    assert bare.body.calibration is None
+    bare.close()
