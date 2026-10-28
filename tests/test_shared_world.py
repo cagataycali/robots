@@ -15,6 +15,23 @@ from strands_robots import Robot, Simulation
 ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 
 
+@pytest.mark.parametrize(
+    "written, id_, name",
+    [
+        ("g1", "g1", "unitree_g1"),
+        ("Unitree-G1", "unitree_g1", "unitree_g1"),
+        ("so101_follower", "so101_follower", "so101"),
+    ],
+)
+def test_a_robot_is_addressed_by_the_name_it_was_written_with(written, id_, name):
+    # Robot("g1").id was "unitree_g1": the URL, the card, sim.run maps and the agent tool all wanted the other name
+    sim = Simulation()
+    r = Robot(written, sim=sim)
+    assert (r.id, r.name, list(sim.robots)) == (id_, name, [id_])
+    assert Robot(written, sim=sim, id="mine").id == "mine"  # a given id still wins
+    sim.close()
+
+
 @pytest.fixture
 def pair():
     return Robot("so101"), Robot("g1", position=[1, 0, 0])
@@ -23,9 +40,9 @@ def pair():
 def test_two_robots_share_the_default_world(pair):
     arm, g1 = pair
     assert arm.sim is g1.sim is Simulation.default()
-    assert list(arm.sim.robots) == ["so101", "unitree_g1"]
+    assert list(arm.sim.robots) == ["so101", "g1"]
     assert Robot("so101", position=[0, -0.5, 0]).id == "so101_2"
-    assert json.loads(json.dumps(arm.sim.describe()))["robots"]["unitree_g1"]["position"] == [1, 0, 0]
+    assert json.loads(json.dumps(arm.sim.describe()))["robots"]["g1"]["position"] == [1, 0, 0]
 
 
 def test_each_robot_reads_its_own_joints_and_pose(pair):
@@ -346,7 +363,7 @@ def test_contacts_name_both_bodies_and_reset_stands_a_teleported_g1_on_its_keyfr
     sim = g1.sim
     sim.step(50)
     feet = [c for c in sim.contacts() if "ground" in (c.body_a, c.body_b) or c.body_a == "world"]
-    assert any(c.body_b.startswith("unitree_g1/") and c.force > 0 for c in feet), sim.contacts()[:3]
+    assert any(c.body_b.startswith("g1/") and c.force > 0 for c in feet), sim.contacts()[:3]
     sim.set_pose(g1, position=[2, 0, 0.8])
     sim.add_object("box", shape="box", position=[0.3, 0, 0.1])  # a reload keeps the teleported base where it is
     assert np.allclose(g1.pose.position, [2, 0, 0.8], atol=1e-9)
@@ -389,7 +406,7 @@ def test_lockstep_run_drives_both_robots_one_control_step_at_a_time(pair):
     arm, g1 = pair
     t0 = arm.sim.time
     res = arm.sim.run({arm: lambda o: {"shoulder_pan": 0.3}, g1: lambda o: o.joints.positions}, steps=20)
-    assert set(res) == {"so101", "unitree_g1"} and res["so101"].steps == 20
+    assert set(res) == {"so101", "g1"} and res["so101"].steps == 20
     assert arm.sim.time == pytest.approx(t0 + 20 * arm.sim.physics.control_dt)
     assert res["so101"].final["shoulder_pan"] == pytest.approx(0.3, abs=0.03)
     with Simulation() as other, pytest.raises(ValueError, match="not in this world"):

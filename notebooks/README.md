@@ -22,7 +22,8 @@ From the folder above this one (Python 3.12):
 
 ```bash
 uv venv -p 3.12 && source .venv/bin/activate
-uv pip install -e ".[mujoco,onnx,lerobot,mesh]" strands-agents fastapi "uvicorn[standard]" playwright ipykernel av
+uv pip install -e ".[all]" ipykernel nbconvert av playwright
+uv pip install "lerobot[remote,feetech,dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"  # LeRobot main
 playwright install chromium          # 07 only
 jupyter lab notebooks/               # or open the folder in VS Code, kernel "Python 3"
 ```

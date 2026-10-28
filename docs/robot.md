@@ -15,6 +15,7 @@ arm.observe()                               # Observation: joints, base pose, im
 arm.act({"shoulder_pan": 0.3})              # write targets for THIS body, then one control step for the world
 arm.act({"gripper": 1.0}, seconds=1.0)      # reach the pose: ramp there from the measured one, then read back
 res = arm.run(lambda obs: {"elbow_flex": 0.4}, hz=50, steps=60)   # RunResult(steps, seconds, ..., final)
+res.stopped_by                              # "steps" here; "seconds" for run(seconds=), else stop_when/estop/fault...
 task = arm.start(my_policy, seconds=30)     # the same loop in the background; arm.stop() returns its RunResult
 arm.sim.run({arm: my_policy, g1: my_policy}, steps=20)   # many robots in lock-step, each policy bound as run() binds it
 ```
