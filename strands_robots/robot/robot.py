@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..description import Description
+from ..description import Description, default_id
 from ..types import Action, Observation, Pose
 from . import gate as _gate
 from . import reach as _reach
@@ -81,9 +81,9 @@ class Robot(DeviceVerbs):
                 raise TypeError("a hardware Robot takes port=/driver=, not sim=: its twin is in Simulation.default()")
             from .drivers import make_driver
 
-            self.id = id or self.name
+            self.id = id or default_id(name)  # the name as written: Robot("g1").id == "g1"
             hw = {"port": port, "driver": driver, "cameras": cameras, "calibration": calibration}
-            self._body = make_driver(self.description, **hw, options=driver_options, id=self.id)
+            self._body = make_driver(self.description, **hw, options=driver_options, id=id)
             self.supports_position_hold = position_hold_of(self.description, self._body)
             if twin:
                 self.twin = Robot(
@@ -98,7 +98,7 @@ class Robot(DeviceVerbs):
                     "cameras=/calibration= are hardware arguments; in a world: sim.camera(name, attach=robot)"
                 )
             world = sim if sim is not None else Simulation.default()
-            self.sim, self.id = world, world.unique_id(id or self.name)
+            self.sim, self.id = world, world.unique_id(id or default_id(name))
             self.clock = WorldClock(world)
             world.add(self, position=position, orientation=orientation, keyframe=keyframe)
             self._body = SimBody(world, self.id, self.description.action_keys)
