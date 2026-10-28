@@ -2,7 +2,8 @@
 
 import pytest
 
-from strands_robots.policy.lerobot.remote import WAN_TIMEOUT_S, ZenohPolicy, is_local, wan_defaults
+from strands_robots.policy.lerobot.link import WAN_TIMEOUT_S, is_local, wan_defaults
+from strands_robots.policy.lerobot.remote import ZenohPolicy
 
 
 @pytest.mark.parametrize(
