@@ -11,14 +11,21 @@ WAN_TIMEOUT_S = (
 
 
 def is_local(endpoint: str) -> bool:
-    """``<link>/host:port`` names this machine or its LAN (loopback, private ranges, link-local, ``.local``)."""
+    """``<link>/host:port`` names this machine or its LAN.
+
+    Local: loopback, the private and link-local ranges, ``localhost``, mDNS ``*.local``, and a single-label
+    hostname (``gpu-box``: no TLD, so it can only resolve through ``/etc/hosts``, mDNS or a local search
+    domain and cannot name an internet host as written). A dotted name (``zenoh.example``) or a public
+    address is the internet. Decided from the text alone: nothing is resolved, no network is touched.
+    """
     host = endpoint.split("/", 1)[-1].rpartition(":")[0].strip("[]")
     if host in ("localhost", "") or host.endswith(".local"):
         return True
     try:
-        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+        addr = ipaddress.ip_address(host)
     except ValueError:
-        return False
+        return "." not in host  # a hostname: single-label = LAN, dotted = somebody else's domain
+    return addr.is_private or addr.is_loopback or addr.is_link_local
 
 
 def wan_defaults(endpoint: str, settings: dict[str, Any], descriptor: dict[str, Any] | None = None) -> dict[str, Any]:
