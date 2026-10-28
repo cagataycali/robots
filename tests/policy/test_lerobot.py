@@ -183,11 +183,15 @@ def test_execution_is_the_servers_word_then_the_contracts():
         ZenohPolicy(endpoint="tcp/h:1", deployment="d", execution="rtc")
 
 
-def test_unknown_semantics_are_refused_naming_the_table(deployment):
+def test_unknown_semantics_are_derived_from_the_robots_convention_with_a_warning(deployment):
+    """A server labels its units as it likes; the deployment already matched this robot joint by joint, so an
+    unknown label is read as the robot's own LeRobot convention (and what the label's words say), not refused."""
     cfg, server = deployment(semantics="furlongs-v1")
     with server as url:
-        with pytest.raises(ValueError, match=r"unknown LeRobot semantics 'furlongs-v1'.*semantics.json"):
-            _arm().run(Policy(url), seconds=1)
+        p = Policy(url)
+        with pytest.warns(UserWarning, match=r"'furlongs-v1' is not in strands_robots/units/semantics.json; read as"):
+            r = _arm().run(p, steps=3)
+        assert r.steps == 3 and r.fault is None and p.describe()["semantics"] == "furlongs-v1"  # the label is theirs
 
 
 def test_a_lerobot_normalized_deployment_attaches_and_runs(deployment):
