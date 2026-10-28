@@ -31,7 +31,24 @@ me.broadcast("estop")                            # everything in the room stops
 
 The robot stays in charge of itself: every command from the mesh goes through its own safety chain, and a remote
 caller can never approve a move on the operator's behalf. If whoever was driving disappears, the robot does what its
-`on_disconnect` says. Resuming after an e-stop takes the operator who pressed it.
+`on_disconnect` says.
+
+A robot stopped over the mesh stays stopped until someone it trusts resumes it. Over `zenoh://` a claimed name is
+not a credential (any peer that reaches the listener, even a loopback one, can type it), so by default a resume is
+refused with `RequestRefused`. Give each operator a key, and the robot accepts only a resume they signed for this
+stop:
+
+```python
+from strands_robots.mesh import Mesh, authority
+
+private, public = authority.keygen()        # once, on the operator's machine; the robot gets `public`
+lab = Mesh("zenoh://", tenant="lab-a", resume_authority=authority.Authority(public_keys=(public,)))  # robot side
+me = Mesh("zenoh://", tenant="lab-a", resume_key=private)                                          # operator side
+me.invoke("so101", "resume", approved_by=me.operator)                                             # signed, accepted
+```
+
+On a network you trust, `authority.Authority(trust_names=True)` accepts the operator who pressed the stop by name
+instead. Names are trusted without asking only when every transport is in-process (`mem://`).
 
 Mount a real robot with `watchdog_ms=None` and it is served observe-only: `observe` and `describe` still
 answer, but `act` and `hold` are refused by name, because with no watchdog a mover that vanished would leave
