@@ -13,6 +13,7 @@ from ...units import Units
 from ..base import PolicyFault
 from ..requirements import Requirements
 from .contract import Contract, lerobot
+from .link import wan_defaults
 
 if TYPE_CHECKING:
     from ...description import Description
@@ -66,11 +67,12 @@ class ZenohPolicy:
         finally:
             client.close()
 
-    def _config(self, semantics: str = "?") -> Any:
+    def _config(self, semantics: str = "?", descriptor: dict[str, Any] | None = None) -> Any:
         from lerobot.inference import RemoteInferenceConfig
 
-        blend = self.settings.get("blend_components")
-        kw = dict(self.settings, blend_components=[f"{k}.pos" if "." not in k else k for k in blend or []])
+        kw = wan_defaults(self.endpoint, self.settings, descriptor)
+        blend = kw.get("blend_components")
+        kw["blend_components"] = [f"{k}.pos" if "." not in k else k for k in blend or []]
         return RemoteInferenceConfig(endpoint=self.endpoint, deployment=self.deployment, semantics=semantics, **kw)
 
     def _connect(self) -> Any:
@@ -88,7 +90,7 @@ class ZenohPolicy:
             contract.check()
             contract.units()  # unknown semantics -> refused by name, before a session exists
             contract.requirements().check(robot.observe(), who=repr(self))
-            config = self._config(sem)
+            config = self._config(sem, client.descriptor)  # the hello's limits widen the action timeout
             client.config = config
             client.admit(
                 features=caps.features,
@@ -171,4 +173,4 @@ class ZenohPolicy:
         return self._last
 
     def __repr__(self) -> str:
-        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}')"
+        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}')"  # tls/… stays visible
