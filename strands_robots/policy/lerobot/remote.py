@@ -136,4 +136,6 @@ class ZenohPolicy:
         return self._last
 
     def __repr__(self) -> str:
-        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}')"
+        link, _, hostport = self.endpoint.partition("/")
+        scheme = "zenoh" if link in ("tcp", "") else f"zenoh+{link}"
+        return f"Policy('{scheme}://{hostport or link}/{self.deployment}')"

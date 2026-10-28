@@ -14,7 +14,16 @@ def test_a_callable_is_a_policy_and_a_subclass_is_a_plain_constructor():
 
 
 @pytest.mark.parametrize(
-    "spec", ["Not-A-Preset?", "act", "pi0", "not a spec", "zenoh://host-without-port/x", "zenoh://h:7447/"]
+    "spec",
+    [
+        "Not-A-Preset?",
+        "act",
+        "pi0",
+        "not a spec",
+        "zenoh://host-without-port/x",
+        "zenoh://h:7447/",
+        "zenoh+ftp://h:7447/x",
+    ],
 )
 def test_an_unknown_form_is_refused_listing_the_forms(spec):
     with pytest.raises(ValueError, match=r"zenoh://"):
@@ -26,6 +35,9 @@ def test_zenoh_url_and_hub_repo_need_no_network_to_construct():
     p = Policy("zenoh://10.0.0.5:7447/manipulation", chunk_merge="aligned")
     assert repr(p) == "Policy('zenoh://10.0.0.5:7447/manipulation')"
     assert p.endpoint == "tcp/10.0.0.5:7447" and p.deployment == "manipulation"
+    tls = Policy("zenoh+tls://zenoh.api.agi.diy:7447/d_lease")  # a leased slot behind a TLS router (api.agi.diy)
+    assert tls.endpoint == "tls/zenoh.api.agi.diy:7447" and tls.deployment == "d_lease"
+    assert repr(tls) == "Policy('zenoh+tls://zenoh.api.agi.diy:7447/d_lease')"
     hub = Policy("lerobot/smolvla_base", device="cpu")
     assert isinstance(hub, ChunkedPolicy) and repr(hub.inner) == "Policy('lerobot/smolvla_base')"
 

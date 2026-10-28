@@ -9,9 +9,10 @@ from urllib.parse import parse_qsl, urlparse
 
 _REPO = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
 _PRESET = re.compile(r"^[a-z][a-z0-9_]*(\?[^\s/]*)?$")
+_LINKS = ("tcp", "tls", "quic", "ws", "udp")  # zenoh locator protocols a lerobot-policy-server can be reached over
 FORMS = (
     "<preset>[?k=v&k2=v2]            a named ONNX preset, run in-process",
-    "zenoh://host:port/<deployment>   a lerobot-policy-server",
+    "zenoh://host:port/<deployment>   a lerobot-policy-server (tcp; zenoh+tls:// zenoh+ws:// for another link)",
     "<owner>/<repo>                   a LeRobot checkpoint on the Hugging Face Hub, run in-process",
     "<dir with config.json>           a local LeRobot checkpoint, run in-process",
     "<dir with meta/info.json>[?episode=n]   a recorded LeRobot dataset, one episode replayed",
@@ -28,14 +29,15 @@ def make(spec: Any, **kw: Any) -> Any:
             return CallablePolicy(spec)
         raise TypeError(f"Policy({type(spec).__name__}) is not a policy spec; forms:\n  " + "\n  ".join(FORMS))
     s = str(spec)
-    if s.startswith("zenoh://"):
+    if s.startswith("zenoh://") or s.startswith("zenoh+"):
         from .lerobot import ZenohPolicy
 
         u = urlparse(s)
+        link = u.scheme.partition("+")[2] or "tcp"  # zenoh:// = tcp; zenoh+tls:// zenoh+ws:// ... = that zenoh link
         deployment = u.path.strip("/")
-        if not u.hostname or not u.port or not deployment or "/" in deployment:
-            raise ValueError(f"{s!r}: expected zenoh://host:port/<deployment>")
-        return ZenohPolicy(endpoint=f"tcp/{u.hostname}:{u.port}", deployment=deployment, **kw)
+        if link not in _LINKS or not u.hostname or not u.port or not deployment or "/" in deployment:
+            raise ValueError(f"{s!r}: expected zenoh://host:port/<deployment> (or zenoh+{'|'.join(_LINKS[1:])}://)")
+        return ZenohPolicy(endpoint=f"{link}/{u.hostname}:{u.port}", deployment=deployment, **kw)
     if s == "hold":  # a run of it moved nothing, yet an agent read the word as "reach a pose": no such spec
         raise ValueError(f"Policy({s!r}): not a policy; {HOLD_HINT}")
     path, _, query = s.partition("?")
