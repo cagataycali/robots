@@ -48,6 +48,18 @@ def test_handles_are_named_by_the_mapping_the_name_or_the_deployment():
         handles({"x": "zenoh://h:7447/d"})
 
 
+def test_two_handles_with_one_name_are_refused_not_collapsed():
+    pytest.importorskip("lerobot")
+    from strands_robots import Policy
+
+    a, b = Policy("zenoh://host-a:7447/d_pick"), Policy("zenoh://host-b:7447/d_pick")
+    with pytest.raises(ValueError, match=r"two handles are both named 'd_pick'.*pass a \{name: policy\} mapping"):
+        handles([a, b])
+    with pytest.raises(ValueError, match=r"two handles are both named 'nudge'"):
+        handles([_Named(), _Named()])
+    assert list(handles({"pick_a": a, "pick_b": b})) == ["pick_a", "pick_b"]
+
+
 def test_the_tool_is_the_same_tool_with_handles_and_the_spec_names_them():
     arm = Robot("so101")
     plain, with_one = arm.tool, arm.tool(policies=[_Named()])

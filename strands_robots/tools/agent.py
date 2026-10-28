@@ -37,7 +37,10 @@ class _DeviceTool(PythonAgentTool):
 
 
 def handles(policies: Iterable[Any] | Mapping[str, Any] | None) -> dict[str, Any]:
-    """``{name: policy}``: a mapping as given; a list named by ``.name``, then a remote policy's ``.deployment``."""
+    """``{name: policy}``: a mapping as given; a list named by ``.name``, then a remote policy's ``.deployment``.
+
+    Two list entries that derive the same name are refused, never collapsed: the tool spec, the refusal hint and
+    ``run(policy=...)`` all read this dict, so a silent overwrite would move the arm with whichever came last."""
     if policies is None:
         return {}
     if isinstance(policies, Mapping):
@@ -45,8 +48,13 @@ def handles(policies: Iterable[Any] | Mapping[str, Any] | None) -> dict[str, Any
     else:
         out = {}
         for i, p in enumerate(policies):
-            name = getattr(p, "name", None) or getattr(p, "deployment", None) or f"policy{i + 1}"
-            out[str(name)] = p
+            name = str(getattr(p, "name", None) or getattr(p, "deployment", None) or f"policy{i + 1}")
+            if name in out:
+                raise ValueError(
+                    f"policies: two handles are both named {name!r} ({out[name]!r} and {p!r}); "
+                    "pass a {name: policy} mapping to name them yourself"
+                )
+            out[name] = p
     for name, p in out.items():
         if isinstance(p, str | bytes) or not (callable(p) or hasattr(p, "act")):
             raise TypeError(f"policies[{name!r}] must be a policy object (Policy(...), a callable), got {p!r}")
