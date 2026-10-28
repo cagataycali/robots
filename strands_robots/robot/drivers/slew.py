@@ -36,8 +36,8 @@ class Slew:
             self._t = self._now()
 
     def release(self) -> None:
-        """Torque off: the body may be moved by hand, so the next write ramps from a read, not from the old goal."""
-        self._goal = self._t = None
+        """Torque off: the body may be moved by hand, so the next write ramps from a fresh read, not an old one."""
+        self._goal = self._seen = self._t = None
 
     def reset(self, anchor: np.ndarray) -> None:
         """A hold: the goal IS ``anchor`` (the measured pose), whatever the last goal was and however far away.
@@ -46,9 +46,14 @@ class Slew:
         be bent toward the old goal. The ramp continues from ``anchor`` afterwards."""
         self._goal, self._t = np.asarray(anchor, dtype=float).copy(), self._now()
 
-    def apply(self, targets: np.ndarray) -> np.ndarray:
-        """The goal to write now: ``targets``, or as far toward them as ``max_speed`` allows since the last write."""
+    def apply(self, targets: np.ndarray, read: Callable[[], object]) -> np.ndarray:
+        """The goal to write now: ``targets``, or as far toward them as ``max_speed`` allows since the last write.
+
+        With a cap and no anchor (a fresh driver, or torque went off since the last read) ``read()`` is called
+        first, so the cap never depends on the caller having read."""
         t = np.asarray(targets, dtype=float)
+        if self.max_speed is not None and self._goal is None and self._seen is None:
+            read()  # -> seen(): one bus round-trip, once
         now = self._now()
         anchor = self._goal if self._goal is not None else self._seen
         if self.max_speed is not None and anchor is not None:

@@ -606,6 +606,28 @@ def test_the_cap_anchors_on_a_read_again_after_torque_goes_off_and_max_speed_non
         make_driver(max_speed=0)
 
 
+@pytest.mark.parametrize("before", ["nothing", "torque_off_then_moved_by_hand"])
+def test_a_write_with_no_fresh_read_reads_first_so_the_cap_holds(before):
+    """The cap must not depend on the caller reading first: a fresh driver, or one whose torque went off (the arm
+    may have been moved by hand, ``calibrate()`` sweeps with raw reads), anchors on a read taken by the write."""
+    from strands_robots.robot.drivers.slew import MAX_SPEED
+
+    clock = [100.0]
+    d, s = make_driver(max_speed=MAX_SPEED)
+    d.slew._now = lambda: clock[0]
+    lo, hi = d.description.limits["shoulder_pan"]
+    if before != "nothing":
+        d.read()
+        d.torque(False)
+        s.actual[1] = 1024  # moved by hand to the low end; no read follows
+        clock[0] += 5.0
+    present = d.counts_to_rad("shoulder_pan", s.actual[1])
+    d.write(np.array([hi, 0, 0, 0, 0, 0.5]))
+    goal = d.counts_to_rad("shoulder_pan", _goal(s, 1))
+    assert abs(goal - present) <= MAX_SPEED * 0.5 + 2e-3, f"goal {goal:.3f} rad, body at {present:.3f}"
+    assert d.extras()["slewed"] == 1
+
+
 def test_a_hold_and_the_estop_write_the_measured_pose_through_no_cap_even_when_a_joint_is_blocked():
     """A blocked servo never reaches its goal. Through the cap, ``hold()`` would have moved the goal toward the
     present pose by only ``max_speed * dt`` and left the servo pushing; it must write Present_Position itself."""

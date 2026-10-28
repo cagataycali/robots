@@ -147,7 +147,7 @@ class FeetechDriver:
         # write leaves a limp arm limp instead of stiffening it against a stale Goal_Position.
         if not np.all(np.isfinite(np.asarray(targets, dtype=float))):
             raise ValueError(f"{self.description.name}: non-finite goal {np.asarray(targets).tolist()}")
-        targets = self.slew.apply(targets)
+        targets = self.slew.apply(targets, self.read)
         goals = {
             mid: word(self.rad_to_counts(n, float(t))) for n, mid, t in zip(self.names, self.ids, targets, strict=True)
         }

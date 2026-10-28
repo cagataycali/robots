@@ -35,7 +35,8 @@ measured pose to `action` at 30 Hz, settle there, and the returned `Observation`
 an agent tool (`confirm_act`) the operator gate is asked once, for the target. To stand
 still, call `hold()`; there is no `"hold"` policy. On a Feetech arm every write is also capped at `max_speed`
 (default 2 rad/s, `Robot(..., max_speed=None)` to opt out): a goal 50° away becomes a ramp, a trained chunk's
-steps pass as written, and `extras()["slewed"]` counts the writes the cap shortened.
+steps pass as written, and `extras()["slewed"]` counts the writes the cap shortened. The first write after
+construction or after torque goes off reads the arm first, so the cap never depends on the caller having read.
 
 A policy that names where its episodes begin (`start_pose`, in its own units; `Policy("zenoh://…",
 start_pose={"shoulder_pan": 20.0})`, or the server's own word) is taken there first: `run()` ramps to it over
