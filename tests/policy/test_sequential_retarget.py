@@ -154,3 +154,37 @@ def test_a_request_in_flight_ends_when_the_server_leaves():
     assert client.cancelled == 1
     with pytest.raises(PolicyFault, match="server presence lost"):
         seq.step(frame)
+
+
+def test_a_reply_that_lands_between_the_two_reads_of_a_tick_is_never_asked_for_twice():
+    """The worker stores its reply and exits in the gap between step()'s two reads. Liveness must be read first: then
+    the tick sees the request still in flight and holds; the next tick takes the reply. Read the other way round, the
+    tick sees no reply AND no request and asks a second time for the same frame (two chunks from one pose)."""
+    client = _Client()
+    seq = Sequential(client, _Contract(), "p")
+    frame = {"observation.state": np.zeros(2)}
+    seq.retarget("x")
+    assert seq.step(frame) is None and client.started.acquire(timeout=2.0)  # request 1 in flight
+    worker = seq._inflight
+    inner = seq._lock
+
+    class LetTheWorkerFinishOnRelease:
+        """The loop thread's lock: when it is released the worker is let through and joined, so whatever the loop
+        read under the lock is stale by the time it runs its next statement (the reviewer's interleaving)."""
+
+        def __enter__(self):
+            inner.acquire()
+
+        def __exit__(self, *exc):
+            inner.release()
+            if threading.current_thread() is not worker and worker.is_alive():
+                client.gate.set()
+                worker.join(2.0)
+                assert not worker.is_alive()
+
+    seq._lock = LetTheWorkerFinishOnRelease()  # the worker also stores through seq._lock: same inner lock
+    out = seq.step(frame)  # tick 2: the reply lands between the two reads
+    assert out is None and len(client.requests) == 1, "a second request was sent for the same still frame"
+    seq._lock = inner
+    row = seq.step(frame)  # tick 3: the reply is taken, the plan plays
+    assert row is not None and len(seq.calls) == 1 and seq.queued == 2 and len(client.requests) == 1

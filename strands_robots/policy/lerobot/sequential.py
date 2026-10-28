@@ -94,10 +94,14 @@ class Sequential:
 
     def step(self, frame: dict[str, np.ndarray]) -> np.ndarray | None:
         """One tick: the next row of the plan, or None (hold) while the chunk for this frame is on its way."""
+        # Liveness BEFORE the reply, never after: a worker that has exited has already stored (or dropped) its reply
+        # under the lock, so "not alive => the reply is in _reply" holds in this order only. Read the other way round,
+        # a worker that stores and exits between the two statements leaves its reply unconsumed while this tick sees
+        # an empty queue and no request in flight, and asks a second time for the same still frame.
+        if self._inflight is not None and not self._inflight.is_alive():
+            self._inflight = None
         with self._lock:
             reply, self._reply = self._reply, None
-        if self._inflight is not None and not self._inflight.is_alive():
-            self._inflight = None  # its reply is in ``reply`` now, or was dropped as superseded
         if reply is not None:
             chunk, t0, t1 = reply
             if isinstance(chunk, Exception):
