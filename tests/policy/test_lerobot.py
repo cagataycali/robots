@@ -141,7 +141,7 @@ def test_a_sequential_session_sends_the_instruction_with_every_chunk(deployment,
         arm, p = _arm(), Policy(url)  # auto: a chunk-only deployment with no RTC contract runs sequentially
         for _ in range(2):
             r = arm.run(p, seconds=0.5, instruction="pick the cube")
-            assert r.holds >= 1 and r.deadline_misses == 0
+            assert r.holds >= 1  # it waited for its chunk; that a hold is never a miss is pinned in tests/test_kernel
         assert p.execution == "sequential" and tasks and set(tasks) == {"pick the cube"}
         assert all(c["instruction"] == "pick the cube" and c["rows"] >= 1 for c in p.calls)
         with pytest.raises(ValueError, match="refused the instruction"):
@@ -160,7 +160,9 @@ def test_a_sequential_session_asks_only_when_its_queue_is_empty(deployment, monk
         r = arm.run(p, steps=45)  # tiny ACT serves 10-row chunks at 30 Hz
         played = 45 - r.holds  # the tick that sends the frame holds, and so does every tick until its reply lands
         assert r.steps == 45 and r.holds >= len(requests) and len(p.calls) == -(-played // 10)
-        assert r.deadline_misses == 0  # a wait for the network is a hold, never a miss
+        # That a hold is never booked as a miss is pinned on a virtual clock in tests/test_kernel.py (k3): this
+        # server runs IN THIS PROCESS, so its inference competes with the loop for the GIL and the ticks here are
+        # genuinely late on a loaded host — a miss count would measure the machine, not the queue discipline.
         assert len(requests) - len(p.calls) <= 1 and all(c["rows"] == 10 for c in p.calls)  # the last may be in flight
         assert all(req.continuation.canonical_actions is None for req in requests)  # never a splice: empty queue
         assert all(req.delay == 0 for req in requests)
