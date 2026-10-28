@@ -38,6 +38,7 @@ class _Client:
         self.gate = threading.Event()
         self.started = threading.Semaphore(0)
         self.inside, self.max_inside, self.cancelled = 0, 0, 0
+        self.present = True  # RemoteClient.present: the server's liveliness token, latched False once lost
         self._lock = threading.Lock()
 
     def infer(self, req, *, cancelled=lambda: False):
@@ -118,3 +119,38 @@ def test_close_drops_the_plan_under_the_lock():
     _drain(seq)
     seq.close()
     assert seq._reply is None and seq.queued == 0 and seq.task is None
+
+
+def test_a_lost_server_faults_once_the_received_plan_is_played_not_after_the_action_timeout():
+    """LeRobot's engine notices a dead server by action starvation; a sequential loop holds as a matter of course, so
+    it must read the liveliness latch itself: finish the rows it has, then fault at once (not 5 s later)."""
+    from strands_robots.policy.base import PolicyFault
+
+    client = _Client()
+    seq = Sequential(client, _Contract(), "p")
+    frame = {"observation.state": np.zeros(2)}
+    seq.retarget("x")
+    assert seq.step(frame) is None and client.started.acquire(timeout=2.0)
+    client.gate.set()
+    _drain(seq)
+    assert seq.step(frame) is not None  # row 1 of 3 arrived
+    client.present = False  # the server leaves while two rows are still queued
+    assert seq.step(frame) is not None and seq.step(frame) is not None  # the local buffer is played to its end
+    with pytest.raises(PolicyFault, match="server presence lost"):
+        seq.step(frame)  # queue empty, nobody to ask: fault NOW, no request is sent
+    assert len(client.requests) == 1
+
+
+def test_a_request_in_flight_ends_when_the_server_leaves():
+    from strands_robots.policy.base import PolicyFault
+
+    client = _Client()
+    seq = Sequential(client, _Contract(), "p")
+    frame = {"observation.state": np.zeros(2)}
+    seq.retarget("x")
+    assert seq.step(frame) is None and client.started.acquire(timeout=2.0)
+    client.present = False  # mid-request: the cancelled= hook ends the wait instead of action_timeout_s
+    _drain(seq)
+    assert client.cancelled == 1
+    with pytest.raises(PolicyFault, match="server presence lost"):
+        seq.step(frame)

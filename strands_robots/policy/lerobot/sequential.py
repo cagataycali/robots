@@ -75,7 +75,9 @@ class Sequential:
         )
         req = ChunkRequest(snap, empty, uuid4().hex, 0, ExecutionMode.CHUNK, 0, now, 0.0)
         gen, client = self._gen, self.client
-        superseded = lambda: gen != self._gen  # noqa: E731  (retarget/close end this request's wait promptly)
+        # retarget/close end this request's wait promptly; so does the server's departure (its liveliness token),
+        # which LeRobot's own action path deliberately waits out until ``action_timeout_s`` (5 s by default).
+        superseded = lambda: gen != self._gen or not client.present  # noqa: E731
 
         def go() -> None:
             t0 = time.monotonic()
@@ -99,6 +101,8 @@ class Sequential:
         if reply is not None:
             chunk, t0, t1 = reply
             if isinstance(chunk, Exception):
+                if not self.client.present:  # the request ended because the server left, not because it failed
+                    raise PolicyFault(f"{self.who}: server presence lost; the session cannot recover")
                 raise PolicyFault(f"{self.who}: {type(chunk).__name__}: {chunk}")
             rows = self.contract.to_keys_chunk(chunk.canonical_actions.detach().cpu().numpy())
             self._queue.extend(rows)
@@ -110,6 +114,11 @@ class Sequential:
                     "instruction": self.task,
                 }
             )
+        if not self._queue and not self.client.present:
+            # Holding is this loop's normal state, so unlike LeRobot's engine it has no starvation clock to notice a
+            # dead server: the plan already received is played to its end (the local buffer LeRobot's contract keeps),
+            # then the run faults at once instead of waiting out ``action_timeout_s`` on a request nobody will answer.
+            raise PolicyFault(f"{self.who}: server presence lost; the session cannot recover")
         if not self._queue and self._inflight is None:  # the queue is EMPTY: this still frame is the observation
             self._request(frame)  # (never while a superseded request is still draining: one infer per client)
         if self._queue:
