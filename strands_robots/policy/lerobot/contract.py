@@ -108,18 +108,20 @@ class Contract:
         return out
 
 
-def _misfit(units: Units, stats: Mapping[str, np.ndarray], margin: float = 0.1) -> str | None:
-    """The first saved min/max that cannot be in ``units`` (beyond ``margin`` of a joint's span), or None."""
-    span = np.abs(units.hi_u - units.lo_u)
-    lo, hi = np.minimum(units.lo_u, units.hi_u) - margin * span, np.maximum(units.lo_u, units.hi_u) + margin * span
+# What LeRobot's ``_normalize`` can emit per mode: range modes are clamped (exact), degrees is one motor turn.
+_CAN_EMIT = {"range_m100_100": (-100.0, 100.0), "range_0_100": (0.0, 100.0), "degrees": (-180.0, 180.0)}
+
+
+def _misfit(units: Units, stats: Mapping[str, np.ndarray]) -> str | None:
+    """The first saved min/max that LeRobot's normalizer cannot emit in ``units``' mode, or None."""
     for feat in (STATE, ACTION):
         mn, mx = stats.get(f"{feat}.min"), stats.get(f"{feat}.max")
         if mn is None or mx is None or len(mn) != len(units.keys):
             continue
-        for i, k in enumerate(units.keys):
-            if mn[i] < lo[i] or mx[i] > hi[i]:
-                mode = units.modes[i] if units.modes else "these units"
-                return f"{feat} {k} spans {mn[i]:.1f}..{mx[i]:.1f}, impossible in {mode} ({lo[i]:.0f}..{hi[i]:.0f})"
+        for i, (k, mode) in enumerate(zip(units.keys, units.modes, strict=False)):
+            lo, hi = _CAN_EMIT.get(mode, (-np.inf, np.inf))
+            if mn[i] < lo - 1e-3 or mx[i] > hi + 1e-3:
+                return f"{feat} {k} spans {mn[i]:.1f}..{mx[i]:.1f}, impossible in {mode} ({lo:.0f}..{hi:.0f})"
     return None
 
 

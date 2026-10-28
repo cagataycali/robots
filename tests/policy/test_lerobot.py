@@ -300,24 +300,29 @@ def test_two_robots_in_one_world_each_on_its_own_deployment(deployment, tiny_act
 
 DEGREES = {"*": "degrees", "gripper": "range_0_100"}
 WRIST_IN_DEGREES = ([-66.4, -108.5, -53.2, 27.5, -155.6, 11.1], [19.9, 41.0, 96.4, 100.4, -71.6, 98.9])  # a real SO-101
+DEGREES_PAST_THE_CLAMP = ([-90.0, -95.0, -80.0, -106.1, -99.0, 2.0], [90.0, 95.0, 80.0, 115.9, 99.0, 98.0])  # a Hub ACT
 WITHIN_RANGE = ([-90.0, -95.0, -80.0, -70.0, -99.0, 2.0], [90.0, 95.0, 80.0, 70.0, 99.0, 98.0])  # a range-mode dataset
 
 
 @pytest.mark.parametrize(
-    "span, kw, semantics",
+    "span, kw, refused, semantics",
     [
-        (WRIST_IN_DEGREES, {}, None),  # the registry's range default: refused, naming the joint
-        (WRIST_IN_DEGREES, {"semantics": "so101-normalized-v1"}, None),  # an explicit label is checked too
-        (WRIST_IN_DEGREES, {"norm": DEGREES}, "so101-degrees-gripper-percent-v1"),
-        (WITHIN_RANGE, {}, "so101-range-gripper-percent-v1"),
+        (WRIST_IN_DEGREES, {}, "shoulder_lift spans -108.5..41.0", None),  # the range default: refused by joint
+        (WRIST_IN_DEGREES, {"semantics": "so101-normalized-v1"}, "shoulder_lift", None),  # an explicit label too
+        (WRIST_IN_DEGREES, {"norm": DEGREES}, None, "so101-degrees-gripper-percent-v1"),
+        (DEGREES_PAST_THE_CLAMP, {}, "wrist_flex spans -106.1..115.9", None),  # past range's clamp: not range
+        (DEGREES_PAST_THE_CLAMP, {"norm": DEGREES}, None, "so101-degrees-gripper-percent-v1"),  # past sim limits
+        (WITHIN_RANGE, {}, None, "so101-range-gripper-percent-v1"),
     ],
 )
-def test_a_checkpoints_saved_stats_must_fit_the_units_it_is_read_in(tmp_path, span, kw, semantics):
+def test_a_checkpoints_saved_stats_must_fit_the_units_it_is_read_in(tmp_path, span, kw, refused, semantics):
     from tiny_act import save_tiny_act
 
     ckpt = str(save_tiny_act(tmp_path / "ckpt", 6, span=span))
-    if semantics is None:
-        with pytest.raises(ValueError, match=r"wrist_roll spans -155.6..-71.6, impossible in range_m100_100.*degrees"):
+    if refused:
+        with pytest.raises(ValueError, match=rf"{refused}.*impossible in range_m100_100 \(-100..100\)") as e:
             server_config(Description.load("so101"), ckpt, device="cpu", **kw)
+        remedy = str(e.value).split("Pass ")[1]
+        assert "'degrees'" in remedy and "'range_m100_100'" not in remedy  # never points back at a clamped mode
     else:
         assert server_config(Description.load("so101"), ckpt, device="cpu", **kw).semantics == semantics
