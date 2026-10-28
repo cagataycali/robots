@@ -11,6 +11,8 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from .validators import RequestRefused
 
 if TYPE_CHECKING:
@@ -81,7 +83,7 @@ def engage(robot: Robot, reason: str = "estop()", by: str | None = None) -> None
     try:
         robot.estop_latch.engage(reason, by)
     finally:
-        body = robot._body
+        robot._held, body = None, robot._body  # the stop holds the measured pose; no old target outlives it
         if body is not None:
             body.estop()
 
@@ -91,6 +93,7 @@ def guarded_write(robot: Robot, targets: object) -> None:
     latch, body = robot.estop_latch, robot.body
     latch.check(robot.id)
     body.write(targets)  # type: ignore[arg-type]
+    robot._held = np.array(targets, dtype=float)  # a joint the next Action omits keeps this
     if latch.engaged:
         body.estop()
         latch.check(robot.id)

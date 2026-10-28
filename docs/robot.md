@@ -24,8 +24,10 @@ arm.sim.run({arm: my_policy, g1: my_policy}, steps=20)   # many robots in lock-s
 `so101` is `so101_2`). The `Body` is the only thing that differs between bodies: `SimBody` is a handle
 into a world, and the loop never knows which one it has.
 
-An `Action` is a vector in `action_keys` order or a `{joint: target}` mapping (missing joints hold where
-they are). An unknown joint raises `KeyError`, a vector of the wrong length raises `ValueError`, and every
+An `Action` is a vector in `action_keys` order or a `{joint: target}` mapping: a joint it leaves out keeps
+its last commanded target, so `act({"elbow_flex": 0.4})` holds the other five against gravity (`act({})` holds
+all six). Before the first write, and after `hold()`, an e-stop, `calibrate()` or `sim.reset()`, that target is
+the measured pose. An unknown joint raises `KeyError`, a vector of the wrong length raises `ValueError`, and every
 target is clipped to the joint limits. `set_pose` teleports, `set_gains(kp, kd)` sets the PD gains of
 its actuators, `describe()` is JSON-safe, `close()` removes it from its world (a removed robot raises
 `RuntimeError` on its next `observe`).
