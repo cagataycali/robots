@@ -157,9 +157,10 @@ def test_a_sequential_session_asks_only_when_its_queue_is_empty(deployment, monk
     cfg, server = deployment()
     with server as url:
         arm, p = _arm(), Policy(url, execution="sequential")
-        r = arm.run(p, steps=45)  # tiny ACT serves 10-row chunks at 30 Hz; a local reply lands within one tick
-        played = 45 - r.holds  # one hold per chunk asked: the tick that sends the frame waits for its reply
-        assert r.steps == 45 and r.holds == len(requests) and len(p.calls) == -(-played // 10)
+        r = arm.run(p, steps=45)  # tiny ACT serves 10-row chunks at 30 Hz
+        played = 45 - r.holds  # the tick that sends the frame holds, and so does every tick until its reply lands
+        assert r.steps == 45 and r.holds >= len(requests) and len(p.calls) == -(-played // 10)
+        assert r.deadline_misses == 0  # a wait for the network is a hold, never a miss
         assert len(requests) - len(p.calls) <= 1 and all(c["rows"] == 10 for c in p.calls)  # the last may be in flight
         assert all(req.continuation.canonical_actions is None for req in requests)  # never a splice: empty queue
         assert all(req.delay == 0 for req in requests)
