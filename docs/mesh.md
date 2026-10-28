@@ -21,7 +21,7 @@ And from the other laptop:
 ```python
 me = Mesh("zenoh://", tenant="lab-a")
 me.discover("device(type:robot_arm)")            # [Device('so101', ...)]
-me.invoke("so101", "act", action={"shoulder_pan": 0.3})
+me.invoke("so101", "act", action={"shoulder_pan": 0.3}, seconds=1.0)  # reach it, not one step
 me.subscribe("so101", "state", print)            # its live feed
 remote = me.connect("so101")                     # a Robot you can .run() like any other
 me.broadcast("estop")                            # everything in the room stops
@@ -49,6 +49,10 @@ me.invoke("so101", "resume", approved_by=me.operator)                           
 
 On a network you trust, `authority.Authority(trust_names=True)` accepts the operator who pressed the stop by name
 instead. Names are trusted without asking only when every transport is in-process (`mem://`).
+
+A remote `act` takes the same arguments as `Robot.act`: on its own it moves one control step toward the targets,
+`steps=` advances the world that many, and `seconds=` (up to 10) reaches the pose before it answers. The watchdog
+counts a reach in progress as its caller waiting, not as silence; the agent tool `use_mesh` offers `seconds` too.
 
 Mount a real robot with `watchdog_ms=None` and it is served observe-only: `observe` and `describe` still
 answer, but `act` and `hold` are refused by name, because with no watchdog a mover that vanished would leave
