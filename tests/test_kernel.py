@@ -331,6 +331,18 @@ def test_k7_a_fault_on_one_robot_stops_both_and_the_other_never_acts_that_tick()
     sim.close()
 
 
+def test_k7_a_start_pose_ramps_each_robot_before_the_lockstep_loop():
+    """Simulation.run takes a start_pose policy to its pose before step one, as Robot.run does; a robot whose policy
+    names no start_pose is left where it is."""
+    sim, a, b = _pair()
+    res = sim.run({a: _FromReady(), b: lambda o: {}}, steps=1)
+    assert res["a"].steps == res["b"].steps == 1
+    q = a.observe().joints.positions
+    assert q[0] == pytest.approx(0.6, abs=0.1) and q[2] == pytest.approx(-0.4, abs=0.1)
+    assert abs(b.observe().joints.positions[0]) < 0.1  # b named no start_pose: not moved
+    sim.close()
+
+
 def test_k7_lockstep_honours_a_stop_event():
     sim, a, b = _pair()
     ev = threading.Event()
