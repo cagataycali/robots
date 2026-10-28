@@ -208,11 +208,9 @@ class Simulation(_SceneOps):
         return lockstep(self, bodies, hz=hz, seconds=seconds, steps=steps, instruction=instruction, units=units)  # type: ignore[arg-type]
 
     def pose(self, body: str) -> Pose:
-        """Where a robot base or object is now: position m, orientation quaternion w,x,y,z."""
-        if body not in self._robots and not any(o.name == body for o in self.scene.objects):
-            raise KeyError(f"no body {body!r} in this world")
+        """Where a robot base, an object or a robot link (``"so101/gripper"``) is now: position m, quat w,x,y,z."""
         with self.lock:
-            return self.backend.body_pose(body)
+            return self.backend.body_pose(_describe.known(self, body))
 
     @property
     def tool(self) -> Any:
