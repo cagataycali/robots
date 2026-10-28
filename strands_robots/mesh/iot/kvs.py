@@ -34,8 +34,10 @@ def stream_name(tenant: str, device_id: str, camera: str) -> str:
 
 
 def cameras_of(manifest: Mapping[str, Any]) -> list[str]:
+    """The bare camera names (``wrist``), keys of ``observe(images=True).images``; the manifest says ``wrist.image``."""
+    sensors = manifest.get("sensors") or ()
     return [
-        str(s["name"]) for s in manifest.get("sensors") or () if isinstance(s, Mapping) and s.get("kind") == "camera"
+        str(s["name"]).removesuffix(".image") for s in sensors if isinstance(s, Mapping) and s.get("kind") == "camera"
     ]
 
 
@@ -74,10 +76,7 @@ def ensure_stream(kv: Any, name: str, *, retention_hours: int = 24) -> str:
         try:
             call(**kw)
         except ClientError as exc:
-            if exc.response.get("Error", {}).get("Code") not in (
-                "ResourceInUseException",
-                "AccountStreamLimitExceededException",
-            ):
+            if exc.response.get("Error", {}).get("Code") != "ResourceInUseException":  # only "it exists" is fine
                 raise
     return name
 

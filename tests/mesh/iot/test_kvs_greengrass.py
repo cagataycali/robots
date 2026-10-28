@@ -15,8 +15,8 @@ RECORD = {
     "tenant": "lab",
     "labels": {},
     "manifest": {"sensors": [{"name": "shoulder_pan.pos", "unit": "rad", "kind": "joint"},
-                             {"name": "camera1", "unit": "rgb", "kind": "camera"},
-                             {"name": "wrist", "unit": "rgb", "kind": "camera"}]},
+                             {"name": "camera1.image", "unit": "rgb8", "kind": "camera"},
+                             {"name": "wrist.image", "unit": "rgb8", "kind": "camera"}]},
 }  # fmt: skip
 
 
@@ -27,6 +27,37 @@ def test_one_stream_and_channel_per_camera_sensor_with_legal_names():
     assert all(re.fullmatch(r"[a-zA-Z0-9_.-]{1,256}", e["stream"]) for e in entries)
     assert kvs.stream_name("lab", "arm", "cam:top") == "strands-lab-arm-cam-top"
     assert kvs.cameras_of({}) == []
+
+
+def test_camera_names_are_the_keys_observe_returns_for_the_record_the_mesh_builds():
+    from strands_robots import Robot, Simulation
+    from strands_robots.mesh.record import record
+
+    sim = Simulation()
+    arm = Robot("so101", sim=sim)
+    sim.camera("wrist", size=(32, 24), attach=arm)
+    rec = record(arm, "arm-1", {}, "lab", ())
+    assert kvs.cameras_of(rec["manifest"]) == sorted(arm.observe(images=True).images) == ["wrist"]
+    assert [e["stream"] for e in kvs.camera_entries(rec, "us-west-2")] == ["strands-lab-arm-1-wrist"]
+
+
+@pytest.mark.parametrize(("code", "raises"), [("ResourceInUseException", False),
+                                              ("AccountStreamLimitExceededException", True),
+                                              ("AccountChannelLimitExceededException", True)])  # fmt: skip
+def test_ensure_stream_passes_only_an_existing_resource(code, raises):
+    from botocore.exceptions import ClientError
+
+    class Kv:
+        def _refuse(self, **kw):
+            raise ClientError({"Error": {"Code": code, "Message": code}}, "Create")
+
+        create_stream = create_signaling_channel = _refuse
+
+    if raises:
+        with pytest.raises(ClientError, match=code):
+            kvs.ensure_stream(Kv(), "s")
+    else:
+        assert kvs.ensure_stream(Kv(), "s") == "s"
 
 
 def test_pipeline_is_the_measured_one_and_clip_window_pads_the_run():
