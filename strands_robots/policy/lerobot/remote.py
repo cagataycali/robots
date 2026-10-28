@@ -13,7 +13,7 @@ chunked deployment.
 from __future__ import annotations
 
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -67,17 +67,23 @@ class ZenohPolicy:
         endpoint: str,
         deployment: str,
         execution: Execution = "auto",
+        start_pose: Mapping[str, float] | Sequence[float] | None = None,
+        start_seconds: float = 3.0,
         tasks: Sequence[str] | None = None,
         **settings: Any,
     ) -> None:
-        """``tasks``: the instructions the deployment was trained on; ``run(instruction=)`` with any other string is
-        refused naming them, before the first frame goes out. Left out, the server's descriptor may say (``tasks``);
-        else any instruction is sent."""
+        """``execution``: see the module docstring. ``start_pose`` (the deployment's units; a mapping of joint -> value
+        or a full vector) is where its episodes begin: ``robot.run`` ramps there over ``start_seconds`` first. Left
+        out, the server's descriptor may say (``start_pose``); else the run begins where the body is. ``tasks``: the
+        instructions it was trained on — any other ``run(instruction=)`` is refused naming them before a frame goes
+        out; left out, the descriptor may say (``tasks``); else any instruction is sent."""
         if execution not in EXECUTIONS:
             raise ValueError(f"execution must be one of {', '.join(map(repr, EXECUTIONS))}, got {execution!r}")
         self.endpoint, self.deployment, self.settings = endpoint, deployment, settings
         self.asked: Execution = execution
         self.execution: str | None = None  # resolved at attach, from the server
+        self._start_pose, self.start_seconds = start_pose, float(start_seconds)
+        self.start_pose: Mapping[str, float] | Sequence[float] | None = start_pose
         self._tasks = None if tasks is None else tuple(str(t) for t in tasks)
         self.tasks: tuple[str, ...] = self._tasks or ()
         self.contract: Contract | None = None
@@ -147,6 +153,9 @@ class ZenohPolicy:
         if self._tasks is None:  # the server's word on what it was trained to do, when it has one
             said = client.descriptor.get("tasks")
             self.tasks = tuple(str(t) for t in said) if isinstance(said, list | tuple) else ()
+        if self._start_pose is None:  # the server's word on where its episodes begin, when it has one
+            said = client.descriptor.get("start_pose")
+            self.start_pose = said if isinstance(said, Mapping | list | tuple) and len(said) else None
         if execution == "sequential":  # no engine: ``act`` asks for a chunk only when the queue is empty
             self._seq = Sequential(client, contract, repr(self), self.calls)
             return
@@ -231,4 +240,4 @@ class ZenohPolicy:
 
     def __repr__(self) -> str:
         mode = "" if self.asked == "auto" else f", execution={self.asked!r}"
-        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}'{mode})"  # tls/… stays visible
+        return f"Policy('zenoh://{self.endpoint.removeprefix('tcp/')}/{self.deployment}'{mode})"
