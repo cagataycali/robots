@@ -80,9 +80,9 @@ class _SceneOps:
                 items.pop()
                 raise
 
-    def remove(self, robot: Member | str) -> None:
+    def remove(self, name: Member | str) -> None:
         """Take a robot, object or camera out of this world, by name (to move a camera: remove it, add it again)."""
-        rid = robot if isinstance(robot, str) else robot.id
+        rid = name if isinstance(name, str) else name.id
         if rid not in self._robots:
             with self.lock:
                 objs = [o for o in self.scene.objects if o.name != rid]
@@ -120,7 +120,9 @@ class _SceneOps:
         color: tuple[float, float, float, float] | None = None,
         free: bool = True,
     ) -> Object:
-        """Add a shape, or a mesh/MJCF file (path); position m, orientation quaternion w,x,y,z, color RGBA 0-1."""
+        """Add a shape, or a mesh/MJCF file (path); position m, orientation quaternion w,x,y,z, color RGBA 0-1; size m
+        from the centre out (MuJoCo half-sizes): a box's three half-sides, a sphere's radius, a cylinder's or a
+        capsule's radius and half-length, so the default (0.05, 0.05, 0.05) is a 10 cm cube."""
         self._open()
         if (shape is None) == (path is None):
             raise ValueError("add_object needs exactly one of shape= or path=")
@@ -228,6 +230,7 @@ class _SceneOps:
             return _randomize.scales(self.scene)
 
     def contacts(self) -> list[Contact]:
+        """Every touching pair now: the two bodies, the contact point m (world frame), its normal and force N."""
         with self.lock:  # a GPU solver mirrors its state into the CPU world on this read
             self._flush()
             return self.backend.contacts()

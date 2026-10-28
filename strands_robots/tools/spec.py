@@ -29,9 +29,31 @@ def handler(device: Any, rpc: str) -> Callable[..., Any]:
     return fn
 
 
+def _plain(text: str) -> str:
+    return " ".join(text.replace("``", "").split())
+
+
 def summary(fn: Callable[..., Any]) -> str:
-    doc = inspect.getdoc(fn) or ""
-    return doc.splitlines()[0] if doc else ""
+    """The first paragraph of ``fn``'s docstring on one line, RST markup dropped: what a model reads per rpc."""
+    return _plain((inspect.getdoc(fn) or "").split("\n\n")[0])
+
+
+def details(fn: Callable[..., Any]) -> str:
+    """The rest of ``fn``'s docstring, the same way: the description of the rpc's argument object."""
+    return _plain((inspect.getdoc(fn) or "").partition("\n\n")[2])
+
+
+def joints(device: Any) -> dict[str, dict[str, Any]]:
+    """Action key -> its control's unit and range from the manifest (empty when the manifest has no such control)."""
+    out: dict[str, dict[str, Any]] = {}
+    for k in getattr(device, "action_keys", ()):
+        c = next((c for c in getattr(device.manifest, "controls", ()) if c.name in (f"{k}.pos", k)), None)
+        out[k] = (
+            {}
+            if c is None
+            else {"description": c.unit, "minimum": round(c.range[0], 3), "maximum": round(c.range[1], 3)}
+        )
+    return out
 
 
 def tool_name(prefix: str, ident: str) -> str:
@@ -45,7 +67,8 @@ def tool_name(prefix: str, ident: str) -> str:
 def tool_spec(device: Any, *, prefix: str = "robot", policies: tuple[str, ...] = ()) -> dict[str, Any]:
     """The JSON-safe tool spec of ``device``, generated from its rpcs and their signatures; ``policies`` are the
     registered handles ``run`` takes by name (with exactly one, ``policy`` is optional)."""
-    joints = tuple(getattr(device, "action_keys", ()))
+    keys = joints(device)
+    robot = getattr(device.manifest, "name", None)
     names = rpc_names(device)
     fns = {n: handler(device, n) for n in names}
     props: dict[str, Any] = {
@@ -56,9 +79,15 @@ def tool_spec(device: Any, *, prefix: str = "robot", policies: tuple[str, ...] =
         }
     }
     for n, f in fns.items():
-        params = parameters(f, joints=joints, exclude=DEVELOPER_ONLY_ARGS)
-        if n == "run" and policies and "policy" in params["properties"]:
-            pol = params["properties"]["policy"]
+        params = parameters(f, joints=keys, exclude=DEVELOPER_ONLY_ARGS)
+        if more := details(f):
+            params["description"] = more
+        pol = params["properties"].get("policy") if n == "run" else None
+        if pol is not None and isinstance(robot, str):  # the presets that drive THIS robot, not every shipped one
+            from ..policy.factory import spec_help
+
+            pol["description"] = spec_help(robot)
+        if pol is not None and policies:
             pol["description"] = (pol.get("description") or "").rstrip(". ") + (
                 f". Registered policies, by name: {', '.join(policies)}"
                 + (" (the only one: may be left out)" if len(policies) == 1 else "")
@@ -68,8 +97,8 @@ def tool_spec(device: Any, *, prefix: str = "robot", policies: tuple[str, ...] =
         if params["properties"]:
             props[n] = params
     about = f"{device.id}: call one rpc; its arguments go under the property named after it."
-    if joints:
-        about += f" Joints: {list(joints)}."
+    if keys:
+        about += f" Joints: {list(keys)}."
     return {
         "name": tool_name(prefix, device.id),
         "description": about,
