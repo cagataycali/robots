@@ -42,14 +42,24 @@ class Sequential:
             raise ValueError(
                 f"{self.who} refused the instruction: {len(task)} characters; the deployment allows {limit}"
             )
-        self.task, self._gen = task, self._gen + 1
-        self._queue.clear()
-        self._inflight = None
+        self._supersede(task)
 
     def close(self) -> None:
-        self._gen += 1
-        self._queue.clear()
-        self._inflight = None
+        self._supersede(None)
+
+    def _supersede(self, task: str | None) -> None:
+        """Drop the old plan: the queue, a reply that landed but was not consumed yet, and the request in flight.
+
+        All under the lock the worker takes before it stores a reply, so a chunk that lands in the same instant is
+        either dropped here or dropped by the worker's generation check: never played under the new instruction.
+        The worker thread is kept in ``_inflight`` until it has exited (``cancelled`` ends its wait promptly), so the
+        next request waits for the superseded one to drain instead of racing it for the one ``/act`` subscriber.
+        """
+        with self._lock:
+            self.task = task
+            self._gen += 1
+            self._queue.clear()
+            self._reply = None
 
     def _request(self, features: dict[str, np.ndarray]) -> None:
         """Send one frame for a whole chunk on a worker thread; a later ``step`` picks the reply up."""
@@ -65,15 +75,16 @@ class Sequential:
         )
         req = ChunkRequest(snap, empty, uuid4().hex, 0, ExecutionMode.CHUNK, 0, now, 0.0)
         gen, client = self._gen, self.client
+        superseded = lambda: gen != self._gen  # noqa: E731  (retarget/close end this request's wait promptly)
 
         def go() -> None:
             t0 = time.monotonic()
             try:
-                reply: Any = client.infer(req)
+                reply: Any = client.infer(req, cancelled=superseded)
             except Exception as e:  # noqa: BLE001  (raised on the loop's thread as a PolicyFault, by name)
                 reply = e
             with self._lock:
-                if gen == self._gen:
+                if gen == self._gen:  # a reply for a superseded plan (or its RequestCancelled) is dropped
                     self._reply = (reply, t0, time.monotonic())
 
         self._inflight = threading.Thread(target=go, name=f"zenoh-infer-{client.config.deployment}", daemon=True)
@@ -83,9 +94,10 @@ class Sequential:
         """One tick: the next row of the plan, or None (hold) while the chunk for this frame is on its way."""
         with self._lock:
             reply, self._reply = self._reply, None
+        if self._inflight is not None and not self._inflight.is_alive():
+            self._inflight = None  # its reply is in ``reply`` now, or was dropped as superseded
         if reply is not None:
             chunk, t0, t1 = reply
-            self._inflight = None
             if isinstance(chunk, Exception):
                 raise PolicyFault(f"{self.who}: {type(chunk).__name__}: {chunk}")
             rows = self.contract.to_keys_chunk(chunk.canonical_actions.detach().cpu().numpy())
@@ -99,7 +111,7 @@ class Sequential:
                 }
             )
         if not self._queue and self._inflight is None:  # the queue is EMPTY: this still frame is the observation
-            self._request(frame)
+            self._request(frame)  # (never while a superseded request is still draining: one infer per client)
         if self._queue:
             return np.asarray(self._queue.popleft(), dtype=float)
         return None  # waiting for the chunk: hold (the loop writes nothing, counts a hold, never a miss)

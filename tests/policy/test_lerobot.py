@@ -135,7 +135,9 @@ def test_a_sequential_session_sends_the_instruction_with_every_chunk(deployment,
 
     tasks = []
     infer = RemoteClient.infer
-    monkeypatch.setattr(RemoteClient, "infer", lambda self, req: tasks.append(req.observation.task) or infer(self, req))
+    monkeypatch.setattr(
+        RemoteClient, "infer", lambda self, req, **kw: tasks.append(req.observation.task) or infer(self, req, **kw)
+    )
     cfg, server = deployment()
     with server as url:
         arm, p = _arm(), Policy(url)  # auto: a chunk-only deployment with no RTC contract runs sequentially
@@ -153,7 +155,7 @@ def test_a_sequential_session_asks_only_when_its_queue_is_empty(deployment, monk
 
     requests = []
     infer = RemoteClient.infer
-    monkeypatch.setattr(RemoteClient, "infer", lambda self, req: requests.append(req) or infer(self, req))
+    monkeypatch.setattr(RemoteClient, "infer", lambda self, req, **kw: requests.append(req) or infer(self, req, **kw))
     cfg, server = deployment()
     with server as url:
         arm, p = _arm(), Policy(url, execution="sequential")
