@@ -19,4 +19,4 @@ mesh". Every notebook is saved with its videos and numbers, so you can read it o
 | [07 · dashboard](https://github.com/strands-labs/robots/blob/dev/notebooks/07_dashboard.ipynb) | the twin in a browser |
 | [08 · GPU backends](https://github.com/strands-labs/robots/blob/dev/notebooks/08_gpu_backends.ipynb) | Isaac and Newton |
 
-Want to run them? `uv pip install -e ".[mujoco,onnx,lerobot,mesh,tools,dashboard]" ipykernel av` (plus LeRobot, see the [quickstart](quickstart.md)) and open the folder.
+Want to run them? `uv pip install -e ".[all]" ipykernel nbconvert av` (plus LeRobot, see the [quickstart](quickstart.md)) and open the folder.
