@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -30,8 +31,21 @@ class ZenohPolicy:
     realtime = True  # LeRobot ages observations and paces chunks on time.monotonic()
     requires_position_hold = True  # LeRobot admits only a robot that holds between motor ticks
 
-    def __init__(self, *, endpoint: str, deployment: str, **settings: Any) -> None:
+    def __init__(
+        self,
+        *,
+        endpoint: str,
+        deployment: str,
+        start_pose: Mapping[str, float] | Sequence[float] | None = None,
+        start_seconds: float = 3.0,
+        **settings: Any,
+    ) -> None:
+        """``start_pose`` (the deployment's units; a mapping of joint -> value or a full vector) is where its episodes
+        begin: ``robot.run`` ramps there over ``start_seconds`` first. Left out, the server's descriptor may say
+        (``start_pose``); else the run begins where the body is."""
         self.endpoint, self.deployment, self.settings = endpoint, deployment, settings
+        self._start_pose, self.start_seconds = start_pose, float(start_seconds)
+        self.start_pose: Mapping[str, float] | Sequence[float] | None = start_pose
         self.contract: Contract | None = None
         self.hz: float | None = None
         self._engine: Any = None
@@ -85,6 +99,9 @@ class ZenohPolicy:
         from lerobot.utils.action_interpolator import ActionInterpolator
 
         self.contract, self._client, self.hz = contract, client, 1.0 / caps.action_interval
+        if self._start_pose is None:  # the server's word on where its episodes begin, when it has one
+            said = client.descriptor.get("start_pose")
+            self.start_pose = said if isinstance(said, Mapping | list | tuple) and len(said) else None
         self._engine = RemoteInferenceEngine(client, config, task="")
         self._interp = ActionInterpolator(multiplier=1)
         self._engine.start()

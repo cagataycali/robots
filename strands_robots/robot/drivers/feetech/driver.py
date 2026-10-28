@@ -16,6 +16,7 @@ from ....description import Description
 from ....types import JointState, Pose
 from ..calibration import Calibration, JointCalibration, lerobot_calibration_candidates, lerobot_calibration_path
 from ..cameras import Cameras
+from ..slew import MAX_SPEED, Slew
 from .bus import (
     REG_GOAL_POSITION,
     REG_HOMING_OFFSET,
@@ -45,9 +46,13 @@ class FeetechDriver:
         calibration: str | Path | Mapping[str, Any] | Calibration | None = None,
         robot_id: str | None = None,
         bus: FeetechBus | None = None,
+        max_speed: float | None = MAX_SPEED,
     ) -> None:
+        """``max_speed`` (rad/s) caps how far one write may move a joint from the last goal (``slew.Slew``);
+        ``None`` writes every goal as given."""
         if port is None and bus is None:
             raise ValueError("FeetechDriver needs port= (e.g. /dev/tty.usbmodem...)")
+        self.slew = Slew(max_speed)
         self.description = description
         self.names = description.action_keys
         # motor ids: the registry labels model joints "1".."6" -> the label; fall back to 1..n in action order
@@ -125,11 +130,15 @@ class FeetechDriver:
             cmin, cmax, lo, hi, rev = self._span(name)
             vel.append(decode_sm(r[2:4], 15) * (hi - lo) / (cmax - cmin) * (-1 if rev else 1))
             load.append(decode_sm(r[4:6], 10) / 1000.0)  # fraction of max torque, signed
+        self.slew.seen(np.array(pos))
         return JointState(self.names, np.array(pos), np.array(vel), np.array(load))
 
     def write(self, targets: np.ndarray) -> None:
         # Every goal is computed (and a non-finite target refused) BEFORE torque comes on, so a refused
         # write leaves a limp arm limp instead of stiffening it against a stale Goal_Position.
+        if not np.all(np.isfinite(np.asarray(targets, dtype=float))):
+            raise ValueError(f"{self.description.name}: non-finite goal {np.asarray(targets).tolist()}")
+        targets = self.slew.apply(targets)
         goals = {
             mid: word(self.rad_to_counts(n, float(t))) for n, mid, t in zip(self.names, self.ids, targets, strict=True)
         }
@@ -145,7 +154,12 @@ class FeetechDriver:
         return self.cameras.read()
 
     def extras(self) -> Mapping[str, Any]:
-        return {"torque": self._torque_on, "calibration": self.calibration_source or "none (raw full-turn counts)"}
+        return {
+            "torque": self._torque_on,
+            "calibration": self.calibration_source or "none (raw full-turn counts)",
+            "max_speed": self.slew.max_speed,
+            "slewed": self.slew.count,
+        }
 
     def hold(self) -> None:
         """Goal_Position := Present_Position, under torque (gravity-loaded joints keep their pose)."""
@@ -159,6 +173,8 @@ class FeetechDriver:
     def torque(self, on: bool) -> None:
         self.bus.torque(self.ids, on)
         self._torque_on = on
+        if not on:
+            self.slew.release()
 
     def calibrate(
         self, *, interactive: bool = True, save: bool = True, prompt: Any = input, sweep_seconds: float = 20.0
@@ -213,7 +229,6 @@ class FeetechDriver:
 
     def close(self) -> None:
         if self._torque_on:
-            self.bus.torque(self.ids, False)
-            self._torque_on = False
+            self.torque(False)
         self.cameras.close()
         self.bus.close()
