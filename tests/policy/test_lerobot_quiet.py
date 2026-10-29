@@ -49,7 +49,7 @@ def test_overlapping_loads_leave_stdout_and_other_threads_prints_alone(capsys):
 
     from lerobot.policies import pretrained
 
-    from strands_robots.policy.lerobot.contract import quiet_load
+    from strands_robots.policy.lerobot.quiet import quiet_load
 
     real, both_in, a_out = sys.stdout, threading.Barrier(3), threading.Event()
 

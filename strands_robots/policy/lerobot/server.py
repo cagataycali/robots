@@ -7,7 +7,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from .contract import lerobot, quiet_load
+from .contract import lerobot
+from .quiet import quiet_load
 
 
 @contextmanager

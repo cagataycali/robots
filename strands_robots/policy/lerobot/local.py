@@ -11,7 +11,8 @@ import numpy as np
 from ...types import Observation
 from ...units import Units
 from ..requirements import Requirements
-from .contract import Contract, lerobot, quiet_load, server_config
+from .contract import Contract, lerobot, server_config
+from .quiet import quiet_load
 
 if TYPE_CHECKING:
     from ...description import Description
