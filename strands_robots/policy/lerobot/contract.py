@@ -15,6 +15,7 @@ from ...types import Observation
 from ...units import Units, lerobot_units, semantics_for, units_for_semantics
 from ...units.semantics import table
 from ..requirements import Requirements
+from .quiet import quiet_load
 
 if TYPE_CHECKING:
     from lerobot.remote_inference.configs import ServerConfig
@@ -185,7 +186,8 @@ def server_config(
     from lerobot.transport import ZenohConfig
 
     artifact = resolve_artifact(checkpoint, revision)
-    cfg = PreTrainedConfig.from_pretrained(artifact)
+    with quiet_load():  # only its features are read here; ModelConfig below carries the device
+        cfg = PreTrainedConfig.from_pretrained(artifact)
     sem = semantics or semantics_for(description, dict(norm) if norm is not None else None)
     check_units(description, artifact, checkpoint, sem)
     names = tuple(f"{k}.pos" for k in description.action_keys)
