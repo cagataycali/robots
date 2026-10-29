@@ -134,7 +134,7 @@ def _loop(
     max_steps = steps if steps is not None else (int(round(seconds * hz)) if seconds is not None else None)
     n, holds, stops0, fault = 0, 0, robot.estop_latch.count, None
     last: np.ndarray | None = None  # the latest written targets: what a held tick records as its action
-    why: StoppedBy = "steps"
+    why: StoppedBy = "steps" if steps is not None else "seconds"  # the limit the caller gave, when it is the one hit
     always = robot.sim is None or stop_when is not None or ep.wants_images  # a recorded step keeps its cameras
     pacer = None
     if robot.sim is None or realtime or bound.realtime:  # hardware (or a watched world): pace on the body's clock
