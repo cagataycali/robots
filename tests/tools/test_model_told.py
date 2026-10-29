@@ -8,6 +8,7 @@ import pytest
 from strands_robots import Robot, Simulation
 from strands_robots.policy.factory import spec_help
 from strands_robots.tools import tool_spec
+from strands_robots.tools.call import dispatch
 from strands_robots.tools.world import WorldDevice
 
 
@@ -40,7 +41,8 @@ def test_act_carries_each_joints_unit_and_range(specs):
     joints = props["robot"]["act"]["properties"]["action"]["properties"]
     for key in arm.action_keys:
         lo, hi = arm.manifest.control(f"{key}.pos").range
-        assert joints[key] == {"type": "number", "description": "rad", "minimum": round(lo, 3), "maximum": round(hi, 3)}
+        j = joints[key]
+        assert j["description"] == "rad" and lo <= j["minimum"] < j["maximum"] <= hi and j["minimum"] - lo < 1e-3
     assert "seconds" in props["robot"]["act"]["description"]  # the rest of the docstring rides on the arguments
 
 
@@ -80,5 +82,17 @@ def test_a_joint_without_a_hard_limit_is_a_number_with_no_bounds():
         joints = tool_spec(panda)["inputSchema"]["json"]["properties"]["act"]["properties"]["action"]["properties"]
         assert joints["actuator8"] == {"type": "number", "description": "rad"}
         assert "minimum" in joints["joint1"]
+    finally:
+        sim.close()
+
+
+@pytest.mark.parametrize("end", ["minimum", "maximum"])
+def test_every_advertised_bound_is_one_the_gate_accepts(end):
+    sim = Simulation()
+    try:
+        arm = Robot("so101", sim=sim)
+        joints = tool_spec(arm)["inputSchema"]["json"]["properties"]["act"]["properties"]["action"]["properties"]
+        for key in arm.action_keys:  # rounded to nearest, -0.1745 became -0.175: past the hard range, refused
+            dispatch(arm, {"rpc": "act", "act": {"action": {key: joints[key][end]}}})
     finally:
         sim.close()
