@@ -21,4 +21,4 @@ mesh". Every notebook is saved with its videos and numbers, so you can read it o
 | [09 · mesh](https://github.com/strands-labs/robots/blob/dev/notebooks/09_mesh.ipynb) | robots across processes |
 | [10 · GPU backends](https://github.com/strands-labs/robots/blob/dev/notebooks/10_gpu_backends.ipynb) | Isaac Sim and MuJoCo-Warp, measured on an L40S |
 
-Want to run them? `uv pip install -e ".[mujoco,onnx,lerobot,mesh,tools,dashboard]" ipykernel av` (plus LeRobot, see the [quickstart](quickstart.md)) and open the folder.
+Want to run them? `uv pip install -e ".[all]" ipykernel nbconvert av` (plus LeRobot, see the [quickstart](quickstart.md)) and open the folder.

@@ -25,15 +25,13 @@ From the repository root, Python 3.12:
 
 ```bash
 uv venv -p 3.12 && source .venv/bin/activate
-uv pip install -e ".[mujoco,onnx,tools,mesh,dashboard]" ipykernel nbconvert av
-uv pip install -e ".[lerobot]" \
-  "lerobot[remote,feetech,dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"  # 02, 05, 06
+uv pip install -e ".[all]" ipykernel nbconvert av playwright
+uv pip install "lerobot[remote,feetech,dataset] @ git+https://github.com/huggingface/lerobot@53feaef37b67e8f4c23b6953e880ff535e39d6fe"  # 02, 05, 06
 playwright install chromium                                                                    # 07
 python notebooks/scripts/00_quickstart.py        # or: jupyter lab notebooks/
 ```
 
 The LeRobot commit is the one `strands_robots/_extras.py` names (LeRobot's PyPI release predates `remote_inference`).
-Both lines were checked in a fresh venv on macOS arm64. There is no `[all]` extra: `uv pip install ".[all]"` installs the core only, without `strands-agents`.
 03 and 04 call a model; they use Amazon Bedrock when `AWS_BEARER_TOKEN_BEDROCK` (or AWS credentials) is set.
 
 ## Editing
