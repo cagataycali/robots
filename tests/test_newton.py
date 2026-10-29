@@ -123,7 +123,7 @@ def test_concurrent_estops_stop_a_background_run():
 
 @pytest.mark.parametrize(("verb", "args"), [("reach", ("so101",)), ("move_camera", (None, None))])
 def test_a_view_read_takes_the_mirror_lock_and_syncs_first(verb, args, monkeypatch):
-    # reach() / move_camera() run mj_* on the shared MjData; the e-stop's read syncs it under _mirror only (no GPU needed)
+    # reach() / move_camera() run mj_* on the shared MjData; the e-stop syncs it under _mirror only (no GPU needed)
     from strands_robots.simulation.backends.mujoco.view import View
     from strands_robots.simulation.backends.newton.backend import NewtonBackend
 
