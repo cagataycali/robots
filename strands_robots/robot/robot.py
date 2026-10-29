@@ -69,6 +69,7 @@ class Robot(DeviceVerbs):
         self.twin: Robot | None = None  # on a hardware Robot: the simulated body that mirrors it
         self.twin_of: Robot | None = None  # on that twin: the hardware Robot it mirrors
         self._task: Task | None = None
+        self._held: np.ndarray | None = None  # the last targets written: what a joint an Action omits keeps
         self._body: Body | None = None
         self._bus_lock = threading.RLock()  # a hardware body: one half-duplex bus shared by every thread
         self.clock: Clock = clock or MONOTONIC  # a world's robot reads its world's time, set below
@@ -118,8 +119,7 @@ class Robot(DeviceVerbs):
         return self.sim.lock if self.sim is not None else self._bus_lock
 
     def detached(self) -> None:
-        self._body = None
-        self.sim = None
+        self._body = self.sim = None
 
     @property
     def action_keys(self) -> tuple[str, ...]:
@@ -211,6 +211,7 @@ class Robot(DeviceVerbs):
 
         if not isinstance(self.body, Driver):
             raise RuntimeError("calibrate() is for hardware; a simulated body needs no calibration")
+        self._held = None  # torque goes off and the arm is moved by hand: no old target survives it
         return self.body.calibrate(interactive=interactive)
 
     def coerce(self, action: Action, *, clip: bool = True, measured: np.ndarray | None = None) -> np.ndarray:
