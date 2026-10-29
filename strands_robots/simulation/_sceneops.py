@@ -4,6 +4,7 @@ never sees them disagree; ``simulation.py`` keeps the world's lifecycle and time
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -44,10 +45,7 @@ class _SceneOps:
     def unique_id(self, want: str) -> str:
         if want not in self._robots:
             return want
-        n = 2
-        while f"{want}_{n}" in self._robots:
-            n += 1
-        return f"{want}_{n}"
+        return next(f"{want}_{n}" for n in itertools.count(2) if f"{want}_{n}" not in self._robots)
 
     def add(
         self,
@@ -121,8 +119,7 @@ class _SceneOps:
         free: bool = True,
     ) -> Object:
         """Add a shape, or a mesh/MJCF file (path); position m, orientation quaternion w,x,y,z, color RGBA 0-1; size m
-        from the centre out (MuJoCo half-sizes): a box's three half-sides, a sphere's radius, a cylinder's or a
-        capsule's radius and half-length, so the default (0.05, 0.05, 0.05) is a 10 cm cube."""
+        as half-sizes (box half-sides, sphere radius, cylinder/capsule radius, half-length): 0.05 = 10 cm cube."""
         self._open()
         if (shape is None) == (path is None):
             raise ValueError("add_object needs exactly one of shape= or path=")
