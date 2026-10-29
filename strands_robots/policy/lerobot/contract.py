@@ -112,13 +112,15 @@ class Contract:
 _CAN_EMIT = {"range_m100_100": (-100.0, 100.0), "range_0_100": (0.0, 100.0), "degrees": (-180.0, 180.0)}
 
 
-def _misfit(units: Units, stats: Mapping[str, np.ndarray]) -> str | None:
-    """The first saved min/max that LeRobot's normalizer cannot emit in ``units``' mode, or None."""
+def _misfit(units: Units, stats: Mapping[str, np.ndarray], graded: set[str]) -> str | None:
+    """The first saved min/max of a ``graded`` joint that LeRobot's normalizer cannot emit in its mode, or None."""
     for feat in (STATE, ACTION):
         mn, mx = stats.get(f"{feat}.min"), stats.get(f"{feat}.max")
         if mn is None or mx is None or len(mn) != len(units.keys):
             continue
         for i, (k, mode) in enumerate(zip(units.keys, units.modes, strict=False)):
+            if k not in graded:
+                continue
             lo, hi = _CAN_EMIT.get(mode, (-np.inf, np.inf))
             if mn[i] < lo - 1e-3 or mx[i] > hi + 1e-3:
                 return f"{feat} {k} spans {mn[i]:.1f}..{mx[i]:.1f}, impossible in {mode} ({lo:.0f}..{hi:.0f})"
@@ -130,7 +132,8 @@ def check_units(description: Description, artifact: Path, checkpoint: str, seman
 
     A LeRobot checkpoint saves its dataset's per-joint min/max (``policy_preprocessor_*normalizer*.safetensors``).
     A degrees dataset read as ``range_m100_100`` drives a joint toward its limit; this names the joint and the
-    labels its numbers do fit. A checkpoint that saved no min/max (mean/std only) is not checked.
+    labels its numbers do fit. Only a joint some row of this robot reads in another mode is graded: a misfit no
+    label can change (the gripper, a pre-clamp or sim-recorded excursion) is no evidence. No min/max: not checked.
     """
     files = sorted(artifact.glob("policy_preprocessor*normalizer*.safetensors"))
     units = units_for_semantics(semantics, description)
@@ -139,12 +142,14 @@ def check_units(description: Description, artifact: Path, checkpoint: str, seman
     from safetensors.numpy import load_file
 
     stats = load_file(str(files[0]))
-    why = _misfit(units, stats)
-    if why is None:
-        return
     mine = {k: v["lerobot_norm"] for k, v in table().items() if "lerobot_norm" in v and k != semantics}
     rows = [n for k, n in mine.items() if k.startswith(f"{description.name}-")]
-    fits = [f"norm={n}" for n in rows if _misfit(lerobot_units(description, n), stats) is None]
+    modes = [dict(zip(u.keys, u.modes, strict=False)) for u in [units, *(lerobot_units(description, n) for n in rows)]]
+    graded = {k for k in units.keys if len({m.get(k) for m in modes}) > 1}
+    why = _misfit(units, stats, graded)
+    if why is None:
+        return
+    fits = [f"norm={n}" for n in rows if _misfit(lerobot_units(description, n), stats, graded) is None]
     raise ValueError(
         f"{checkpoint} was not trained in {semantics}: its saved stats say {why}. "
         f"Pass the units its data was recorded in ({' or '.join(fits) or 'semantics=<label>'})"

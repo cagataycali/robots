@@ -330,6 +330,7 @@ def test_two_robots_in_one_world_each_on_its_own_deployment(deployment, tiny_act
 DEGREES = {"*": "degrees", "gripper": "range_0_100"}
 WRIST_IN_DEGREES = ([-66.4, -108.5, -53.2, 27.5, -155.6, 11.1], [19.9, 41.0, 96.4, 100.4, -71.6, 98.9])  # a real SO-101
 DEGREES_PAST_THE_CLAMP = ([-90.0, -95.0, -80.0, -106.1, -99.0, 2.0], [90.0, 95.0, 80.0, 115.9, 99.0, 98.0])  # a Hub ACT
+GRIPPER_BELOW_ZERO = ([-60.0, -106.4, -50.0, 20.0, -90.0, -1.1], [60.0, 66.5, 90.0, 95.0, 90.0, 65.2])  # a Hub ACT
 WITHIN_RANGE = ([-90.0, -95.0, -80.0, -70.0, -99.0, 2.0], [90.0, 95.0, 80.0, 70.0, 99.0, 98.0])  # a range-mode dataset
 
 
@@ -341,6 +342,8 @@ WITHIN_RANGE = ([-90.0, -95.0, -80.0, -70.0, -99.0, 2.0], [90.0, 95.0, 80.0, 70.
         (WRIST_IN_DEGREES, {"norm": DEGREES}, None, "so101-degrees-gripper-percent-v1"),
         (DEGREES_PAST_THE_CLAMP, {}, "wrist_flex spans -106.1..115.9", None),  # past range's clamp: not range
         (DEGREES_PAST_THE_CLAMP, {"norm": DEGREES}, None, "so101-degrees-gripper-percent-v1"),  # past sim limits
+        (GRIPPER_BELOW_ZERO, {}, "shoulder_lift spans -106.4..66.5", None),  # a body joint still decides
+        (GRIPPER_BELOW_ZERO, {"norm": DEGREES}, None, "so101-degrees-gripper-percent-v1"),  # no label moves the gripper
         (WITHIN_RANGE, {}, None, "so101-range-gripper-percent-v1"),
     ],
 )
