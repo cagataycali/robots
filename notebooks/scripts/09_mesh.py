@@ -186,7 +186,7 @@ try:
     me.invoke("so101", "resume", approved_by="mallory")
 except RequestRefused as e:
     print("mallory:", e)
-me.invoke("unitree_g1", "resume", approved_by="safety-lead")
+me.invoke("g1", "resume", approved_by="safety-lead")
 me.invoke("so101", "resume", approved_by=me.operator)  # the operator who stopped it
 print("after safety-lead (g1) and alice (arm):", arm.estopped, g1.estopped)
 
@@ -286,7 +286,7 @@ for m in agent.messages:
 print("arm estopped:", arm.estopped, "| shoulder_pan:", round(arm.observe().joints["shoulder_pan"], 3))
 me.invoke("so101", "resume", approved_by=me.operator)  # the operator, in code
 bench.resume_authority = authority.Authority(trust_names=True)
-me.invoke("unitree_g1", "resume", approved_by=me.operator)
+me.invoke("g1", "resume", approved_by=me.operator)
 print("operator resumed:", not arm.estopped, not g1.estopped)
 
 # %% [markdown]
