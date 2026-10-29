@@ -40,3 +40,34 @@ def test_device_cpu_loads_on_cpu_without_a_saved_device_warning_or_a_print(forei
         load(foreign_act)
     assert [r.getMessage() for r in caplog.records if "is not available" in r.getMessage()] == []
     assert "Loading weights" not in capsys.readouterr().out
+
+
+def test_overlapping_loads_leave_stdout_and_other_threads_prints_alone(capsys):
+    """Two loads on two run threads: another thread's print shows, stdout is the real one after, lerobot's is muted."""
+    import sys
+    import threading
+
+    from lerobot.policies import pretrained
+
+    from strands_robots.policy.lerobot.contract import quiet_load
+
+    real, both_in, a_out = sys.stdout, threading.Barrier(3), threading.Event()
+
+    def load(last: bool) -> None:
+        with quiet_load():
+            getattr(pretrained, "print", print)("Loading weights from local directory")  # as the module resolves it
+            both_in.wait(5)
+            if last:
+                a_out.wait(5)  # the first load exits first, the second exits last
+
+    a, b = threading.Thread(target=load, args=(False,)), threading.Thread(target=load, args=(True,))
+    a.start(), b.start()
+    both_in.wait(5)
+    print("user output during a load")
+    a.join(5)
+    a_out.set()
+    b.join(5)
+    assert sys.stdout is real
+    out = capsys.readouterr().out
+    assert "user output during a load" in out and "Loading weights" not in out
+    assert not hasattr(pretrained, "print")

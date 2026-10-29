@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import logging
+import threading
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,18 +34,33 @@ def lerobot() -> Any:
     return lr
 
 
+_quiet = threading.Lock()
+_quiet_depth, _quiet_level = 0, logging.NOTSET
+
+
 @contextlib.contextmanager
 def quiet_load() -> Iterator[None]:
     """A checkpoint loads without LeRobot's warning about its saved device (the asked-for device replaces it)
-    or its "Loading weights" print."""
+    or its "Loading weights" print. Only that module's print is muted, never ``sys.stdout``: loads run on
+    a run's thread, and another thread's output (or an overlapping load) must stay untouched."""
+    global _quiet_depth, _quiet_level
+    from lerobot.policies import pretrained
+
     log = logging.getLogger("lerobot.configs.policies")
-    level = log.level
-    log.setLevel(logging.ERROR)
+    with _quiet:
+        if _quiet_depth == 0:
+            _quiet_level = log.level
+            log.setLevel(logging.ERROR)
+            pretrained.print = lambda *a, **k: None  # type: ignore[attr-defined]
+        _quiet_depth += 1
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            yield
+        yield
     finally:
-        log.setLevel(level)
+        with _quiet:
+            _quiet_depth -= 1
+            if _quiet_depth == 0:
+                log.setLevel(_quiet_level)
+                del pretrained.print  # type: ignore[attr-defined]
 
 
 def default_device() -> str:
