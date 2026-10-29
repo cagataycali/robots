@@ -33,9 +33,11 @@ def _swap(ops: Any, items: list[Any], old: Any, new: Any) -> None:
         raise
 
 
-def move_camera(ops: Any, old: SceneCamera, cam: SceneCamera) -> None:
+def put_camera(ops: Any, old: SceneCamera | None, cam: SceneCamera) -> None:
     with ops.lock:
-        if not (ops._editing or ops._pending) and ops.backend.move_camera(old, cam):
+        if old is None:
+            ops._commit(ops.scene.cameras, cam)
+        elif not (ops._editing or ops._pending) and ops.backend.move_camera(old, cam):
             ops.scene.cameras[ops.scene.cameras.index(old)] = cam
             ops.revision += 1
         else:
