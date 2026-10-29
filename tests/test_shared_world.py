@@ -161,6 +161,45 @@ def test_one_render_shows_both_bodies(pair):
     assert diff.sum() < 0.25 * h * w
 
 
+def _robot_pixels(sim):
+    """Where the robots are in ``sim.render()``: the pixels that differ from the same camera over an empty world."""
+    img, cam = sim.render(), sim.scene.cameras[-1]
+    with Simulation(ground=False) as empty:
+        empty.camera("overview", position=cam.position, target=cam.target)
+        return np.abs(img.astype(int) - empty.render("overview").astype(int)).sum(axis=2) > 30
+
+
+@pytest.mark.parametrize(("robots", "min_height"), [((("so101", None),), 0.6), ((("g1", None),), 0.8)])
+def test_the_overview_frames_the_robots_not_the_floor(robots, min_height):
+    """A lone 30 cm arm filled 68 of 480 rows (a 28 x 68 px box at 1.8 m); the overview now fits the bodies."""
+    with Simulation(ground=False) as sim:
+        for name, position in robots:
+            Robot(name, sim=sim, position=position)
+        ys, xs = np.nonzero(_robot_pixels(sim))
+    h, w = 480, 640
+    assert (ys.max() - ys.min()) / h >= min_height, (ys.min(), ys.max())
+    assert ys.min() > 0 and ys.max() < h - 1 and xs.min() > 0 and xs.max() < w - 1  # in view, not cropped
+
+
+@pytest.mark.parametrize(
+    "outline",
+    [np.array([[0, -0.4, 0], [0.1, 0.1, 0.3]]), np.array([[-1, 0, 0], [1.2, 0.2, 1.3]]), np.zeros((1, 3))],
+    ids=["a reaching arm", "two bodies a metre apart", "a point"],
+)
+def test_overview_keeps_every_outline_point_in_view(outline):
+    from strands_robots.simulation.scene import Scene
+
+    cam = Scene().overview(outline, aspect=4 / 3)
+    pos, fwd = np.array(cam["position"]), np.subtract(cam["target"], cam["position"])
+    fwd /= np.linalg.norm(fwd)
+    right = np.cross(fwd, [0, 0, 1]) / np.linalg.norm(np.cross(fwd, [0, 0, 1]))
+    up, t = np.cross(right, fwd), np.tan(np.radians(22.5))
+    q = outline - pos
+    x, y = q @ right / (q @ fwd) / (t * 4 / 3), q @ up / (q @ fwd) / t
+    assert np.abs(x).max() <= 1 and np.abs(y).max() <= 1
+    assert max(np.abs(x).max(), np.abs(y).max()) > 0.85 or len(outline) == 1  # fills the view, not a speck
+
+
 def test_render_without_a_camera_is_the_overview_even_after_user_cameras(pair):
     arm, _ = pair
     sim = arm.sim

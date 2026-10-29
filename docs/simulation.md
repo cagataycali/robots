@@ -19,7 +19,7 @@ with sim.manual_time():           # inside, act() only writes targets; the calle
 sim.set_pose("g1", position=[2, 0, 0.8])   # teleport; velocities zeroed, time does not advance
 sim.add_object("box", shape="box", position=[0.3, 0, 0.1], size=[0.03, 0.03, 0.03])
 sim.camera("wrist", position=[0.035, 0, -0.02], target=[-0.2, 0, -0.09], attach="so101/gripper")  # link frame
-sim.render()                      # HxWx3 uint8 from the auto-framed overview camera that sees every robot
+sim.render()                      # HxWx3 uint8 from the overview camera, fitted to every robot's geometry
 sim.pose("box")                   # where it is now: position (m), quaternion (w, x, y, z)
 sim.pose("so101/gripper")         # a link too (any name in describe()["robots"]["so101"]["links"]): the end effector
 sim.remove("wrist")               # a robot, an object or a camera, by name

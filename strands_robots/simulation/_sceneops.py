@@ -193,7 +193,9 @@ class _SceneOps:
         with self.lock:  # check and draw are one step: a concurrent edit cannot land between them
             if camera is None:  # the auto-framed overview, created on first use (user cameras never replace it)
                 if not any(c.name == "overview" for c in self.scene.cameras):
-                    self.camera("overview", **self.scene.overview())
+                    self._flush()
+                    w, h = self.render_size
+                    self.camera("overview", **self.scene.overview(self.backend.outline(), w / h))
                 name = "overview"
             else:
                 name = camera if isinstance(camera, str) else camera.name
