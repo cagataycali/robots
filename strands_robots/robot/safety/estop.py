@@ -75,7 +75,8 @@ class Latch:
 
     def check(self, robot_id: str) -> None:
         if self._set.is_set():
-            raise EStopped(f"{robot_id}: e-stop is engaged ({self.reason}); resume(approved_by=<operator>) first")
+            by = f" by {self.stopped_by}" if self.stopped_by else ""  # the person at the arm reads who pressed it
+            raise EStopped(f"{robot_id}: e-stop is engaged{by} ({self.reason}); resume(approved_by=<operator>) first")
 
 
 def engage(robot: Robot, reason: str = "estop()", by: str | None = None) -> None:

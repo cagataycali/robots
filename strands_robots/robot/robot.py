@@ -246,5 +246,5 @@ class Robot(DeviceVerbs):
             self.twin = None
 
     def __repr__(self) -> str:
-        where = "hardware" if self.is_real else (self.sim.backend_name if self.sim else "detached")
-        return f"Robot({self.name!r}, id={self.id!r}, {where}, dof={self.description.dof})"
+        at = getattr(self._body, "where", "hardware") if self.is_real else getattr(self.sim, "backend_name", "detached")
+        return f"Robot({self.name!r}, id={self.id!r}, {at}, dof={self.description.dof})"
