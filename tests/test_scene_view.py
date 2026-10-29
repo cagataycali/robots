@@ -10,7 +10,7 @@ pytest.importorskip("mujoco")
 from strands_robots import Robot  # noqa: E402
 from strands_robots.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.backends.isaac import build as isaac_build  # noqa: E402
-from strands_robots.simulation.scene import Scene, SceneLight  # noqa: E402
+from strands_robots.simulation.scene import Scene, SceneCamera, SceneLight  # noqa: E402
 
 FRONT, BACK = ((1.0, -1.0, 1.0), (0.0, 0.0, 0.2)), ((-1.0, -1.0, 1.0), (0.0, 0.0, 0.2))
 
@@ -113,3 +113,9 @@ def test_describe_says_where_the_arm_reaches_and_which_sign_raises_it(world):
 def test_isaac_refuses_a_light_by_name_before_it_touches_the_stage():
     with pytest.raises(NotImplementedError, match="lights"):
         isaac_build.refuse(Scene(lights=[SceneLight("lamp")]), {}, {})
+
+
+def test_isaac_refuses_an_attached_camera_even_when_its_name_is_on_the_stage():
+    # a re-aim onto a link must not pass as the world camera already built under that name
+    with pytest.raises(NotImplementedError, match="attach"):
+        isaac_build.refuse(Scene(cameras=[SceneCamera("front", attach="so101/gripper")]), {}, {"front": object()})

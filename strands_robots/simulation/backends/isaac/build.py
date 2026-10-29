@@ -40,8 +40,8 @@ def refuse(scene: Scene, objects: Any, cameras: Any) -> None:
             raise NotImplementedError(
                 f"Simulation('isaac'): object {o.name!r} from a file is not supported; use a shape"
             )
-    for c in scene.cameras:
-        if c.name not in cameras and c.attach is not None:
+    for c in scene.cameras:  # an attached camera is never on the stage, so a built name cannot vouch for it
+        if c.attach is not None:
             raise NotImplementedError(
                 f"Simulation('isaac'): camera {c.name!r} attach={c.attach!r} is not wired yet; use a world camera"
             )
@@ -91,6 +91,8 @@ def add_camera(c: SceneCamera, cam: Any = None) -> Any:
     made = cam is None
     if made:
         cam = Camera(prim_path=f"/World/cameras/{c.name}", position=pos, frequency=30, resolution=tuple(c.size))
+    else:  # a re-aim may change size too: describe() reports it, so the prim renders at it
+        cam.set_resolution(tuple(c.size))
     cam.set_world_pose(pos, quat, camera_axes="world")
     cam.set_focal_length(1.0 / math.tan(math.radians(c.fov) / 2))  # Isaac's 2 cm horizontal aperture
     if made:
