@@ -70,3 +70,15 @@ def test_presets_offered_are_those_that_drive_the_robot(robot, offered, refused)
 def test_the_arm_tool_offers_no_humanoid_preset(specs):
     text = specs[1]["robot"]["run"]["properties"]["policy"]["description"]
     assert "none drives so101" in text and "holosoma" not in text
+
+
+def test_a_joint_without_a_hard_limit_is_a_number_with_no_bounds():
+    sim = Simulation()
+    try:
+        panda = Robot("panda", sim=sim)  # actuator8 drives a tendon gripper: no range in the manifest
+        assert panda.manifest.control("actuator8.pos").range is None
+        joints = tool_spec(panda)["inputSchema"]["json"]["properties"]["act"]["properties"]["action"]["properties"]
+        assert joints["actuator8"] == {"type": "number", "description": "rad"}
+        assert "minimum" in joints["joint1"]
+    finally:
+        sim.close()

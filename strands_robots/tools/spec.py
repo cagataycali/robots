@@ -44,15 +44,14 @@ def details(fn: Callable[..., Any]) -> str:
 
 
 def joints(device: Any) -> dict[str, dict[str, Any]]:
-    """Action key -> its control's unit and range from the manifest (empty when the manifest has no such control)."""
+    """Action key -> its control's unit and range from the manifest; no bounds for a joint without a hard limit."""
     out: dict[str, dict[str, Any]] = {}
     for k in getattr(device, "action_keys", ()):
         c = next((c for c in getattr(device.manifest, "controls", ()) if c.name in (f"{k}.pos", k)), None)
-        out[k] = (
-            {}
-            if c is None
-            else {"description": c.unit, "minimum": round(c.range[0], 3), "maximum": round(c.range[1], 3)}
+        bounds = (
+            {} if c is None or c.range is None else {"minimum": round(c.range[0], 3), "maximum": round(c.range[1], 3)}
         )
+        out[k] = {} if c is None else {"description": c.unit, **bounds}
     return out
 
 
